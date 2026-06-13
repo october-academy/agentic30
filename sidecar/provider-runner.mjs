@@ -16,6 +16,9 @@ import {
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
+import {
+  prepareOfficeHoursStructuredInputRequest,
+} from "./office-hours-structured-input.mjs";
 import { decorateIcpStructuredInput } from "./idd-doc-gate.mjs";
 import {
   INLINE_DECISION_CONTRACT,
@@ -955,14 +958,19 @@ export function buildClaudeCanUseTool({
       };
     }
 
-    const request = await createUserInputRequest(appSupportPath, {
+    const rawRequest = {
       sessionId,
       toolName,
       title: context.title || structuredInput.title || "Claude needs input",
       intro: structuredInput.intro ?? null,
       resources: structuredInput.resources ?? null,
       questions,
-    });
+      generation: structuredInput.generation ?? null,
+    };
+    const requestInput = executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE
+      ? prepareOfficeHoursStructuredInputRequest(rawRequest)
+      : rawRequest;
+    const request = await createUserInputRequest(appSupportPath, requestInput);
     onRunEvent?.({
       phase: "provider.claude.awaiting_user_input",
       toolName,
@@ -1143,8 +1151,7 @@ export function normalizeClaudeQuestions(questions) {
             }))
             .filter((option) => {
               return option.label
-                && option.description
-                && !isOtherTextOptionLabel(option.label);
+                && option.description;
             })
             .slice(0, 7)
         : [];
@@ -1195,18 +1202,6 @@ export function normalizeClaudeQuestions(questions) {
   } catch {
     return [];
   }
-}
-
-function isOtherTextOptionLabel(label) {
-  const normalized = String(label || "")
-    .trim()
-    .replace(/\s+/g, " ")
-    .replace(/[()（）]/g, " ")
-    .toLowerCase()
-    .trim();
-  return /(?:^|[\s:：\-_/])직접\s*입력(?:$|[\s:：\-_/])/.test(normalized)
-    || /^기타(?:$|[\s:：\-_/])/.test(normalized)
-    || /^other(?:$|[\s:：\-_/])/.test(normalized);
 }
 
 export function extractClaudePartialText(event) {
@@ -2205,6 +2200,7 @@ function buildStubResponse(prompt) {
       INLINE_DECISION_SENTINEL_START,
       JSON.stringify({
         header: "수요 증거",
+        intent: "demand",
         question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
         helperText: "느낌이나 칭찬이 아니라 날짜와 행동으로 설명할 수 있는 증거를 고릅니다.",
         options: [
@@ -2226,7 +2222,8 @@ function buildStubResponse(prompt) {
           },
         ],
         multiSelect: false,
-        allowFreeText: false,
+        allowFreeText: true,
+        requiresFreeText: false,
         textMode: "short",
       }),
       INLINE_DECISION_SENTINEL_END,
@@ -2402,6 +2399,11 @@ async function createStubOfficeHoursUserInputRequest({ sessionIdForMcp } = {}) {
     sessionId: sessionIdForMcp,
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
     title: "Office Hours",
+    generation: {
+      mode: "office_hours_tool",
+      signalId: "office_hours_demand_evidence",
+      signalLabel: "Office Hours Q1 수요 증거",
+    },
     questions: [
       {
         questionId: "office_hours_demand_evidence",

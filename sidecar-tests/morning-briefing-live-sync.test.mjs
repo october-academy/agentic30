@@ -1,7 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
+import { evaluateOfficeHoursSourceGate } from "../sidecar/daily-office-hours-digest.mjs";
 import { applyMorningBriefingLiveSync } from "../sidecar/morning-briefing.mjs";
+
+function fakeExec(responses = []) {
+  const impl = async (cmd, args) => {
+    const key = `${cmd} ${args.join(" ")}`;
+    for (const [pattern, result] of responses) {
+      if (key.includes(pattern)) return result;
+    }
+    return { ok: false, stdout: "", stderr: "" };
+  };
+  return impl;
+}
 
 // 실측 재현 픽스처: 07:39에 생성된 브리핑은 PostHog/Cloudflare를 미연결로 박제
 // 했고, 08:29에 Settings에서 MCP OAuth가 검증됐다 — 서빙 시점 오버레이가 이
@@ -61,6 +76,52 @@ test("applyMorningBriefingLiveSync flips stale missing rows to live ready and dr
   assert.equal(briefing.sync.sources[2].state, "missing");
   assert.equal(briefing.sync.liveCheckedAt, undefined);
   assert.ok(briefing.connectGuide);
+});
+
+test("live sync uses a briefing probe that can ignore local dev fast-days", async () => {
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "morning-briefing-fast-days-"));
+  try {
+    await fs.writeFile(
+      path.join(appSupportPath, "mcp-oauth-state.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        servers: {
+          posthog: {
+            providers: {
+              codex: { state: "ready", detail: "ok", checkedAt: "2026-06-13T14:25:00.000Z" },
+            },
+          },
+          cloudflare: {
+            providers: {
+              codex: { state: "ready", detail: "ok", checkedAt: "2026-06-13T14:25:30.000Z" },
+            },
+          },
+        },
+      }),
+    );
+    const gate = await evaluateOfficeHoursSourceGate({
+      workspaceRoot: "/tmp/ws",
+      day: 2,
+      selectedSources: ["git", "gh_cli", "posthog", "cloudflare"],
+      provider: "codex",
+      appSupportPath,
+      execImpl: fakeExec([
+        ["git rev-parse", { ok: false, stdout: "" }],
+        ["gh auth status", { ok: false, stdout: "" }],
+      ]),
+      env: { AGENTIC30_LOCAL_DEV_FAST_DAYS: "1" },
+      allowLocalDevFastDays: false,
+    });
+
+    const { briefing: live, changed } = applyMorningBriefingLiveSync(briefingFixture(), gate.sources);
+    const byId = new Map(live.sync.sources.map((source) => [source.id, source]));
+    assert.equal(changed, true);
+    assert.equal(byId.get("posthog").state, "ready");
+    assert.equal(byId.get("cloudflare").state, "ready");
+    assert.equal(live.connectGuide, null);
+  } finally {
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
 });
 
 test("provider switch flips a persisted ready row back to missing and resurrects the connect guide", () => {

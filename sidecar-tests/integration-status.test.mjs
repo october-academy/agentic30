@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   collectIntegrationStatus,
+  mergeMcpOauthConnectResultIntoIntegrationStatus,
   probeCloudflareIntegration,
   probeGithubIntegration,
   probePosthogIntegration,
@@ -220,4 +221,33 @@ test("collectIntegrationStatus aggregates all probes with a timestamp", async ()
   assert.equal(result.cloudflare.state, "ready");
   assert.equal(result.vercel.state, "oauth");
   assert.equal(result.checkedAt, "2026-06-10T09:00:00.000Z");
+});
+
+test("mergeMcpOauthConnectResultIntoIntegrationStatus updates only the connected server", () => {
+  const current = {
+    github: { state: "ready", detail: "gh ok" },
+    githubMcp: { state: "ready", detail: "mcp ok" },
+    posthog: { state: "oauth", detail: "needs login" },
+    cloudflare: { state: "ready", detail: "cf ok" },
+    vercel: { state: "oauth", detail: "needs login" },
+    checkedAt: "2026-06-10T09:00:00.000Z",
+  };
+  const merged = mergeMcpOauthConnectResultIntoIntegrationStatus({
+    current,
+    provider: "codex",
+    now: new Date("2026-06-10T09:01:00.000Z"),
+    result: {
+      server: "posthog",
+      provider: "codex",
+      state: "ready",
+      detail: "PostHog MCP OAuth 로그인과 도구 호출이 확인됨",
+    },
+  });
+
+  assert.equal(merged.github.detail, "gh ok");
+  assert.equal(merged.cloudflare.detail, "cf ok");
+  assert.equal(merged.posthog.state, "ready");
+  assert.match(merged.posthog.detail, /PostHog MCP/);
+  assert.equal(merged.provider, "codex");
+  assert.equal(merged.checkedAt, "2026-06-10T09:01:00.000Z");
 });

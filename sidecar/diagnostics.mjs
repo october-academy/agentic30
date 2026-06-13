@@ -8,6 +8,7 @@ export function buildDiagnosticsSnapshot({
   sessionStoreSchemaVersion,
   sessionStoreWarnings = [],
   executionOs = null,
+  mcpOauthTraces = [],
   now = () => new Date(),
   processInfo = process,
 } = {}) {
@@ -39,6 +40,7 @@ export function buildDiagnosticsSnapshot({
     environment: sanitizeEnvironmentSummary(environment),
     preflight: preflight ? sanitizeValue(preflight) : null,
     executionOs: executionOs ? sanitizeValue(executionOs) : null,
+    mcpOauthTraces: sanitizeValue(Array.isArray(mcpOauthTraces) ? mcpOauthTraces.slice(-10) : []),
     redactionSafe: true,
   };
 }

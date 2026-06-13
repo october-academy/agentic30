@@ -469,6 +469,10 @@ struct OpenDesignDayContent {
     }
 
     var lockingDaysAfterSecond: OpenDesignDayContent {
+        lockingDays(after: 2)
+    }
+
+    func lockingDays(after lastUnlockedDay: Int) -> OpenDesignDayContent {
         OpenDesignDayContent(
             railItems: railItems,
             taskGroups: taskGroups.map { group in
@@ -478,7 +482,7 @@ struct OpenDesignDayContent {
                     meta: group.meta,
                     tasks: group.tasks.map { task in
                         guard let dayNumber = openDesignFoundationDayNumber(taskID: task.id),
-                              dayNumber > 2 else {
+                              dayNumber > lastUnlockedDay else {
                             return task
                         }
                         return TaskItem(
@@ -501,7 +505,7 @@ struct OpenDesignDayContent {
             searchItems: searchItems.map { item in
                 guard item.kind == .task,
                       let dayNumber = openDesignFoundationDayNumber(taskID: item.id),
-                      dayNumber > 2 else {
+                      dayNumber > lastUnlockedDay else {
                     return item
                 }
                 return SearchItem(
@@ -3169,16 +3173,17 @@ struct OpenDesignDayPageView: View {
     let advanceToNextDay: () -> Void
     let selectDay: (Int) -> Void
     let routesTodayToOfficeHours: Bool
+    let officeHoursRoutedDayNumbers: Set<Int>
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding private var interaction: OpenDesignDayInteractionState
     @Binding private var selectedReferencePage: OpenDesignReferencePageKind?
     @Binding private var isOfficeHoursPresented: Bool
     @Binding private var isMorningBriefingPresented: Bool
+    @Binding private var pendingScrollRequest: OpenDesignScrollRequest?
     @State private var isSearchPresented = false
     @State private var searchQuery = ""
     @State private var selectedSearchIndex = 0
-    @State private var pendingScrollRequest: OpenDesignScrollRequest?
     @State private var searchPulseTarget: String?
     @State private var completionBurstID = 0
     @State private var requestedDayCompletionID: String?
@@ -3192,6 +3197,7 @@ struct OpenDesignDayPageView: View {
         selectedReferencePage: Binding<OpenDesignReferencePageKind?> = .constant(nil),
         isOfficeHoursPresented: Binding<Bool> = .constant(false),
         isMorningBriefingPresented: Binding<Bool> = .constant(false),
+        pendingScrollRequest: Binding<OpenDesignScrollRequest?> = .constant(nil),
         openSettings: @escaping () -> Void,
         settingsScreen: AnyView? = nil,
         requiresDay1Goal: Bool = false,
@@ -3225,13 +3231,15 @@ struct OpenDesignDayPageView: View {
         completeDay: @escaping () -> Void = {},
         advanceToNextDay: @escaping () -> Void = {},
         selectDay: @escaping (Int) -> Void = { _ in },
-        routesTodayToOfficeHours: Bool = false
+        routesTodayToOfficeHours: Bool = false,
+        officeHoursRoutedDayNumbers: Set<Int> = []
     ) {
         self.content = content
         _interaction = interaction
         _selectedReferencePage = selectedReferencePage
         _isOfficeHoursPresented = isOfficeHoursPresented
         _isMorningBriefingPresented = isMorningBriefingPresented
+        _pendingScrollRequest = pendingScrollRequest
         self.openSettings = openSettings
         self.settingsScreen = settingsScreen
         self.requiresDay1Goal = requiresDay1Goal
@@ -3266,6 +3274,7 @@ struct OpenDesignDayPageView: View {
         self.advanceToNextDay = advanceToNextDay
         self.selectDay = selectDay
         self.routesTodayToOfficeHours = routesTodayToOfficeHours
+        self.officeHoursRoutedDayNumbers = officeHoursRoutedDayNumbers
     }
 
     private var searchResults: [OpenDesignDayContent.SearchItem] {
@@ -3500,7 +3509,7 @@ struct OpenDesignDayPageView: View {
            let dayNumber = openDesignFoundationDayNumber(taskID: item.id) {
             closeSearch()
             selectedReferencePage = nil
-            isOfficeHoursPresented = item.route == .officeHours || (routesTodayToOfficeHours && dayNumber == 1)
+            isOfficeHoursPresented = item.route == .officeHours || officeHoursRoutedDayNumbers.contains(dayNumber)
             selectDay(dayNumber)
             return
         }

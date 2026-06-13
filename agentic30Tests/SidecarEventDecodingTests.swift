@@ -911,6 +911,29 @@ struct SidecarEventDecodingTests {
         #expect(result.isReady == false)
     }
 
+    @MainActor @Test func decodesMcpOauthConnectCancelledPayload() throws {
+        let payload = """
+        {
+          "type": "mcp_oauth_connect_result",
+          "mcpOauthConnect": {
+            "server": "vercel",
+            "provider": "codex",
+            "state": "cancelled",
+            "detail": "MCP 연결 확인을 중지했습니다. 다시 시도하세요.",
+            "checkedAt": "2026-06-10T09:34:00.000Z"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        let result = try #require(event.mcpOauthConnect)
+        #expect(result.server == "vercel")
+        #expect(result.isCancelled == true)
+        #expect(result.isPending == false)
+        #expect(result.isReady == false)
+    }
+
     @MainActor @Test func decodesMcpOauthConnectStatusProgressPayload() throws {
         let payload = """
         {
@@ -2443,7 +2466,21 @@ struct SidecarEventDecodingTests {
                   "message": "Claude"
                 }
               ]
-            }
+            },
+            "mcpOauthTraces": [
+              {
+                "traceId": "mcp_oauth_abc123",
+                "at": "2026-06-13T14:25:59.000Z",
+                "server": "vercel",
+                "provider": "codex",
+                "phase": "completed",
+                "durationMs": 2140,
+                "state": "ready",
+                "hasLoginUrl": false,
+                "commandCount": 0,
+                "providerRunCount": 1
+              }
+            ]
           }
         }
         """
@@ -2460,6 +2497,10 @@ struct SidecarEventDecodingTests {
         #expect(event.diagnostics?.environment?.codex.sdk?.cliSource == "bundled")
         #expect(event.diagnostics?.preflight?.status == "warning")
         #expect(event.diagnostics?.preflight?.checks.first?.id == "provider-auth")
+        let trace = try #require(event.diagnostics?.mcpOauthTraces?.first)
+        #expect(trace.traceId == "mcp_oauth_abc123")
+        #expect(trace.server == "vercel")
+        #expect(trace.providerRunCount == 1)
     }
 
     @MainActor @Test func decodesGeminiAdcDiagnosticOnMissingAuthState() throws {

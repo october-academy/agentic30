@@ -56,6 +56,49 @@ struct OpenDesignDayContentTests {
         #expect(rows.isEmpty)
     }
 
+    @Test func officeHoursTranscriptRowsIgnoreBipMissionChoiceAssistantMessages() {
+        let rows = OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(
+                id: "bip-mission",
+                role: .assistant,
+                content: "추천 1개: 오늘 미션 후보 3개",
+                bipMissionChoices: [makeBipMission()]
+            ),
+        ])
+
+        #expect(rows.isEmpty)
+    }
+
+    @Test func officeHoursTranscriptRowsKeepNormalOfficeHoursUserAndAssistantMessages() {
+        let rows = OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(id: "user-answer", role: .user, content: "가장 빠른 증거는 오늘 보낸 통화 요청입니다."),
+            makeChatMessage(id: "assistant-question", role: .assistant, content: "다음 질문은 무엇을 확인할지입니다."),
+        ])
+
+        #expect(rows.map(\.id) == ["user-answer", "assistant-question"])
+        #expect(rows.map(\.kind) == [.user, .assistant])
+    }
+
+    @Test func officeHoursStartPoliciesIgnoreBipOnlyMissionMessages() {
+        let session = makeChatSession(messages: [
+            makeChatMessage(
+                id: "bip-mission",
+                role: .assistant,
+                content: "오늘 실행 후보 3개를 만들었습니다.",
+                bipMissionChoices: [makeBipMission()]
+            ),
+        ])
+
+        #expect(OfficeHoursLiveStatusPolicy.visibleRows(in: session).isEmpty)
+        #expect(OfficeHoursRealProjectTestSessionPolicy.canStartTest(in: session, provider: .codex))
+        #expect(OfficeHoursAutoStartPolicy.canAutoStart(
+            in: session,
+            startedSessionIDs: [],
+            realProjectTestBusy: false,
+            realProjectSessionCreateRequested: false
+        ))
+    }
+
     @Test func officeHoursTranscriptRowsKeepLongUserAndAssistantTextUntruncated() {
         let longQuestion = String(repeating: "고객에게 무엇을 물어봐야 하는지 더 구체적으로 알고 싶습니다. ", count: 18)
         let longAnswer = String(repeating: "먼저 결제 이유를 만든 사건과 지금 대안을 분리해서 물어보세요. ", count: 22)
@@ -516,6 +559,7 @@ struct OpenDesignDayContentTests {
         role: MessageRole,
         content: String,
         state: MessageState = .final,
+        bipMissionChoices: [BipCoachMission]? = nil,
         seededTurn: Bool = false
     ) -> ChatMessage {
         ChatMessage(
@@ -526,10 +570,32 @@ struct OpenDesignDayContentTests {
             state: state,
             createdAt: Date(),
             error: nil,
-            bipMissionChoices: nil,
+            bipMissionChoices: bipMissionChoices,
             providerAuthActions: nil,
             inlineDecision: nil,
             officeHoursSeededTurn: seededTurn ? true : nil
+        )
+    }
+
+    private func makeBipMission(id: String = "bip-mission-choice") -> BipCoachMission {
+        BipCoachMission(
+            id: id,
+            date: nil,
+            provider: "codex",
+            status: "suggested",
+            compact: nil,
+            title: "15분 고객증거 관찰글",
+            angle: nil,
+            mission: nil,
+            curriculumDay: BipCoachCurriculumDay(day: 1),
+            drafts: nil,
+            eveningChecklist: nil,
+            evidenceRefs: nil,
+            generatedAt: nil,
+            completedAt: nil,
+            completedQuestionCount: nil,
+            threadsUrl: nil,
+            sheetRowNote: nil
         )
     }
 
@@ -1742,12 +1808,137 @@ struct OpenDesignDayContentTests {
         #expect(day3Search?.route == .inert)
     }
 
-    @Test func openDesignRoutePolicySupportsOnlyFirstTwoDays() {
-        #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 1))
-        #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 2))
-        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 3))
-        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 8))
-        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 30))
+    @Test func localDevLockingCanKeepDayThreeOpen() {
+        let content = OpenDesignDayContent.day2.lockingDays(after: 3)
+        let week1Tasks = content.taskGroups.first?.tasks ?? []
+
+        let day3IsPending: Bool
+        if case .pending? = week1Tasks.first(where: { $0.id == "day3" })?.state {
+            day3IsPending = true
+        } else {
+            day3IsPending = false
+        }
+
+        let day4IsLocked: Bool
+        if case .locked? = week1Tasks.first(where: { $0.id == "day4" })?.state {
+            day4IsLocked = true
+        } else {
+            day4IsLocked = false
+        }
+
+        #expect(day3IsPending)
+        #expect(day4IsLocked)
+        #expect(content.rankedSearchItems(query: "day3").first?.isLocked == false)
+        #expect(content.rankedSearchItems(query: "day4").first?.isLocked == true)
+    }
+
+    @Test func openDesignRoutePolicySupportsDayThreeOnlyForLocalDevFastForward() {
+        #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 1, localDevelopmentFastForwardEnabled: false))
+        #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 2, localDevelopmentFastForwardEnabled: false))
+        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 3, localDevelopmentFastForwardEnabled: false))
+        #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 3, localDevelopmentFastForwardEnabled: true))
+        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 8, localDevelopmentFastForwardEnabled: true))
+        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 30, localDevelopmentFastForwardEnabled: true))
+    }
+
+    @Test func workspaceDayResolverAllowsSelectedDayThreeOnlyForLocalDevFastForward() {
+        #expect(OpenDesignWorkspaceDayResolver.dayNumber(
+            selectedDay: 3,
+            completedDays: [1, 2],
+            localDevelopmentFastForwardEnabled: false
+        ) == 2)
+        #expect(OpenDesignWorkspaceDayResolver.dayNumber(
+            selectedDay: 3,
+            completedDays: [1, 2],
+            localDevelopmentFastForwardEnabled: true
+        ) == 3)
+    }
+
+    @Test func localDevProgressPrimerEmitsDayTwoAndDayThreeInterviewPatchesWithoutRegressingDone() {
+        let allPatches = LocalDevelopmentDayProgressPrimer.patchRequests(day: 2, record: nil)
+        #expect(allPatches.map(\.stepId) == ["scan", "retro", "goal", "interview"])
+        #expect(allPatches.map(\.status) == [.done, .done, .done, .active])
+
+        let day3Patches = LocalDevelopmentDayProgressPrimer.patchRequests(day: 3, record: DayRecord(
+            day: 3,
+            kind: .standard,
+            steps: ["scan": .done, "retro": .done, "goal": .done, "interview": .done, "execution": .pending]
+        ))
+        #expect(day3Patches.isEmpty)
+    }
+
+    @Test func officeHoursSidebarTimelineUsesDateDayByDefault() {
+        let plan = OfficeHoursSidebarTimelinePolicy.plan(
+            dateCurrentDay: 1,
+            activeDay: 2,
+            selectedFoundationDay: 2,
+            recordedDays: [1],
+            evidenceDays: [],
+            completedDays: [1],
+            localDevelopmentFastForwardEnabled: false
+        )
+
+        #expect(plan?.displayDay == 1)
+        #expect(plan?.dayNumbers == [1])
+    }
+
+    @Test func officeHoursSidebarTimelineUsesSelectedFutureDayForLocalDevFastForward() {
+        let plan = OfficeHoursSidebarTimelinePolicy.plan(
+            dateCurrentDay: 1,
+            activeDay: 2,
+            selectedFoundationDay: 2,
+            recordedDays: [1],
+            evidenceDays: [],
+            completedDays: [1],
+            localDevelopmentFastForwardEnabled: true
+        )
+
+        #expect(plan?.displayDay == 2)
+        #expect(plan?.dayNumbers == [2, 1])
+    }
+
+    @Test func officeHoursSidebarTimelineKeepsFallbackBeforeProgressWithoutFutureFastForward() {
+        let plan = OfficeHoursSidebarTimelinePolicy.plan(
+            dateCurrentDay: nil,
+            activeDay: 1,
+            selectedFoundationDay: 1,
+            recordedDays: [],
+            evidenceDays: [],
+            completedDays: [],
+            localDevelopmentFastForwardEnabled: true
+        )
+
+        #expect(plan == nil)
+    }
+
+    @Test func officeHoursSidebarTimelineAccumulatesThroughDayThreeForLocalDevFastForward() {
+        let plan = OfficeHoursSidebarTimelinePolicy.plan(
+            dateCurrentDay: 1,
+            activeDay: 3,
+            selectedFoundationDay: 3,
+            recordedDays: [1, 2],
+            evidenceDays: [],
+            completedDays: [1, 2],
+            localDevelopmentFastForwardEnabled: true
+        )
+
+        #expect(plan?.displayDay == 3)
+        #expect(plan?.dayNumbers == [3, 2, 1])
+    }
+
+    @Test func officeHoursSidebarTimelinePastSelectionDoesNotShrinkLocalDevAccumulation() {
+        let plan = OfficeHoursSidebarTimelinePolicy.plan(
+            dateCurrentDay: 1,
+            activeDay: 1,
+            selectedFoundationDay: 2,
+            recordedDays: [1],
+            evidenceDays: [],
+            completedDays: [1],
+            localDevelopmentFastForwardEnabled: true
+        )
+
+        #expect(plan?.displayDay == 2)
+        #expect(plan?.dayNumbers == [2, 1])
     }
 
     @Test func weekProgressLocksFutureWeeksCollapsedByDefault() {
@@ -2641,7 +2832,12 @@ struct OpenDesignDayContentTests {
         #expect(OfficeHoursTranscriptScrollPolicy.repinDelays.allSatisfy { $0 > 0 && $0 <= 1.5 })
     }
 
-    @Test func officeHoursBannerPresentationFoldsScheduledInterventionIntoEvidenceDebt() {
+    @Test func transcriptPostLayoutScrollReusesShortRepinTail() {
+        #expect(OfficeHoursTranscriptScrollPolicy.postLayoutRepinDelays == OfficeHoursTranscriptScrollPolicy.repinDelays)
+        #expect(OfficeHoursTranscriptScrollPolicy.postLayoutRepinDelays.allSatisfy { $0 > 0 && $0 <= 1.5 })
+    }
+
+    @Test func officeHoursBannerPresentationSuppressesScheduledInterventionWhenDebtExists() {
         let presentation = OfficeHoursBannerPresentation.resolve(
             memory: OfficeHoursMemorySummary(compiledTruth: "Cycle 1. 마지막 약속: DM 보내기.", openThreads: ["DM 보내기"]),
             evidenceOS: Self.evidenceOS(openDebts: [Self.commitment(id: "cm-open")]),
@@ -2649,9 +2845,7 @@ struct OpenDesignDayContentTests {
         )
 
         #expect(!presentation.showMemoryBanner)
-        #expect(presentation.showEvidenceOSBanner)
         #expect(!presentation.showFullInterventionBanner)
-        #expect(presentation.showInlineScheduledIntervention)
     }
 
     @Test func officeHoursBannerPresentationKeepsImmediateInterventionFullWidth() {
@@ -2662,9 +2856,7 @@ struct OpenDesignDayContentTests {
         )
 
         #expect(!presentation.showMemoryBanner)
-        #expect(presentation.showEvidenceOSBanner)
         #expect(presentation.showFullInterventionBanner)
-        #expect(!presentation.showInlineScheduledIntervention)
     }
 
     @Test func officeHoursBannerPresentationKeepsNonDuplicateMemorySignalsWithOpenDebt() {
@@ -2685,11 +2877,11 @@ struct OpenDesignDayContentTests {
 
         #expect(abandonedPresentation.showMemoryBanner)
         #expect(calibrationPresentation.showMemoryBanner)
-        #expect(abandonedPresentation.showEvidenceOSBanner)
-        #expect(calibrationPresentation.showEvidenceOSBanner)
+        #expect(!abandonedPresentation.showFullInterventionBanner)
+        #expect(!calibrationPresentation.showFullInterventionBanner)
     }
 
-    @Test func officeHoursBannerPresentationKeepsScheduledInterventionFullWidthWithoutOpenDebt() {
+    @Test func officeHoursBannerPresentationSuppressesScheduledInterventionWithoutOpenDebt() {
         let presentation = OfficeHoursBannerPresentation.resolve(
             memory: OfficeHoursMemorySummary(compiledTruth: "Cycle 1."),
             evidenceOS: EvidenceOSSummary(currentDay: 2),
@@ -2697,9 +2889,97 @@ struct OpenDesignDayContentTests {
         )
 
         #expect(presentation.showMemoryBanner)
-        #expect(!presentation.showEvidenceOSBanner)
-        #expect(presentation.showFullInterventionBanner)
-        #expect(!presentation.showInlineScheduledIntervention)
+        #expect(!presentation.showFullInterventionBanner)
+    }
+
+    @Test func previousCommitmentGateAllowsNewCommitmentWithoutPriorDebt() {
+        let emptyGate = OfficeHoursPreviousCommitmentGate.resolve(
+            evidenceOS: Self.evidenceOS(),
+            activeDay: 2
+        )
+        let currentDayGate = OfficeHoursPreviousCommitmentGate.resolve(
+            evidenceOS: Self.evidenceOS(openDebts: [
+                Self.commitment(id: "cm-current", day: 2, message: "오늘로 이월된 약속")
+            ]),
+            activeDay: 2
+        )
+
+        #expect(!emptyGate.blocksNewCommitment)
+        #expect(emptyGate.debts.isEmpty)
+        #expect(!currentDayGate.blocksNewCommitment)
+        #expect(currentDayGate.debts.isEmpty)
+    }
+
+    @Test func previousCommitmentGateDedupesOverdueBeforeOpenDebt() {
+        let duplicateOpen = Self.commitment(id: "cm-dup", day: 1, message: "open copy")
+        let duplicateOverdue = Self.commitment(id: "cm-dup", day: 1, message: "overdue copy")
+        let gate = OfficeHoursPreviousCommitmentGate.resolve(
+            evidenceOS: Self.evidenceOS(
+                openDebts: [duplicateOpen],
+                overdueDebts: [duplicateOverdue]
+            ),
+            activeDay: 2
+        )
+
+        #expect(gate.blocksNewCommitment)
+        #expect(gate.debts.count == 1)
+        #expect(gate.current?.id == "cm-dup")
+        #expect(gate.current?.message == "overdue copy")
+    }
+
+    @Test func previousCommitmentGateSurfacesMultipleDebtsSequentially() {
+        let first = Self.commitment(
+            id: "cm-first",
+            day: 1,
+            createdAt: "2026-06-10T00:00:00.000Z",
+            message: "첫 번째 이전 약속"
+        )
+        let second = Self.commitment(
+            id: "cm-second",
+            day: 1,
+            createdAt: "2026-06-11T00:00:00.000Z",
+            message: "두 번째 이전 약속"
+        )
+        let initialGate = OfficeHoursPreviousCommitmentGate.resolve(
+            evidenceOS: Self.evidenceOS(openDebts: [second, first]),
+            activeDay: 2
+        )
+        let afterFirstResolved = OfficeHoursPreviousCommitmentGate.resolve(
+            evidenceOS: Self.evidenceOS(openDebts: [second]),
+            activeDay: 2
+        )
+
+        #expect(initialGate.debts.map(\.id) == ["cm-first", "cm-second"])
+        #expect(initialGate.current?.id == "cm-first")
+        #expect(afterFirstResolved.debts.map(\.id) == ["cm-second"])
+        #expect(afterFirstResolved.current?.id == "cm-second")
+    }
+
+    @Test func previousCommitmentGateIgnoresCarriedForwardCurrentDayDebt() {
+        let gate = OfficeHoursPreviousCommitmentGate.resolve(
+            evidenceOS: Self.evidenceOS(openDebts: [
+                Self.commitment(id: "cm-carried-today", day: 2, message: "어제 약속을 오늘로 다시 열기")
+            ]),
+            activeDay: 2
+        )
+
+        #expect(!gate.blocksNewCommitment)
+        #expect(gate.debts.isEmpty)
+    }
+
+    @Test func previousCommitmentGateFiltersActiveDebtSuggestions() {
+        let evidenceOS = Self.evidenceOS(openDebts: [
+            Self.commitment(id: "cm-open", day: 1, message: "Jane에게 오늘 첫 실행 약속 잡기")
+        ])
+
+        #expect(OfficeHoursPreviousCommitmentGate.isActiveDebtSuggestion(
+            "  jane에게   오늘 첫 실행 약속 잡기  ",
+            evidenceOS: evidenceOS
+        ))
+        #expect(!OfficeHoursPreviousCommitmentGate.isActiveDebtSuggestion(
+            "새 고객에게 가격 질문하기",
+            evidenceOS: evidenceOS
+        ))
     }
 
     private static func evidenceOS(
@@ -2715,20 +2995,29 @@ struct OpenDesignDayContentTests {
         )
     }
 
-    private static func commitment(id: String) -> CommitmentRecord {
-        CommitmentRecord(
+    private static func commitment(
+        id: String,
+        day: Int = 1,
+        createdAt: String = "2026-06-13T00:00:00.000Z",
+        text: String? = nil,
+        message: String? = nil,
+        dueDay: Int? = 2,
+        status: String = "open"
+    ) -> CommitmentRecord {
+        let resolvedMessage = message ?? "오늘 첫 실행 약속 잡기"
+        return CommitmentRecord(
             id: id,
-            cycle: 1,
-            day: 1,
-            createdAt: "2026-06-13T00:00:00.000Z",
-            text: "최근 질문한 지인에게 오늘 첫 실행 약속을 잡아라",
+            cycle: day,
+            day: day,
+            createdAt: createdAt,
+            text: text ?? resolvedMessage,
             customer: "Jane",
             channel: "DM",
-            message: "오늘 첫 실행 약속 잡기",
+            message: resolvedMessage,
             expectedEvidenceKind: "screenshot",
-            dueDay: 2,
+            dueDay: dueDay,
             confirmedByUser: true,
-            status: "open",
+            status: status,
             evidence: nil
         )
     }

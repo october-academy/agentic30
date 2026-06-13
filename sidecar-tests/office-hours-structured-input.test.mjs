@@ -10,7 +10,6 @@ import {
   buildOfficeHoursInlineStructuredPromptPayload,
   buildOfficeHoursStructuredQuestionTranscriptText,
   buildOfficeHoursStructuredInputContinuationPrompt,
-  ensureOfficeHoursGeneration,
   extractOfficeHoursChatEmphasis,
   formatSelectedOptionEvidenceHint,
   isOfficeHoursStructuredInputMode,
@@ -18,7 +17,6 @@ import {
   officeHoursStructuredInputChannel,
   prepareOfficeHoursStructuredInputRequest,
   normalizeOfficeHoursEmphasis,
-  normalizeOfficeHoursStructuredPromptRequest,
   shouldAppendOfficeHoursStructuredQuestionMessage,
   stripTrailingRubricFocusMetadata,
 } from "../sidecar/office-hours-structured-input.mjs";
@@ -62,12 +60,21 @@ test("Office Hours inline decision payload is promoted into host structured inpu
             failureMode: "돈이 움직이지 않았으면 구매 조건 이하로 낮춥니다.",
           },
           {
+            label: "구매 조건이 구체적으로 확인됐다",
+            description: "가격, 범위, 일정 조건이 확인됐습니다.",
+          },
+          {
+            label: "현재 대안에 돈/시간을 쓰고 있다",
+            description: "현재 대안 비용이나 반복 시간이 있습니다.",
+          },
+          {
             label: "관심만 있거나 아직 증거가 없다",
             description: "칭찬이나 가격 질문은 수요가 아닙니다.",
             risk: "실제 행동 검증이 남습니다.",
           },
         ],
-        allowFreeText: false,
+        allowFreeText: true,
+        requiresFreeText: false,
       },
     },
   });
@@ -81,16 +88,22 @@ test("Office Hours inline decision payload is promoted into host structured inpu
   assert.equal(payload.questions[0].questionId, "office_hours_demand_evidence");
   assert.equal(payload.questions[0].options.length, 4);
   assert.equal(payload.questions[0].options[0].recommended, true);
-  assert.equal(payload.questions[0].options[0].risk, "결제 주체와 날짜가 없으면 말뿐인 관심으로 낮춰 봐야 합니다.");
-  assert.equal(payload.questions[0].options[0].evidenceTarget, "실명, 날짜, 결제 또는 계약 절차");
+  assert.equal(payload.questions[0].options[0].risk, "결제 주체가 ICP가 아닐 수 있습니다.");
+  assert.equal(payload.questions[0].options[0].evidenceTarget, "실명, 날짜, 결제 절차");
   assert.equal(payload.questions[0].options[3].label, "관심만 있거나 아직 증거가 없다");
-  // LLM이 allowFreeText: false를 보내도 승격된 카드는 자유 입력을 보장한다.
   assert.equal(payload.questions[0].allowFreeText, true);
+  assert.equal(payload.questions[0].requiresFreeText, false);
 });
 
-test("Office Hours demand evidence question is canonicalized to four choices", () => {
-  const request = normalizeOfficeHoursStructuredPromptRequest({
+test("prepareOfficeHoursStructuredInputRequest rejects non-canonical demand choices", () => {
+  assert.throws(() => prepareOfficeHoursStructuredInputRequest({
+    toolName: "AskUserQuestion",
     title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_demand_evidence",
+      signalLabel: "Office Hours Q1 수요 증거",
+    },
     questions: [
       {
         questionId: "office_hours_demand_evidence",
@@ -99,35 +112,23 @@ test("Office Hours demand evidence question is canonicalized to four choices", (
         options: [
           { label: "old option 1", description: "돈" },
           { label: "old option 2", description: "조건" },
-          { label: "old option 3", description: "비용" },
-          { label: "old option 4", description: "시간" },
-          { label: "old option 5", description: "관심" },
-          { label: "old option 6", description: "없음" },
         ],
         allowFreeText: true,
-        requiresFreeText: true,
+        requiresFreeText: false,
       },
     ],
-  });
-
-  assert.deepEqual(
-    request.questions[0].options.map((option) => option.label),
-    [
-      "실제 결제/계약이 있었다",
-      "구매 조건이 구체적으로 확인됐다",
-      "현재 대안에 돈/시간을 쓰고 있다",
-      "관심만 있거나 아직 증거가 없다",
-    ],
-  );
-  assert.equal(request.questions[0].allowFreeText, true);
-  assert.ok(String(request.questions[0].freeTextPlaceholder || "").length > 0);
-  assert.equal(request.questions[0].requiresFreeText, false);
+  }), /options must be exactly/);
 });
 
-test("prepareOfficeHoursStructuredInputRequest guarantees free-text input on every Office Hours question", () => {
-  const prepared = prepareOfficeHoursStructuredInputRequest({
+test("prepareOfficeHoursStructuredInputRequest rejects missing Office Hours free-text contract", () => {
+  assert.throws(() => prepareOfficeHoursStructuredInputRequest({
     toolName: "AskUserQuestion",
     title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_premise_challenge",
+      signalLabel: "Office Hours 전제 확인",
+    },
     questions: [
       {
         questionId: "office_hours_premise_challenge",
@@ -138,14 +139,38 @@ test("prepareOfficeHoursStructuredInputRequest guarantees free-text input on eve
           { label: "확실하지 않다", description: "증거 공백이 있다" },
         ],
         allowFreeText: false,
+        requiresFreeText: false,
+      },
+    ],
+  }), /allowFreeText must be true/);
+});
+
+test("prepareOfficeHoursStructuredInputRequest keeps current-alternative cards selection-only", () => {
+  const prepared = prepareOfficeHoursStructuredInputRequest({
+    toolName: "AskUserQuestion",
+    title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_status_quo",
+      signalLabel: "Office Hours Q2 현재 대안",
+    },
+    questions: [
+      {
+        questionId: "office_hours_status_quo",
+        header: "현재 대안",
+        question: "지금 이 문제를 어떤 현재 대안으로 해결하고 있나요?",
+        options: [
+          { label: "혼자 더 만들기", description: "직접 기능을 더 만듭니다." },
+          { label: "수작업", description: "매번 수동으로 처리합니다." },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
       },
     ],
   });
 
   assert.equal(prepared.questions[0].allowFreeText, true);
-  assert.ok(String(prepared.questions[0].freeTextPlaceholder || "").length > 0);
-  // 근거 문장 필수 여부(requiresFreeText)는 강제 대상이 아니다.
-  assert.notEqual(prepared.questions[0].requiresFreeText, true);
+  assert.equal(prepared.questions[0].requiresFreeText, false);
 });
 
 test("prepareOfficeHoursStructuredInputRequest leaves non-Office-Hours free-text flags alone", () => {
@@ -169,30 +194,8 @@ test("prepareOfficeHoursStructuredInputRequest leaves non-Office-Hours free-text
   assert.equal(prepared.questions[0].allowFreeText, false);
 });
 
-test("ensureOfficeHoursGeneration stamps a tool-channel request so it is treated as Office Hours", () => {
-  // Shape produced by createUserInputRequest in canUseTool / mcp-server: no generation.
-  const stamped = ensureOfficeHoursGeneration({
-    toolName: "AskUserQuestion",
-    title: "Office Hours",
-    questions: [
-      {
-        header: "수요 증거",
-        question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
-        options: [{ label: "실제 결제/계약이 있었다", description: "돈이 움직였다" }],
-      },
-    ],
-  });
-
-  assert.equal(stamped.generation.mode, OFFICE_HOURS_TOOL_MODE);
-  assert.equal(isOfficeHoursStructuredInputMode(stamped.generation.mode), true);
-  // Intent is derived from the demand header so the turn carries signal lineage.
-  assert.equal(stamped.generation.signalId, "office_hours_demand_evidence");
-  assert.equal(typeof stamped.generation.signalLabel, "string");
-  assert.ok(stamped.generation.signalLabel.length > 0);
-});
-
-test("ensureOfficeHoursGeneration stamps get_users active-user-definition lineage", () => {
-  const stamped = ensureOfficeHoursGeneration({
+test("prepareOfficeHoursStructuredInputRequest rejects missing generation", () => {
+  assert.throws(() => prepareOfficeHoursStructuredInputRequest({
     toolName: "agentic30_request_user_input",
     title: "Office Hours",
     questions: [
@@ -206,25 +209,29 @@ test("ensureOfficeHoursGeneration stamps get_users active-user-definition lineag
         ],
       },
     ],
-  });
-
-  assert.equal(stamped.generation.mode, OFFICE_HOURS_TOOL_MODE);
-  assert.equal(stamped.generation.signalId, "get_users_active_user_definition");
-  assert.equal(stamped.generation.signalLabel, "활성 사용자 기준");
+  }), /generation\.mode/);
 });
 
-test("prepareOfficeHoursStructuredInputRequest renders active-user-definition header", () => {
+test("prepareOfficeHoursStructuredInputRequest accepts explicit active-user-definition card", () => {
   const prepared = prepareOfficeHoursStructuredInputRequest({
+    toolName: "agentic30_request_user_input",
     title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "get_users_active_user_definition",
+      signalLabel: "활성 사용자 기준",
+    },
     questions: [
       {
-        header: "Question",
-        question: "이 목표에서 활성 사용자 1명으로 세려면 ICP가 어떤 핵심 행동을 끝내야 하나요?",
+        header: "활성 사용자 기준",
+        question: "이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?",
         options: [
           { label: "첫 가치 완료", description: "핵심 결과를 처음 끝냅니다." },
           { label: "반복 사용 완료", description: "정해진 기간에 다시 씁니다." },
           { label: "수동 파일럿 성공", description: "수동으로라도 원하는 결과를 얻습니다." },
         ],
+        allowFreeText: true,
+        requiresFreeText: false,
       },
     ],
   });
@@ -280,40 +287,6 @@ test("Office Hours Korean UI-copy contract detects awkward visible copy without 
   assert.equal(normalizeOfficeHoursUiCopyRequest(request), request);
 });
 
-test("ensureOfficeHoursGeneration leaves an existing Office Hours generation untouched", () => {
-  const inline = {
-    title: "Office Hours",
-    questions: [{ header: "현재 대안", question: "지금 무엇으로 버티나요?" }],
-    generation: { mode: OFFICE_HOURS_INLINE_MODE, signalId: "office_hours_status_quo" },
-  };
-  const result = ensureOfficeHoursGeneration(inline);
-  assert.equal(result, inline);
-  assert.equal(result.generation.mode, OFFICE_HOURS_INLINE_MODE);
-});
-
-test("ensureOfficeHoursGeneration does not override a non-Office-Hours generation (IDD docType)", () => {
-  const idd = {
-    title: "ICP adaptive follow-up",
-    questions: [{ header: "근거 보완", question: "어떤 근거를 고정할까요?" }],
-    generation: { mode: "provider_adaptive", docType: "icp" },
-  };
-  const result = ensureOfficeHoursGeneration(idd);
-  assert.equal(result, idd);
-  assert.equal(result.generation.docType, "icp");
-  assert.equal(isOfficeHoursStructuredInputMode(result.generation.mode), false);
-});
-
-test("ensureOfficeHoursGeneration stamps mode only when intent is unresolved", () => {
-  const stamped = ensureOfficeHoursGeneration({
-    title: "Office Hours",
-    questions: [{ header: "메모", question: "한 줄로 정리해 주세요." }],
-  });
-  assert.equal(stamped.generation.mode, OFFICE_HOURS_TOOL_MODE);
-  // No confident intent -> no misleading demand signal stamped.
-  assert.equal(stamped.generation.signalId, undefined);
-  assert.equal(stamped.generation.signalLabel, undefined);
-});
-
 test("officeHoursStructuredInputChannel maps each provider to its asking mechanism", () => {
   const claude = officeHoursStructuredInputChannel("claude");
   assert.equal(claude.kind, "tool");
@@ -334,27 +307,32 @@ test("officeHoursStructuredInputChannel maps each provider to its asking mechani
   assert.equal(officeHoursStructuredInputChannel("").kind, "tool");
 });
 
-test("prepareOfficeHoursStructuredInputRequest canonicalizes choices and stamps a tool-channel request", () => {
-  // Shape produced by createUserInputRequest in canUseTool / mcp-server: no generation.
+test("prepareOfficeHoursStructuredInputRequest accepts an explicit demand contract", () => {
   const prepared = prepareOfficeHoursStructuredInputRequest({
     toolName: "agentic30_request_user_input",
     title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_demand_evidence",
+      signalLabel: "Office Hours Q1 수요 증거",
+    },
     questions: [
       {
         questionId: "office_hours_demand_evidence",
         header: "수요 증거",
         question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
         options: [
-          { label: "old 1", description: "돈" },
-          { label: "old 2", description: "조건" },
+          { label: "실제 결제/계약이 있었다", description: "돈이 이미 움직였습니다." },
+          { label: "구매 조건이 구체적으로 확인됐다", description: "가격, 범위, 일정 조건이 확인됐습니다." },
+          { label: "현재 대안에 돈/시간을 쓰고 있다", description: "현재 대안 비용이나 반복 시간이 있습니다." },
+          { label: "관심만 있거나 아직 증거가 없다", description: "칭찬이나 가격 질문은 수요가 아닙니다." },
         ],
         allowFreeText: true,
-        requiresFreeText: true,
+        requiresFreeText: false,
       },
     ],
   });
 
-  // normalize: demand choices canonicalized to the fixed four.
   assert.deepEqual(
     prepared.questions[0].options.map((o) => o.label),
     [
@@ -364,52 +342,76 @@ test("prepareOfficeHoursStructuredInputRequest canonicalizes choices and stamps 
       "관심만 있거나 아직 증거가 없다",
     ],
   );
-  // ensure: Office Hours generation stamped so the Mac timeline renders a card.
   assert.equal(prepared.generation.mode, OFFICE_HOURS_TOOL_MODE);
   assert.equal(isOfficeHoursStructuredInputMode(prepared.generation.mode), true);
   assert.equal(prepared.generation.signalId, "office_hours_demand_evidence");
+  assert.equal(prepared.questions[0].requiresFreeText, false);
 });
 
 test("prepareOfficeHoursStructuredInputRequest leaves an inline-promoted request untouched", () => {
   const inline = {
     title: "Office Hours",
-    questions: [{ header: "현재 대안", question: "지금 무엇으로 버티나요?" }],
-    generation: { mode: OFFICE_HOURS_INLINE_MODE, signalId: "office_hours_status_quo" },
+    questions: [
+      {
+        header: "현재 대안",
+        question: "지금 무엇으로 버티나요?",
+        options: [
+          { label: "수작업", description: "직접 처리합니다." },
+          { label: "다른 도구", description: "이미 쓰는 도구가 있습니다." },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    ],
+    generation: {
+      mode: OFFICE_HOURS_INLINE_MODE,
+      signalId: "office_hours_status_quo",
+      signalLabel: "Office Hours Q2 현재 대안",
+    },
   };
   const prepared = prepareOfficeHoursStructuredInputRequest(inline);
   assert.equal(prepared.generation.mode, OFFICE_HOURS_INLINE_MODE);
   assert.equal(prepared.generation.signalId, "office_hours_status_quo");
 });
 
-test("prepareOfficeHoursStructuredInputRequest fills an empty or 'Question' header with the intent header (card-title parity)", () => {
-  // Claude's normalizeClaudeQuestions can leave the header empty (and historically
-  // injected a literal English "Question"); the tool-channel card must show the
-  // same Korean intent header the inline (Gemini) path produces, never a placeholder.
+test("prepareOfficeHoursStructuredInputRequest rejects an empty or literal Question header", () => {
   const baseQuestion = {
     question: "지금 이 문제를 어떤 대안으로 해결하고 있나요?",
     options: [
       { label: "수작업", description: "직접 처리" },
       { label: "다른 도구", description: "우회" },
     ],
+    allowFreeText: true,
+    requiresFreeText: false,
+  };
+  const baseRequest = {
+    title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_status_quo",
+      signalLabel: "Office Hours Q2 현재 대안",
+    },
   };
 
-  const emptyHeader = prepareOfficeHoursStructuredInputRequest({
-    title: "Office Hours",
+  assert.throws(() => prepareOfficeHoursStructuredInputRequest({
+    ...baseRequest,
     questions: [{ ...baseQuestion, header: "" }],
-  });
-  assert.equal(emptyHeader.questions[0].header, "현재 대안");
+  }), /explicit Korean card header/);
 
-  const literalHeader = prepareOfficeHoursStructuredInputRequest({
-    title: "Office Hours",
+  assert.throws(() => prepareOfficeHoursStructuredInputRequest({
+    ...baseRequest,
     questions: [{ ...baseQuestion, header: "Question" }],
-  });
-  assert.notEqual(literalHeader.questions[0].header, "Question");
-  assert.equal(literalHeader.questions[0].header, "현재 대안");
+  }), /explicit Korean card header/);
 });
 
 test("prepareOfficeHoursStructuredInputRequest carries and validates tool-channel emphasis spans (statement-styling parity)", () => {
   const prepared = prepareOfficeHoursStructuredInputRequest({
     title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_status_quo",
+      signalLabel: "Office Hours Q2 현재 대안",
+    },
     questions: [
       {
         header: "현재 대안",
@@ -418,6 +420,8 @@ test("prepareOfficeHoursStructuredInputRequest carries and validates tool-channe
           { label: "수작업", description: "직접 처리" },
           { label: "다른 도구", description: "우회" },
         ],
+        allowFreeText: true,
+        requiresFreeText: false,
         emphasis: [
           { phrase: "어떤 대안으로", style: "mark" },
           { phrase: "이 문장에 없는 구절", style: "strong" }, // dropped: not a substring of the question
@@ -432,8 +436,8 @@ test("prepareOfficeHoursStructuredInputRequest carries and validates tool-channe
   assert.equal(question.emphasis[0].style, "mark");
 });
 
-test("Office Hours inline decision without choices is rejected unless free text is explicit", () => {
-  const rejected = buildOfficeHoursInlineStructuredPromptPayload({
+test("Office Hours inline decision without choices is rejected", () => {
+  assert.throws(() => buildOfficeHoursInlineStructuredPromptPayload({
     sessionId: "session-3",
     assistantMessage: {
       inlineDecision: {
@@ -442,10 +446,9 @@ test("Office Hours inline decision without choices is rejected unless free text 
         allowFreeText: false,
       },
     },
-  });
-  assert.equal(rejected, null);
+  }), /options must contain at least two choices/);
 
-  const accepted = buildOfficeHoursInlineStructuredPromptPayload({
+  assert.throws(() => buildOfficeHoursInlineStructuredPromptPayload({
     sessionId: "session-3",
     assistantMessage: {
       inlineDecision: {
@@ -453,14 +456,11 @@ test("Office Hours inline decision without choices is rejected unless free text 
         question: "무엇을 확인했나요?",
         options: [],
         allowFreeText: true,
-        requiresFreeText: true,
+        requiresFreeText: false,
         freeTextPlaceholder: "예: 6/2 A가 결제 링크를 요청했다.",
       },
     },
-  });
-  assert.equal(accepted.questions[0].allowFreeText, true);
-  assert.equal(accepted.questions[0].requiresFreeText, true);
-  assert.equal(accepted.questions[0].freeTextPlaceholder, "예: 6/2 A가 결제 링크를 요청했다.");
+  }), /options must contain at least two choices/);
 });
 
 test("Office Hours contextual question supports explicit inline question text", () => {
@@ -483,6 +483,8 @@ test("Office Hours inline decision preserves Open Design question highlights", (
           { label: "더 필수적이다", description: "세계 변화가 제품 의존도를 키웁니다." },
           { label: "덜 필수적일 수 있다", description: "범용 AI가 흡수할 수 있습니다." },
         ],
+        allowFreeText: true,
+        requiresFreeText: false,
       },
     },
   });
@@ -505,6 +507,8 @@ test("Office Hours inline decision accepts explicit highlight string", () => {
           { label: "직접 관찰함", description: "사용 장면을 봅니다." },
           { label: "아직 못 봄", description: "관찰이 없습니다." },
         ],
+        allowFreeText: true,
+        requiresFreeText: false,
       },
     },
   });
@@ -770,6 +774,7 @@ test("Office Hours inline decision forwards normalized emphasis alongside highli
           { label: "아직 안 했다", description: "증거가 없습니다." },
         ],
         allowFreeText: true,
+        requiresFreeText: false,
       },
     },
   });
@@ -800,6 +805,7 @@ test("Office Hours inline decision omits emphasis key when none survive normaliz
           { label: "다른 도구", description: "유료 도구를 씁니다." },
         ],
         allowFreeText: true,
+        requiresFreeText: false,
       },
     },
   });

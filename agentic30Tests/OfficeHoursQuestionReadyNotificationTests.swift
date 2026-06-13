@@ -160,6 +160,20 @@ struct OfficeHoursQuestionReadyNotificationTests {
         )
 
         #expect(parsed?.sessionId == "session-7")
+        #expect(parsed?.requestId == "req-7")
+    }
+
+    @Test func userInfoIncludesCommonRouteAndLegacyKeys() throws {
+        let notification = OfficeHoursQuestionReadyNotification(
+            sessionId: "session-7",
+            requestId: "req-7"
+        )
+
+        #expect(notification.userInfo[OfficeHoursQuestionReadyNotification.sessionIdUserInfoKey] as? String == "session-7")
+        #expect(notification.userInfo[OfficeHoursQuestionReadyNotification.requestIdUserInfoKey] as? String == "req-7")
+
+        let route = try #require(AgenticAppRoute(notificationUserInfo: notification.userInfo))
+        #expect(route.destination == .officeHoursQuestion(sessionId: "session-7", requestId: "req-7"))
     }
 
     @Test func rejectsForeignIdentifiers() {
@@ -203,6 +217,15 @@ struct McpOauthConnectedNotificationTests {
         #expect(parsed?.server == "posthog")
         #expect(parsed?.notificationTitle == "PostHog MCP 연결 완료")
         #expect(parsed?.notificationBody == "AI 실행에서 바로 사용할 수 있어요.")
+    }
+
+    @Test func userInfoIncludesCommonSettingsRouteAndLegacyServer() throws {
+        let notification = try #require(McpOauthConnectedNotification(server: "posthog"))
+
+        #expect(notification.userInfo[McpOauthConnectedNotification.serverUserInfoKey] as? String == "posthog")
+
+        let route = try #require(AgenticAppRoute(notificationUserInfo: notification.userInfo))
+        #expect(route.destination == .settings(section: .integrations))
     }
 
     @Test func parsesServerFromIdentifierFallback() {
@@ -274,6 +297,16 @@ struct LongRunningCompletionNotificationTests {
         }
     }
 
+    @Test func userInfoIncludesCommonOpenDesignRouteAndLegacyKeys() throws {
+        let notification = LongRunningCompletionNotification(kind: .morningBriefing, outcome: .success)
+
+        #expect(notification.userInfo[LongRunningCompletionNotification.kindUserInfoKey] as? String == "morningBriefing")
+        #expect(notification.userInfo[LongRunningCompletionNotification.routeUserInfoKey] as? String == "morningBriefing")
+
+        let route = try #require(AgenticAppRoute(notificationUserInfo: notification.userInfo))
+        #expect(route.destination == .openDesign(route: .morningBriefing, day: nil, anchor: "summary", placement: .section))
+    }
+
     @Test func parsesKindAndOutcomeFromIdentifierFallback() {
         let identifier = LongRunningCompletionNotification.notificationIdentifier(
             kind: .workspaceScan,
@@ -290,7 +323,7 @@ struct LongRunningCompletionNotificationTests {
         #expect(parsed?.notificationTitle == "워크스페이스 분석 확인 필요")
     }
 
-    @Test func documentNotificationIncludesDocPathAndFileNameBody() {
+    @Test func documentNotificationIncludesDocPathAndFileNameBody() throws {
         let notification = LongRunningCompletionNotification(
             kind: .documentCreation,
             outcome: .success,
@@ -304,6 +337,9 @@ struct LongRunningCompletionNotificationTests {
         #expect(parsed?.docPath == "/Users/october/project/ICP.md")
         #expect(parsed?.notificationTitle == "문서 생성 완료")
         #expect(parsed?.notificationBody == "ICP.md을 만들었어요.")
+
+        let route = try #require(AgenticAppRoute(notificationUserInfo: notification.userInfo))
+        #expect(route.destination == .document(path: "/Users/october/project/ICP.md"))
     }
 
     @Test func rejectsForeignIdentifiersAndBadPayloads() {

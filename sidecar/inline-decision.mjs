@@ -12,6 +12,7 @@
 //     options?: [{ label, description?, preview?, nextIntent? }],
 //     multiSelect?: boolean,             // default false
 //     allowFreeText?: boolean,           // default false
+//     requiresFreeText?: boolean,        // default false
 //     freeTextPlaceholder?: string,
 //     textMode?: "short" | "long"        // default "short"
 //   }
@@ -44,6 +45,7 @@ export function validateInlineDecision(decision, { logger = console } = {}) {
     options: options.length ? options : null,
     multiSelect: decision.multiSelect === true,
     allowFreeText,
+    requiresFreeText: decision.requiresFreeText === true,
     freeTextPlaceholder:
       typeof decision.freeTextPlaceholder === "string" ? decision.freeTextPlaceholder : null,
     textMode: decision.textMode === "long" ? "long" : "short",
@@ -233,6 +235,7 @@ Schema (StructuredPromptQuestion):
 - options: [{ label: string, description?: string }]
 - multiSelect: boolean — default false
 - allowFreeText: boolean — default false; true면 자유입력 폴백 노출
+- requiresFreeText: boolean — default false; true면 자유입력 필수
 - freeTextPlaceholder: string? — allowFreeText=true일 때만
 - textMode: "short" | "long" — default "short"
 

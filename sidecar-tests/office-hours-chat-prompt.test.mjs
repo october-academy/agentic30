@@ -36,7 +36,9 @@ test("office-hours chat system prompt routes Codex forcing questions through str
   assert.match(prompt, /explicit submit button/);
   assert.match(prompt, /현재 대안에 돈\/시간을 쓰고 있다/);
   assert.match(prompt, /관심만 있거나 아직 증거가 없다/);
-  assert.match(prompt, /separate evidence sentence or separate weakness selection/);
+  assert.match(prompt, /Do not require a separate evidence sentence/);
+  assert.match(prompt, /generation: \{ mode: "office_hours_tool"/);
+  assert.doesNotMatch(prompt, /must set requiresFreeText: true/);
   assert.match(prompt, /가격 질문|Price questions/);
   assert.match(prompt, /After Q1/);
   assert.match(prompt, /2-4 options/);
@@ -218,6 +220,9 @@ test("office-hours Day 2+ goal-driven prompt requires live briefing and goal-spe
   assert.match(prompt, /For build_product/);
   assert.match(prompt, /BUILD_WITHOUT_CUSTOMER_EVIDENCE: true/);
   assert.match(prompt, /challenge the customer\/user evidence gap/);
+  assert.doesNotMatch(prompt, /fixed Startup design-doc flow/i);
+  assert.doesNotMatch(prompt, /generated_by: office-hours/);
+  assert.doesNotMatch(prompt, /handoff_for: day1-docs/);
 });
 
 test("office-hours chat system prompt routes Claude forcing questions through AskUserQuestion", () => {

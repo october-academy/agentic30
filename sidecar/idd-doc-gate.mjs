@@ -9,6 +9,18 @@ import {
   projectDocDefinitions,
   projectDocPath,
 } from "./project-doc-paths.mjs";
+import {
+  buildOfficeHoursEvidenceState,
+  evidenceSidecarPath,
+  mergeDay1HandoffWithEvidence,
+  renderOfficeHoursEvidenceDebtCard,
+  writeOfficeHoursEvidenceDebtReport,
+  writeOfficeHoursEvidenceSidecar,
+} from "./office-hours-evidence-state.mjs";
+import {
+  OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE,
+  judgeOfficeHoursEvidenceDocuments,
+} from "./office-hours-evidence-judge.mjs";
 
 export const IDD_SETUP_SCHEMA_VERSION = 2;
 
@@ -120,6 +132,9 @@ function normalizeDocWriteStatuses(value = {}) {
       unresolvedAssumptions: Array.isArray(raw.unresolvedAssumptions)
         ? raw.unresolvedAssumptions.map(String).filter(Boolean)
         : [],
+      ...(typeof raw.evidencePath === "string" && raw.evidencePath ? { evidencePath: raw.evidencePath } : {}),
+      ...(Number.isFinite(Number(raw.judgeScore)) ? { judgeScore: Number(raw.judgeScore) } : {}),
+      ...(typeof raw.judgeStatus === "string" && raw.judgeStatus ? { judgeStatus: raw.judgeStatus } : {}),
     };
   }
   return out;
@@ -1900,14 +1915,18 @@ function renderGoalHandoffDocument(facts) {
     "## 30일 목표",
     handoffBullet(null, facts.northStarGoal),
     "",
-    "## 이번 주 검증",
+    "## 현재 측정 계약",
     handoffBullet("증명할 것", facts.weeklyProof || facts.entryPoint),
-    handoffBullet("판단 지표", facts.weeklyProof),
+    handoffBullet("판단 지표", facts.metric || facts.weeklyProof),
     handoffBullet("기준값/기한", facts.threshold),
     handoffBullet("실패 조건", facts.failureCondition),
+    handoffBullet("활성 행동", facts.activationAction),
     "",
     "## 다음 행동",
     handoffBullet(null, facts.nextAction || facts.entryPoint),
+    "",
+    "## 증거부채",
+    ...handoffListLines(facts.evidenceDebt, { empty: ["- 확인 필요"] }),
     "",
     renderHandoffEvidenceSections(facts),
   ]);
@@ -1915,22 +1934,26 @@ function renderGoalHandoffDocument(facts) {
 
 function renderIcpHandoffDocument(facts) {
   return compactMarkdown([
-    "# 고객 후보",
+    "# ICP",
     "",
-    "## 고객 후보",
+    "## 행동-상황 고객 후보",
     handoffBullet(null, facts.targetUser),
     "",
     "## 현재 대안",
     handoffBullet(null, facts.currentAlternative),
+    handoffBullet("압박 비용", facts.pressureCost),
     "",
     "## 문제와 시급성",
     handoffBullet(null, facts.problem),
     "",
     "## 이번 주 닿을 방법",
-    handoffBullet(null, facts.nextAction || facts.weeklyProof),
+    handoffBullet(null, facts.firstReach || facts.nextAction || facts.weeklyProof),
     "",
-    "## 제외할 고객",
+    "## 제외할 고객 / Anti-ICP",
     ...handoffListLines(facts.nonGoals),
+    "",
+    "## 남은 고객 증거부채",
+    ...handoffListLines(facts.evidenceDebt, { empty: ["- 확인 필요"] }),
     "",
     renderHandoffEvidenceSections(facts),
   ]);
@@ -1940,6 +1963,7 @@ function renderSpecHandoffDocument(facts) {
   const flow = [
     facts.targetUser ? `대상 사용자: ${facts.targetUser}` : "",
     facts.entryPoint ? `첫 진입점: ${facts.entryPoint}` : "",
+    facts.activationAction ? `핵심 활성 행동: ${facts.activationAction}` : "",
     facts.nextAction ? `검증 방법: ${facts.nextAction}` : "",
   ].filter(Boolean);
   return compactMarkdown([
@@ -1948,20 +1972,24 @@ function renderSpecHandoffDocument(facts) {
     "## 문제",
     handoffBullet(null, facts.problem),
     "",
-    "## 가장 작은 진입점",
+    "## 가장 작은 유료 진입점",
     handoffBullet(null, facts.entryPoint),
     "",
-    "## 사용자 흐름",
+    "## Core Loop",
     ...(flow.length ? flow.map((line, index) => `${index + 1}. ${line}`) : ["- 확인 필요"]),
     "",
-    "## 만들지 않을 것",
-    ...handoffListLines(facts.nonGoals),
+    "## MVP 범위",
+    handoffBullet("이번 주 포함", facts.entryPoint || facts.activationAction || facts.nextAction),
+    handoffBullet("성공 신호", facts.weeklyProof || facts.nextAction),
     "",
-    "## 성공 신호",
-    handoffBullet(null, facts.weeklyProof || facts.nextAction),
+    "## Out of Scope",
+    ...handoffListLines(facts.nonGoals),
     "",
     "## 핵심 리스크",
     handoffBullet(null, facts.assumptions[0]),
+    "",
+    "## 근거 링크",
+    ...handoffListLines(facts.sourceQuotes, { empty: ["- 확인 필요"] }),
     "",
     renderHandoffEvidenceSections(facts),
   ]);
@@ -1978,7 +2006,9 @@ function renderValuesHandoffDocument(facts) {
   return compactMarkdown([
     "# VALUES",
     "",
-    "## 이번 주 결정 원칙",
+    "## 안정 제품 가치",
+    "- 누적되는 압박: 매 세션은 지난 증거부채를 숨기지 않고 다음 고객/시장 질문으로 이어진다.",
+    "- 행동 증거 우선: 말, 관심, 기능 완성보다 실명 고객의 현재 대안, 돈, 시간, 완료 행동을 먼저 본다.",
     `- ${principle}`,
     "",
     "## 포기할 선택",
@@ -1986,6 +2016,9 @@ function renderValuesHandoffDocument(facts) {
     "",
     "## 적용 상황",
     `- ${trigger}`,
+    "",
+    "## 충돌 로그",
+    ...handoffListLines(facts.evidenceDebt, { empty: ["- 아직 원칙을 바꿀 만큼의 충돌 증거는 없음"] }),
     "",
     "## 위반 예시",
     "- 인터뷰 답변이나 사용 행동 없이 고객, 기능, 진입점을 넓히는 것.",
@@ -2032,8 +2065,52 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
   provider = "codex",
   fsImpl = fs,
   onProgress = null,
+  runEvidenceJudge = false,
+  judgeOfficeHoursDocs = judgeOfficeHoursEvidenceDocuments,
 } = {}) {
   let nextState = normalizeIddSetupState(state);
+  const evidenceState = await buildOfficeHoursEvidenceState({
+    workspaceRoot,
+    day1Handoff,
+    fsImpl,
+  });
+  const hasEvidence = hasOfficeHoursReducerEvidence(evidenceState);
+  const mergedHandoff = hasEvidence
+    ? mergeDay1HandoffWithEvidence(day1Handoff, evidenceState)
+    : day1Handoff;
+  let judgeResult = null;
+  if (runEvidenceJudge && hasEvidence) {
+    const documents = Object.fromEntries(DAY1_HANDOFF_DOC_TYPES.map((type) => {
+      const doc = day1HandoffDocByType(type);
+      return [type, doc ? buildDay1HandoffResponseText(doc, { day1Handoff: mergedHandoff }) : ""];
+    }));
+    judgeResult = await judgeOfficeHoursDocs({
+      provider,
+      workspaceRoot,
+      evidenceState,
+      documents,
+    });
+    evidenceState.judge = judgeResult;
+    if (!judgeResult?.passed) {
+      await writeOfficeHoursEvidenceDebtReport(workspaceRoot, evidenceState, {
+        judgeResult,
+        fsImpl,
+      }).catch(() => null);
+      const failedState = setIddSetupError(nextState, {
+        provider,
+        docType: DAY1_HANDOFF_DOC_TYPES[0],
+        message: `Office Hours 문서 judge가 ${judgeResult?.score ?? 0}/10으로 저장을 보류했습니다. 기준은 ${OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE}/10입니다.`,
+      });
+      return {
+        state: failedState,
+        written: [],
+        blocked: true,
+        evidenceState,
+        judgeResult,
+        evidenceDebtCard: renderOfficeHoursEvidenceDebtCard(evidenceState),
+      };
+    }
+  }
   const written = [];
   for (const type of DAY1_HANDOFF_DOC_TYPES) {
     const doc = day1HandoffDocByType(type);
@@ -2046,17 +2123,31 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
     nextState = recordIddStructuredResponse(nextState, {
       doc,
       provider,
-      responseText: buildDay1HandoffResponseText(doc, { day1Handoff }),
+      responseText: buildDay1HandoffResponseText(doc, { day1Handoff: mergedHandoff }),
     });
     await onProgress?.({ stage: "recorded", doc, state: nextState });
     nextState = await writeDay1HandoffDocument(workspaceRoot, nextState, doc, {
-      day1Handoff,
+      day1Handoff: mergedHandoff,
+      evidenceState: hasEvidence ? evidenceState : null,
+      judgeResult,
       fsImpl,
     });
     written.push(doc);
     await onProgress?.({ stage: "written", doc, state: nextState });
   }
-  return { state: normalizeIddSetupState(nextState), written };
+  return {
+    state: normalizeIddSetupState(nextState),
+    written,
+    blocked: false,
+    evidenceState: hasEvidence ? evidenceState : null,
+    judgeResult,
+    evidenceDebtCard: hasEvidence ? renderOfficeHoursEvidenceDebtCard(evidenceState) : "",
+  };
+}
+
+function hasOfficeHoursReducerEvidence(evidenceState = {}) {
+  return (Array.isArray(evidenceState.references) ? evidenceState.references : [])
+    .some((ref) => ["office_hours_turn", "office_hours_commitment", "daily_digest"].includes(ref?.sourceType));
 }
 
 export function isDay1HandoffDocWritten(state, type) {
@@ -2168,6 +2259,8 @@ function normalizeMarkdownHeadingText(value) {
 
 export async function writeDay1HandoffDocument(workspaceRoot, state, doc, {
   day1Handoff = {},
+  evidenceState = null,
+  judgeResult = null,
   fsImpl = fs,
 } = {}) {
   const normalized = normalizeIddSetupState(state);
@@ -2205,6 +2298,12 @@ export async function writeDay1HandoffDocument(workspaceRoot, state, doc, {
     status,
   });
   await fsImpl.writeFile(target, mergeDay1HandoffBlock(existing, block, targetDoc), "utf8");
+  const evidenceSidecar = evidenceState
+    ? await writeOfficeHoursEvidenceSidecar(workspaceRoot, targetDoc, evidenceState, {
+        judgeResult,
+        fsImpl,
+      })
+    : null;
 
   const docWriteStatuses = {
     ...normalized.docWriteStatuses,
@@ -2214,6 +2313,8 @@ export async function writeDay1HandoffDocument(workspaceRoot, state, doc, {
       status,
       writtenAt,
       unresolvedAssumptions,
+      ...(evidenceSidecar ? { evidencePath: evidenceSidecarPath(targetDoc.canonicalPath) } : {}),
+      ...(judgeResult ? { judgeScore: judgeResult.score ?? null, judgeStatus: judgeResult.status || null } : {}),
     },
   };
   const complete = DAY1_HANDOFF_DOC_TYPES.every((type) =>
@@ -2278,9 +2379,14 @@ function normalizeDay1HandoffFacts(value = {}) {
     metric: first("metric"),
     threshold: first("threshold"),
     failureCondition: first("failureCondition", "failure_condition"),
+    pressureCost: first("pressureCost", "pressure_cost"),
+    activationAction: first("activationAction", "activation_action"),
+    firstReach: first("firstReach", "first_reach", "channel", "firstChannel", "first_channel"),
     nonGoals: cleanHandoffList(merged.nonGoals ?? merged.non_goals),
     assumptions: cleanHandoffList(merged.assumptions),
     sourceQuotes: cleanHandoffList(merged.sourceQuotes ?? merged.source_quotes),
+    evidenceDebt: cleanHandoffList(merged.evidenceDebt ?? merged.evidence_debt),
+    nextQuestion: first("nextQuestion", "next_question"),
     markdown: cleanHandoffField(merged.markdown),
   };
 }
@@ -2288,6 +2394,7 @@ function normalizeDay1HandoffFacts(value = {}) {
 function day1HandoffDocumentQualityIssues(doc, content, facts) {
   const issues = [];
   const text = String(content || "");
+  const evidenceEnriched = day1HandoffHasReducerEvidence(facts);
   if (containsDay1HandoffPlaceholder(text)) {
     issues.push("문서에 placeholder가 남아 있습니다.");
   }
@@ -2302,18 +2409,36 @@ function day1HandoffDocumentQualityIssues(doc, content, facts) {
   if (doc?.type === "goal" && !facts.northStarGoal && !facts.weeklyProof) {
     issues.push("GOAL: 목표 또는 이번 주 검증 기준 확인 필요");
   }
+  if (doc?.type === "goal" && evidenceEnriched) {
+    if (!facts.metric) issues.push("GOAL: 판단 지표 확인 필요");
+    if (!facts.threshold) issues.push("GOAL: 기준값/기한 확인 필요");
+    if (!facts.failureCondition) issues.push("GOAL: 실패 조건 확인 필요");
+  }
   if (doc?.type === "icp") {
     if (!facts.targetUser) issues.push("고객 후보 확인 필요");
     if (!facts.currentAlternative) issues.push("현재 대안 확인 필요");
+    if (evidenceEnriched && !facts.pressureCost) issues.push("압박 비용 확인 필요");
   }
   if (doc?.type === "spec") {
     if (!facts.problem) issues.push("SPEC: 문제 확인 필요");
     if (!facts.entryPoint) issues.push("SPEC: 가장 작은 진입점 확인 필요");
+    if (evidenceEnriched && !facts.activationAction && !facts.nextAction) issues.push("SPEC: 핵심 흐름 확인 필요");
   }
   if (doc?.type === "values" && facts.nonGoals.length === 0) {
     issues.push("VALUES: 포기할 선택 확인 필요");
   }
   return uniqueStrings(issues);
+}
+
+function day1HandoffHasReducerEvidence(facts) {
+  return Boolean(
+    facts.activationAction
+    || facts.pressureCost
+    || facts.firstReach
+    || facts.nextQuestion
+    || (facts.evidenceDebt || []).length
+    || (facts.sourceQuotes || []).some((item) => /고객 후보|현재 대안|유료|외부 시장 신호|첫 가치/.test(item)),
+  );
 }
 
 function day1HandoffFactCount(facts) {
@@ -2325,6 +2450,11 @@ function day1HandoffFactCount(facts) {
     facts.currentAlternative,
     facts.entryPoint,
     facts.nextAction,
+    facts.metric,
+    facts.threshold,
+    facts.failureCondition,
+    facts.pressureCost,
+    facts.activationAction,
     ...(facts.sourceQuotes || []),
   ].filter((value) => cleanHandoffField(value)).length;
 }
@@ -2338,6 +2468,11 @@ function day1HandoffLooksLikeAgentic30Product(facts) {
     facts.currentAlternative,
     facts.entryPoint,
     facts.nextAction,
+    facts.metric,
+    facts.threshold,
+    facts.failureCondition,
+    facts.pressureCost,
+    facts.activationAction,
     facts.markdown,
     ...(facts.sourceQuotes || []),
   ].filter(Boolean).join("\n");

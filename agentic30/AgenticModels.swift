@@ -414,6 +414,11 @@ struct OfficeHoursTranscriptRow: Identifiable, Hashable {
         let trimmedContent = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedError = message.error?.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        if message.role == .assistant,
+           message.bipMissionChoices?.isEmpty == false {
+            return nil
+        }
+
         if message.role == .user,
            (
                trimmedContent.caseInsensitiveCompare(Self.syntheticStartPrompt) == .orderedSame
@@ -798,7 +803,7 @@ nonisolated struct IntegrationProbeStatus: Codable, Hashable {
 /// placeholder that returns a login URL (`loginUrl`) — the Mac side opens it in
 /// the browser unless `openBrowser` is false; once the user finishes, the real
 /// tools unlock and the call proves the link. States: progress · ready ·
-/// login_pending · verification_pending · failed.
+/// login_pending · verification_pending · failed · cancelled.
 nonisolated struct McpOauthConnectResult: Codable, Hashable {
     var server: String?
     var provider: String?
@@ -811,6 +816,7 @@ nonisolated struct McpOauthConnectResult: Codable, Hashable {
     var isReady: Bool { state == "ready" }
     var isLoginPending: Bool { state == "login_pending" }
     var isVerificationPending: Bool { state == "verification_pending" }
+    var isCancelled: Bool { state == "cancelled" }
     var isPending: Bool { isLoginPending || isVerificationPending }
 }
 
@@ -1668,13 +1674,14 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
     func isSatisfied(selectedOptions: Set<String>, freeText: String) -> Bool {
         let hasSelection = !selectedOptions.isEmpty
         let hasFreeText = !freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasOptions = options?.isEmpty == false
 
-        if requiresFreeText == true {
-            return hasFreeText
+        if hasOptions {
+            return hasSelection || (allowFreeText == true && hasFreeText)
         }
 
-        if allowFreeText == true {
-            return hasSelection || hasFreeText
+        if allowFreeText == true || requiresFreeText == true {
+            return hasFreeText
         }
 
         return hasSelection
@@ -2511,6 +2518,20 @@ struct SidecarDiagnostics: Codable, Hashable {
     let sessions: SidecarSessionDiagnostics
     let environment: SidecarEnvironment?
     let preflight: SidecarPreflightReport?
+    var mcpOauthTraces: [SidecarMcpOauthTraceDiagnostics]? = nil
+}
+
+struct SidecarMcpOauthTraceDiagnostics: Codable, Hashable {
+    let traceId: String?
+    let at: String?
+    let server: String?
+    let provider: String?
+    let phase: String?
+    let durationMs: Int?
+    let state: String?
+    let hasLoginUrl: Bool?
+    let commandCount: Int?
+    let providerRunCount: Int?
 }
 
 struct SidecarRuntimeDiagnostics: Codable, Hashable {
@@ -3582,6 +3603,21 @@ extension SidecarDiagnostics {
 
         for key in sessions.statuses.keys.sorted() {
             lines.append("- \(key): \(sessions.statuses[key] ?? 0)")
+        }
+
+        if let traces = mcpOauthTraces, !traces.isEmpty {
+            lines.append("")
+            lines.append("MCP OAuth traces")
+            for trace in traces.suffix(10) {
+                let server = trace.server ?? "unknown"
+                let provider = trace.provider ?? "unknown"
+                let phase = trace.phase ?? "unknown"
+                let state = trace.state ?? "unknown"
+                let duration = trace.durationMs.map { "\($0)ms" } ?? "unknown"
+                let commands = trace.commandCount.map(String.init) ?? "0"
+                let providerRuns = trace.providerRunCount.map(String.init) ?? "0"
+                lines.append("- \(server)/\(provider) \(phase) \(state) \(duration) commands=\(commands) providerRuns=\(providerRuns)")
+            }
         }
 
         if let environment {

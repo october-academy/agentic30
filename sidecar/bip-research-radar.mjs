@@ -31,6 +31,7 @@ export const BIP_RESEARCH_EXA_MCP_TOOLS = Object.freeze([
 
 const MAX_PROVIDER_PROMPT_CHARS = 40_000;
 const DEFAULT_TARGET_CANDIDATE_COUNT = 18;
+const BIP_RESEARCH_SEARCH_QUERY_LIMIT = 6;
 
 const BIP_RESEARCH_PROGRESS_STEPS = Object.freeze([
   { stage: "checking_exa_route", stepIndex: 1, progressText: "웹 검색 도구 연결을 확인하는 중" },
@@ -238,6 +239,7 @@ export async function refreshBipResearch({
     researchSource: primaryRoute?.label || null,
   });
 
+  const researchStartedAt = now.toISOString();
   const rawProviderResult = await providerResearcher({
     context,
     prompt: buildBipResearchProviderPrompt(context),
@@ -268,6 +270,8 @@ export async function refreshBipResearch({
       error: null,
       reason,
       researchSource,
+      startedAt: researchStartedAt,
+      completedAt: new Date().toISOString(),
     },
   });
 
@@ -281,6 +285,12 @@ export async function refreshBipResearch({
     snapshot: {
       ...snapshot,
       contextFingerprint,
+      status: {
+        ...snapshot.status,
+        durationMs: snapshot.status.startedAt && snapshot.status.completedAt
+          ? Math.max(0, Date.parse(snapshot.status.completedAt) - Date.parse(snapshot.status.startedAt))
+          : null,
+      },
     },
     rawProviderResult,
     now,
@@ -377,8 +387,10 @@ export function buildBipResearchProviderPrompt(context = {}) {
     "- The user does not want hardcoded examples. Every rendered candidate must come from actual Exa search + web fetch evidence.",
     "",
     "Search rules:",
-    "- Use Context.querySeeds as the search plan. Do not add fixed customer-type, geography, tool-stack, product-platform, or public-building assumptions that are absent from Context.adaptiveProfile.",
-    "- Search X/Twitter, Threads(Meta), and Instagram with site filters when possible, then call web_fetch_exa for candidate URLs.",
+    `- Use at most ${BIP_RESEARCH_SEARCH_QUERY_LIMIT} Context.querySeeds as the search plan. Do not add fixed customer-type, geography, tool-stack, product-platform, or public-building assumptions that are absent from Context.adaptiveProfile.`,
+    "- Use at most two web_search_advanced_exa calls total.",
+    "- For each search call use type:\"fast\", numResults <= 6, enableSummary:false, enableHighlights:true, and highlightsMaxCharacters <= 700.",
+    "- Search X/Twitter, Threads(Meta), and Instagram with site filters when possible, then call web_fetch_exa for at most 8 candidate URLs total.",
     "- Context.adaptiveProfile.localeProfile describes inferred language/market priority. Prefer matching-language and matching-market posts first, then use global examples when evidence is sparse or useful for comparison.",
     "- If X direct fetch is blocked, a public mirror such as ThreadReader may be used as the fetched URL, but keep the sourceLabel/platform honest.",
     "- Do not invent dates, handles, quotes, revenue status, or full-time status. Mark gaps explicitly.",
@@ -805,6 +817,11 @@ function statusForSnapshot(value = {}, now = new Date()) {
     stepIndex: Number.isFinite(value.stepIndex) ? value.stepIndex : null,
     stepCount: Number.isFinite(value.stepCount) ? value.stepCount : null,
     partialFailures: normalizePartialFailures(value.partialFailures || value.partial_failures),
+    startedAt: normalizeOptionalIsoDate(value.startedAt || value.started_at),
+    completedAt: normalizeOptionalIsoDate(value.completedAt || value.completed_at),
+    durationMs: Number.isFinite(value.durationMs ?? value.duration_ms)
+      ? Math.max(0, Math.round(value.durationMs ?? value.duration_ms))
+      : null,
   };
 }
 

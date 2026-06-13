@@ -52,8 +52,9 @@ export const MCP_OAUTH_PREWARM_VERIFY_TIMEOUT_MS = 90_000;
 export const MCP_OAUTH_PREWARM_MAX_RECHECKS = 2;
 export const CODEX_MCP_CLI_GET_TIMEOUT_MS = 15_000;
 export const MCP_OAUTH_LOGIN_URL_MAX_LENGTH = 16_384;
+const CODEX_MCP_CONFIG_LOCKS = new Map();
 
-const MCP_OAUTH_CONNECT_RESULT_STATE_VALUES = ["ready", "login_pending", "verification_pending", "failed"];
+const MCP_OAUTH_CONNECT_RESULT_STATE_VALUES = ["ready", "login_pending", "verification_pending", "failed", "cancelled"];
 const MCP_OAUTH_CONNECT_STATUS_STATE_VALUES = ["progress"];
 export const MCP_OAUTH_CONNECT_STATES = Object.freeze([
   ...MCP_OAUTH_CONNECT_STATUS_STATE_VALUES,
@@ -73,6 +74,8 @@ export const McpOauthConnectResultSchema = z.object({
   detail: boundedString(200),
   loginUrl: optionalLoginUrl,
   checkedAt: z.string().datetime(),
+  traceId: boundedString(80).optional(),
+  durationMs: z.number().int().nonnegative().optional(),
   providerLimited: z.boolean().optional(),
 }).strict();
 
@@ -360,7 +363,39 @@ function result(server, provider, state, detail, loginUrl = "", extra = {}) {
   });
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const MCP_OAUTH_CANCELLED_DETAIL = "MCP 연결 확인을 중지했습니다. 다시 시도하세요.";
+
+function abortError() {
+  const error = new Error("MCP OAuth connect cancelled");
+  error.name = "AbortError";
+  return error;
+}
+
+function isAbortSignalAborted(signal) {
+  return Boolean(signal?.aborted);
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError";
+}
+
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  if (isAbortSignalAborted(signal)) {
+    reject(abortError());
+    return;
+  }
+  const timer = setTimeout(() => {
+    cleanup();
+    resolve();
+  }, ms);
+  const onAbort = () => {
+    clearTimeout(timer);
+    cleanup();
+    reject(abortError());
+  };
+  const cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+  signal?.addEventListener?.("abort", onAbort, { once: true });
+});
 
 function defaultAppSupportPath() {
   return path.join(os.homedir(), "Library", "Application Support", "agentic30");
@@ -467,6 +502,40 @@ export async function syncCodexMcpOauthServerConfig({
   appSupportPath = "",
 } = {}) {
   const codexHomePath = codexHome ? path.resolve(codexHome) : defaultCodexHomePath(env);
+  return withCodexMcpConfigLock(codexHomePath, async () => syncCodexMcpOauthServerConfigUnlocked({
+    server,
+    codexHomePath,
+    env,
+    appSupportPath,
+  }));
+}
+
+async function withCodexMcpConfigLock(codexHomePath, fn) {
+  const lockKey = path.resolve(codexHomePath || defaultCodexHomePath());
+  const previous = CODEX_MCP_CONFIG_LOCKS.get(lockKey) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.then(() => current, () => current);
+  CODEX_MCP_CONFIG_LOCKS.set(lockKey, chained);
+  try {
+    await previous.catch(() => {});
+    return await fn();
+  } finally {
+    release();
+    if (CODEX_MCP_CONFIG_LOCKS.get(lockKey) === chained) {
+      CODEX_MCP_CONFIG_LOCKS.delete(lockKey);
+    }
+  }
+}
+
+async function syncCodexMcpOauthServerConfigUnlocked({
+  server,
+  codexHomePath,
+  env = process.env,
+  appSupportPath = "",
+} = {}) {
   const configPath = path.join(codexHomePath, "config.toml");
   const desired = buildCodexMcpOauthServerConfig({ server, env, appSupportPath });
   await fs.mkdir(path.dirname(configPath), { recursive: true });
@@ -509,6 +578,7 @@ export async function runCodexMcpCommand({
   timeoutMs = MCP_OAUTH_PREWARM_TIMEOUT_MS,
   onOutput,
   stopWhen,
+  signal,
   backgroundOnStop = false,
   spawnImpl = spawn,
 } = {}) {
@@ -517,11 +587,14 @@ export async function runCodexMcpCommand({
     let stderr = "";
     let settled = false;
     let timedOut = false;
+    let timer = null;
     let killTimer = null;
     let child = null;
+    let abortListener = null;
     const cleanupTimers = () => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
+      if (abortListener) signal?.removeEventListener?.("abort", abortListener);
     };
     const resolveOnce = (payload) => {
       if (settled) return false;
@@ -549,6 +622,10 @@ export async function runCodexMcpCommand({
         }
       }
     };
+    if (isAbortSignalAborted(signal)) {
+      finish({ exitCode: null, signal: "SIGTERM", aborted: true });
+      return;
+    }
     const maybeStopEarly = (stream) => {
       if (settled || typeof stopWhen !== "function") return;
       let shouldStop = false;
@@ -571,7 +648,12 @@ export async function runCodexMcpCommand({
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
-    const timer = setTimeout(() => {
+    abortListener = () => {
+      terminate("SIGTERM");
+      finish({ exitCode: null, signal: "SIGTERM", aborted: true });
+    };
+    signal?.addEventListener?.("abort", abortListener, { once: true });
+    timer = setTimeout(() => {
       timedOut = true;
       terminate("SIGTERM");
       killTimer = setTimeout(() => {
@@ -662,7 +744,12 @@ async function prewarmCodexMcpOauth({
   runCodexMcpCommandImpl,
   buildCodexEnvImpl,
   resolveCodexBinaryPathImpl,
+  signal,
+  onTraceEvent,
 } = {}) {
+  if (isAbortSignalAborted(signal)) {
+    return result(normalized, "codex", "cancelled", MCP_OAUTH_CANCELLED_DETAIL);
+  }
   let runtime;
   try {
     runtime = await resolveCodexCliRuntime({
@@ -688,8 +775,13 @@ async function prewarmCodexMcpOauth({
     });
   };
   const runCli = async (args, phase, detail, commandTimeoutMs, options = {}) => {
+    if (isAbortSignalAborted(signal)) {
+      return { stdout: commandTranscript, stderr: "", timedOut: false, exitCode: null, aborted: true };
+    }
     commandTranscript = "";
     progress(phase, detail);
+    onTraceEvent?.({ type: "command", phase, command: args.slice(0, 3).join(" ") });
+    const shouldAnnounceLoginUrl = options.announceLoginUrl === true;
     let commandResult;
     try {
       commandResult = await runCommandImpl({
@@ -700,9 +792,10 @@ async function prewarmCodexMcpOauth({
         timeoutMs: commandTimeoutMs,
         onOutput: (chunk) => {
           commandTranscript += String(chunk || "");
-          announceLoginUrl(commandTranscript);
+          if (shouldAnnounceLoginUrl) announceLoginUrl(commandTranscript);
         },
         stopWhen: options.stopWhen,
+        signal,
         backgroundOnStop: Boolean(options.backgroundOnStop),
       });
     } catch (error) {
@@ -714,74 +807,28 @@ async function prewarmCodexMcpOauth({
         error,
       };
     }
-    announceLoginUrl(`${commandResult.stdout || ""}\n${commandResult.stderr || ""}`);
+    if (shouldAnnounceLoginUrl) {
+      announceLoginUrl(`${commandResult.stdout || ""}\n${commandResult.stderr || ""}`);
+    }
     return commandResult;
   };
+  const cancelled = () => result(normalized, "codex", "cancelled", MCP_OAUTH_CANCELLED_DETAIL, loginUrlAnnounced);
+  const isCancelledCommand = (commandResult) => commandResult?.aborted || isAbortSignalAborted(signal);
 
   progress("provider_started", `${target.label} MCP 서버를 Codex 설정에 등록하는 중… (codex)`);
   const appSupportPath = runtime.codexEnv.AGENTIC30_APP_SUPPORT_PATH || env.AGENTIC30_APP_SUPPORT_PATH || "";
-  const desired = buildCodexMcpOauthServerConfig({
-    server: normalized,
-    env: runtime.codexEnv,
-    appSupportPath,
-  });
-
-  const getTimeoutMs = Math.min(verifyTimeoutMs, CODEX_MCP_CLI_GET_TIMEOUT_MS);
-  const initialGet = await runCli(
-    ["mcp", "get", desired.mcpServerName, "--json"],
-    "registering",
-    `${target.label} MCP 서버 등록 여부를 확인하는 중…`,
-    getTimeoutMs,
-  );
-  if (!isSuccessfulCodexCommand(initialGet)) {
-    const addResult = await runCli(
-      codexMcpAddArgs(desired),
-      "registering",
-      `${target.label} MCP 서버를 Codex에 등록하는 중…`,
-      timeoutMs,
-    );
-    try {
-      await syncCodexMcpOauthServerConfig({
-        server: normalized,
-        codexHome: runtime.codexHome,
-        env: runtime.codexEnv,
-        appSupportPath,
-      });
-    } catch (error) {
-      return result(normalized, "codex", "failed", `Codex MCP 설정 저장 실패: ${error?.message || error}`, loginUrlAnnounced);
-    }
-    if ((addResult.timedOut || addResult.earlyStopped || addResult.backgrounded) && loginUrlAnnounced) {
-      return result(
-        normalized,
-        "codex",
-        "login_pending",
-        `${target.label} 브라우저 로그인이 필요해요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 검증해 주세요.`,
-        loginUrlAnnounced,
-      );
-    }
-    if (!isSuccessfulCodexCommand(addResult)) {
-      return result(
-        normalized,
-        "codex",
-        loginUrlAnnounced ? "login_pending" : "failed",
-        loginUrlAnnounced
-          ? `${target.label} 브라우저 로그인이 필요해요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 검증해 주세요.`
-          : `${target.label} MCP Codex 등록 실패: ${summarizeCodexCommandFailure(addResult)}`,
-        loginUrlAnnounced,
-      );
-    }
-  } else {
-    try {
-      await syncCodexMcpOauthServerConfig({
-        server: normalized,
-        codexHome: runtime.codexHome,
-        env: runtime.codexEnv,
-        appSupportPath,
-      });
-    } catch (error) {
-      return result(normalized, "codex", "failed", `Codex MCP 설정 저장 실패: ${error?.message || error}`, loginUrlAnnounced);
-    }
+  let syncResult;
+  try {
+    syncResult = await syncCodexMcpOauthServerConfig({
+      server: normalized,
+      codexHome: runtime.codexHome,
+      env: runtime.codexEnv,
+      appSupportPath,
+    });
+  } catch (error) {
+    return result(normalized, "codex", "failed", `Codex MCP 설정 저장 실패: ${error?.message || error}`, loginUrlAnnounced);
   }
+  const desired = syncResult;
 
   if (desired.authMode === "api_key") {
     return result(
@@ -792,13 +839,56 @@ async function prewarmCodexMcpOauth({
     );
   }
 
+  const verifyProvider = async ({ loginUrl = "", progressDetail = "" } = {}) => {
+    if (typeof runProviderStreamImpl !== "function") return null;
+    return verifyCodexMcpOauthWithProvider({
+      normalized,
+      target,
+      workspaceRoot,
+      runProviderStreamImpl,
+      verifyTimeoutMs,
+      progress,
+      loginUrl,
+      signal,
+      progressDetail,
+      onTraceEvent,
+    });
+  };
+
+  const cachedVerification = await verifyProvider({
+    progressDetail: `${target.label} Codex MCP 연결 캐시를 확인하는 중…`,
+  });
+  if (!cachedVerification) {
+    return result(
+      normalized,
+      "codex",
+      "failed",
+      `${target.label} Codex 설정은 확인됐지만 AI 실행에서 도구 호출 확인을 완료하지 못했어요 — 다시 'MCP 연결'을 눌러 검증해 주세요.`,
+      loginUrlAnnounced,
+    );
+  }
+  if (cachedVerification.state !== "login_pending") {
+    return cachedVerification;
+  }
+
   const loginResult = await runCli(
     ["mcp", "login", desired.mcpServerName],
     "authenticating",
     `${target.label} MCP OAuth 로그인을 Codex에서 시작하는 중…`,
     timeoutMs,
+    { announceLoginUrl: true },
   );
+  if (isCancelledCommand(loginResult)) return cancelled();
   if (loginResult.timedOut) {
+    if (loginUrlAnnounced) {
+      const timeoutVerification = await verifyProvider({
+        loginUrl: loginUrlAnnounced,
+        progressDetail: `${target.label} 브라우저 로그인 완료 여부를 새 로그인 없이 확인하는 중…`,
+      });
+      if (timeoutVerification && timeoutVerification.state !== "login_pending") {
+        return timeoutVerification;
+      }
+    }
     return result(
       normalized,
       "codex",
@@ -810,6 +900,15 @@ async function prewarmCodexMcpOauth({
     );
   }
   if (!isSuccessfulCodexCommand(loginResult)) {
+    if (loginUrlAnnounced) {
+      const failedLoginVerification = await verifyProvider({
+        loginUrl: loginUrlAnnounced,
+        progressDetail: `${target.label} 브라우저 로그인 완료 여부를 새 로그인 없이 확인하는 중…`,
+      });
+      if (failedLoginVerification && failedLoginVerification.state !== "login_pending") {
+        return failedLoginVerification;
+      }
+    }
     return result(
       normalized,
       "codex",
@@ -821,34 +920,11 @@ async function prewarmCodexMcpOauth({
     );
   }
 
-  const verifyResult = await runCli(
-    ["mcp", "get", desired.mcpServerName, "--json"],
-    "verifying",
-    `${target.label} MCP Codex 설정을 검증하는 중…`,
-    getTimeoutMs,
-  );
-  if (!isSuccessfulCodexCommand(verifyResult)) {
-    return result(
-      normalized,
-      "codex",
-      "failed",
-      `${target.label} MCP Codex 로그인 후 설정 검증 실패: ${summarizeCodexCommandFailure(verifyResult)}`,
-      loginUrlAnnounced,
-    );
-  }
-
-  if (typeof runProviderStreamImpl === "function") {
-    const providerVerification = await verifyCodexMcpOauthWithProvider({
-      normalized,
-      target,
-      workspaceRoot,
-      runProviderStreamImpl,
-      verifyTimeoutMs,
-      progress,
-      loginUrl: loginUrlAnnounced,
-    });
-    if (providerVerification) return providerVerification;
-  }
+  const providerVerification = await verifyProvider({
+    loginUrl: loginUrlAnnounced,
+    progressDetail: `${target.label} MCP 도구 호출로 Codex 연결을 검증하는 중…`,
+  });
+  if (providerVerification) return providerVerification;
 
   return result(
     normalized,
@@ -867,13 +943,26 @@ async function verifyCodexMcpOauthWithProvider({
   verifyTimeoutMs,
   progress,
   loginUrl = "",
+  signal,
+  progressDetail = "",
+  onTraceEvent,
 } = {}) {
-  progress("verifying", `${target.label} MCP 도구 호출로 Codex 연결을 검증하는 중…`);
+  if (isAbortSignalAborted(signal)) {
+    return result(normalized, "codex", "cancelled", MCP_OAUTH_CANCELLED_DETAIL, loginUrl);
+  }
+  progress("verifying", progressDetail || `${target.label} MCP 도구 호출로 Codex 연결을 검증하는 중…`);
   const abortController = new AbortController();
-  const timer = setTimeout(() => abortController.abort(), verifyTimeoutMs);
+  let timedOut = false;
+  const onAbort = () => abortController.abort();
+  signal?.addEventListener?.("abort", onAbort, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, verifyTimeoutMs);
   let transcript = "";
   let sawTargetMcpToolCall = false;
   try {
+    onTraceEvent?.({ type: "provider_run", phase: "verifying" });
     await runProviderStreamImpl({
       provider: "codex",
       prompt: buildMcpOauthVerifyPrompt(normalized),
@@ -895,7 +984,10 @@ async function verifyCodexMcpOauthWithProvider({
       },
     });
   } catch (error) {
-    if (abortController.signal.aborted) {
+    if (isAbortSignalAborted(signal)) {
+      return result(normalized, "codex", "cancelled", MCP_OAUTH_CANCELLED_DETAIL, loginUrl);
+    }
+    if (timedOut || abortController.signal.aborted) {
       return result(
         normalized,
         "codex",
@@ -924,6 +1016,7 @@ async function verifyCodexMcpOauthWithProvider({
     );
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener?.("abort", onAbort);
   }
 
   const parsed = parseMcpOauthPrewarmReply(transcript);
@@ -1066,7 +1159,9 @@ export async function prewarmMcpOauth({
   workspaceRoot,
   runProviderStreamImpl,
   onProgress,
+  onTraceEvent,
   env = process.env,
+  signal,
   timeoutMs = MCP_OAUTH_PREWARM_TIMEOUT_MS,
   verifyTimeoutMs = MCP_OAUTH_PREWARM_VERIFY_TIMEOUT_MS,
   recheckDelayMs = MCP_OAUTH_PREWARM_RECHECK_DELAY_MS,
@@ -1082,6 +1177,9 @@ export async function prewarmMcpOauth({
   }
   if (!provider) {
     return result(normalized, "", "failed", "사용 가능한 AI 프로바이더가 없어요 — Claude 또는 Codex 로그인이 필요해요.");
+  }
+  if (isAbortSignalAborted(signal)) {
+    return result(normalized, provider, "cancelled", MCP_OAUTH_CANCELLED_DETAIL);
   }
   if (env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
     // Hermetic UI tests: stub provider can't run MCP OAuth — succeed deterministically.
@@ -1110,6 +1208,8 @@ export async function prewarmMcpOauth({
       runCodexMcpCommandImpl,
       buildCodexEnvImpl,
       resolveCodexBinaryPathImpl,
+      signal,
+      onTraceEvent,
     });
   }
 
@@ -1127,8 +1227,17 @@ export async function prewarmMcpOauth({
   };
 
   const runAttempt = async ({ prompt, attemptTimeoutMs }) => {
+    if (isAbortSignalAborted(signal)) {
+      return { kind: "cancelled" };
+    }
     const abortController = new AbortController();
-    const timer = setTimeout(() => abortController.abort(), attemptTimeoutMs);
+    let timedOut = false;
+    const onAbort = () => abortController.abort();
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+    }, attemptTimeoutMs);
     let transcript = "";
     let sawTargetMcpToolCall = false;
     const checkLoginUrl = () => announceLoginUrl(extractMcpOauthLoginUrl(transcript));
@@ -1136,6 +1245,7 @@ export async function prewarmMcpOauth({
     // 센티널 라인을 생략해도(실측: 종종 생략함) 브라우저 오픈이 누락되지 않게.
     const authenticateCallKeys = new Set();
     try {
+      onTraceEvent?.({ type: "provider_run", phase: "provider_attempt" });
       await runProviderStreamImpl({
         provider,
         prompt,
@@ -1177,12 +1287,16 @@ export async function prewarmMcpOauth({
         },
       });
     } catch (error) {
-      if (abortController.signal.aborted) {
+      if (isAbortSignalAborted(signal)) {
+        return { kind: "cancelled" };
+      }
+      if (timedOut || abortController.signal.aborted) {
         return { kind: "timeout" };
       }
       return { kind: "error", message: String(error?.message || error) };
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener?.("abort", onAbort);
     }
     return { kind: "done", parsed: parseMcpOauthPrewarmReply(transcript), sawTargetMcpToolCall };
   };
@@ -1207,13 +1321,23 @@ export async function prewarmMcpOauth({
       "login_recheck",
       `로그인 완료를 자동으로 재확인하는 중 (${rechecksUsed}/${maxRechecks})…`,
     );
-    await sleep(recheckDelayMs);
+    try {
+      await sleep(recheckDelayMs, signal);
+    } catch (error) {
+      if (isAbortSignalAborted(signal) || isAbortError(error)) {
+        return result(normalized, provider, "cancelled", MCP_OAUTH_CANCELLED_DETAIL, loginUrlAnnounced);
+      }
+      throw error;
+    }
     attempt = await runAttempt({
       prompt: buildMcpOauthVerifyPrompt(normalized),
       attemptTimeoutMs: verifyTimeoutMs,
     });
   }
 
+  if (attempt.kind === "cancelled") {
+    return result(normalized, provider, "cancelled", MCP_OAUTH_CANCELLED_DETAIL, loginUrlAnnounced);
+  }
   if (attempt.kind === "timeout") {
     return result(
       normalized,

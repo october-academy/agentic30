@@ -344,7 +344,7 @@ private struct OfficeHoursOffsetOpacityModifier: ViewModifier {
     }
 }
 
-private extension AnyTransition {
+fileprivate extension AnyTransition {
     static var officeHoursPromptReveal: AnyTransition {
         .modifier(
             active: OfficeHoursOffsetOpacityModifier(opacity: 0, y: 5),
@@ -1634,12 +1634,6 @@ private struct OfficeHoursEvidenceDraft: Identifiable, Hashable {
     var id: String { "\(mode.rawValue)-\(commitment.id)" }
 }
 
-private enum OfficeHoursEvidenceBannerActionTone: Hashable {
-    case primary
-    case secondary
-    case quiet
-}
-
 struct OfficeHoursTimelineBuilder {
     static func items(
         rows: [OfficeHoursTranscriptRow],
@@ -1725,9 +1719,7 @@ struct OfficeHoursPendingPromptPresentation: Hashable {
 
 struct OfficeHoursBannerPresentation: Equatable {
     let showMemoryBanner: Bool
-    let showEvidenceOSBanner: Bool
     let showFullInterventionBanner: Bool
-    let showInlineScheduledIntervention: Bool
 
     static func resolve(
         memory: OfficeHoursMemorySummary?,
@@ -1739,17 +1731,104 @@ struct OfficeHoursBannerPresentation: Equatable {
         let hasCalibration = !(memory?.calibrationLine?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         let hasNonDuplicateMemorySignal = hasAbandonedThread || hasCalibration
         let hasMemoryContent = memory?.hasContent ?? false
-        let isScheduledIntervention = intervention?.severity?
+        let isImmediateIntervention = intervention?.severity?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() == "scheduled"
-        let inlineScheduledIntervention = hasOpenDebt && isScheduledIntervention
+            .lowercased() == "immediate"
 
         return OfficeHoursBannerPresentation(
             showMemoryBanner: hasMemoryContent && (!hasOpenDebt || hasNonDuplicateMemorySignal),
-            showEvidenceOSBanner: hasOpenDebt,
-            showFullInterventionBanner: intervention != nil && !inlineScheduledIntervention,
-            showInlineScheduledIntervention: inlineScheduledIntervention
+            showFullInterventionBanner: intervention != nil && isImmediateIntervention
         )
+    }
+}
+
+struct OfficeHoursPreviousCommitmentGate: Equatable {
+    let debts: [CommitmentRecord]
+
+    var current: CommitmentRecord? { debts.first }
+    var totalCount: Int { debts.count }
+    var blocksNewCommitment: Bool { current != nil }
+
+    static func resolve(evidenceOS: EvidenceOSSummary?, activeDay: Int) -> OfficeHoursPreviousCommitmentGate {
+        OfficeHoursPreviousCommitmentGate(
+            debts: blockingDebts(evidenceOS: evidenceOS, activeDay: activeDay)
+        )
+    }
+
+    static func blockingDebts(evidenceOS: EvidenceOSSummary?, activeDay: Int) -> [CommitmentRecord] {
+        guard let evidenceOS else { return [] }
+        let resolvedActiveDay = max(1, activeDay)
+        var seen = Set<String>()
+        var candidates: [Candidate] = []
+
+        func append(_ debt: CommitmentRecord, overdue: Bool, index: Int) {
+            guard isUnresolvedDebt(debt), debt.day < resolvedActiveDay else { return }
+            let key = dedupeKey(for: debt)
+            guard !key.isEmpty, !seen.contains(key) else { return }
+            seen.insert(key)
+            candidates.append(Candidate(debt: debt, overdue: overdue, index: index))
+        }
+
+        for (index, debt) in evidenceOS.overdueDebts.enumerated() {
+            append(debt, overdue: true, index: index)
+        }
+        let offset = evidenceOS.overdueDebts.count
+        for (index, debt) in evidenceOS.openDebts.enumerated() {
+            append(debt, overdue: false, index: offset + index)
+        }
+
+        return candidates.sorted { lhs, rhs in
+            if lhs.overdue != rhs.overdue { return lhs.overdue && !rhs.overdue }
+            if lhs.debt.day != rhs.debt.day { return lhs.debt.day < rhs.debt.day }
+            let lhsDue = lhs.debt.dueDay ?? Int.max
+            let rhsDue = rhs.debt.dueDay ?? Int.max
+            if lhsDue != rhsDue { return lhsDue < rhsDue }
+            let lhsCreatedAt = lhs.debt.createdAt.isEmpty ? "9999" : lhs.debt.createdAt
+            let rhsCreatedAt = rhs.debt.createdAt.isEmpty ? "9999" : rhs.debt.createdAt
+            if lhsCreatedAt != rhsCreatedAt { return lhsCreatedAt < rhsCreatedAt }
+            return lhs.index < rhs.index
+        }.map(\.debt)
+    }
+
+    static func isActiveDebtSuggestion(_ text: String, evidenceOS: EvidenceOSSummary?) -> Bool {
+        let key = suggestionKey(for: text)
+        guard !key.isEmpty else { return false }
+        return activeDebtSuggestionKeys(evidenceOS: evidenceOS).contains(key)
+    }
+
+    static func suggestionKey(for text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    private struct Candidate: Equatable {
+        let debt: CommitmentRecord
+        let overdue: Bool
+        let index: Int
+    }
+
+    private static func activeDebtSuggestionKeys(evidenceOS: EvidenceOSSummary?) -> Set<String> {
+        guard let evidenceOS else { return [] }
+        return Set((evidenceOS.overdueDebts + evidenceOS.openDebts).compactMap { debt in
+            guard isUnresolvedDebt(debt) else { return nil }
+            let key = suggestionKey(for: debt.message.nonEmpty ?? debt.text)
+            return key.isEmpty ? nil : key
+        })
+    }
+
+    private static func isUnresolvedDebt(_ debt: CommitmentRecord) -> Bool {
+        guard debt.evidence == nil else { return false }
+        let status = debt.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return status.isEmpty || status == "open" || status == "missed"
+    }
+
+    private static func dedupeKey(for debt: CommitmentRecord) -> String {
+        let id = debt.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !id.isEmpty { return "id:\(id)" }
+        return "action:\(suggestionKey(for: debt.message.nonEmpty ?? debt.text)):day:\(debt.day)"
     }
 }
 
@@ -1810,7 +1889,7 @@ struct OfficeHoursRealProjectTestSessionPolicy {
         guard session.provider == provider else { return false }
         guard session.status == .idle else { return false }
         guard session.pendingUserInput == nil else { return false }
-        return session.messages.isEmpty
+        return OfficeHoursTranscriptRow.rows(from: session.messages).isEmpty
     }
 }
 
@@ -1872,6 +1951,7 @@ struct OfficeHoursAutoStartPolicy {
 /// only stomps user-initiated scrolling.
 struct OfficeHoursTranscriptScrollPolicy {
     static let repinDelays: [TimeInterval] = [0.24, 0.6, 1.2]
+    static var postLayoutRepinDelays: [TimeInterval] { repinDelays }
 
     static func shouldPerform(requestGeneration: Int, currentGeneration: Int) -> Bool {
         requestGeneration == currentGeneration
@@ -1893,6 +1973,18 @@ enum WorkspaceChromeStyle: Equatable {
             return .day1OfficeHours
         }
         return .standard
+    }
+}
+
+private struct OfficeHoursRouteScrollRequest: Equatable {
+    let sessionId: String
+    let requestId: String?
+    let token: UUID
+
+    init(sessionId: String, requestId: String?, token: UUID = UUID()) {
+        self.sessionId = sessionId
+        self.requestId = requestId
+        self.token = token
     }
 }
 
@@ -1931,6 +2023,8 @@ struct ContentView: View {
     @State private var isOpenDesignOfficeHoursPresented = false
     @State private var isOpenDesignMorningBriefingPresented = false
     @State private var isBipMissionRoutePresented = false
+    @State private var pendingOpenDesignScrollRequest: OpenDesignScrollRequest?
+    @State private var pendingMorningBriefingScrollRequest: MorningBriefingScrollRequest?
     @State private var openDesignDayInteractionStateCache = OpenDesignDayInteractionStateCache()
     @State private var officeHoursStartedSessionIDs: Set<String> = []
     @State private var officeHoursRealProjectTestState: OfficeHoursRealProjectTestState = .idle
@@ -1951,6 +2045,7 @@ struct ContentView: View {
     /// Hours session. Read-only retro uses `selectedPastReviewDay` separately.
     @State private var selectedTimelineDay: Int?
     @State private var selectedPastReviewDay: Int? = Self.uiTestingInitialOfficeHoursPastDay()
+    @State private var localDevFastForwardAdvancedDay2CompletionID: String?
     @State private var officeHoursQuestionLoadingStartedAtBySession: [String: Date] = [:]
     @State private var officeHoursSubmittedPromptSnapshotsBySession: [String: [OfficeHoursSubmittedPromptSnapshot]] = [:]
     @State private var officeHoursActiveQuestionLoadersBySession: [String: OfficeHoursLoadingSnapshot] = [:]
@@ -1959,6 +2054,7 @@ struct ContentView: View {
     @State private var officeHoursSubmittedRevisionDraftsByPrompt: [String: [String: AgenticViewModel.StructuredPromptSubmission]] = [:]
     @State private var editingOfficeHoursSubmittedFreeTextID: String?
     @State private var editingOfficeHoursSubmittedFreeTextValue = ""
+    @State private var pendingOfficeHoursRouteScrollRequest: OfficeHoursRouteScrollRequest?
     @State private var officeHoursScrollGeneration = 0
     @State private var officeHoursMainScrollCaptureAnchor: NSView?
     @State private var officeHoursSharePicker: NSSharingServicePicker?
@@ -1971,6 +2067,7 @@ struct ContentView: View {
     private static let officeHoursQuestionOutputRowID = "office-hours-question-output-row"
     private static let officeHoursQuestionStageTopID = "office-hours-question-stage-top"
     private static let officeHoursDocReadyHeaderID = "office-hours-doc-ready-header"
+    private static let officeHoursCompletionSummaryHeaderID = "office-hours-completion-summary-header"
     private static let officeHoursCommitmentBarID = "opendesign.officeHours.commitmentBar"
     private static let officeHoursDay1CompleteButtonID = "opendesign.officeHours.day1.completeDay"
     private static let officeHoursTranscriptBottomID = "office-hours-transcript-bottom"
@@ -2078,6 +2175,9 @@ struct ContentView: View {
                     clearOpenDesignReferenceRoute()
                 }
             }
+            .onChange(of: viewModel.dayProgress) { _, _ in
+                autoAdvanceLocalDevFastForwardAfterDay2OfficeHoursIfNeeded()
+            }
             .onChange(of: viewModel.localDataResetGeneration) { _, _ in
                 resetLocalSwiftUIStateAfterLocalDataReset()
             }
@@ -2087,6 +2187,10 @@ struct ContentView: View {
                     selectedSettingsSection = requestedSection
                 }
                 openOpenDesignSettingsRoute()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .agenticAppRouteRequested)) { notification in
+                guard isWorkspaceWindow else { return }
+                openAppRoute(from: notification)
             }
             .onReceive(NotificationCenter.default.publisher(for: .agenticOpenDesignRouteRequested)) { notification in
                 guard isWorkspaceWindow else { return }
@@ -2376,12 +2480,16 @@ struct ContentView: View {
             && !viewModel.isScanning
             && (viewModel.workspaceRoot.isEmpty || viewModel.scanResult?.error?.nonEmpty != nil)
         let day1Content = personalizedDay1Content ?? (day.day == 1 || shouldUseIntakeOnlyDay1 ? OpenDesignDayContent.day1 : nil)
+        let openDesignUnlockedDayLimit = LocalDevelopmentDayFastForward.maxUnlockedOpenDesignDay
         let officeHoursDay1Content = (personalizedDay1Content ?? OpenDesignDayContent.day1)
             .applyingFoundationProgress(viewModel.foundationProgressState, selectedDay: 1)
-            .lockingDaysAfterSecond
-        let resolvedContent: OpenDesignDayContent? = (day.day == 2 ? OpenDesignDayContent.day2 : day1Content)?
+            .lockingDays(after: openDesignUnlockedDayLimit)
+        let baseContent: OpenDesignDayContent? = (day.day == 2 || (LocalDevelopmentDayFastForward.isEnabled && day.day == 3))
+            ? OpenDesignDayContent.day2
+            : day1Content
+        let resolvedContent: OpenDesignDayContent? = baseContent?
             .applyingFoundationProgress(viewModel.foundationProgressState, selectedDay: day.day)
-            .lockingDaysAfterSecond
+            .lockingDays(after: openDesignUnlockedDayLimit)
         let bipResearchDayNumber = viewModel.foundationProgressState.currentDayNumber() ?? 1
         let bipResearchDay = AgenticCurriculumDay.days.first(where: { $0.day == bipResearchDayNumber })
             ?? AgenticCurriculumDay.days[0]
@@ -2392,6 +2500,9 @@ struct ContentView: View {
         }
         let situationSummary = isWorkspaceWindow && day.day == 1 ? viewModel.scanResult?.day1SituationSummary : nil
         let officeHoursActiveDay = activeOfficeHoursDay(fallback: day.day)
+        let officeHoursRoutedDayNumbers: Set<Int> = day.day == 1
+            ? Set([1])
+            : (LocalDevelopmentDayFastForward.isEnabled && (2...3).contains(day.day) ? Set([day.day]) : [])
         let officeHoursSession = viewModel.officeHoursSession(forDay: officeHoursActiveDay)
             ?? session.flatMap { candidate in
                 viewModel.canUseSessionForOfficeHours(candidate, day: officeHoursActiveDay) ? candidate : nil
@@ -2423,6 +2534,7 @@ struct ContentView: View {
                     selectedReferencePage: $selectedOpenDesignReferencePage,
                     isOfficeHoursPresented: $isOpenDesignOfficeHoursPresented,
                     isMorningBriefingPresented: $isOpenDesignMorningBriefingPresented,
+                    pendingScrollRequest: $pendingOpenDesignScrollRequest,
                     openSettings: {
                         openOpenDesignSettingsRoute()
                     },
@@ -2501,7 +2613,8 @@ struct ContentView: View {
                                 withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                                     isOpenDesignMorningBriefingPresented = false
                                 }
-                            }
+                            },
+                            routeScrollRequest: $pendingMorningBriefingScrollRequest
                         )
                     ),
                     activeDay1HandoffDocType: day1HandoffPrompt?.generation?.docType?.lowercased(),
@@ -2525,11 +2638,14 @@ struct ContentView: View {
                               viewModel.isFoundationDayUnlocked(selectedDay) else { return }
                         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                             clearOpenDesignReferenceRoute()
+                            selectedTimelineDay = nil
                             isOpenDesignOfficeHoursPresented = false
                             viewModel.selectFoundationDay(selectedDay)
                         }
                     },
                     routesTodayToOfficeHours: day.day == 1
+                        || (LocalDevelopmentDayFastForward.isEnabled && (2...3).contains(day.day)),
+                    officeHoursRoutedDayNumbers: officeHoursRoutedDayNumbers
                 )
             } else {
                 OpenDesignDayPlanPreparingView(
@@ -2594,12 +2710,6 @@ struct ContentView: View {
 
                 VStack(spacing: 0) {
                     officeHoursMemoryBanner(presentation: bannerPresentation)
-                    officeHoursEvidenceOSBanner(
-                        presentation: bannerPresentation,
-                        session: conversationSession,
-                        day1Content: day1Content,
-                        activeDay: activeDay
-                    )
                     officeHoursSourceGateBanner(activeDay: activeDay)
                     officeHoursGateBlockedBanner()
                     officeHoursInterventionBanner(
@@ -2737,101 +2847,6 @@ struct ContentView: View {
                 Rectangle().fill(Color.primary.opacity(0.06)).frame(height: 1)
             }
             .accessibilityIdentifier("opendesign.officeHours.memoryBanner")
-        }
-    }
-
-    @ViewBuilder
-    private func officeHoursEvidenceOSBanner(
-        presentation: OfficeHoursBannerPresentation,
-        session: ChatSession?,
-        day1Content: OpenDesignDayContent,
-        activeDay: Int
-    ) -> some View {
-        if presentation.showEvidenceOSBanner,
-           let evidenceOS = viewModel.evidenceOS,
-           evidenceOS.hasOpenDebt {
-            let debts = evidenceOS.overdueDebts.isEmpty ? evidenceOS.openDebts : evidenceOS.overdueDebts
-            VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 9) {
-                        Image(systemName: "checklist.unchecked")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(OpenDesignOfficeHoursColor.amber)
-                            .frame(width: 22, height: 22)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(OpenDesignOfficeHoursColor.amberDim)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                            .stroke(OpenDesignOfficeHoursColor.amber.opacity(0.38), lineWidth: 1)
-                                    )
-                            )
-                        Text(evidenceOS.overdueDebts.isEmpty ? "약속 증거 대기" : "기한 지난 약속 증거")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                            .lineLimit(1)
-                        if let dayLabel = officeHoursEvidenceBannerDayLabel(for: debts.first) {
-                            officeHoursEvidenceBannerHeaderPill(dayLabel)
-                        }
-                        Spacer(minLength: 8)
-                        Text("\(evidenceOS.openDebts.count) open")
-                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                    ForEach(Array(debts.prefix(2))) { debt in
-                        officeHoursEvidenceDebtRow(debt)
-                    }
-                    if presentation.showInlineScheduledIntervention,
-                       let intervention = viewModel.ohInterventionRequired {
-                        officeHoursInlineScheduledInterventionRow(
-                            intervention: intervention,
-                            session: session,
-                            day1Content: day1Content,
-                            activeDay: activeDay
-                        )
-                    }
-                }
-                .padding(.leading, 20)
-                .padding(.trailing, 18)
-                .padding(.vertical, 14)
-                .frame(maxWidth: 820, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(OpenDesignOfficeHoursColor.surface)
-                        .overlay(
-                            LinearGradient(
-                                colors: [
-                                    OpenDesignOfficeHoursColor.amber.opacity(0.10),
-                                    OpenDesignOfficeHoursColor.amber.opacity(0.02),
-                                    Color.clear,
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        )
-                )
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(OpenDesignOfficeHoursColor.accent)
-                        .frame(width: 3)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(OpenDesignOfficeHoursColor.border, lineWidth: 1)
-                )
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 28)
-            .padding(.vertical, 14)
-            .background(OpenDesignOfficeHoursColor.bg)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1)
-            }
-            .accessibilityIdentifier("opendesign.officeHours.evidenceOSBanner")
         }
     }
 
@@ -3174,245 +3189,6 @@ struct ContentView: View {
         }
     }
 
-    private func officeHoursEvidenceBannerHeaderPill(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-            .foregroundStyle(OpenDesignOfficeHoursColor.accent)
-            .padding(.horizontal, 8)
-            .frame(height: 20)
-            .background(Capsule().fill(OpenDesignOfficeHoursColor.accentDim))
-            .overlay(Capsule().stroke(OpenDesignOfficeHoursColor.accentLine, lineWidth: 1))
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-    }
-
-    private func officeHoursEvidenceBannerDayLabel(for debt: CommitmentRecord?) -> String? {
-        guard let debt else { return nil }
-        if debt.day > 0 {
-            return "Day \(debt.day)"
-        }
-        if let due = debt.dueDay {
-            return "Day \(due)"
-        }
-        return nil
-    }
-
-    private func officeHoursInlineScheduledInterventionRow(
-        intervention: SidecarEvent.OhInterventionRequired,
-        session: ChatSession?,
-        day1Content: OpenDesignDayContent,
-        activeDay: Int
-    ) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            Image(systemName: "bell.badge")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(OpenDesignOfficeHoursColor.amber)
-                .frame(width: 18, height: 18)
-            Text("다음 브리핑")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-            if let triggerLabel = intervention.ruleId ?? intervention.gateId {
-                Text(triggerLabel)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
-                    .padding(.horizontal, 6)
-                    .frame(height: 18)
-                    .background(Capsule().fill(OpenDesignOfficeHoursColor.amberDim))
-                    .overlay(Capsule().stroke(OpenDesignOfficeHoursColor.amber.opacity(0.34), lineWidth: 1))
-            }
-            if let firstQuestion = intervention.questions?.first?.nonEmpty {
-                Text(firstQuestion)
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(1)
-            }
-            Spacer(minLength: 8)
-            Button {
-                startOfficeHours(
-                    mode: selectedOfficeHoursMode,
-                    session: session,
-                    day1Content: day1Content,
-                    day: intervention.day ?? activeDay,
-                    trigger: intervention.triggerId
-                )
-            } label: {
-                HStack(spacing: 5) {
-                    Text("Office Hours에서 다루기")
-                        .font(.system(size: 10.5, weight: .semibold))
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 9.5, weight: .semibold))
-                }
-                .foregroundStyle(OpenDesignOfficeHoursColor.amber)
-                .padding(.horizontal, 9)
-                .frame(height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(OpenDesignOfficeHoursColor.bgDeep)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .stroke(OpenDesignOfficeHoursColor.amber.opacity(0.34), lineWidth: 1)
-                        )
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("opendesign.officeHours.evidenceOS.inlineIntervention.start")
-        }
-        .padding(.top, 2)
-        .padding(.horizontal, 10)
-        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(OpenDesignOfficeHoursColor.amberDim.opacity(0.62))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(OpenDesignOfficeHoursColor.amber.opacity(0.22), lineWidth: 1)
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("opendesign.officeHours.evidenceOS.inlineIntervention")
-    }
-
-    private func officeHoursEvidenceDebtRow(_ debt: CommitmentRecord) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .bottom, spacing: 14) {
-                officeHoursEvidenceDebtCopy(debt)
-                    .layoutPriority(1)
-                Spacer(minLength: 12)
-                officeHoursEvidenceBannerActions(for: debt)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                officeHoursEvidenceDebtCopy(debt)
-                officeHoursEvidenceBannerActions(for: debt)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("opendesign.officeHours.evidenceOS.debt.\(debt.id)")
-    }
-
-    private func officeHoursEvidenceDebtCopy(_ debt: CommitmentRecord) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                if let customer = debt.customer.nonEmpty {
-                    officeHoursPastDayChip(customer, tone: "success")
-                }
-                if let evidence = debt.expectedEvidenceKind.nonEmpty {
-                    officeHoursPastDayChip("증거 \(evidence)", tone: "warning")
-                }
-                if let due = debt.dueDay {
-                    officeHoursPastDayChip("Day \(due)까지", tone: "muted")
-                }
-            }
-            Text(officeHoursEvidenceActionText(for: debt))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func officeHoursEvidenceActionText(for debt: CommitmentRecord) -> String {
-        let message = debt.message.nonEmpty ?? debt.text
-        if let customer = debt.customer.nonEmpty,
-           let channel = debt.channel.nonEmpty,
-           let coreMessage = debt.message.nonEmpty {
-            return "\(customer)에게 \(channel)으로 \(coreMessage)"
-        }
-        if let customer = debt.customer.nonEmpty,
-           let coreMessage = debt.message.nonEmpty {
-            return "\(customer)에게 \(coreMessage)"
-        }
-        return message
-    }
-
-    private func officeHoursEvidenceBannerActions(for debt: CommitmentRecord) -> some View {
-        let isOverdue = viewModel.evidenceOS?.overdueDebts.contains(where: { $0.id == debt.id }) == true
-        return HStack(spacing: 8) {
-            officeHoursEvidenceBannerActionButton(
-                systemName: "paperclip",
-                title: "증거 붙이기",
-                accessibilityID: "attach",
-                tone: isOverdue ? .primary : .secondary
-            ) {
-                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: debt, mode: .evidence)
-            }
-            officeHoursEvidenceBannerActionButton(
-                systemName: "arrow.forward.circle",
-                title: "목표에 반영",
-                accessibilityID: "carry",
-                tone: isOverdue ? .secondary : .primary
-            ) {
-                _ = viewModel.carryForwardOfficeHoursCommitment(commitmentId: debt.id)
-            }
-            officeHoursEvidenceBannerActionButton(
-                systemName: "xmark.circle",
-                title: "제외",
-                accessibilityID: "abandon",
-                tone: .quiet
-            ) {
-                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: debt, mode: .abandon)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .trailing)
-    }
-
-    private func officeHoursEvidenceBannerActionButton(
-        systemName: String,
-        title: String,
-        accessibilityID: String,
-        tone: OfficeHoursEvidenceBannerActionTone,
-        action: @escaping () -> Void
-    ) -> some View {
-        let fill: Color
-        let stroke: Color
-        let foreground: Color
-        switch tone {
-        case .primary:
-            fill = OpenDesignOfficeHoursColor.accentDim
-            stroke = OpenDesignOfficeHoursColor.accentLine
-            foreground = OpenDesignOfficeHoursColor.accent
-        case .secondary:
-            fill = OpenDesignOfficeHoursColor.bgDeep
-            stroke = OpenDesignOfficeHoursColor.borderSoft
-            foreground = OpenDesignOfficeHoursColor.fg
-        case .quiet:
-            fill = OpenDesignOfficeHoursColor.bgDeep.opacity(0.72)
-            stroke = OpenDesignOfficeHoursColor.borderSoft.opacity(0.78)
-            foreground = OpenDesignOfficeHoursColor.fgSecondary
-        }
-
-        return Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: systemName)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(foreground)
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(fill)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(stroke, lineWidth: 1)
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(title)
-        .accessibilityIdentifier("opendesign.officeHours.evidenceOS.\(accessibilityID)")
-    }
-
     private func officeHoursEvidenceActionButton(systemName: String, title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 4) {
@@ -3472,89 +3248,113 @@ struct ContentView: View {
                 .id(Self.officeHoursCommitmentBarID)
                 .transition(.officeHoursPromptReveal)
             } else if stepStatus == .active && allQuestionsAnswered {
-                // 약속도 인터뷰처럼: 카드를 열기 전에 이번 인터뷰의 답변에서 후보 액션을
-                // 만들어 온다(사이드카 생성, 제안일 뿐 — 저장되는 약속은 항상 사용자가
-                // 고르거나 고쳐 쓴 문장이라 user-origin 게이트는 그대로다). 후보가 resolve
-                // 되기 전에는 카드를 잡아두고, 메인 로더("약속 준비 중")가 꺼진 뒤에도
-                // 생성이 남아 있으면 같은 amber 로더로 그 박자를 채운다.
-                let sessionID = session?.id ?? ""
-                let candidates = sessionID.isEmpty ? nil : viewModel.officeHoursCommitmentCandidatesBySession[sessionID]
-                let commitmentRevealed = sessionID.isEmpty
-                    || candidates != nil
-                    || (officeHoursCommitmentCandidateRequestedSessions.contains(sessionID)
-                        && !viewModel.officeHoursCommitmentCandidatesGenerating.contains(sessionID))
-                // 마지막 질문 답변과 약속 게이트 사이에 호흡을 둔다 — 연한 구분선으로 '이제
-                // 인터뷰 마무리'로의 전환을 분리(질문 흐름과 종료 흐름을 한 박자 띄운다).
-                VStack(spacing: 14) {
-                    if commitmentRevealed {
+                let previousCommitmentGate = OfficeHoursPreviousCommitmentGate.resolve(
+                    evidenceOS: viewModel.evidenceOS,
+                    activeDay: activeDay
+                )
+                if let previousDebt = previousCommitmentGate.current {
+                    VStack(spacing: 14) {
                         Rectangle()
                             .fill(OpenDesignOfficeHoursColor.borderSoft)
                             .frame(height: 1)
                             .padding(.top, 6)
-                        // 부채 confrontation: 새 약속을 적기 전에 미증명 약속을 직면시킨다(anti-displacement).
-                        // 증거 닫기는 다음 인터뷰 대화 넛지가 담당 — 여기선 시각 confront + 빠른 '포기로 기록'만.
-                        if let evidenceOS = viewModel.evidenceOS,
-                           let debt = evidenceOS.overdueDebts.first ?? evidenceOS.openDebts.first {
-                            officeHoursCommitmentDebtBanner(debt)
-                        }
-                        OfficeHoursCommitmentBarView(
-                            // Scope the gate nudge to the step that was actually held (gatedStep).
-                            gateMessage: (viewModel.commitmentGateStep == nil || viewModel.commitmentGateStep == stepId)
-                                ? viewModel.commitmentGateMessage : nil,
-                            suggestedActions: officeHoursCommitmentSuggestions(sidecarCandidates: candidates ?? []),
-                            deferralStreak: viewModel.officeHoursMemory?.consecutiveDeferrals ?? 0,
-                            onCommit: { action in
-                                // user-origin: the founder's chosen/typed next customer action (one line).
-                                _ = viewModel.markDayStep(
-                                    day: activeDay,
-                                    stepId: stepId,
-                                    status: .done,
-                                    commitmentText: action,
-                                    sessionID: session?.id
-                                )
+                        OfficeHoursPreviousCommitmentResolutionCard(
+                            commitment: previousDebt,
+                            position: 1,
+                            total: previousCommitmentGate.totalCount,
+                            onAttachEvidence: {
+                                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: previousDebt, mode: .evidence)
                             },
-                            onConfess: { reason in
-                                // A confess-close records a deferral ("미룸"); it opens no new commitment.
-                                _ = viewModel.markDayStep(
-                                    day: activeDay,
-                                    stepId: stepId,
-                                    status: .done,
-                                    confession: reason,
-                                    sessionID: session?.id
-                                )
+                            onCarryForward: {
+                                _ = viewModel.carryForwardOfficeHoursCommitment(commitmentId: previousDebt.id)
+                            },
+                            onAbandon: {
+                                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: previousDebt, mode: .abandon)
                             }
                         )
                         .transition(.officeHoursPromptReveal)
-                    } else if session?.status != .running {
-                        // run이 이미 끝났는데 후보 생성만 남은 짧은 구간 — 메인 로더 자리가
-                        // 비므로 여기서 amber 로더로 이어받는다. run이 도는 동안에는 타임
-                        // 라인의 "약속 준비 중" 로더가 보이고 있어 중복 로더를 만들지 않는다.
-                        Rectangle()
-                            .fill(OpenDesignOfficeHoursColor.borderSoft)
-                            .frame(height: 1)
-                            .padding(.top, 6)
-                        officeHoursQuestionLoader(
-                            title: "약속 준비 중",
-                            detail: "이번 답변 기반 · 고객 행동 후보 · 직접 적기 가능",
-                            accent: OpenDesignOfficeHoursColor.amber
-                        )
                     }
-                }
-                .id(Self.officeHoursCommitmentBarID)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: commitmentRevealed)
-                .task(id: sessionID) {
-                    guard !sessionID.isEmpty else { return }
-                    guard !officeHoursCommitmentCandidateRequestedSessions.contains(sessionID) else { return }
-                    officeHoursCommitmentCandidateRequestedSessions.insert(sessionID)
-                    _ = viewModel.requestOfficeHoursCommitmentCandidates(
-                        sessionID: sessionID,
-                        day: activeDay,
-                        provider: session?.provider
-                    )
-                    // 버전 스큐 안전망: 옛 사이드카가 요청을 모르면 ready가 영영 안 온다 —
-                    // 일정 시간 뒤 빈 결과로 강제 resolve해 약속 닫기가 로더에 갇히지 않게 한다.
-                    try? await Task.sleep(nanoseconds: 45_000_000_000)
-                    viewModel.resolveStalledOfficeHoursCommitmentCandidates(sessionID: sessionID)
+                    .id(Self.officeHoursCommitmentBarID)
+                    .transition(.officeHoursPromptReveal)
+                } else {
+                    // 약속도 인터뷰처럼: 카드를 열기 전에 이번 인터뷰의 답변에서 후보 액션을
+                    // 만들어 온다(사이드카 생성, 제안일 뿐 — 저장되는 약속은 항상 사용자가
+                    // 고르거나 고쳐 쓴 문장이라 user-origin 게이트는 그대로다). 후보가 resolve
+                    // 되기 전에는 카드를 잡아두고, 메인 로더("약속 준비 중")가 꺼진 뒤에도
+                    // 생성이 남아 있으면 같은 amber 로더로 그 박자를 채운다.
+                    let sessionID = session?.id ?? ""
+                    let candidates = sessionID.isEmpty ? nil : viewModel.officeHoursCommitmentCandidatesBySession[sessionID]
+                    let commitmentRevealed = sessionID.isEmpty
+                        || candidates != nil
+                        || (officeHoursCommitmentCandidateRequestedSessions.contains(sessionID)
+                            && !viewModel.officeHoursCommitmentCandidatesGenerating.contains(sessionID))
+                    // 마지막 질문 답변과 약속 게이트 사이에 호흡을 둔다 — 연한 구분선으로 '이제
+                    // 인터뷰 마무리'로의 전환을 분리(질문 흐름과 종료 흐름을 한 박자 띄운다).
+                    VStack(spacing: 14) {
+                        if commitmentRevealed {
+                            Rectangle()
+                                .fill(OpenDesignOfficeHoursColor.borderSoft)
+                                .frame(height: 1)
+                                .padding(.top, 6)
+                            OfficeHoursCommitmentBarView(
+                                // Scope the gate nudge to the step that was actually held (gatedStep).
+                                gateMessage: (viewModel.commitmentGateStep == nil || viewModel.commitmentGateStep == stepId)
+                                    ? viewModel.commitmentGateMessage : nil,
+                                suggestedActions: officeHoursCommitmentSuggestions(sidecarCandidates: candidates ?? []),
+                                deferralStreak: viewModel.officeHoursMemory?.consecutiveDeferrals ?? 0,
+                                onCommit: { action in
+                                    // user-origin: the founder's chosen/typed next customer action (one line).
+                                    _ = viewModel.markDayStep(
+                                        day: activeDay,
+                                        stepId: stepId,
+                                        status: .done,
+                                        commitmentText: action,
+                                        sessionID: session?.id
+                                    )
+                                },
+                                onConfess: { reason in
+                                    // A confess-close records a deferral ("미룸"); it opens no new commitment.
+                                    _ = viewModel.markDayStep(
+                                        day: activeDay,
+                                        stepId: stepId,
+                                        status: .done,
+                                        confession: reason,
+                                        sessionID: session?.id
+                                    )
+                                }
+                            )
+                            .transition(.officeHoursPromptReveal)
+                        } else if session?.status != .running {
+                            // run이 이미 끝났는데 후보 생성만 남은 짧은 구간 — 메인 로더 자리가
+                            // 비므로 여기서 amber 로더로 이어받는다. run이 도는 동안에는 타임
+                            // 라인의 "약속 준비 중" 로더가 보이고 있어 중복 로더를 만들지 않는다.
+                            Rectangle()
+                                .fill(OpenDesignOfficeHoursColor.borderSoft)
+                                .frame(height: 1)
+                                .padding(.top, 6)
+                            officeHoursQuestionLoader(
+                                title: "약속 준비 중",
+                                detail: "이번 답변 기반 · 고객 행동 후보 · 직접 적기 가능",
+                                accent: OpenDesignOfficeHoursColor.amber
+                            )
+                        }
+                    }
+                    .id(Self.officeHoursCommitmentBarID)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: commitmentRevealed)
+                    .task(id: sessionID) {
+                        guard !sessionID.isEmpty else { return }
+                        guard !officeHoursCommitmentCandidateRequestedSessions.contains(sessionID) else { return }
+                        officeHoursCommitmentCandidateRequestedSessions.insert(sessionID)
+                        _ = viewModel.requestOfficeHoursCommitmentCandidates(
+                            sessionID: sessionID,
+                            day: activeDay,
+                            provider: session?.provider
+                        )
+                        // 버전 스큐 안전망: 옛 사이드카가 요청을 모르면 ready가 영영 안 온다 —
+                        // 일정 시간 뒤 빈 결과로 강제 resolve해 약속 닫기가 로더에 갇히지 않게 한다.
+                        try? await Task.sleep(nanoseconds: 45_000_000_000)
+                        viewModel.resolveStalledOfficeHoursCommitmentCandidates(sessionID: sessionID)
+                    }
                 }
             }
         }
@@ -3636,17 +3436,11 @@ struct ContentView: View {
         .accessibilityIdentifier(Self.officeHoursDay1CompleteButtonID)
     }
 
-    // 약속 카드의 행동 후보(≤3) — ① 사이드카가 이번 인터뷰 6답변에서 생성한 후보(우선) ②
-    // 직전 인터뷰의 미증명 부채 ③ 메모리의 open thread. ①은 제안일 뿐이고(고르거나 직접
-    // 고쳐 쓰는 건 사용자), ②③은 사용자 자신의 과거 약속/스레드라 user-origin 원칙과
-    // 충돌하지 않는다. 사이드카 미연결/구버전이면 ①이 비어 기존 로컬 폴백 그대로다.
+    // 약속 카드의 행동 후보(≤3) — ① 사이드카가 이번 인터뷰 6답변에서 생성한 후보(우선)
+    // ② 메모리의 open thread. 이전 약속 부채는 위의 해결 카드에서만 다루고, 새 약속
+    // 후보에는 다시 섞지 않는다.
     private func officeHoursCommitmentSuggestions(sidecarCandidates: [String] = []) -> [String] {
         var raw: [String] = sidecarCandidates
-        if let evidenceOS = viewModel.evidenceOS {
-            for debt in evidenceOS.overdueDebts + evidenceOS.openDebts {
-                raw.append(debt.message.nonEmpty ?? debt.text)
-            }
-        }
         if let threads = viewModel.officeHoursMemory?.openThreads {
             raw.append(contentsOf: threads)
         }
@@ -3654,44 +3448,35 @@ struct ContentView: View {
         var result: [String] = []
         for candidate in raw {
             let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !seen.contains(trimmed) else { continue }
-            seen.insert(trimmed)
+            let key = OfficeHoursPreviousCommitmentGate.suggestionKey(for: trimmed)
+            guard !trimmed.isEmpty,
+                  !key.isEmpty,
+                  !seen.contains(key),
+                  !OfficeHoursPreviousCommitmentGate.isActiveDebtSuggestion(trimmed, evidenceOS: viewModel.evidenceOS) else { continue }
+            seen.insert(key)
             result.append(trimmed)
             if result.count == 3 { break }
         }
         return result
     }
 
-    // 부채 배너 — 약속 카드 바로 위. 기존 Evidence OS 데이터·abandon 시트를 재사용한다.
+    // 부채 배너 — 약속 카드 바로 위. 기존 Evidence OS 증거/이월/포기 처리를 재사용한다.
     @ViewBuilder
     private func officeHoursCommitmentDebtBanner(_ debt: CommitmentRecord) -> some View {
         let text = debt.message.nonEmpty ?? debt.text
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(OpenDesignOfficeHoursColor.rose)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("이전 약속: \"\(text)\"")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("증거 0 · 새 약속 전에 닫을래?")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                officeHoursCommitmentDebtCopy(text)
+                    .layoutPriority(1)
+                Spacer(minLength: 8)
+                officeHoursCommitmentDebtActions(debt)
+                    .fixedSize(horizontal: true, vertical: false)
             }
-            Spacer(minLength: 8)
-            Button("포기로 기록") {
-                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: debt, mode: .abandon)
+
+            VStack(alignment: .leading, spacing: 10) {
+                officeHoursCommitmentDebtCopy(text)
+                officeHoursCommitmentDebtActions(debt)
             }
-            .buttonStyle(.plain)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(OpenDesignOfficeHoursColor.border, lineWidth: 1)
-            )
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -3705,6 +3490,39 @@ struct ContentView: View {
                 .stroke(OpenDesignOfficeHoursColor.rose.opacity(0.42), lineWidth: 1)
         )
         .accessibilityIdentifier("opendesign.officeHours.commitmentDebtBanner")
+    }
+
+    private func officeHoursCommitmentDebtCopy(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("이전 약속: \"\(text)\"")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("증거 0 · 새 약속 전에 닫을래?")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func officeHoursCommitmentDebtActions(_ debt: CommitmentRecord) -> some View {
+        HStack(spacing: 6) {
+            officeHoursEvidenceActionButton(systemName: "paperclip", title: "증거") {
+                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: debt, mode: .evidence)
+            }
+            officeHoursEvidenceActionButton(systemName: "arrow.forward.circle", title: "이월") {
+                _ = viewModel.carryForwardOfficeHoursCommitment(commitmentId: debt.id)
+            }
+            officeHoursEvidenceActionButton(systemName: "xmark.circle", title: "포기") {
+                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: debt, mode: .abandon)
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 
     // §18 gate 차단 화면: milestone gate가 day 패치를 보류했을 때의 하드블록
@@ -3875,18 +3693,18 @@ struct ContentView: View {
     // Day timeline sidebar (IA): cumulative Day list, today on top, past newest-first,
     // skipped days collapsed into a chip. Falls back to the legacy mode row pre-scan.
     private func officeHoursSessionsSidebar(session: ChatSession?, activeDay: Int) -> some View {
-        VStack(spacing: 0) {
-            officeHoursTimelineHeader()
+        let timelinePlan = officeHoursSidebarTimelinePlan(activeDay: activeDay)
+        return VStack(spacing: 0) {
+            officeHoursTimelineHeader(displayDay: timelinePlan?.displayDay)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    if let progress = viewModel.dayProgress,
-                       let currentDay = progress.currentDayNumber() {
-                        officeHoursSidebarGroupTitle(officeHoursPhaseTitle(forDay: currentDay))
-                        ForEach(officeHoursTimelineRows(progress: progress, currentDay: currentDay)) { row in
+                    if let timelinePlan {
+                        officeHoursSidebarGroupTitle(officeHoursPhaseTitle(forDay: timelinePlan.displayDay))
+                        ForEach(officeHoursTimelineRows(plan: timelinePlan)) { row in
                             switch row {
                             case .day(let day):
-                                officeHoursTimelineDayRow(day: day, progress: progress, isToday: day == currentDay)
+                                officeHoursTimelineDayRow(day: day, progress: viewModel.dayProgress, isToday: day == timelinePlan.displayDay)
                             case .skip(let from, let to):
                                 officeHoursTimelineSkipChip(from: from, to: to)
                             }
@@ -3949,15 +3767,14 @@ struct ContentView: View {
         .background(OpenDesignOfficeHoursColor.bg)
     }
 
-    private func officeHoursTimelineHeader() -> some View {
-        let currentDay = viewModel.dayProgress?.currentDayNumber()
-        return HStack(spacing: 8) {
+    private func officeHoursTimelineHeader(displayDay: Int?) -> some View {
+        HStack(spacing: 8) {
             Text(officeHoursProjectName())
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(OpenDesignOfficeHoursColor.fg)
                 .lineLimit(1)
-            if let currentDay {
-                Text("Day \(currentDay)")
+            if let displayDay {
+                Text("Day \(displayDay)")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(OpenDesignOfficeHoursColor.accent)
                     .padding(.horizontal, 7)
@@ -3972,6 +3789,18 @@ struct ContentView: View {
         .accessibilityIdentifier("opendesign.officeHours.timeline.header")
     }
 
+    private func officeHoursSidebarTimelinePlan(activeDay: Int) -> OfficeHoursSidebarTimelinePlan? {
+        OfficeHoursSidebarTimelinePolicy.plan(
+            dateCurrentDay: viewModel.dayProgress?.currentDayNumber(),
+            activeDay: activeDay,
+            selectedFoundationDay: viewModel.selectedFoundationDay,
+            recordedDays: Set(viewModel.dayProgress?.days.values.map(\.day) ?? []),
+            evidenceDays: Set(viewModel.evidenceOS?.dayStates.keys.compactMap { Int($0) } ?? []),
+            completedDays: viewModel.foundationProgressState.completedDays,
+            localDevelopmentFastForwardEnabled: LocalDevelopmentDayFastForward.isEnabled
+        )
+    }
+
     private func officeHoursProjectName() -> String {
         let root = viewModel.workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !root.isEmpty else { return "agentic30" }
@@ -3982,10 +3811,14 @@ struct ContentView: View {
         if let selectedTimelineDay, selectedTimelineDay > 0 {
             return selectedTimelineDay
         }
+        let fallbackDay = max(1, day)
         if let currentDay = viewModel.dayProgress?.currentDayNumber(), currentDay > 0 {
+            if LocalDevelopmentDayFastForward.isEnabled, fallbackDay > currentDay {
+                return fallbackDay
+            }
             return currentDay
         }
-        return max(1, day)
+        return fallbackDay
     }
 
     // Phase grouping (placeholder: backbone elapsed-day mapping; scan-adaptive phase
@@ -4005,34 +3838,73 @@ struct ContentView: View {
             ?? officeHoursBackboneGoal(forDay: day)
     }
 
-    private func officeHoursTimelineRows(progress: DayProgress, currentDay: Int) -> [OfficeHoursTimelineRow] {
-        var rows: [OfficeHoursTimelineRow] = [.day(currentDay)]
-        var emptyRun: [Int] = []
-        func flush() {
-            guard let hi = emptyRun.first, let lo = emptyRun.last else { return }
-            rows.append(.skip(from: lo, to: hi))
-            emptyRun.removeAll()
+    @discardableResult
+    private func primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: Int) -> Bool {
+        guard LocalDevelopmentDayFastForward.isEnabled, (2...3).contains(day) else { return false }
+        var sentAny = false
+        for patch in LocalDevelopmentDayProgressPrimer.patchRequests(
+            day: day,
+            record: viewModel.dayProgress?.record(forDay: day)
+        ) {
+            sentAny = viewModel.markDayStep(day: day, stepId: patch.stepId, status: patch.status) || sentAny
         }
-        var day = currentDay - 1
-        while day >= 1 {
-            if progress.record(forDay: day) != nil || viewModel.evidenceOS?.dayStates[String(day)] != nil {
-                flush()
-                rows.append(.day(day))
-            } else {
-                emptyRun.append(day)
-            }
-            day -= 1
-        }
-        flush()
-        return rows
+        return sentAny
     }
 
-    private func officeHoursTimelineDayRow(day: Int, progress: DayProgress, isToday: Bool) -> some View {
-        let record = progress.record(forDay: day)
+    private func autoAdvanceLocalDevFastForwardAfterDay2OfficeHoursIfNeeded() {
+        guard LocalDevelopmentDayFastForward.isEnabled,
+              let record = viewModel.dayProgress?.record(forDay: 2),
+              record.steps["interview"] == .done else {
+            return
+        }
+        let completionID = record.updatedAt.nonEmpty ?? "day2-interview-done"
+        guard localDevFastForwardAdvancedDay2CompletionID != completionID else { return }
+        guard viewModel.selectedFoundationDay <= 2
+                || !viewModel.foundationProgressState.completedDays.contains(2) else {
+            return
+        }
+
+        localDevFastForwardAdvancedDay2CompletionID = completionID
+        _ = viewModel.markFoundationDayCompleted(2)
+        selectedTimelineDay = nil
+        selectedPastReviewDay = nil
+        officeHoursStartedSessionIDs.removeAll()
+        officeHoursQuestionLoadingStartedAtBySession.removeAll()
+        officeHoursSubmittedPromptSnapshotsBySession.removeAll()
+        officeHoursActiveQuestionLoadersBySession.removeAll()
+        officeHoursRevisionInFlightSessionIDs.removeAll()
+        officeHoursSubmittedRevisionDraftsByPrompt.removeAll()
+        editingOfficeHoursSubmittedFreeTextID = nil
+        editingOfficeHoursSubmittedFreeTextValue = ""
+        officeHoursReadyPromptRevealIDs.removeAll()
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            clearOpenDesignReferenceRoute()
+            viewModel.selectFoundationDay(3)
+        }
+        primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: 3)
+        viewModel.ensureOfficeHoursSession(forDay: 3)
+    }
+
+    private func officeHoursTimelineRows(plan: OfficeHoursSidebarTimelinePlan) -> [OfficeHoursTimelineRow] {
+        plan.rows.map { row in
+            switch row {
+            case .day(let day):
+                return .day(day)
+            case .skip(let from, let to):
+                return .skip(from: from, to: to)
+            }
+        }
+    }
+
+    private func officeHoursTimelineDayRow(day: Int, progress: DayProgress?, isToday: Bool) -> some View {
+        let record = isToday && LocalDevelopmentDayFastForward.isEnabled
+            ? (progress ?? DayProgress()).recordOrDefault(forDay: day)
+            : progress?.record(forDay: day)
         let dayState = viewModel.evidenceOS?.dayStates[String(day)]
         let goal = record?.goalText.nonEmpty ?? dayState?.carryForwardAction?.nonEmpty ?? officeHoursBackboneGoal(forDay: day)
-        let complete = record?.isDisplayComplete ?? false
-        let incomplete = !isToday && ((record != nil && !complete) || dayState?.state == "not_started" || (dayState?.openDebtCount ?? 0) > 0)
+        let foundationComplete = viewModel.foundationProgressState.completedDays.contains(day)
+        let complete = (record?.isDisplayComplete ?? false) || foundationComplete
+        let incomplete = !isToday && !foundationComplete && ((record != nil && !complete) || dayState?.state == "not_started" || (dayState?.openDebtCount ?? 0) > 0)
         let liveSelectionIsActive = selectedPastReviewDay == nil
         let isSelected = selectedPastReviewDay == day
             || (liveSelectionIsActive && (isToday ? selectedTimelineDay == nil : selectedTimelineDay == day))
@@ -4800,13 +4672,15 @@ struct ContentView: View {
             .padding(.horizontal, 4)
     }
 
-    private func officeHoursStatusPill(session: ChatSession?) -> some View {
+    private func officeHoursStatusPill(session: ChatSession?, activeDay: Int) -> some View {
         let label: String
         if let session {
             switch session.status {
             case .idle:
-                if officeHoursIsDocReady(session: session) {
+                if officeHoursIsDocReady(session: session, activeDay: activeDay) {
                     label = "doc ready"
+                } else if officeHoursIsCommitReady(session: session, activeDay: activeDay) {
+                    label = "commit ready"
                 } else {
                     label = session.pendingUserInput == nil ? "ready" : "running"
                 }
@@ -4925,12 +4799,24 @@ struct ContentView: View {
                 .onChange(of: viewModel.dayProgress) { _, _ in
                     scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
                 }
+                .onChange(of: officeHoursDay1DocumentsWritten) { wasWritten, isWritten in
+                    guard !wasWritten, isWritten else { return }
+                    scrollOfficeHoursCommitmentBarAfterDocumentSave(proxy, session: session, activeDay: activeDay)
+                }
                 .onChange(of: officeHoursReadyPromptRevealIDs) { previous, current in
                     // The minimum-loading gate revealed a question (loader → prompt swap,
                     // content height changes). An explicit trigger here replaces the old
                     // blind 3.4–5.9s scroll retries that papered over this moment.
                     guard !current.subtracting(previous).isEmpty else { return }
                     scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
+                }
+                .onChange(of: pendingOfficeHoursRouteScrollRequest) { _, request in
+                    guard let request, request.sessionId == session?.id else { return }
+                    scrollOfficeHoursTranscript(
+                        proxy,
+                        target: officeHoursRouteScrollTarget(for: request, session: session, activeDay: activeDay),
+                        repinDelays: OfficeHoursTranscriptScrollPolicy.postLayoutRepinDelays
+                    )
                 }
                 .onChange(of: session.map {
                     OfficeHoursAutoStartPolicy.SessionProviderSnapshot(sessionID: $0.id, provider: $0.provider)
@@ -5840,8 +5726,11 @@ struct ContentView: View {
                         .id("office-hours-failure-\(session.id)")
                         .transition(.officeHoursPromptReveal)
                 } else if !timeline.isEmpty && session.status != .running {
-                    if officeHoursIsDocReady(session: session) {
+                    if officeHoursIsDocReady(session: session, activeDay: activeDay) {
                         officeHoursDocReadyBlock(session: session)
+                            .transition(.officeHoursPromptReveal)
+                    } else if officeHoursIsCommitReady(session: session, activeDay: activeDay) {
+                        officeHoursCompletionSummaryBlock(session: session, activeDay: activeDay)
                             .transition(.officeHoursPromptReveal)
                     } else {
                         // An idle session that hasn't finished its question
@@ -6274,12 +6163,20 @@ struct ContentView: View {
         }
     }
 
-    private func officeHoursIsDocReady(session: ChatSession) -> Bool {
+    private func officeHoursIsReadyToClose(session: ChatSession) -> Bool {
         let interviewComplete = officeHoursInterviewComplete(session: session)
         let blockingPendingInput = session.pendingUserInput != nil && !interviewComplete
         return !blockingPendingInput
             && session.status != .running
             && interviewComplete
+    }
+
+    private func officeHoursIsDocReady(session: ChatSession, activeDay: Int) -> Bool {
+        activeDay == 1 && officeHoursIsReadyToClose(session: session)
+    }
+
+    private func officeHoursIsCommitReady(session: ChatSession, activeDay: Int) -> Bool {
+        activeDay >= 2 && officeHoursIsReadyToClose(session: session)
     }
 
     private func officeHoursDocReadyBlock(session: ChatSession) -> some View {
@@ -6361,6 +6258,91 @@ struct ContentView: View {
         .accessibilityIdentifier("opendesign.officeHours.docReady")
     }
 
+    private func officeHoursCompletionSummaryBlock(session: ChatSession, activeDay: Int) -> some View {
+        let completed = min(
+            officeHoursCompletedQuestionCount(session: session),
+            selectedOfficeHoursMode.questionCount
+        )
+        let total = officeHoursQuestionTotal(session: session)
+        let goalLine = officeHoursGoalLine(forDay: activeDay)
+        return VStack(alignment: .leading, spacing: 0) {
+            Color.clear
+                .frame(height: 22)
+                .accessibilityHidden(true)
+                .id(Self.officeHoursCompletionSummaryHeaderID)
+
+            VStack(alignment: .leading, spacing: 12) {
+                officeHoursSectionHeader("인터뷰 완료", meta: "Final · 약속 필요")
+                VStack(alignment: .leading, spacing: 8.5) {
+                    HStack(spacing: 8) {
+                        Text("결론 · 오늘 행동")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                            .tracking(1.2)
+                            .textCase(.uppercase)
+                        Spacer(minLength: 0)
+                        Text("\(completed) / \(total)")
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                            .padding(.horizontal, 8)
+                            .frame(height: 20)
+                            .background(Capsule().fill(OpenDesignOfficeHoursColor.accentDim))
+                            .overlay(Capsule().stroke(OpenDesignOfficeHoursColor.accentLine, lineWidth: 1))
+                    }
+
+                    OfficeHoursAttributedInlineTypewriterText(
+                        text: "답변 \(completed)개를 오늘 목표와 묶었습니다. 오늘 목표는 \(goalLine)입니다.",
+                        highlightPhrases: [goalLine],
+                        reduceMotion: reduceMotion,
+                        baseSpeedMilliseconds: 5
+                    )
+                    .frame(maxWidth: 668, alignment: .leading)
+
+                    OfficeHoursAttributedInlineTypewriterText(
+                        text: "아래 약속 카드에서 오늘 남길 고객 행동을 고정합니다.",
+                        highlightPhrases: ["오늘 남길 고객 행동"],
+                        reduceMotion: reduceMotion,
+                        baseSpeedMilliseconds: 5
+                    )
+                    .frame(maxWidth: 668, alignment: .leading)
+                    .padding(.bottom, 6)
+
+                    HStack(spacing: 14) {
+                        officeHoursDocCriterion("답변 정리")
+                        officeHoursDocCriterion("목표 연결")
+                        officeHoursDocCriterion("약속 필요")
+                    }
+                    .padding(.top, 12)
+                    .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .top)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 18)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [OpenDesignOfficeHoursColor.surface, OpenDesignOfficeHoursColor.surface2],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(OpenDesignOfficeHoursColor.border, lineWidth: 1)
+                        )
+                )
+                .overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(OpenDesignOfficeHoursColor.accent)
+                        .frame(width: 3)
+                        .shadow(color: OpenDesignOfficeHoursColor.accent.opacity(0.45), radius: 7)
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.officeHours.completionSummary")
+    }
+
     private func officeHoursDocCriterion(_ title: String) -> some View {
         HStack(spacing: 6) {
             Text("✓")
@@ -6372,9 +6354,9 @@ struct ContentView: View {
         }
     }
 
-    private func officeHoursCanSaveDoc(session: ChatSession?) -> Bool {
+    private func officeHoursCanSaveDoc(session: ChatSession?, activeDay: Int) -> Bool {
         guard let session else { return false }
-        return officeHoursIsDocReady(session: session)
+        return officeHoursIsDocReady(session: session, activeDay: activeDay)
     }
 
     private var officeHoursDocumentSpecs: [(type: String, title: String, path: String)] {
@@ -6708,8 +6690,15 @@ struct ContentView: View {
 
     private func completeOfficeHoursDay1AndAdvance() {
         _ = viewModel.markFoundationDayCompleted(1)
+        selectedTimelineDay = nil
+        selectedPastReviewDay = nil
+        officeHoursStartedSessionIDs.removeAll()
         clearOpenDesignReferenceRoute()
         viewModel.selectFoundationDay(2)
+        if LocalDevelopmentDayFastForward.isEnabled {
+            primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: 2)
+            viewModel.ensureOfficeHoursSession(forDay: 2)
+        }
     }
 
     private func officeHoursDesignDocPreview(
@@ -7447,7 +7436,8 @@ struct ContentView: View {
         value: String,
         editable: Bool
     ) -> some View {
-        let isRequiredText = question.requiresFreeText == true
+        let hasOptions = question.options?.isEmpty == false
+        let isRequiredText = question.requiresFreeText == true && !hasOptions
         let stagedSubmission = officeHoursStagedSubmittedSubmission(for: question, snapshot: snapshot, session: session)
         let stagedFreeText = stagedSubmission?.freeText.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasPendingFreeText = stagedSubmission != nil
@@ -7469,7 +7459,7 @@ struct ContentView: View {
         }
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(isRequiredText ? "근거 문장 입력" : "선택지에 없으면 입력")
+                Text(isRequiredText ? "근거 문장 입력" : hasOptions ? "근거 추가 선택사항" : "선택지에 없으면 입력")
                 Spacer(minLength: 0)
                 Text(hasPendingFreeText ? "수정 예정" : editable ? "클릭해 수정" : "제출됨")
                     .foregroundStyle(hasPendingFreeText ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.mutedDeep)
@@ -7829,9 +7819,8 @@ struct ContentView: View {
         let hasOptions = question.options?.isEmpty == false
         let isRequiredTextOnly = question.requiresFreeText == true && !hasOptions
         let draft = viewModel.structuredPromptDraft(for: question, in: prompt)
-        let pickedCount = hasOptions
-            ? (draft.selectedOptions.isEmpty ? 0 : 1)
-            : (draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : 1)
+        let trimmedFreeText = draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pickedCount = draft.selectedOptions.isEmpty && trimmedFreeText.isEmpty ? 0 : 1
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 HStack(spacing: 8) {
@@ -8003,16 +7992,17 @@ struct ContentView: View {
         prompt: StructuredPromptRequest,
         isDisabled: Bool
     ) -> some View {
-        let isRequiredText = question.requiresFreeText == true
+        let hasOptions = question.options?.isEmpty == false
+        let isRequiredText = question.requiresFreeText == true && !hasOptions
         let placeholder = question.freeTextPlaceholder?.nonEmpty ?? "예: 실제 사용자, 현재 대안, 이번 주 행동"
         let focusID = "office-hours-free-text-\(prompt.requestId)-\(question.id)"
         let showsPromptFocusRing = !isDisabled
             && focusedOfficeHoursStructuredFreeTextID == focusID
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(isRequiredText ? "근거 문장 입력" : "선택지에 없으면 입력")
+                Text(isRequiredText ? "근거 문장 입력" : hasOptions ? "근거 추가 선택사항" : "선택지에 없으면 입력")
                 Spacer(minLength: 0)
-                Text(isRequiredText ? "필수" : "Enter 제출")
+                Text(isRequiredText ? "필수" : hasOptions ? "선택사항" : "Enter 제출")
                     .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
                     .tracking(0.4)
             }
@@ -8096,6 +8086,10 @@ struct ContentView: View {
         .padding(.bottom, 13)
         .background(OpenDesignOfficeHoursColor.bgDeep)
         .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .top)
+        .onChange(of: focusedOfficeHoursStructuredFreeTextID) { _, current in
+            guard !isDisabled, current == focusID else { return }
+            viewModel.activateStructuredPromptFreeText(for: question, in: prompt)
+        }
         .onDisappear {
             if focusedOfficeHoursStructuredFreeTextID == focusID {
                 focusedOfficeHoursStructuredFreeTextID = nil
@@ -8106,10 +8100,13 @@ struct ContentView: View {
     private func officeHoursStructuredPromptHintParts(
         _ prompt: StructuredPromptRequest
     ) -> (label: String, name: String?) {
-        guard let selected = officeHoursSelectedOptionInfo(prompt) else {
-            return ("미선택", nil)
+        if let selected = officeHoursSelectedOptionInfo(prompt) {
+            return ("선택됨 · \(selected.index)번", selected.label)
         }
-        return ("선택됨 · \(selected.index)번", selected.label)
+        if let freeText = officeHoursFreeTextAnswerInfo(prompt) {
+            return ("입력됨", freeText)
+        }
+        return ("미선택", nil)
     }
 
     private func officeHoursSelectedOptionInfo(
@@ -8120,6 +8117,16 @@ struct ContentView: View {
             guard let selectedLabel = draft.selectedOptions.first else { continue }
             let index = (question.options ?? []).firstIndex { $0.label == selectedLabel }.map { $0 + 1 } ?? 1
             return (index, selectedLabel)
+        }
+        return nil
+    }
+
+    private func officeHoursFreeTextAnswerInfo(_ prompt: StructuredPromptRequest) -> String? {
+        for question in prompt.questions {
+            let draft = viewModel.structuredPromptDraft(for: question, in: prompt)
+            let trimmed = draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            return officeHoursCompactDocText(trimmed, max: 48)
         }
         return nil
     }
@@ -8140,6 +8147,45 @@ struct ContentView: View {
         .background(openDesignOfficeHoursBackground(cornerRadius: 10, fill: OpenDesignOfficeHoursColor.surface))
     }
 
+    private func officeHoursMetaSummaryRows(session: ChatSession?, activeDay: Int) -> some View {
+        let previewRows = officeHoursDocPreviewRows(session: session, activeDay: activeDay)
+        return VStack(alignment: .leading, spacing: 10) {
+            VStack(spacing: 9) {
+                ForEach(Array(previewRows.enumerated()), id: \.offset) { index, row in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(row.label)
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        Spacer(minLength: 0)
+                        Text(row.value)
+                            .font(.system(size: 11.25, weight: .regular))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                            .multilineTextAlignment(.trailing)
+                            .lineLimit(2)
+                    }
+                    .frame(minHeight: 18, alignment: .center)
+                    .padding(.bottom, index < previewRows.count - 1 ? 8 : 0)
+                    .overlay(alignment: .bottom) {
+                        if index < previewRows.count - 1 {
+                            Rectangle()
+                                .fill(OpenDesignOfficeHoursColor.borderSoft)
+                                .frame(height: 1)
+                        }
+                    }
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(OpenDesignOfficeHoursColor.bgDarker)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                    )
+            )
+        }
+    }
+
     private func officeHoursMetaPanel(session: ChatSession?, activeDay: Int) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
@@ -8147,7 +8193,7 @@ struct ContentView: View {
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(OpenDesignOfficeHoursColor.fg)
                 Spacer(minLength: 0)
-                officeHoursStatusPill(session: session)
+                officeHoursStatusPill(session: session, activeDay: activeDay)
             }
             .padding(.horizontal, 16)
             .frame(height: 47)
@@ -8190,53 +8236,28 @@ struct ContentView: View {
                         }
                     }
 
-                    officeHoursMetaCard(
-                        title: "Design doc 초안",
-                        trailing: nil,
-                        actionTitle: officeHoursMetaDocSaveTitle,
-                        actionDisabled: !officeHoursCanSaveDoc(session: session) || officeHoursDay1DocumentsWritten || officeHoursDocumentHandoffBusy,
-                        action: {
-                            if let session {
-                                startOfficeHoursDocumentHandoff(session: session)
-                            }
-                        },
-                        fixedHeight: 226
-                    ) {
-                        let previewRows = officeHoursDocPreviewRows(session: session, activeDay: activeDay)
-                        VStack(alignment: .leading, spacing: 10) {
-                            VStack(spacing: 9) {
-                                ForEach(Array(previewRows.enumerated()), id: \.offset) { index, row in
-                                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                        Text(row.label)
-                                            .font(.system(size: 11, weight: .regular))
-                                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
-                                        Spacer(minLength: 0)
-                                        Text(row.value)
-                                            .font(.system(size: 11.25, weight: .regular))
-                                            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                                            .multilineTextAlignment(.trailing)
-                                            .lineLimit(2)
-                                    }
-                                    .frame(minHeight: 18, alignment: .center)
-                                    .padding(.bottom, index < previewRows.count - 1 ? 8 : 0)
-                                    .overlay(alignment: .bottom) {
-                                        if index < previewRows.count - 1 {
-                                            Rectangle()
-                                                .fill(OpenDesignOfficeHoursColor.borderSoft)
-                                                .frame(height: 1)
-                                        }
-                                    }
+                    if activeDay == 1 {
+                        officeHoursMetaCard(
+                            title: "Design doc 초안",
+                            trailing: nil,
+                            actionTitle: officeHoursMetaDocSaveTitle,
+                            actionDisabled: !officeHoursCanSaveDoc(session: session, activeDay: activeDay) || officeHoursDay1DocumentsWritten || officeHoursDocumentHandoffBusy,
+                            action: {
+                                if let session {
+                                    startOfficeHoursDocumentHandoff(session: session)
                                 }
-                            }
-                            .padding(12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(OpenDesignOfficeHoursColor.bgDarker)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
-                                    )
-                            )
+                            },
+                            fixedHeight: 226
+                        ) {
+                            officeHoursMetaSummaryRows(session: session, activeDay: activeDay)
+                        }
+                    } else {
+                        officeHoursMetaCard(
+                            title: "인터뷰 완료 요약",
+                            trailing: session.map { officeHoursIsCommitReady(session: $0, activeDay: activeDay) } == true ? "약속 필요" : nil,
+                            fixedHeight: 226
+                        ) {
+                            officeHoursMetaSummaryRows(session: session, activeDay: activeDay)
                         }
                     }
 
@@ -8731,7 +8752,7 @@ struct ContentView: View {
             let snapshots = officeHoursSubmittedPromptSnapshots(for: session)
             return (snapshots.isEmpty ? Self.officeHoursQuestionStageTopID : loader.requestId, .top)
         }
-        if officeHoursIsDocReady(session: session) {
+        if officeHoursIsDocReady(session: session, activeDay: activeDay) {
             if officeHoursDay1DocumentsWritten {
                 if officeHoursDay1CommitmentClosed(activeDay: activeDay) {
                     return (Self.officeHoursDay1CompleteButtonID, .top)
@@ -8742,6 +8763,9 @@ struct ContentView: View {
                 return (Self.officeHoursDocReadyHeaderID, .top)
             }
             return (Self.officeHoursDocReadyHeaderID, .top)
+        }
+        if officeHoursIsCommitReady(session: session, activeDay: activeDay) {
+            return (Self.officeHoursCompletionSummaryHeaderID, .top)
         }
         return (Self.officeHoursTranscriptBottomID, .bottom)
     }
@@ -8754,10 +8778,59 @@ struct ContentView: View {
         "\(requestID)-pending-scroll"
     }
 
+    private func officeHoursRouteScrollTarget(
+        for request: OfficeHoursRouteScrollRequest,
+        session: ChatSession?,
+        activeDay: Int
+    ) -> (id: String, anchor: UnitPoint) {
+        guard let requestId = request.requestId,
+              let session else {
+            return officeHoursScrollTarget(for: session, activeDay: activeDay)
+        }
+
+        let snapshots = officeHoursSubmittedPromptSnapshots(for: session)
+        if let snapshot = snapshots.first(where: { $0.requestId == requestId }) {
+            return (snapshot.id, .top)
+        }
+
+        if session.pendingUserInput?.requestId == requestId {
+            if snapshots.isEmpty {
+                return (officeHoursPendingPromptScrollID(for: requestId), .top)
+            }
+            return (officeHoursPendingPromptHeaderID(for: requestId), .top)
+        }
+
+        return officeHoursScrollTarget(for: session, activeDay: activeDay)
+    }
+
     private func scrollOfficeHoursTranscript(_ proxy: ScrollViewProxy, session: ChatSession?, activeDay: Int) {
+        scrollOfficeHoursTranscript(
+            proxy,
+            target: officeHoursScrollTarget(for: session, activeDay: activeDay),
+            repinDelays: OfficeHoursTranscriptScrollPolicy.repinDelays
+        )
+    }
+
+    private func scrollOfficeHoursCommitmentBarAfterDocumentSave(
+        _ proxy: ScrollViewProxy,
+        session: ChatSession?,
+        activeDay: Int
+    ) {
+        guard shouldRenderOfficeHoursCommitmentBar(session: session, activeDay: activeDay) else { return }
+        scrollOfficeHoursTranscript(
+            proxy,
+            target: (Self.officeHoursCommitmentBarID, .top),
+            repinDelays: OfficeHoursTranscriptScrollPolicy.postLayoutRepinDelays
+        )
+    }
+
+    private func scrollOfficeHoursTranscript(
+        _ proxy: ScrollViewProxy,
+        target: (id: String, anchor: UnitPoint),
+        repinDelays: [TimeInterval]
+    ) {
         officeHoursScrollGeneration &+= 1
         let generation = officeHoursScrollGeneration
-        let target = officeHoursScrollTarget(for: session, activeDay: activeDay)
         let performScroll = {
             guard OfficeHoursTranscriptScrollPolicy.shouldPerform(
                 requestGeneration: generation,
@@ -8773,7 +8846,7 @@ struct ContentView: View {
         }
         DispatchQueue.main.async {
             performScroll()
-            for delay in OfficeHoursTranscriptScrollPolicy.repinDelays {
+            for delay in repinDelays {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                     performScroll()
                 }
@@ -9153,6 +9226,7 @@ struct ContentView: View {
     ) {
         selectedOfficeHoursMode = mode
         guard viewModel.day1GoalSelection != nil else { return }
+        primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: day)
         guard let session else {
             pendingOfficeHoursStartMode = mode
             pendingOfficeHoursStartDay = day
@@ -9287,6 +9361,7 @@ struct ContentView: View {
         ) else { return }
 
         guard viewModel.day1GoalSelection != nil else { return }
+        primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: day)
         selectedOfficeHoursMode = .startup
         officeHoursReadyPromptRevealIDs = Set(
             officeHoursReadyPromptRevealIDs.filter { !$0.hasPrefix("\(session.id)::") }
@@ -10128,6 +10203,58 @@ struct ContentView: View {
         }
     }
 
+    private func openAppRoute(from notification: Notification) {
+        guard let route = AgenticAppRoute(
+            notificationUserInfo: notification.userInfo ?? [:],
+            telemetrySource: "workspace_route"
+        ) else {
+            return
+        }
+        openAppRoute(route)
+    }
+
+    private func openAppRoute(_ route: AgenticAppRoute) {
+        switch route.destination {
+        case .settings(let section):
+            if let section {
+                selectedSettingsSection = section
+            }
+            openOpenDesignSettingsRoute()
+        case .officeHoursQuestion(let sessionId, let requestId):
+            routeToOfficeHoursQuestion(sessionId: sessionId, requestId: requestId)
+        case .openDesign(let route, let day, let anchor, let placement):
+            openOpenDesignRoute(route, day: day, anchor: anchor, placement: placement)
+        case .document:
+            openOpenDesignRoute(.document)
+        }
+    }
+
+    private func routeToOfficeHoursQuestion(sessionId: String, requestId: String?) {
+        let session = viewModel.sessions.first(where: { $0.id == sessionId })
+        if let session {
+            viewModel.selectSession(session.id)
+        }
+
+        let activeDay = session?.runtime?.officeHours?.day
+            ?? activeOfficeHoursDay(fallback: workspaceOpenDesignDay.day)
+        if OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: activeDay),
+           viewModel.isFoundationDayUnlocked(activeDay) {
+            viewModel.selectFoundationDay(activeDay)
+        }
+        selectedPastReviewDay = nil
+        selectedTimelineDay = activeDay
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            selectedOpenDesignReferencePage = nil
+            isOpenDesignMorningBriefingPresented = false
+            isBipMissionRoutePresented = false
+            isOpenDesignOfficeHoursPresented = true
+        }
+        pendingOfficeHoursRouteScrollRequest = OfficeHoursRouteScrollRequest(
+            sessionId: sessionId,
+            requestId: requestId
+        )
+    }
+
     private func openOpenDesignRoute(from notification: Notification) {
         guard let rawRoute = notification.userInfo?[LongRunningCompletionNotification.routeUserInfoKey] as? String,
               let route = LongRunningCompletionRoute(rawValue: rawRoute) else {
@@ -10136,7 +10263,12 @@ struct ContentView: View {
         openOpenDesignRoute(route)
     }
 
-    private func openOpenDesignRoute(_ route: LongRunningCompletionRoute) {
+    private func openOpenDesignRoute(
+        _ route: LongRunningCompletionRoute,
+        day requestedDay: Int? = nil,
+        anchor: String? = nil,
+        placement: AgenticAppRoute.Placement = .section
+    ) {
         switch route {
         case .morningBriefing:
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
@@ -10145,8 +10277,11 @@ struct ContentView: View {
                 isBipMissionRoutePresented = false
                 isOpenDesignMorningBriefingPresented = true
             }
+            if let anchor {
+                pendingMorningBriefingScrollRequest = MorningBriefingScrollRequest(id: anchor)
+            }
         case .day1:
-            let day = 1
+            let day = requestedDay ?? 1
             if OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: day),
                viewModel.isFoundationDayUnlocked(day) {
                 viewModel.selectFoundationDay(day)
@@ -10159,6 +10294,7 @@ struct ContentView: View {
                 isOpenDesignMorningBriefingPresented = false
                 isBipMissionRoutePresented = false
             }
+            requestOpenDesignScroll(anchor: anchor, placement: placement)
         case .history:
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                 selectedOpenDesignReferencePage = .history
@@ -10190,6 +10326,17 @@ struct ContentView: View {
                 isBipMissionRoutePresented = false
             }
         }
+    }
+
+    private func requestOpenDesignScroll(anchor: String?, placement: AgenticAppRoute.Placement) {
+        guard let rawAnchor = anchor,
+              let target = OpenDesignSectionAnchor(rawValue: rawAnchor) else {
+            return
+        }
+        pendingOpenDesignScrollRequest = OpenDesignScrollRequest(
+            target: target,
+            placement: placement == .action ? .nextAction : .sectionContext
+        )
     }
 
     private func handleWorkspaceScanBlockedAuthAction(_ readiness: WorkspaceScanProviderReadiness) {
@@ -10225,7 +10372,12 @@ struct ContentView: View {
               viewModel.isFoundationDayUnlocked(nextDay) else { return }
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
             clearOpenDesignReferenceRoute()
+            selectedTimelineDay = nil
             viewModel.selectFoundationDay(nextDay)
+        }
+        if LocalDevelopmentDayFastForward.isEnabled, (2...3).contains(nextDay) {
+            primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: nextDay)
+            viewModel.ensureOfficeHoursSession(forDay: nextDay)
         }
     }
 
@@ -10242,6 +10394,7 @@ struct ContentView: View {
         isBipMissionRoutePresented = false
         selectedPastReviewDay = nil
         selectedTimelineDay = nil
+        localDevFastForwardAdvancedDay2CompletionID = nil
         openDesignDayInteractionStateCache.removeAll()
         officeHoursStartedSessionIDs.removeAll()
         officeHoursRealProjectTestState = .idle
@@ -12939,17 +13092,150 @@ private struct BipReadinessGroup: Identifiable, Hashable {
 }
 
 struct OpenDesignReferenceRoutePolicy {
-    static func supportsOpenDesignDay(dayNumber: Int) -> Bool {
-        dayNumber == 1 || dayNumber == 2
+    static func supportsOpenDesignDay(
+        dayNumber: Int,
+        localDevelopmentFastForwardEnabled: Bool = LocalDevelopmentDayFastForward.isEnabled
+    ) -> Bool {
+        dayNumber == 1 || dayNumber == 2 || (localDevelopmentFastForwardEnabled && dayNumber == 3)
+    }
+}
+
+enum LocalDevelopmentDayProgressPrimer {
+    struct PatchRequest: Equatable {
+        let stepId: String
+        let status: DayStepStatus
+    }
+
+    static func patchRequests(day: Int, record: DayRecord?) -> [PatchRequest] {
+        guard (2...3).contains(day) else { return [] }
+        return [
+            PatchRequest(stepId: "scan", status: .done),
+            PatchRequest(stepId: "retro", status: .done),
+            PatchRequest(stepId: "goal", status: .done),
+            PatchRequest(stepId: "interview", status: .active),
+        ].filter { patch in
+            let current = record?.steps[patch.stepId]
+            return current != patch.status && current != .done
+        }
     }
 }
 
 enum OpenDesignWorkspaceDayResolver {
-    static func dayNumber(selectedDay: Int, completedDays: Set<Int>) -> Int {
-        if OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: selectedDay) {
+    static func dayNumber(
+        selectedDay: Int,
+        completedDays: Set<Int>,
+        localDevelopmentFastForwardEnabled: Bool = LocalDevelopmentDayFastForward.isEnabled
+    ) -> Int {
+        if OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(
+            dayNumber: selectedDay,
+            localDevelopmentFastForwardEnabled: localDevelopmentFastForwardEnabled
+        ) {
             return selectedDay
         }
         return completedDays.contains(1) ? 2 : 1
+    }
+}
+
+struct OfficeHoursSidebarTimelinePlan: Equatable {
+    enum Row: Equatable {
+        case day(Int)
+        case skip(from: Int, to: Int)
+    }
+
+    let displayDay: Int
+    let rows: [Row]
+
+    var dayNumbers: [Int] {
+        rows.compactMap { row in
+            if case .day(let day) = row {
+                return day
+            }
+            return nil
+        }
+    }
+}
+
+enum OfficeHoursSidebarTimelinePolicy {
+    static func plan(
+        dateCurrentDay: Int?,
+        activeDay: Int,
+        selectedFoundationDay: Int,
+        recordedDays: Set<Int>,
+        evidenceDays: Set<Int>,
+        completedDays: Set<Int>,
+        localDevelopmentFastForwardEnabled: Bool
+    ) -> OfficeHoursSidebarTimelinePlan? {
+        guard let displayDay = displayDay(
+            dateCurrentDay: dateCurrentDay,
+            activeDay: activeDay,
+            selectedFoundationDay: selectedFoundationDay,
+            localDevelopmentFastForwardEnabled: localDevelopmentFastForwardEnabled
+        ) else {
+            return nil
+        }
+        return OfficeHoursSidebarTimelinePlan(
+            displayDay: displayDay,
+            rows: rows(
+                displayDay: displayDay,
+                recordedDays: recordedDays,
+                evidenceDays: evidenceDays,
+                completedDays: completedDays
+            )
+        )
+    }
+
+    static func displayDay(
+        dateCurrentDay: Int?,
+        activeDay: Int,
+        selectedFoundationDay: Int,
+        localDevelopmentFastForwardEnabled: Bool
+    ) -> Int? {
+        let normalizedDateDay = normalizedDay(dateCurrentDay)
+        guard localDevelopmentFastForwardEnabled else {
+            return normalizedDateDay
+        }
+        let futureDevDays = [
+            normalizedDay(activeDay),
+            normalizedDay(selectedFoundationDay),
+        ]
+            .compactMap { $0 }
+            .filter { $0 > 1 }
+        return ([normalizedDateDay] + futureDevDays).compactMap { $0 }.max()
+    }
+
+    private static func rows(
+        displayDay: Int,
+        recordedDays: Set<Int>,
+        evidenceDays: Set<Int>,
+        completedDays: Set<Int>
+    ) -> [OfficeHoursSidebarTimelinePlan.Row] {
+        var rows: [OfficeHoursSidebarTimelinePlan.Row] = [.day(displayDay)]
+        let visiblePastDays = recordedDays.union(evidenceDays).union(completedDays)
+        var emptyRun: [Int] = []
+
+        func flush() {
+            guard let hi = emptyRun.first, let lo = emptyRun.last else { return }
+            rows.append(.skip(from: lo, to: hi))
+            emptyRun.removeAll()
+        }
+
+        var day = displayDay - 1
+        while day >= 1 {
+            if visiblePastDays.contains(day) {
+                flush()
+                rows.append(.day(day))
+            } else {
+                emptyRun.append(day)
+            }
+            day -= 1
+        }
+        flush()
+        return rows
+    }
+
+    private static func normalizedDay(_ day: Int?) -> Int? {
+        guard let day, day > 0 else { return nil }
+        return day
     }
 }
 
@@ -13589,6 +13875,134 @@ private struct OfficeHoursEvidenceResolutionSheet: View {
         }
         .padding(20)
         .frame(width: 460)
+    }
+}
+
+fileprivate struct OfficeHoursPreviousCommitmentResolutionCard: View {
+    let commitment: CommitmentRecord
+    let position: Int
+    let total: Int
+    let onAttachEvidence: () -> Void
+    let onCarryForward: () -> Void
+    let onAbandon: () -> Void
+
+    private var commitmentText: String {
+        commitment.message.nonEmpty ?? commitment.text
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("이전 약속부터 닫기")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                    .tracking(1.2)
+                    .textCase(.uppercase)
+                Text("\(max(1, position))/\(max(position, total))")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                    .padding(.horizontal, 7)
+                    .frame(height: 19)
+                    .background(Capsule().fill(OpenDesignOfficeHoursColor.rose.opacity(0.15)))
+                    .overlay(Capsule().stroke(OpenDesignOfficeHoursColor.rose.opacity(0.38), lineWidth: 1))
+                Spacer(minLength: 0)
+            }
+
+            Text("새 약속 전, 남은 이전 약속을 먼저 처리합니다.")
+                .font(.system(size: 13.5, weight: .semibold))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("이전 약속")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                Text(commitmentText)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let dueDay = commitment.dueDay {
+                    Text("Day \(dueDay)까지 · 증거 0")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                }
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { actionButtons }
+                VStack(alignment: .leading, spacing: 8) { actionButtons }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+        )
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(OpenDesignOfficeHoursColor.rose)
+                .frame(width: 3)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(OpenDesignOfficeHoursColor.rose.opacity(0.42), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.officeHours.previousCommitmentResolution")
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        actionButton(
+            systemName: "paperclip",
+            title: "증거 붙여 닫기",
+            accessibilityID: "attach",
+            action: onAttachEvidence
+        )
+        actionButton(
+            systemName: "arrow.uturn.forward.circle",
+            title: "오늘 못 했음",
+            accessibilityID: "carry",
+            action: onCarryForward
+        )
+        actionButton(
+            systemName: "xmark.circle",
+            title: "포기로 기록",
+            accessibilityID: "abandon",
+            action: onAbandon
+        )
+    }
+
+    private func actionButton(
+        systemName: String,
+        title: String,
+        accessibilityID: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: systemName)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(OpenDesignOfficeHoursColor.bgDeep)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("opendesign.officeHours.previousCommitmentResolution.\(accessibilityID)")
     }
 }
 

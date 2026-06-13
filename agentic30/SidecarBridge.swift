@@ -1,6 +1,24 @@
 import Darwin
 import Foundation
 
+enum LocalDevelopmentDayFastForward {
+    static var isEnabled: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["AGENTIC30_DISABLE_LOCAL_DEV_FAST_DAYS"] != "1"
+        #else
+        false
+        #endif
+    }
+
+    static func supportsOpenDesignDay(_ day: Int) -> Bool {
+        day == 1 || day == 2 || (isEnabled && day == 3)
+    }
+
+    static var maxUnlockedOpenDesignDay: Int {
+        isEnabled ? 3 : 2
+    }
+}
+
 protocol SidecarTransport: AnyObject {
     var onEvent: ((SidecarEvent) -> Void)? { get set }
 
@@ -663,6 +681,9 @@ final class SidecarBridge: SidecarTransport {
     private func makeProcessEnvironment(nodeURL: URL) -> [String: String] {
         var environment = nodeResolver.makeEnvironment(nodeURL: nodeURL)
         environment["AGENTIC30_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        if LocalDevelopmentDayFastForward.isEnabled {
+            environment["AGENTIC30_LOCAL_DEV_FAST_DAYS"] = "1"
+        }
         for (key, value) in PostHogTelemetry.sidecarEnvironmentOverrides() {
             environment[key] = value
         }

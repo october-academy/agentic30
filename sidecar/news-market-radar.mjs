@@ -24,8 +24,9 @@ export const NEWS_MARKET_RADAR_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const NEWS_MARKET_RADAR_DEFAULT_PROVIDER_TIMEOUT_MS = 240_000;
 export const NEWS_MARKET_RADAR_CONTENT_LOCALE = "ko-KR";
 export const NEWS_MARKET_RADAR_PROMPT_PROFILE = "ko_market_radar_v6_adaptive_context_trusted_sources_no_self_sources";
-export const NEWS_MARKET_RADAR_LANE_CONCURRENCY = 5;
+export const NEWS_MARKET_RADAR_LANE_CONCURRENCY = 2;
 export const NEWS_MARKET_RADAR_MAX_CARDS_PER_LANE = 4;
+export const NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
 export const NEWS_MARKET_RADAR_EXA_MCP_TOOLS = Object.freeze([
   "web_search_advanced_exa",
   "web_fetch_exa",
@@ -36,6 +37,10 @@ const FRESH_SOURCE_WINDOW_MS = 18 * 31 * DAY_MS;
 const MAX_EVIDENCE_CHARS_PER_DOC = 12_000;
 const MAX_ANSWER_CHARS = 2_000;
 const MAX_PROVIDER_PROMPT_CHARS = 40_000;
+const MARKET_RADAR_LANE_TRUSTED_QUERY_LIMIT = 3;
+const MARKET_RADAR_LANE_SOURCE_HINT_LIMIT = 4;
+const MARKET_RADAR_LANE_BASE_QUERY_LIMIT = 8;
+const MARKET_RADAR_LANE_QUERY_SEED_LIMIT = 10;
 const NEWS_LANE_IDS = Object.freeze([
   "icp",
   "problem",
@@ -660,11 +665,23 @@ export async function refreshNewsMarketRadar({
     throw new Error("news market radar requires a providerResearcher.");
   }
   const selfReferenceProfile = context.selfReferenceProfile;
+  if (
+    shouldReuseFailedNewsMarketRadarSnapshot({
+      previous,
+      contextFingerprint,
+      reason,
+      force,
+      now,
+    })
+  ) {
+    return previous;
+  }
   notifyNewsMarketRadarProgress(onProgress, {
     stage: "running_provider_research",
-    progressText: `${NEWS_LANE_IDS.length}개 가설을 병렬 리서치하는 중`,
+    progressText: `${NEWS_LANE_IDS.length}개 가설을 최대 ${NEWS_MARKET_RADAR_LANE_CONCURRENCY}개씩 리서치하는 중`,
     researchSource: primaryRoute?.label || null,
   });
+  const researchStartedAt = now.toISOString();
   let completedLaneCount = 0;
   const laneResults = await runWithConcurrency(
     NEWS_LANE_IDS,
@@ -733,16 +750,21 @@ export async function refreshNewsMarketRadar({
   ) || null;
 
   if (successfulLaneResults.length === 0) {
+    const completedAt = new Date().toISOString();
     const noLaneSucceeded = {
       ...(hasSnapshotCards(previous) ? previous : makeEmptyNewsMarketRadarSnapshot({ now })),
+      contextFingerprint,
       status: {
         state: "failed",
         lastSuccessAt: previous.status?.lastSuccessAt || null,
         stale: hasSnapshotCards(previous),
-        error: `완료된 가설 리서치가 없습니다. ${partialFailures.map((failure) => failure.error).filter(Boolean).join(" | ")}`,
+        error: `완료된 가설 리서치가 없습니다. ${summarizePartialFailureErrors(partialFailures)}`,
         reason,
         researchSource,
         partialFailures,
+        startedAt: researchStartedAt,
+        completedAt,
+        durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(researchStartedAt)),
       },
     };
     return persistNewsMarketRadarSnapshot({
@@ -823,11 +845,18 @@ export async function refreshNewsMarketRadar({
     stage: "saving_results",
     researchSource,
   });
+  const completedAt = new Date().toISOString();
   return persistNewsMarketRadarSnapshot({
     workspaceRoot,
     snapshot: {
       ...finalSnapshot,
       contextFingerprint,
+      status: {
+        ...finalSnapshot.status,
+        startedAt: researchStartedAt,
+        completedAt,
+        durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(researchStartedAt)),
+      },
     },
     rawProviderResult: {
       mode: "parallel_lane_research",
@@ -1101,10 +1130,13 @@ function buildMarketRadarLaneTrustedSourceHints({
     .map(sanitizeWebSearchQuery)
     .filter(Boolean)
     .filter((query) => !isSelfReferenceQuerySeed(query, profile))
-    .slice(0, 12);
+    .slice(0, MARKET_RADAR_LANE_TRUSTED_QUERY_LIMIT);
   return {
     mode: "priority_seed_not_whitelist",
-    sources: trustedSourcesForMarketRadarPrompt(laneId, { localeProfile }),
+    sources: compactTrustedSourceHints(
+      trustedSourcesForMarketRadarPrompt(laneId, { localeProfile }),
+      MARKET_RADAR_LANE_SOURCE_HINT_LIMIT,
+    ),
     queries,
   };
 }
@@ -1196,19 +1228,19 @@ export function buildMarketRadarLaneResearchContext(context = {}, laneId = "") {
     .map(sanitizeWebSearchQuery)
     .filter(Boolean)
     .filter((seed) => !isSelfReferenceQuerySeed(seed, selfReferenceProfile))
-    .slice(0, 14);
+    .slice(0, MARKET_RADAR_LANE_BASE_QUERY_LIMIT);
   const trustedSourceHints = buildMarketRadarLaneTrustedSourceHints({
     laneId,
     querySeeds: baseQuerySeeds,
     selfReferenceProfile,
     adaptiveProfile: context.adaptiveProfile,
   });
-  const trustedSourceQueries = normalizeStringArray(trustedSourceHints.queries, 12, 256)
+  const trustedSourceQueries = normalizeStringArray(trustedSourceHints.queries, MARKET_RADAR_LANE_TRUSTED_QUERY_LIMIT, 256)
     .filter((seed) => !isSelfReferenceQuerySeed(seed, selfReferenceProfile));
   const querySeeds = uniqueStrings([
-    ...trustedSourceQueries.slice(0, 6),
+    ...trustedSourceQueries,
     ...baseQuerySeeds,
-  ], 18);
+  ], MARKET_RADAR_LANE_QUERY_SEED_LIMIT);
   return truncateForPrompt({
     ...context,
     selfReferenceProfile,
@@ -1251,7 +1283,10 @@ export function buildMarketRadarLaneProviderPrompt(context) {
     "",
     "Trusted source policy:",
     "- Context.trustedSourceHints lists preferred source seeds and site queries for this lane. Use them as priority starting points, not a mandatory citation list or hard whitelist.",
-    "- Search at least 2 relevant trusted-source queries when they are not self-referential, then search the open web for current pricing, reviews, product pages, and community evidence.",
+    "- Use at most one web_search_advanced_exa call for this lane.",
+    "- For that search call use type:\"fast\", numResults <= 4, enableSummary:false, enableHighlights:true, highlightsMaxCharacters <= 600, and no more than 2 additionalQueries.",
+    "- Search the strongest relevant trusted-source query when it is not self-referential, then use any remaining query budget for current pricing, reviews, product pages, and community evidence.",
+    "- Call web_fetch_exa for at most 3 URLs only when search snippets are insufficient for sourceRefs.",
     "- Strong confidence requires 2+ independent external domains, or a primary trusted source plus independent current market evidence.",
     "- Community-only sources such as launch/community forums can support a card but cannot make confidence strong by themselves.",
     "- Evergreen founder essays and company handbooks can support interpretation, but claims about live market trends need current evidence.",
@@ -2221,6 +2256,9 @@ function statusForSnapshot(value = {}, now = new Date()) {
     stepIndex,
     stepCount,
     partialFailures: normalizePartialFailures(value?.partialFailures || value?.partial_failures),
+    startedAt: normalizeOptionalIsoDate(value?.startedAt || value?.started_at),
+    completedAt: normalizeOptionalIsoDate(value?.completedAt || value?.completed_at),
+    durationMs: clampInt(value?.durationMs ?? value?.duration_ms, 0, DAY_MS, null),
   };
 }
 
@@ -2241,6 +2279,45 @@ function notifyNewsMarketRadarProgress(onProgress, {
     stepCount: NEWS_MARKET_RADAR_PROGRESS_STEPS.length,
   };
   onProgress(payload);
+}
+
+function shouldReuseFailedNewsMarketRadarSnapshot({
+  previous,
+  contextFingerprint = "",
+  reason = "",
+  force = false,
+  now = new Date(),
+} = {}) {
+  if (force || previous?.status?.state !== "failed") return false;
+  const normalizedReason = cleanString(reason, 80);
+  if (!["daily", "startup", "auto", "background"].includes(normalizedReason)) return false;
+  const generatedAtMs = Date.parse(previous.generatedAt || "");
+  if (!Number.isFinite(generatedAtMs)) return false;
+  const previousFingerprint = cleanString(previous.contextFingerprint || "", 128);
+  if (previousFingerprint && contextFingerprint && previousFingerprint !== contextFingerprint) return false;
+  return now.getTime() - generatedAtMs < NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS;
+}
+
+function summarizePartialFailureErrors(partialFailures = []) {
+  const errors = partialFailures
+    .map((failure) => cleanString(failure.error || "", 500))
+    .filter(Boolean);
+  if (errors.length === 0) return "알 수 없는 리서치 오류입니다.";
+  const unique = uniqueStrings(errors, 10);
+  if (unique.length === 1 && errors.length > 1) {
+    return `${unique[0]} (${errors.length}개 가설 모두 실패)`;
+  }
+  return unique.join(" | ");
+}
+
+function compactTrustedSourceHints(sources = [], limit = MARKET_RADAR_LANE_SOURCE_HINT_LIMIT) {
+  return (Array.isArray(sources) ? sources : []).slice(0, limit).map((source) => ({
+    key: cleanString(source.key || "", 80),
+    label: cleanString(source.label || "", 120),
+    domain: cleanString(source.domain || "", 120),
+    pathPrefix: cleanString(source.pathPrefix || "", 120),
+    trustTier: cleanString(source.trustTier || "", 40),
+  }));
 }
 
 function normalizeExaResearchRoutes({
@@ -2490,6 +2567,11 @@ function normalizeIsoDate(value, fallback = new Date()) {
   }
   if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString();
   return fallback.toISOString();
+}
+
+function normalizeOptionalIsoDate(value) {
+  const parsed = Date.parse(String(value || "").trim());
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
 }
 
 function cleanString(value, maxLength = 500) {

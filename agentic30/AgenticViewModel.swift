@@ -92,12 +92,15 @@ enum LegacyBipDailyNotificationCleanup {
 /// session to reselect when the user clicks the banner.
 struct OfficeHoursQuestionReadyNotification: Hashable, Sendable {
     static let sessionIdUserInfoKey = "agentic30.officeHours.questionReady.sessionId"
+    static let requestIdUserInfoKey = "agentic30.officeHours.questionReady.requestId"
     static let identifierPrefix = "agentic30.office-hours.question-ready."
 
     let sessionId: String
+    let requestId: String?
 
-    init(sessionId: String) {
+    init(sessionId: String, requestId: String? = nil) {
         self.sessionId = sessionId
+        self.requestId = requestId?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
     }
 
     init?(notificationUserInfo userInfo: [AnyHashable: Any], identifier: String) {
@@ -108,10 +111,39 @@ struct OfficeHoursQuestionReadyNotification: Hashable, Sendable {
             return nil
         }
         self.sessionId = sessionId
+        self.requestId = (userInfo[Self.requestIdUserInfoKey] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty
+            ?? Self.requestId(fromIdentifier: identifier)
     }
 
     static func notificationIdentifier(requestId: String) -> String {
         "\(identifierPrefix)\(requestId)"
+    }
+
+    static func requestId(fromIdentifier identifier: String) -> String? {
+        guard identifier.hasPrefix(identifierPrefix) else { return nil }
+        return String(identifier.dropFirst(identifierPrefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty
+    }
+
+    var appRoute: AgenticAppRoute {
+        AgenticAppRoute(
+            destination: .officeHoursQuestion(sessionId: sessionId, requestId: requestId),
+            telemetrySource: "office_hours_question_notification"
+        )
+    }
+
+    var userInfo: [AnyHashable: Any] {
+        var info: [AnyHashable: Any] = [
+            Self.sessionIdUserInfoKey: sessionId,
+        ]
+        if let requestId {
+            info[Self.requestIdUserInfoKey] = requestId
+        }
+        info.merge(AgenticAppRoute.routeURLUserInfo(appRoute)) { _, latest in latest }
+        return info
     }
 
     static func removeDelivered(center: UNUserNotificationCenter = .current()) {
@@ -208,6 +240,21 @@ struct McpOauthConnectedNotification: Hashable, Sendable {
     var notificationBody: String {
         "AI 실행에서 바로 사용할 수 있어요."
     }
+
+    var appRoute: AgenticAppRoute {
+        AgenticAppRoute(
+            destination: .settings(section: .integrations),
+            telemetrySource: "mcp_oauth_connected_notification"
+        )
+    }
+
+    var userInfo: [AnyHashable: Any] {
+        var info: [AnyHashable: Any] = [
+            Self.serverUserInfoKey: server,
+        ]
+        info.merge(AgenticAppRoute.routeURLUserInfo(appRoute)) { _, latest in latest }
+        return info
+    }
 }
 
 enum McpOauthConnectedNotifier {
@@ -268,6 +315,28 @@ enum LongRunningCompletionRoute: String, Hashable, Sendable {
     case bipResearch
     case newsMarketRadar
     case bipMission
+}
+
+extension LongRunningCompletionNotificationKind {
+    var defaultRouteDay: Int? {
+        switch self {
+        case .workspaceScan:
+            return 1
+        default:
+            return nil
+        }
+    }
+
+    var defaultRouteAnchor: String? {
+        switch self {
+        case .morningBriefing:
+            return "summary"
+        case .workspaceScan:
+            return OpenDesignSectionAnchor.top.rawValue
+        default:
+            return nil
+        }
+    }
 }
 
 /// Routing payload for local notifications posted when a user-visible long
@@ -426,6 +495,7 @@ struct LongRunningCompletionNotification: Hashable, Sendable {
         if let detail {
             info[Self.detailUserInfoKey] = detail
         }
+        info.merge(AgenticAppRoute.routeURLUserInfo(AgenticAppRoute.defaultRoute(for: self))) { _, latest in latest }
         return info
     }
 }
@@ -2943,6 +3013,21 @@ final class AgenticViewModel: ObservableObject {
         structuredPromptDraftBySession[prompt.sessionId] = state
     }
 
+    func activateStructuredPromptFreeText(
+        for question: StructuredPromptQuestion,
+        in prompt: StructuredPromptRequest
+    ) {
+        synchronizeStructuredPromptDrafts(with: prompt)
+        var state = structuredPromptDraftBySession[prompt.sessionId] ?? StructuredPromptDraftState(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            answersByQuestionID: [:]
+        )
+        let draft = state.answersByQuestionID[question.id] ?? StructuredPromptAnswerDraft()
+        state.answersByQuestionID[question.id] = draft
+        structuredPromptDraftBySession[prompt.sessionId] = state
+    }
+
     func toggleStructuredPromptOption(
         _ label: String,
         for question: StructuredPromptQuestion,
@@ -3101,11 +3186,20 @@ final class AgenticViewModel: ObservableObject {
 
     func requestOfficeHoursQuestionReadyOpen(
         sessionId: String,
+        requestId: String? = nil,
         source: String = "notification_center"
     ) {
-        PostHogTelemetry.capture("mac_office_hours_question_ready_notification_opened", properties: [
+        var properties: [String: Any] = [
             "source": source,
-        ], authSession: macAuthSession)
+        ]
+        if let requestId {
+            properties["requestId"] = requestId
+        }
+        PostHogTelemetry.capture(
+            "mac_office_hours_question_ready_notification_opened",
+            properties: properties,
+            authSession: macAuthSession
+        )
 
         guard sessions.contains(where: { $0.id == sessionId }) else { return }
         selectedSessionID = sessionId
@@ -3405,6 +3499,9 @@ final class AgenticViewModel: ObservableObject {
         // day: the day-scoped Office Hours screen always calls this with a
         // concrete `activeDay` (>= 1, see `activeOfficeHoursDay`), so a
         // `scopedDay == nil` precondition would orphan the seeds entirely.
+        if installUITestingOfficeHoursDay2CompletedSessionIfNeeded() {
+            return true
+        }
         if installUITestingOfficeHoursCommitmentGateSessionIfNeeded() {
             return true
         }
@@ -4992,6 +5089,24 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    func cancelMcpOauth(server: String) {
+        guard isConnected, mcpOauthConnecting.contains(server) else { return }
+        mcpOauthProgress[server] = "중지 중…"
+        PostHogTelemetry.capture(
+            "mac_mcp_oauth_connect_cancel_requested",
+            properties: [
+                "server": server,
+                "provider": selectedProvider.rawValue,
+            ],
+            authSession: macAuthSession
+        )
+        sidecar.send(payload: [
+            "type": "mcp_oauth_connect_cancel",
+            "server": server,
+            "preferredProvider": selectedProvider.rawValue,
+        ])
+    }
+
     private func finishMcpOauthInFlightAfterSidecarInterruption(
         detail: String = "",
         markFailedResult: Bool
@@ -5054,7 +5169,7 @@ final class AgenticViewModel: ObservableObject {
     private func reportMcpOauthConnectTelemetry(_ result: McpOauthConnectResult?) {
         guard let result,
               let state = result.state,
-              !["ready", "progress"].contains(state)
+              !["ready", "progress", "cancelled"].contains(state)
         else { return }
 
         let properties: [String: Any] = [
@@ -8706,6 +8821,119 @@ final class AgenticViewModel: ObservableObject {
     }
 
     @discardableResult
+    fileprivate func installUITestingOfficeHoursDay2CompletedSessionIfNeeded() -> Bool {
+        #if DEBUG
+        guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-day2-completed") else {
+            return false
+        }
+        if let selectedSession,
+           selectedSession.title.range(of: "Office Hours", options: [.caseInsensitive, .diacriticInsensitive]) != nil,
+           selectedSession.runtime?.officeHours?.day == 2,
+           selectedSession.pendingUserInput == nil,
+           selectedSession.status == .idle {
+            return true
+        }
+
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let now = Date()
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now) ?? now
+        let startedAt = formatter.string(from: yesterday)
+        let today = formatter.string(from: now)
+
+        day1GoalSelection = Day1GoalSelection(
+            goalType: .getUsers,
+            goalText: "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다",
+            customer: "전업 1인 개발자",
+            problem: "AI로 제품은 만들지만 고객 행동 증거가 남지 않는다",
+            validationAction: "가장 적합한 사용자 1명에게 이번 주 유료 진입점 보여주기",
+            evidenceRefs: [".agentic30/docs/GOAL.md", ".agentic30/docs/ICP.md"],
+            proofSink: .local,
+            sourcePlanFingerprint: "ui-test-day2-completed",
+            selectedAt: ISO8601DateFormatter().string(from: now)
+        )
+        dayProgress = DayProgress(
+            challengeStartedAt: startedAt,
+            days: [
+                "1": DayRecord(
+                    day: 1,
+                    kind: .day1,
+                    steps: ["onboarding": .done, "scan": .done, "goal": .done, "first_interview": .done],
+                    goalText: "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다",
+                    updatedAt: startedAt
+                ),
+                "2": DayRecord(
+                    day: 2,
+                    kind: .standard,
+                    steps: ["scan": .done, "retro": .done, "goal": .done, "interview": .active, "execution": .pending],
+                    goalText: "오늘 가장 적합한 사용자 1명에게 유료 진입점 보여주기",
+                    updatedAt: today
+                ),
+            ]
+        )
+
+        let sessionID = "ui-test-office-hours-day2-completed-\(UUID().uuidString)"
+        func answer(_ index: Int, _ content: String) -> ChatMessage {
+            ChatMessage(
+                id: "ui-test-office-hours-day2-answer-\(index)",
+                role: .user,
+                provider: selectedProvider,
+                content: content,
+                state: .final,
+                createdAt: now.addingTimeInterval(TimeInterval(index)),
+                error: nil,
+                bipMissionChoices: nil,
+                providerAuthActions: nil
+            )
+        }
+        let session = ChatSession(
+            id: sessionID,
+            title: "Office Hours",
+            provider: selectedProvider,
+            model: preferredModel(for: selectedProvider),
+            status: .idle,
+            createdAt: now,
+            updatedAt: now,
+            error: nil,
+            messages: [
+                answer(1, "현재 대안에 시간을 쓰고 있다"),
+                answer(2, "가장 적합한 사용자는 macOS에서 AI 코딩을 매일 쓰는 전업 1인 개발자"),
+                answer(3, "지금은 노션과 수동 체크리스트로 검증 행동을 기록한다"),
+                answer(4, "이번 주 유료 진입점은 30분 설정 세션이다"),
+                answer(5, "직접 관찰한 행동은 고객 검증을 미루고 코드만 더 쓰는 패턴이다"),
+                answer(6, "앞으로 더 중요해지는 이유는 AI 빌드 속도보다 고객 증거가 병목이 되기 때문이다"),
+            ],
+            pendingUserInput: nil,
+            runtime: ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: "day2_step",
+                iddMode: "office_hours",
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "office_hours_day_2",
+                    startedAt: ISO8601DateFormatter().string(from: now),
+                    context: "DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS\nUI test completed Day 2 Office Hours",
+                    day: 2
+                )
+            )
+        )
+        sessions = [session]
+        selectedSessionID = sessionID
+        officeHoursSessionCreateInFlight = false
+        refreshPresentationState()
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    @discardableResult
     private func installUITestingOfficeHoursCommitmentGateSessionIfNeeded() -> Bool {
         #if DEBUG
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-commitment-gate") else {
@@ -10578,13 +10806,12 @@ final class AgenticViewModel: ObservableObject {
         title: String,
         body: String?
     ) async {
+        let notification = OfficeHoursQuestionReadyNotification(sessionId: sessionId, requestId: requestId)
         let posted = await postLocalNotification(
             identifier: OfficeHoursQuestionReadyNotification.notificationIdentifier(requestId: requestId),
             title: title,
             body: body,
-            userInfo: [
-                OfficeHoursQuestionReadyNotification.sessionIdUserInfoKey: sessionId,
-            ]
+            userInfo: notification.userInfo
         )
         guard posted else { return }
         PostHogTelemetry.capture(
@@ -10610,9 +10837,7 @@ final class AgenticViewModel: ObservableObject {
             identifier: notification.notificationIdentifier,
             title: notification.notificationTitle,
             body: notification.notificationBody,
-            userInfo: [
-                McpOauthConnectedNotification.serverUserInfoKey: notification.server,
-            ],
+            userInfo: notification.userInfo,
             removeDeliveredIdentifiers: [notification.notificationIdentifier]
         )
         guard posted else { return }

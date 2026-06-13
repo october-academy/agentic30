@@ -17,6 +17,7 @@ struct MorningBriefingPageView: View {
     let submitAnomalyLabel: (String) -> Void
     let applyAction: (MorningBriefingActionDraft) -> Void
     let startToday: () -> Void
+    private let routeScrollRequest: Binding<MorningBriefingScrollRequest?>
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pickedAnomalyOptionID: String?
@@ -29,6 +30,32 @@ struct MorningBriefingPageView: View {
     @State private var toastText: String?
     @State private var toastDismissTask: Task<Void, Never>?
     @State private var viewingPrevious = false
+
+    init(
+        briefing: MorningBriefing?,
+        previousBriefing: MorningBriefing?,
+        collecting: Bool,
+        sourceProgress: [String: MorningBriefingSourceProgress],
+        fallbackDay: Int,
+        refresh: @escaping () -> Void,
+        prepare: @escaping () -> Void,
+        submitAnomalyLabel: @escaping (String) -> Void,
+        applyAction: @escaping (MorningBriefingActionDraft) -> Void,
+        startToday: @escaping () -> Void,
+        routeScrollRequest: Binding<MorningBriefingScrollRequest?> = .constant(nil)
+    ) {
+        self.briefing = briefing
+        self.previousBriefing = previousBriefing
+        self.collecting = collecting
+        self.sourceProgress = sourceProgress
+        self.fallbackDay = fallbackDay
+        self.refresh = refresh
+        self.prepare = prepare
+        self.submitAnomalyLabel = submitAnomalyLabel
+        self.applyAction = applyAction
+        self.startToday = startToday
+        self.routeScrollRequest = routeScrollRequest
+    }
 
     /// The payload the screen renders: today's briefing, or — in "어제 브리핑"
     /// mode — the persisted previous-day briefing (read-only).
@@ -169,6 +196,13 @@ struct MorningBriefingPageView: View {
             customAnomalyLabel = ""
             presentedDrilldownID = nil
             activeSectionID = "summary"
+        }
+        .onChange(of: routeScrollRequest.wrappedValue) { _, request in
+            guard let request else { return }
+            viewingPrevious = false
+            presentedDrilldownID = nil
+            activeSectionID = request.id
+            sectionScrollRequest = request
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("morningBriefing.screen")
@@ -536,22 +570,6 @@ struct MorningBriefingPageView: View {
             .buttonStyle(.plain)
             .disabled(collecting || viewingPrevious)
             .accessibilityIdentifier("morningBriefing.refresh")
-
-            Button(action: startToday) {
-                HStack(spacing: 6) {
-                    Text("Day \(day) 시작")
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 10, weight: .bold))
-                }
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(OpenDesignDayColor.bgDeep)
-                .padding(.horizontal, 14)
-                .frame(height: 28)
-                .background(Capsule().fill(OpenDesignDayColor.accent))
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("morningBriefing.startDay")
         }
         .padding(.horizontal, 28)
         .frame(height: 70)

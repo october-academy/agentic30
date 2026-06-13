@@ -27,6 +27,9 @@ import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
 import {
+  prepareOfficeHoursStructuredInputRequest,
+} from "./office-hours-structured-input.mjs";
+import {
   recordFlatRubricAssessment,
   getRubricStatus,
 } from "./rubric-assessment-host.mjs";
@@ -407,15 +410,20 @@ server.tool(
 
 function registerUserInputTool(name, description) {
   server.tool(name, description, structuredPromptSchema, async (rawInput) => {
-    const { title, intro, resources, questions } = parseCodexStructuredInputToolInput(rawInput);
-    const request = await createUserInputRequest(appSupportPath, {
+    const { title, intro, resources, questions, generation } = parseCodexStructuredInputToolInput(rawInput);
+    const rawRequest = {
       sessionId,
       toolName: name,
       title: title ?? null,
       intro: intro ?? null,
       resources: resources ?? null,
       questions,
-    });
+      generation: generation ?? null,
+    };
+    const requestInput = executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE && name === CODEX_STRUCTURED_INPUT_TOOL
+      ? prepareOfficeHoursStructuredInputRequest(rawRequest)
+      : rawRequest;
+    const request = await createUserInputRequest(appSupportPath, requestInput);
 
     if (executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE && name === CODEX_STRUCTURED_INPUT_TOOL) {
       return {

@@ -117,7 +117,7 @@ export function buildOfficeHoursUiCopyContractPrompt() {
     "Question: exactly one natural Korean sentence, scoped to one decision.",
     "Option label: short Korean noun phrase, not a sentence fragment copied from internal analysis.",
     "Option description: one easy Korean sentence. Do not expose `risk`, `evidenceTarget`, `failureMode`, or scoring notes as visible prefixes.",
-    "Do-NOT preservation: keep `questionId`, `signalId`, `allowFreeText`, `requiresFreeText`, `recommended`, `risk`, `evidenceTarget`, `mapsTo`, and `failureMode` semantically intact. Move analysis details into metadata instead of deleting them.",
+    "Do-NOT preservation: keep `questionId`, `generation.signalId`, `generation.signalLabel`, `allowFreeText`, `requiresFreeText`, `recommended`, `risk`, `evidenceTarget`, `mapsTo`, and `failureMode` semantically intact. Never remove generation metadata, never promote general interview cards to `requiresFreeText: true`, and never rely on the host to repair missing Office Hours contract fields. Evidence text is optional when choices exist. Move analysis details into metadata instead of deleting them.",
     "For get_users goals, never weaken the target into signups. Keep the 기준 as active users completing the chosen 핵심 행동.",
     "Severity: S1 must be rewritten before showing the card; S2 should be rewritten unless the user's own wording requires it; S3 is polish for readability.",
     ...rules,

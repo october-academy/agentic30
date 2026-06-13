@@ -274,7 +274,9 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
         {
           question: firstQuestion.question,
           selectedOptions: [firstQuestion.options[0].label],
-          freeText: "",
+          freeText: firstQuestion.requiresFreeText === true
+            ? "6/13 실명 후보 A가 결제 조건을 물었고 현재 대안 비용을 확인 중"
+            : "",
         },
       ],
     }));
@@ -607,6 +609,7 @@ test("office_hours Day 1 stops at expected six questions and suppresses stray se
       generation: {
         mode: "office_hours",
         signalId: "office_hours_alternatives",
+        signalLabel: "Office Hours 대안 비교",
       },
       questions: [
         {
@@ -823,6 +826,63 @@ test("office_hours_start blocks Day 2+ when no live source exists", async () => 
         event.type === "session_updated"
           && event.session?.id === created.session.id
           && event.session?.messages?.some((message) => message.content === "Test blocked Office Hours"),
+      ),
+      false,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_start skips Day 2+ source gate in local dev fast-days mode", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: { AGENTIC30_LOCAL_DEV_FAST_DAYS: "1" },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 2,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: "DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS\nGoal lane: build_product / 작동하는 첫 버전 출시",
+      visiblePrompt: "Test local dev fast-days Office Hours",
+      source: "office_hours_day_2",
+      day: 2,
+      selectedSources: ["github", "posthog"],
+    }));
+
+    const gate = await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_source_gate"
+        && event.sessionId === created.session.id
+        && event.status === "ready"
+        && event.officeHoursSourceGate?.reason === "local_dev_fast_days",
+    );
+    assert.equal(gate.officeHoursSourceGate.skipped, true);
+    assert.deepEqual(gate.officeHoursSourceGate.selectedSources, []);
+
+    await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_daily_digest_result"
+        && event.sessionId === created.session.id
+        && event.status === "ready",
+    );
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "error"
+          && event.sessionId === created.session.id
+          && /source|연결/i.test(event.message || ""),
       ),
       false,
     );
@@ -1094,6 +1154,9 @@ async function waitForPendingOfficeHoursPrompt(ws, sessionId, previousRequestId 
 function submitStructuredAnswer(ws, sessionId, prompt) {
   const question = prompt.questions[0];
   const selectedLabel = question.options?.[0]?.label || "직접 입력";
+  const evidenceText = question.requiresFreeText === true
+    ? "6/13 실명 후보 A가 현재 대안 비용과 유료 진행 조건을 답했다"
+    : "";
   ws.send(JSON.stringify({
     type: "submit_user_input",
     sessionId,
@@ -1102,7 +1165,7 @@ function submitStructuredAnswer(ws, sessionId, prompt) {
       {
         question: question.question,
         selectedOptions: question.options?.length ? [selectedLabel] : [],
-        freeText: question.options?.length ? "" : selectedLabel,
+        freeText: question.options?.length ? evidenceText : selectedLabel,
       },
     ],
   }));
@@ -1197,6 +1260,7 @@ function makeCompletedOfficeHoursTurn(index) {
       generation: {
         mode: "office_hours_tool",
         signalId: `completed_q_${index}`,
+        signalLabel: "완료 질문",
       },
     },
     submissions: [

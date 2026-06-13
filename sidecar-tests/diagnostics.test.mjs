@@ -66,6 +66,20 @@ test("buildDiagnosticsSnapshot redacts credential-shaped fields", () => {
         ],
       },
     },
+    mcpOauthTraces: [
+      {
+        traceId: "trace-1",
+        server: "posthog",
+        provider: "codex",
+        phase: "completed",
+        durationMs: 123,
+        state: "ready",
+        hasLoginUrl: false,
+        commandCount: 0,
+        providerRunCount: 1,
+        authorization: "Bearer secret",
+      },
+    ],
     sessions: [
       { id: "session-1", status: "idle" },
       { id: "session-2", status: "error" },
@@ -104,5 +118,7 @@ test("buildDiagnosticsSnapshot redacts credential-shaped fields", () => {
   assert.equal(snapshot.redactionSafe, true);
   assert.equal(snapshot.executionOs.pilotReadiness.status, "blocked");
   assert.equal(snapshot.executionOs.proofLedger.events[0].metadata.authorization, "[redacted]");
+  assert.equal(snapshot.mcpOauthTraces[0].server, "posthog");
+  assert.equal(snapshot.mcpOauthTraces[0].authorization, "[redacted]");
   assert.equal(snapshot.storage.sessionStoreWarnings[0].type, "session_store_corrupt");
 });

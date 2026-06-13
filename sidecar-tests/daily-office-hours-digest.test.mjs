@@ -91,6 +91,79 @@ test("Day 2+ source gate blocks when no live source exists", async () => {
   assert.ok(gate.connectActions.some((action) => action.source === "posthog"));
 });
 
+test("Day 2+ source gate skips source requirements in local dev fast-days mode", async () => {
+  const execImpl = fakeExec([
+    ["git rev-parse", { ok: false, stdout: "" }],
+    ["gh auth status", { ok: false, stdout: "" }],
+  ]);
+  const gate = await evaluateOfficeHoursSourceGate({
+    workspaceRoot: "/tmp/ws",
+    day: 2,
+    selectedSources: ["github", "posthog"],
+    execImpl,
+    env: { AGENTIC30_LOCAL_DEV_FAST_DAYS: "1" },
+  });
+
+  assert.equal(gate.ok, true);
+  assert.equal(gate.skipped, true);
+  assert.equal(gate.reason, "local_dev_fast_days");
+  assert.deepEqual(gate.selectedSources, []);
+  assert.deepEqual(gate.sources, []);
+  assert.deepEqual(gate.missingRequiredSources, []);
+  assert.deepEqual(execImpl.calls, []);
+});
+
+test("source gate can bypass local dev fast-days for morning briefing probes", async () => {
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "oh-gate-briefing-fast-days-"));
+  try {
+    await fs.writeFile(
+      path.join(appSupportPath, "mcp-oauth-state.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        servers: {
+          posthog: {
+            providers: {
+              codex: { state: "ready", detail: "ok", checkedAt: "2026-06-13T14:25:00.000Z" },
+            },
+          },
+          cloudflare: {
+            providers: {
+              codex: { state: "ready", detail: "ok", checkedAt: "2026-06-13T14:25:30.000Z" },
+            },
+          },
+        },
+      }),
+    );
+    const execImpl = fakeExec([
+      ["git rev-parse", { ok: false, stdout: "" }],
+      ["gh auth status", { ok: false, stdout: "" }],
+    ]);
+    const gate = await evaluateOfficeHoursSourceGate({
+      workspaceRoot: "/tmp/ws",
+      day: 2,
+      selectedSources: ["git", "gh_cli", "posthog", "cloudflare"],
+      provider: "codex",
+      appSupportPath,
+      execImpl,
+      env: { AGENTIC30_LOCAL_DEV_FAST_DAYS: "1" },
+      allowLocalDevFastDays: false,
+    });
+
+    assert.equal(gate.skipped, false);
+    assert.equal(gate.sources.length, 4);
+    assert.ok(execImpl.calls.some((call) => call.join(" ").includes("git rev-parse")));
+    assert.ok(execImpl.calls.some((call) => call.join(" ").includes("gh auth status")));
+    assert.equal(gate.sources.find((source) => source.id === "git").state, "missing");
+    assert.equal(gate.sources.find((source) => source.id === "gh_cli").state, "missing");
+    assert.equal(gate.sources.find((source) => source.id === "posthog").state, "ready");
+    assert.match(gate.sources.find((source) => source.id === "posthog").detail, /OAuth connection verified/);
+    assert.equal(gate.sources.find((source) => source.id === "cloudflare").state, "ready");
+    assert.match(gate.sources.find((source) => source.id === "cloudflare").detail, /OAuth connection verified/);
+  } finally {
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+});
+
 test("Day 2+ source gate blocks when a selected source fails even if git is live", async () => {
   const gate = await evaluateOfficeHoursSourceGate({
     workspaceRoot: "/tmp/ws",

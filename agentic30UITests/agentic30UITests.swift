@@ -1464,6 +1464,22 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 5))
         confirmDay1GoalRequired(in: app)
 
+        let selectedChoice = app.buttons["assistant.structuredChoice.office_hours_demand_evidence.돈을 냈거나 제안함"]
+        XCTAssertTrue(scrollElementToVisible(
+            selectedChoice,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        tapRequired(selectedChoice, in: app, named: "Office Hours Q1 initial choice")
+        XCTAssertTrue(waitForElementLabel(
+            in: app,
+            identifier: "assistant.structuredChoice.office_hours_demand_evidence.돈을 냈거나 제안함",
+            containing: "Selected",
+            timeout: 3
+        ))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
+
         let freeTextAnswer = "온보딩을 끝내고 첫 검증 행동을 기록한다"
         let freeTextField = elementWithIdentifier(in: app, "assistant.structuredFreeText.office_hours_demand_evidence")
         XCTAssertTrue(scrollElementToVisible(
@@ -1473,6 +1489,13 @@ final class agentic30UITests: XCTestCase {
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
         clickCenter(of: freeTextField)
+        XCTAssertTrue(waitForElementLabel(
+            in: app,
+            identifier: "assistant.structuredChoice.office_hours_demand_evidence.돈을 냈거나 제안함",
+            containing: "Selected",
+            timeout: 3
+        ))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
         freeTextField.typeText(freeTextAnswer)
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
 
@@ -1491,9 +1514,49 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForElementLabel(
             in: app,
             identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.돈을 냈거나 제안함",
-            containing: "완료된 미선택",
+            containing: "제출됨",
             timeout: 3
         ))
+    }
+
+    @MainActor
+    func testOfficeHoursDay2CompletedShowsSummaryAndCommitmentOnly() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-office-hours-day2-completed-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-office-hours-day2-completed-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-office-hours-day2-completed",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 8))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.completionSummary").waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.bridgeStatus", containing: "commit ready", timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.docReady").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff").exists)
+        XCTAssertFalse(app.buttons["opendesign.officeHours.saveDoc"].exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.commitmentBar").waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -1694,6 +1757,12 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(app.buttons["opendesign.officeHours.planCeoReview"].exists)
         XCTAssertFalse(app.buttons["opendesign.officeHours.planCeoReview.completeDay"].exists)
         let commitmentBar = elementWithIdentifier(in: app, "opendesign.officeHours.commitmentBar")
+        XCTAssertTrue(waitForElementVisible(
+            commitmentBar,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ), "Commitment card should auto-scroll into view after document save completes")
         XCTAssertTrue(scrollElementToVisible(
             commitmentBar,
             in: app,
@@ -1951,6 +2020,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.attach").waitForExistence(timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.carry").waitForExistence(timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.abandon").waitForExistence(timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.more").exists)
         movePointerAwayFromContent()
         attachWindowScreenshot(from: app, named: "Office Hours Past Day Customer Evidence Review")
     }
@@ -4124,6 +4194,23 @@ final class agentic30UITests: XCTestCase {
             }
             if scrollView.exists {
                 scrollToward(element, in: scrollView)
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        } while Date() < deadline
+        return elementIsVisible(element, in: scrollViewElement(in: app, identifier: scrollViewIdentifier), app: app)
+    }
+
+    @MainActor
+    private func waitForElementVisible(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval,
+        scrollViewIdentifier: String? = nil
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if elementIsVisible(element, in: scrollViewElement(in: app, identifier: scrollViewIdentifier), app: app) {
+                return true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         } while Date() < deadline

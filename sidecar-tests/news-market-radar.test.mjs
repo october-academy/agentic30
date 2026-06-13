@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS,
   NEWS_MARKET_RADAR_LANE_CONCURRENCY,
   NEWS_MARKET_RADAR_PROGRESS_STEPS,
   NEWS_MARKET_RADAR_PROMPT_PROFILE,
@@ -224,6 +225,11 @@ test("provider prompt requires Korean user-facing Market Radar copy", () => {
   assert.match(lanePrompt, /Context\.adaptiveProfile\.localeProfile/);
   assert.match(lanePrompt, /Self-source exclusion/);
   assert.match(lanePrompt, /Context\.trustedSourceHints/);
+  assert.match(lanePrompt, /Use at most one web_search_advanced_exa call/);
+  assert.match(lanePrompt, /type:"fast"/);
+  assert.match(lanePrompt, /numResults <= 4/);
+  assert.match(lanePrompt, /enableSummary:false/);
+  assert.match(lanePrompt, /Call web_fetch_exa for at most 3 URLs/);
   assert.match(lanePrompt, /cannot make confidence strong/);
 });
 
@@ -327,32 +333,23 @@ test("trusted source hints are lane-specific and still respect self-source exclu
   const laneContext = buildMarketRadarLaneResearchContext(context, "channel");
 
   assert.equal(laneContext.trustedSourceHints.mode, "priority_seed_not_whitelist");
-  assert.equal(
-    laneContext.trustedSourceHints.sources.some((source) => (
-      source.domain === "ycombinator.com" && source.pathPrefix === "/library"
-    )),
-    true,
-  );
-  assert.equal(
-    laneContext.trustedSourceHints.sources.some((source) => source.domain === "paulgraham.com"),
-    true,
-  );
-  assert.equal(
-    laneContext.trustedSourceHints.sources.some((source) => source.domain === "lennysnewsletter.com"),
-    true,
-  );
+  assert.ok(laneContext.trustedSourceHints.sources.length <= 4);
+  for (const source of laneContext.trustedSourceHints.sources) {
+    assert.deepEqual(
+      Object.keys(source).sort(),
+      ["domain", "key", "label", "pathPrefix", "trustTier"].sort(),
+    );
+  }
   assert.ok(laneContext.trustedSourceHints.queries.length > 0);
+  assert.ok(laneContext.trustedSourceHints.queries.length <= 3);
   assert.ok(laneContext.trustedSourceHints.queries.some((query) => /유료 AI 도구|한국 1인 개발자|Find public communities/.test(query)));
   assert.doesNotMatch(laneContext.trustedSourceHints.queries.join(" "), /AcmePilot/i);
   assert.doesNotMatch(laneContext.searchExclusions.additionalQueries.join(" "), /AcmePilot/i);
 
   const prompt = buildMarketRadarLaneProviderPrompt(laneContext);
-  assert.match(prompt, /posthog\.com/);
-  assert.match(prompt, /paulgraham\.com/);
-  assert.match(prompt, /ycombinator\.com/);
-  assert.match(prompt, /lennysnewsletter\.com/);
-  assert.match(prompt, /indiehackers\.com/);
-  assert.match(prompt, /levels\.io/);
+  assert.match(prompt, /type:"fast"/);
+  assert.match(prompt, /enableSummary:false/);
+  assert.doesNotMatch(prompt, /Search at least 2 relevant trusted-source queries/);
 });
 
 test("news market radar self-source logic does not hard-code dogfood product literals", async () => {
@@ -850,7 +847,7 @@ test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async 
   });
 });
 
-test("refresh runs five Market Radar lane jobs concurrently", async () => {
+test("refresh runs every Market Radar lane with bounded concurrency", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
     await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
@@ -898,9 +895,91 @@ test("refresh runs five Market Radar lane jobs concurrently", async () => {
     });
 
     assert.equal(maxActive, NEWS_MARKET_RADAR_LANE_CONCURRENCY);
-    assert.equal(new Set(startedLaneIds).size, NEWS_MARKET_RADAR_LANE_CONCURRENCY);
+    assert.equal(new Set(startedLaneIds).size, snapshot.lanes.length);
     assert.equal(snapshot.status.state, "ready");
-    assert.equal(countCards(snapshot), NEWS_MARKET_RADAR_LANE_CONCURRENCY);
+    assert.equal(countCards(snapshot), snapshot.lanes.length);
+  });
+});
+
+test("refresh groups duplicate all-lane timeout failures and persists diagnostics", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    const snapshot = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [{
+        provider: "codex",
+        source: "provider_mcp",
+        label: "Codex Exa MCP",
+        serverName: "exa",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      providerResearcher: async () => {
+        throw new Error("공개 근거 검색이 4m 안에 끝나지 않았습니다");
+      },
+    });
+
+    assert.equal(snapshot.status.state, "failed");
+    assert.match(snapshot.status.error, /공개 근거 검색이 4m 안에 끝나지 않았습니다 \(5개 가설 모두 실패\)/);
+    assert.doesNotMatch(snapshot.status.error, /\|/);
+    assert.equal(snapshot.status.partialFailures.length, 5);
+    assert.equal(snapshot.status.researchSource, "Codex Exa MCP");
+    assert.equal(snapshot.status.startedAt, "2026-05-20T00:00:00.000Z");
+    assert.match(snapshot.status.completedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(Number.isFinite(snapshot.status.durationMs), true);
+  });
+});
+
+test("refresh reuses recent failed daily snapshot during failed auto-refresh cooldown", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    let calls = 0;
+    const route = {
+      provider: "codex",
+      source: "provider_mcp",
+      label: "Codex Exa MCP",
+      serverName: "exa",
+      mcpConfig: {
+        type: "http",
+        url: "https://mcp.exa.ai/mcp",
+      },
+    };
+    const first = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [route],
+      providerResearcher: async () => {
+        calls += 1;
+        throw new Error("공개 근거 검색이 4m 안에 끝나지 않았습니다");
+      },
+    });
+    const second = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "daily",
+      force: false,
+      now: new Date(Date.parse("2026-05-20T00:00:00.000Z") + NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS - 1),
+      exaResearchRoutes: [route],
+      providerResearcher: async () => {
+        calls += 1;
+        throw new Error("provider should not be called during cooldown");
+      },
+    });
+
+    assert.equal(calls, 5);
+    assert.equal(first.status.state, "failed");
+    assert.equal(second.status.state, "failed");
+    assert.equal(second.generatedAt, first.generatedAt);
+    assert.equal(second.contextFingerprint, first.contextFingerprint);
   });
 });
 
@@ -1052,7 +1131,7 @@ test("refresh falls back to deterministic merge when final synthesis fails", asy
     });
 
     assert.equal(snapshot.status.state, "ready");
-    assert.equal(countCards(snapshot), NEWS_MARKET_RADAR_LANE_CONCURRENCY);
+    assert.equal(countCards(snapshot), snapshot.lanes.length);
     assert.equal(snapshot.lanes.find((lane) => lane.id === "platform").cards.length, 1);
   });
 });
@@ -1107,7 +1186,7 @@ test("refresh emits real progress stages for the Market Radar UI", async () => {
       true,
     );
     assert.equal(progressEvents[0].researchSource, "Codex Exa MCP");
-    assert.ok(progressEvents.some((event) => /5개 가설을 병렬 리서치하는 중/.test(event.progressText || "")));
+    assert.ok(progressEvents.some((event) => /5개 가설을 최대 2개씩 리서치하는 중/.test(event.progressText || "")));
     assert.ok(progressEvents.some((event) => /5개 중 5개 완료/.test(event.progressText || "")));
   });
 });

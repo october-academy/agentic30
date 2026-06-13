@@ -52,6 +52,21 @@ export function orderExaMcpRoutes(routes = [], { preferredProvider = "" } = {}) 
   });
 }
 
+export function resolveExaResearchRoutes({
+  discoveredRoutes = [],
+  apiKey = "",
+  preferredProvider = "",
+} = {}) {
+  const routes = [];
+  const apiKeyRoute = buildExaApiKeyRoute({
+    apiKey,
+    provider: normalizeProvider(preferredProvider) || "codex",
+  });
+  if (apiKeyRoute) routes.push(apiKeyRoute);
+  routes.push(...orderExaMcpRoutes(discoveredRoutes, { preferredProvider }));
+  return dedupeRoutes(routes);
+}
+
 export function buildExaApiKeyRoute({
   apiKey = "",
   provider = "codex",

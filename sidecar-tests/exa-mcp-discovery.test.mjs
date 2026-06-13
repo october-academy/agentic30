@@ -10,6 +10,7 @@ import {
   discoverExaMcpRoutes,
   orderExaMcpRoutes,
   redactExaResearchRoute,
+  resolveExaResearchRoutes,
 } from "../sidecar/exa-mcp-discovery.mjs";
 
 async function withTmpHome(fn) {
@@ -76,6 +77,37 @@ test("orders discovered Exa routes by preferred provider", () => {
     { provider: "codex", configPath: "a" },
   ], { preferredProvider: "gemini" });
   assert.deepEqual(ordered.map((route) => route.provider), ["gemini", "codex", "claude"]);
+});
+
+test("configured EXA_API_KEY route wins before discovered provider MCP routes", () => {
+  const routes = resolveExaResearchRoutes({
+    apiKey: "exa_secret",
+    preferredProvider: "gemini",
+    discoveredRoutes: [
+      {
+        provider: "codex",
+        source: "provider_mcp",
+        label: "Codex Exa MCP",
+        serverName: "exa",
+        configPath: "a",
+        mcpConfig: { type: "http", url: EXA_MCP_URL },
+      },
+      {
+        provider: "gemini",
+        source: "provider_mcp",
+        label: "Gemini Exa MCP",
+        serverName: "exa",
+        configPath: "b",
+        mcpConfig: { type: "http", url: "https://mcp.exa.ai/mcp?alt=1" },
+      },
+    ],
+  });
+
+  assert.equal(routes[0].source, "api_key");
+  assert.equal(routes[0].provider, "gemini");
+  assert.equal(routes[0].label, "EXA_API_KEY fallback");
+  assert.equal(routes[1].provider, "gemini");
+  assert.equal(routes[2].provider, "codex");
 });
 
 test("redacted Exa route summary excludes header and env values", () => {

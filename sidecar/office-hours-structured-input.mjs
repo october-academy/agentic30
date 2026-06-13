@@ -22,14 +22,9 @@ const OFFICE_HOURS_STRUCTURED_MODES = new Set([
 const DEFAULT_OFFICE_HOURS_QUESTION =
   "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?";
 
-// 모든 Office Hours 인터뷰 질문은 자유 입력 답변을 보장한다. 선택지가 실제
-// 상황과 맞지 않으면 사용자가 직접 쓴 답으로 제출할 수 있어야 하므로, 어떤
-// 채널(LLM 도구 호출, 인라인 승격, 호스트 폴백)이 무엇을 선언했든 카드가
-// Mac UI로 나가기 직전에 allowFreeText를 켠다. requiresFreeText(근거 문장
-// 필수 여부)는 질문 의미에 속하므로 건드리지 않는다.
-const DEFAULT_OFFICE_HOURS_FREE_TEXT_PLACEHOLDER =
-  "예: 선택지에 없으면 실제 상황을 직접 입력";
-
+// 모든 Office Hours 인터뷰 질문은 선택지와 자유 입력 탈출구를 명시해야 한다.
+// 이 모듈은 누락된 allowFreeText/requiresFreeText/generation 계약을 보정하지
+// 않는다. 잘못된 provider payload는 즉시 계약 위반으로 실패한다.
 const DEMAND_EVIDENCE_QUESTION_ID = "office_hours_demand_evidence";
 const ACTIVE_USER_DEFINITION_QUESTION_ID = "get_users_active_user_definition";
 const DEMAND_EVIDENCE_OPTIONS = Object.freeze([
@@ -165,89 +160,11 @@ export function isOfficeHoursStructuredInputToolEvent(event = {}) {
   ].some((value) => isStructuredInputToolName(value));
 }
 
-export function normalizeOfficeHoursStructuredPromptRequest(request = {}) {
-  if (!request || typeof request !== "object") return request;
-  const questions = Array.isArray(request.questions) ? request.questions : [];
-  let changed = false;
-  const normalizedQuestions = questions.map((question) => {
-    if (isActiveUserDefinitionQuestion(question)) {
-      changed = true;
-      return normalizeActiveUserDefinitionQuestion(question);
-    }
-    if (isDemandEvidenceQuestion(question)) {
-      changed = true;
-      return normalizeDemandEvidenceQuestion(question);
-    }
-    return question;
-  });
-  return changed
-    ? {
-        ...request,
-        questions: normalizedQuestions,
-      }
-    : request;
-}
-
-// Tool-channel requests (Claude AskUserQuestion via canUseTool, Codex
-// agentic30_request_user_input via the MCP subprocess) reach the host through
-// createUserInputRequest, which — unlike the inline-decision promotion path
-// (buildOfficeHoursInlineStructuredPromptPayload) — attaches no generation
-// stamp. Without `generation.mode`, the submit handler's
-// isOfficeHoursStructuredInputResponse check is false, so the answer skips the
-// Office Hours transcript question bubble and, more importantly, the
-// appendOfficeHoursTurn memory log. This stamps a tool-channel Office Hours
-// request so both providers get identical post-answer treatment.
-//
-// Conservative + idempotent: only stamps when NO generation is present at all
-// (the tool-channel signature). Requests already carrying an Office Hours
-// generation (inline promotion) or any other generation — e.g. an IDD adaptive
-// continuation with a docType — are returned untouched.
-export function ensureOfficeHoursGeneration(request = {}) {
-  if (!request || typeof request !== "object") return request;
-  const generation = request.generation;
-  if (isOfficeHoursStructuredInputMode(generation?.mode)) return request;
-  if (generation && (generation.mode || generation.docType)) return request;
-
-  const firstQuestion = Array.isArray(request.questions) ? request.questions[0] : null;
-  const intent = firstQuestion
-    ? resolveOfficeHoursQuestionIntent({
-        question: String(firstQuestion.question || ""),
-        inlineDecision: {
-          header: firstQuestion.header,
-          question: firstQuestion.question,
-          intent: firstQuestion.intent || firstQuestion.questionIntent,
-          questionId: firstQuestion.questionId,
-        },
-      })
-    : "";
-
-  const stamped = {
-    ...(generation || {}),
-    mode: OFFICE_HOURS_TOOL_MODE,
-  };
-  if (intent) {
-    stamped.signalId = resolveOfficeHoursSignalId(
-      { questionId: firstQuestion?.questionId },
-      intent,
-    );
-    stamped.signalLabel = officeHoursSignalLabel(intent);
-  }
-  return { ...request, generation: stamped };
-}
-
-// Single entry point that makes any structured-input request card-ready for the
-// Office Hours surface: canonicalize the demand-evidence choices, then guarantee
-// an Office Hours generation stamp. With the stamp the Mac timeline collapses
-// the question/answer into a stacked submitted card (instead of a plain "you"
-// bubble) and submit_user_input treats it as an Office Hours turn (transcript +
-// appendOfficeHoursTurn memory log). Idempotent: requests already promoted from
-// the inline_decision channel keep their richer generation untouched.
+// Single entry point that makes an explicitly stamped Office Hours structured
+// input request card-ready. This is fail-closed: callers must provide
+// generation.mode, signal lineage, options, and free-text flags up front.
 // Normalize one question's PRESENTATION so the stacked card renders identically
 // regardless of which provider/channel produced it:
-//  - header: tool channels (especially Claude's AskUserQuestion default) may emit
-//    an empty or literal "Question" header; fall back to the same deterministic
-//    Korean intent header the inline path uses so the card title never shows a
-//    raw English placeholder.
 //  - highlightPhrases / emphasis: validate + derive them the same way the inline
 //    path does (option-label highlights, substring-checked emphasis spans) so the
 //    question-statement styling is consistent across providers. The tool channels
@@ -255,19 +172,8 @@ export function ensureOfficeHoursGeneration(request = {}) {
 //    the prompt already asks every provider to attach emphasis spans.
 function normalizeOfficeHoursQuestionPresentation(question = {}) {
   if (!question || typeof question !== "object") return question;
-  const intent = resolveOfficeHoursQuestionIntent({
-    question: String(question.question || ""),
-    inlineDecision: {
-      header: question.header,
-      question: question.question,
-      intent: question.intent || question.questionIntent,
-      questionId: question.questionId,
-    },
-  });
   const rawHeader = String(question.header || "").trim();
-  const header = !rawHeader || rawHeader.toLowerCase() === "question"
-    ? officeHoursIntentHeader(intent)
-    : rawHeader.slice(0, 32);
+  const header = rawHeader.slice(0, 32);
   const highlightPhrases = normalizeOfficeHoursHighlightPhrases(
     question.highlightPhrases || question.highlight_phrases || question.highlights,
     question.question,
@@ -286,42 +192,107 @@ function normalizeOfficeHoursQuestionPresentation(question = {}) {
 }
 
 export function prepareOfficeHoursStructuredInputRequest(request = {}) {
-  const canonical = normalizeOfficeHoursStructuredPromptRequest(request);
-  const stamped = ensureOfficeHoursGeneration(canonical);
-  const withUiCopy = isOfficeHoursStructuredInputMode(stamped?.generation?.mode)
-    ? normalizeOfficeHoursUiCopyRequest(stamped)
-    : stamped;
+  const shouldValidate = isLikelyOfficeHoursStructuredInputRequest(request);
+  if (shouldValidate) {
+    assertOfficeHoursStructuredInputContract(request);
+  }
+  const withUiCopy = isOfficeHoursStructuredInputMode(request?.generation?.mode)
+    ? normalizeOfficeHoursUiCopyRequest(request)
+    : request;
   const withPresentation = Array.isArray(withUiCopy?.questions)
     ? { ...withUiCopy, questions: withUiCopy.questions.map(normalizeOfficeHoursQuestionPresentation) }
     : withUiCopy;
-  // Office Hours로 스탬프된 카드만 자유 입력을 강제한다 — 이 함수를 통과하는
-  // 비 Office Hours 요청(예: docType이 있는 IDD 연속 질문)은 그대로 둔다.
-  return isOfficeHoursStructuredInputMode(withPresentation?.generation?.mode)
-    ? ensureOfficeHoursFreeTextInput(withPresentation)
-    : withPresentation;
+  if (shouldValidate) {
+    assertOfficeHoursStructuredInputContract(withPresentation);
+  }
+  return withPresentation;
 }
 
-// 요청 안의 모든 질문에 자유 입력 탈출구를 보장한다. allowFreeText가 이미
-// true인 질문은 그대로 두고(자체 placeholder 보존), 꺼져 있던 질문만 켜면서
-// 기본 placeholder를 채운다.
-export function ensureOfficeHoursFreeTextInput(request = {}) {
-  if (!request || typeof request !== "object" || !Array.isArray(request.questions)) {
-    return request;
+function isLikelyOfficeHoursStructuredInputRequest(request = {}) {
+  if (!request || typeof request !== "object") return false;
+  if (isOfficeHoursStructuredInputMode(request.generation?.mode)) return true;
+  return String(request.title || "").trim().toLowerCase() === "office hours";
+}
+
+export function assertOfficeHoursStructuredInputContract(request = {}) {
+  if (!request || typeof request !== "object") {
+    throw officeHoursStructuredInputContractError("request must be an object");
   }
-  let changed = false;
-  const questions = request.questions.map((question) => {
-    if (!question || typeof question !== "object") return question;
-    if (question.allowFreeText === true) return question;
-    changed = true;
-    return {
-      ...question,
-      allowFreeText: true,
-      freeTextPlaceholder:
-        String(question.freeTextPlaceholder || question.free_text_placeholder || "").trim()
-        || DEFAULT_OFFICE_HOURS_FREE_TEXT_PLACEHOLDER,
-    };
-  });
-  return changed ? { ...request, questions } : request;
+  if (!isOfficeHoursStructuredInputMode(request.generation?.mode)) {
+    throw officeHoursStructuredInputContractError("generation.mode must be office_hours_tool or office_hours_inline");
+  }
+  const signalId = String(request.generation?.signalId || request.generation?.signal_id || "").trim();
+  const signalLabel = String(request.generation?.signalLabel || request.generation?.signal_label || "").trim();
+  if (!signalId) {
+    throw officeHoursStructuredInputContractError("generation.signalId is required");
+  }
+  if (!signalLabel) {
+    throw officeHoursStructuredInputContractError("generation.signalLabel is required");
+  }
+  const questions = Array.isArray(request.questions) ? request.questions : [];
+  if (questions.length !== 1) {
+    throw officeHoursStructuredInputContractError("Office Hours requests must contain exactly one question");
+  }
+  const question = questions[0] || {};
+  const header = String(question.header || "").trim();
+  if (!header || header.toLowerCase() === "question") {
+    throw officeHoursStructuredInputContractError("question.header must be an explicit Korean card header");
+  }
+  if (question.allowFreeText !== true) {
+    throw officeHoursStructuredInputContractError("question.allowFreeText must be true");
+  }
+  if (question.requiresFreeText !== false) {
+    throw officeHoursStructuredInputContractError("question.requiresFreeText must be false");
+  }
+  const options = Array.isArray(question.options) ? question.options : [];
+  if (options.length < 2 || options.length > 4) {
+    throw officeHoursStructuredInputContractError("question.options must contain 2-4 choices");
+  }
+  if (options.some((option) => isOtherTextOptionLabel(option?.label))) {
+    throw officeHoursStructuredInputContractError("direct-input choices are not allowed; use allowFreeText instead");
+  }
+  if (signalId === DEMAND_EVIDENCE_QUESTION_ID) {
+    assertExactOfficeHoursOptionLabels(
+      options,
+      DEMAND_EVIDENCE_OPTIONS.map((option) => option.label),
+      "office_hours_demand_evidence",
+    );
+  }
+  if (signalId === ACTIVE_USER_DEFINITION_QUESTION_ID) {
+    assertExactOfficeHoursOptionLabels(
+      options,
+      ACTIVE_USER_DEFINITION_OPTIONS.map((option) => option.label),
+      "get_users_active_user_definition",
+    );
+  }
+}
+
+function assertExactOfficeHoursOptionLabels(options, expectedLabels, signalId) {
+  const labels = options.map((option) => String(option?.label || "").trim());
+  if (labels.length !== expectedLabels.length
+    || labels.some((label, index) => label !== expectedLabels[index])) {
+    throw officeHoursStructuredInputContractError(
+      `${signalId} options must be exactly: ${expectedLabels.join("; ")}`,
+    );
+  }
+}
+
+function officeHoursStructuredInputContractError(detail) {
+  const error = new Error(`Office Hours structured input contract violation: ${detail}.`);
+  error.code = "ERR_OFFICE_HOURS_STRUCTURED_INPUT_CONTRACT";
+  return error;
+}
+
+function isOtherTextOptionLabel(label) {
+  const normalized = String(label || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[()（）]/g, " ")
+    .toLowerCase()
+    .trim();
+  return /(?:^|[\s:：\-_/])직접\s*입력(?:$|[\s:：\-_/])/.test(normalized)
+    || /^기타(?:$|[\s:：\-_/])/.test(normalized)
+    || /^other(?:$|[\s:：\-_/])/.test(normalized);
 }
 
 export function stripTrailingRubricFocusMetadata(content = "") {
@@ -368,17 +339,24 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
   const question = cleanOfficeHoursQuestion(
     String(inlineDecision.question || "").trim() || defaultQuestion,
   );
+  const options = normalizeOfficeHoursOptions(inlineDecision?.options);
+  if (options.length < 2) {
+    throw officeHoursStructuredInputContractError("inline_decision.options must contain at least two choices");
+  }
   const intent = resolveOfficeHoursQuestionIntent({
     inlineDecision,
     question,
     assistantContent: assistantMessage?.content || "",
   });
-  const options = normalizeOfficeHoursOptions(inlineDecision?.options);
-  // 승격 가능 여부는 LLM이 선언한 형태(선택지 2개 미만 + 자유입력 의도 없음 =
-  // 잘못된 카드)로 판정하되, 살아남은 카드는 항상 자유 입력을 허용한다.
-  const declaredAllowFreeText = inlineDecision.allowFreeText === true;
-  const requiresFreeText = inlineDecision.requiresFreeText === true;
-  if (options.length < 2 && !declaredAllowFreeText) return null;
+  if (!intent) {
+    throw officeHoursStructuredInputContractError("inline_decision intent or signalId is required");
+  }
+  if (inlineDecision.allowFreeText !== true) {
+    throw officeHoursStructuredInputContractError("inline_decision.allowFreeText must be true");
+  }
+  if (inlineDecision.requiresFreeText !== false) {
+    throw officeHoursStructuredInputContractError("inline_decision.requiresFreeText must be false");
+  }
   const highlightPhrases = normalizeOfficeHoursHighlightPhrases(
     inlineDecision?.highlightPhrases
       || inlineDecision?.highlight_phrases
@@ -406,8 +384,8 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
       ...(emphasis.length ? { emphasis } : {}),
       ...(options.length ? { options } : {}),
       multiSelect: inlineDecision.multiSelect === true,
-      allowFreeText: true,
-      requiresFreeText,
+      allowFreeText: inlineDecision.allowFreeText,
+      requiresFreeText: inlineDecision.requiresFreeText,
       ...(inlineDecision.freeTextPlaceholder || inlineDecision.free_text_placeholder
         ? {
             freeTextPlaceholder: String(
@@ -431,10 +409,7 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
       signalLabel: officeHoursSignalLabel(intent),
     },
   };
-  const canonicalPayload = normalizeOfficeHoursIntent(intent) === "demand"
-    ? normalizeOfficeHoursStructuredPromptRequest(payload)
-    : payload;
-  return normalizeOfficeHoursUiCopyRequest(canonicalPayload);
+  return prepareOfficeHoursStructuredInputRequest(normalizeOfficeHoursUiCopyRequest(payload));
 }
 
 export function buildOfficeHoursStructuredInputContinuationPrompt({
@@ -639,81 +614,6 @@ export function buildContextualOfficeHoursQuestion(context = "") {
   return DEFAULT_OFFICE_HOURS_QUESTION;
 }
 
-function isDemandEvidenceQuestion(question = {}) {
-  const id = String(question?.questionId || question?.question_id || question?.id || "")
-    .trim()
-    .toLowerCase();
-  if (id === DEMAND_EVIDENCE_QUESTION_ID) return true;
-  const text = [
-    question?.header,
-    question?.question,
-  ].filter(Boolean).join("\n").toLowerCase();
-  return /수요|demand/.test(text)
-    && /증거|evidence|실제 행동|strongest/.test(text);
-}
-
-function isActiveUserDefinitionQuestion(question = {}) {
-  const id = String(question?.questionId || question?.question_id || question?.id || "")
-    .trim()
-    .toLowerCase();
-  if (id === ACTIVE_USER_DEFINITION_QUESTION_ID) return true;
-  const text = [
-    question?.header,
-    question?.question,
-  ].filter(Boolean).join("\n").toLowerCase();
-  return /active user|activation action|활성 사용자|활성\s*행동|핵심\s*행동/.test(text)
-    && /기준|세려면|count|definition|완료/.test(text);
-}
-
-function normalizeActiveUserDefinitionQuestion(question = {}) {
-  return {
-    ...question,
-    questionId: String(
-      question.questionId
-        || question.question_id
-        || question.id
-        || ACTIVE_USER_DEFINITION_QUESTION_ID,
-    ).trim().slice(0, 96) || ACTIVE_USER_DEFINITION_QUESTION_ID,
-    header: "활성 사용자 기준",
-    question: "이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?",
-    helperText: cleanOfficeHoursQuestion(
-      String(question.helperText || question.helper_text || "").trim()
-        || "가입, 대기 신청, 페이지 조회, 좋아요, 팔로워, 관심 표현만으로는 활성 사용자로 세지 않습니다.",
-    ),
-    options: ACTIVE_USER_DEFINITION_OPTIONS.map((option) => ({ ...option })),
-    allowFreeText: true,
-    requiresFreeText: false,
-    textMode: question.textMode || question.text_mode || "short",
-    freeTextPlaceholder: String(question.freeTextPlaceholder || question.free_text_placeholder || "")
-      .trim()
-      .slice(0, 180) || "예: 온보딩을 끝내고 첫 검증 행동을 기록해 다음 과제를 받는다",
-  };
-}
-
-function normalizeDemandEvidenceQuestion(question = {}) {
-  return {
-    ...question,
-    questionId: String(
-      question.questionId
-        || question.question_id
-        || question.id
-        || DEMAND_EVIDENCE_QUESTION_ID,
-    ).trim().slice(0, 96) || DEMAND_EVIDENCE_QUESTION_ID,
-    header: String(question.header || "").trim().slice(0, 32) || "수요 증거",
-    question: cleanOfficeHoursQuestion(
-      String(question.question || "").trim() || DEFAULT_OFFICE_HOURS_QUESTION,
-    ),
-    options: DEMAND_EVIDENCE_OPTIONS.map((option) => ({ ...option })),
-    multiSelect: false,
-    allowFreeText: true,
-    requiresFreeText: false,
-    freeTextPlaceholder:
-      String(question.freeTextPlaceholder || question.free_text_placeholder || "").trim()
-      || DEFAULT_OFFICE_HOURS_FREE_TEXT_PLACEHOLDER,
-    textMode: question.textMode === "long" ? "long" : "short",
-  };
-}
-
 function normalizeOfficeHoursOptions(options) {
   if (!Array.isArray(options)) return [];
   const normalized = options
@@ -826,7 +726,7 @@ function resolveOfficeHoursQuestionId(inlineDecision, intent = "") {
   if (key === "get_users_active_user_definition") return ACTIVE_USER_DEFINITION_QUESTION_ID;
   if (key === "demand") return DEMAND_EVIDENCE_QUESTION_ID;
   if (key) return `office_hours_${key}`;
-  return DEMAND_EVIDENCE_QUESTION_ID;
+  return "";
 }
 
 function resolveOfficeHoursSignalId(inlineDecision, intent = "") {
@@ -860,7 +760,7 @@ function officeHoursIntentHeader(intent = "") {
     case "get_users_active_user_definition":
       return "활성 사용자 기준";
     default:
-      return "수요 증거";
+      return "";
   }
 }
 
@@ -885,7 +785,7 @@ function officeHoursSignalLabel(intent = "") {
     case "get_users_active_user_definition":
       return "활성 사용자 기준";
     default:
-      return "Office Hours Q1 수요 증거";
+      return "";
   }
 }
 

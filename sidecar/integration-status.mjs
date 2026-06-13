@@ -17,6 +17,35 @@ function status(state, detail) {
   return { state, detail: String(detail || "").slice(0, 200) };
 }
 
+function statusFromMcpOauthResult(result = {}) {
+  const stateName = String(result?.state || "");
+  if (stateName === "ready") return status("ready", result.detail);
+  if (stateName === "failed") return status("failed", result.detail);
+  if (stateName === "login_pending" || stateName === "verification_pending") {
+    return status("oauth", result.detail);
+  }
+  return null;
+}
+
+export function mergeMcpOauthConnectResultIntoIntegrationStatus({
+  current = null,
+  result = {},
+  provider = "",
+  now = new Date(),
+} = {}) {
+  const server = String(result?.server || "").trim().toLowerCase();
+  const probe = statusFromMcpOauthResult(result);
+  if (!probe || !["posthog", "cloudflare", "vercel"].includes(server)) {
+    return current || null;
+  }
+  return {
+    ...(current || {}),
+    [server]: probe,
+    provider: String(provider || result?.provider || current?.provider || ""),
+    checkedAt: (now instanceof Date ? now : new Date(now)).toISOString(),
+  };
+}
+
 // MCP OAuth 토큰은 프로바이더(Claude/Codex)별 캐시 — ready 판정은 현재 선택한
 // 프로바이더 기준이어야 한다. 다른 프로바이더에서만 검증된 상태면 "연결됨"
 // 대신 그 사실을 알려 사용자가 현재 프로바이더로 'MCP 연결'을 다시 누르게 한다.

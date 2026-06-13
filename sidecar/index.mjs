@@ -66,7 +66,10 @@ import {
   collectPosthogDirectDrilldown,
   mergeMorningBriefingDrilldownMaps,
 } from "./morning-briefing-direct-sources.mjs";
-import { collectIntegrationStatus } from "./integration-status.mjs";
+import {
+  collectIntegrationStatus,
+  mergeMcpOauthConnectResultIntoIntegrationStatus,
+} from "./integration-status.mjs";
 import {
   isProviderUsageLimitMessage,
   normalizeMcpOauthPrewarmServer,
@@ -76,6 +79,11 @@ import {
   resolveMcpOauthConnectProvider,
 } from "./mcp-oauth-prewarm.mjs";
 import { persistMcpOauthConnectResult } from "./mcp-oauth-state.mjs";
+import {
+  appendMcpOauthTrace,
+  createMcpOauthTraceId,
+  readRecentMcpOauthTraces,
+} from "./mcp-oauth-trace.mjs";
 import {
   buildQmdGuidance,
   buildQmdMcpConfig,
@@ -323,10 +331,9 @@ import {
   refreshBipResearch,
 } from "./bip-research-radar.mjs";
 import {
-  buildExaApiKeyRoute,
   discoverExaMcpRoutes,
-  orderExaMcpRoutes,
   redactExaResearchRoute,
+  resolveExaResearchRoutes,
 } from "./exa-mcp-discovery.mjs";
 import {
   appendOfficeHoursTurn,
@@ -504,6 +511,19 @@ const INSTANT_CHAT_COMPLETE_SLO_MS = 1_000;
 const NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS = normalizeNewsMarketRadarProviderTimeout(
   process.env.AGENTIC30_NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS,
 );
+const MARKET_RESEARCH_PROVIDER_MCP_CONCURRENCY = boundedIntegerEnv(
+  process.env.AGENTIC30_MARKET_RESEARCH_PROVIDER_MCP_CONCURRENCY,
+  2,
+  1,
+  8,
+);
+const CODEX_EXA_MCP_TOOL_TIMEOUT_SEC = boundedIntegerEnv(
+  process.env.AGENTIC30_CODEX_EXA_MCP_TOOL_TIMEOUT_SEC,
+  90,
+  15,
+  Math.max(15, Math.min(210, Math.floor(NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS / 1000) - 5)),
+);
+const runWithMarketResearchProviderBudget = createAsyncSemaphore(MARKET_RESEARCH_PROVIDER_MCP_CONCURRENCY);
 const REQUEST_EMIT_SCHEMA_VERSION = 1;
 const ALLOWED_REQUEST_EMIT_EVENTS = new Set([
   "workspace_setup_started",
@@ -515,6 +535,8 @@ const state = {
   sessions: new Map(),
   activeRuns: new Map(),
   warmRuns: new Map(),
+  mcpOauthConnectRuns: new Map(),
+  integrationStatusSnapshot: null,
   promptQueues: new Map(),
   clients: new Set(),
   resolvedUserInputIds: new Set(),
@@ -2469,6 +2491,7 @@ async function handleClientMessage(socket, payload) {
         appSupportPath,
         provider: resolveIntegrationStatusProvider(payload.preferredProvider),
       });
+      state.integrationStatusSnapshot = integrationStatus;
       send(socket, { type: "integration_status_result", integrationStatus });
       telemetry.captureEvent("mac_sidecar_integration_status_checked", {
         github: integrationStatus.github?.state || "",
@@ -2478,6 +2501,36 @@ async function handleClientMessage(socket, payload) {
         vercel: integrationStatus.vercel?.state || "",
       });
       reportIntegrationStatusFailures(integrationStatus);
+      return;
+    }
+    case "mcp_oauth_connect_cancel": {
+      const server = normalizeMcpOauthPrewarmServer(payload.server);
+      const runKey = server || String(payload.server || "").trim().toLowerCase();
+      const activeRun = state.mcpOauthConnectRuns.get(runKey);
+      const provider = activeRun?.provider || String(payload.preferredProvider || "").trim().toLowerCase();
+      if (activeRun) {
+        activeRun.abortController.abort();
+        telemetry.captureEvent("mac_sidecar_mcp_oauth_connect", {
+          server: runKey,
+          provider,
+          state: "cancel_requested",
+        });
+        return;
+      }
+      const cancelledResult = parseMcpOauthConnectResult({
+        server: runKey,
+        provider,
+        state: "cancelled",
+        detail: "MCP 연결 확인을 중지했습니다. 다시 시도하세요.",
+        checkedAt: new Date().toISOString(),
+      });
+      send(socket, { type: "mcp_oauth_connect_result", mcpOauthConnect: cancelledResult });
+      telemetry.captureEvent("mac_sidecar_mcp_oauth_connect", {
+        server: cancelledResult.server,
+        provider: cancelledResult.provider,
+        state: "cancelled_no_active_run",
+      });
+      reportMcpOauthConnectOutcome(cancelledResult);
       return;
     }
     case "mcp_oauth_connect": {
@@ -2514,12 +2567,62 @@ async function handleClientMessage(socket, payload) {
         return;
       }
       const provider = resolvedProvider.provider;
+      const runKey = server || String(payload.server || "").trim().toLowerCase();
+      const existingRun = state.mcpOauthConnectRuns.get(runKey);
+      if (existingRun) {
+        const statusPayload = parseMcpOauthConnectStatus({
+          server: runKey,
+          provider: existingRun.provider || provider,
+          state: "progress",
+          detail: "이미 MCP 연결 확인이 진행 중입니다.",
+        });
+        send(socket, {
+          type: "mcp_oauth_connect_status",
+          mcpOauthConnect: statusPayload,
+        });
+        return;
+      }
+      const abortController = new AbortController();
+      state.mcpOauthConnectRuns.set(runKey, { abortController, provider });
+      const traceId = createMcpOauthTraceId();
+      const traceStartedPerf = performance.now();
+      const traceStats = {
+        commandCount: 0,
+        providerRunCount: 0,
+        hasLoginUrl: false,
+      };
+      let traceWriteChain = Promise.resolve();
+      const recordMcpOauthTrace = (phase, stateName = "progress", extra = {}) => {
+        traceWriteChain = traceWriteChain.then(() => appendMcpOauthTrace({
+          appSupportPath,
+          entry: {
+            traceId,
+            server: runKey,
+            provider,
+            phase,
+            durationMs: Math.round(performance.now() - traceStartedPerf),
+            state: stateName,
+            hasLoginUrl: traceStats.hasLoginUrl || Boolean(extra.hasLoginUrl),
+            commandCount: traceStats.commandCount,
+            providerRunCount: traceStats.providerRunCount,
+          },
+        })).catch((error) => {
+          telemetry.captureException(error, {
+            operation: "mcp_oauth_trace_write",
+            server: runKey,
+            provider,
+          });
+        });
+        return traceWriteChain;
+      };
       let mcpOauthConnect;
       try {
+        recordMcpOauthTrace("started", "progress");
         mcpOauthConnect = await prewarmMcpOauth({
           server: server || payload.server,
           provider,
           workspaceRoot,
+          signal: abortController.signal,
           runProviderStreamImpl: runProviderStream,
           buildCodexEnvImpl: buildCodexEnv,
           resolveCodexBinaryPathImpl: resolveCodexBinaryPath,
@@ -2532,6 +2635,10 @@ async function handleClientMessage(socket, payload) {
                 detail: update.detail || "",
                 ...(update.loginUrl ? { loginUrl: update.loginUrl } : {}),
                 ...(typeof update.openBrowser === "boolean" ? { openBrowser: update.openBrowser } : {}),
+              });
+              if (update.loginUrl) traceStats.hasLoginUrl = true;
+              recordMcpOauthTrace(update.phase || "progress", "progress", {
+                hasLoginUrl: Boolean(update.loginUrl),
               });
               send(socket, {
                 type: "mcp_oauth_connect_status",
@@ -2551,6 +2658,14 @@ async function handleClientMessage(socket, payload) {
               });
             }
           },
+          onTraceEvent: (event = {}) => {
+            if (event.type === "command") {
+              traceStats.commandCount += 1;
+            } else if (event.type === "provider_run") {
+              traceStats.providerRunCount += 1;
+            }
+            recordMcpOauthTrace(event.phase || event.type || "trace", "progress");
+          },
         });
       } catch (error) {
         const message = String(error?.message || error);
@@ -2567,21 +2682,36 @@ async function handleClientMessage(socket, payload) {
           checkedAt: new Date().toISOString(),
         },
         );
+      } finally {
+        const activeRun = state.mcpOauthConnectRuns.get(runKey);
+        if (activeRun?.abortController === abortController) {
+          state.mcpOauthConnectRuns.delete(runKey);
+        }
       }
+      const durationMs = Math.round(performance.now() - traceStartedPerf);
+      mcpOauthConnect = parseMcpOauthConnectResult({
+        ...mcpOauthConnect,
+        traceId,
+        durationMs,
+      });
+      await recordMcpOauthTrace("completed", mcpOauthConnect.state, {
+        hasLoginUrl: Boolean(mcpOauthConnect.loginUrl),
+      });
       // 검증 결과 영속: 브리핑 소스 게이트와 Settings 상태 배지가 "OAuth로
       // 연결됨"을 인정하는 유일한 근거. 토큰이 아니라 검증 사실만 저장.
-      await persistMcpOauthConnectResult({ appSupportPath, result: mcpOauthConnect }).catch((error) => {
-        telemetry.captureException(error, { operation: "mcp_oauth_state_persist" });
-      });
+      if (mcpOauthConnect.state !== "cancelled") {
+        await persistMcpOauthConnectResult({ appSupportPath, result: mcpOauthConnect }).catch((error) => {
+          telemetry.captureException(error, { operation: "mcp_oauth_state_persist" });
+        });
+      }
       let integrationStatus = null;
-      try {
-        integrationStatus = await collectIntegrationStatus({ appSupportPath, provider });
-      } catch (error) {
-        telemetry.captureException(error, {
-          operation: "mcp_oauth_connect_integration_status",
-          server: mcpOauthConnect.server,
+      if (mcpOauthConnect.state !== "cancelled") {
+        integrationStatus = mergeMcpOauthConnectResultIntoIntegrationStatus({
+          current: state.integrationStatusSnapshot,
+          result: mcpOauthConnect,
           provider,
         });
+        if (integrationStatus) state.integrationStatusSnapshot = integrationStatus;
       }
       send(socket, {
         type: "mcp_oauth_connect_result",
@@ -5584,6 +5714,17 @@ function resolveIntegrationStatusProvider(preferredProvider = "") {
   return pickMorningBriefingProvider("");
 }
 
+function evaluateMorningBriefingSourceGate({ day = 2, preferredProvider = "" } = {}) {
+  return evaluateOfficeHoursSourceGate({
+    workspaceRoot,
+    day,
+    selectedSources: MORNING_BRIEFING_ALL_SOURCES,
+    provider: pickMorningBriefingProvider(preferredProvider),
+    appSupportPath,
+    allowLocalDevFastDays: false,
+  });
+}
+
 // 브리핑 서빙 직전 연결 상태 라이브 오버레이. 디스크 스냅샷의 sync.sources는
 // 생성 시점 연결 상태라, 이후 Settings의 MCP OAuth 연결/해제·프로바이더 전환을
 // 모른다(설정 "MCP 연결됨" vs 브리핑 "미연결" 모순의 근본 원인). 연결 상태의
@@ -5594,14 +5735,11 @@ async function emitMorningBriefingWithLiveSync({ briefing, previous = null, pref
   emit(briefing ?? null, previous);
   if (!briefing) return;
   try {
-    const gate = await evaluateOfficeHoursSourceGate({
-      workspaceRoot,
+    const gate = await evaluateMorningBriefingSourceGate({
       // Day 1 고정 인터뷰 short-circuit(빈 sources) 우회 — 연결 상태는 Day와
       // 무관하게 항상 probe한다. refresh의 Math.max(2, day) 클램프와 같은 이유.
       day: 2,
-      selectedSources: MORNING_BRIEFING_ALL_SOURCES,
-      provider: pickMorningBriefingProvider(preferredProvider),
-      appSupportPath,
+      preferredProvider,
     });
     const { briefing: live, changed } = applyMorningBriefingLiveSync(briefing, gate.sources || []);
     if (changed) emit(live, previous);
@@ -5658,12 +5796,9 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     // the briefing must still probe what is actually connected.
     // 게이트의 MCP OAuth 판정은 브리핑을 실제로 실행할 프로바이더 기준이어야
     // 한다 — collectMorningBriefingExternalSignals의 primary와 같은 계산.
-    const probeGate = await evaluateOfficeHoursSourceGate({
-      workspaceRoot,
+    const probeGate = await evaluateMorningBriefingSourceGate({
       day: Math.max(2, Number.isFinite(day) ? day : 2),
-      selectedSources: MORNING_BRIEFING_ALL_SOURCES,
-      provider: pickMorningBriefingProvider(preferredProvider),
-      appSupportPath,
+      preferredProvider,
     });
     const readySources = (probeGate.sources || [])
       .filter((source) => source.state === "ready")
@@ -10544,6 +10679,7 @@ async function writeAllDay1DocHandoff({
   const result = await writeAllDay1HandoffDocuments(workspaceRoot, state.iddSetup, {
     day1Handoff: handoffSnapshot,
     provider: seed.provider,
+    runEvidenceJudge: true,
     onProgress: ({ stage, doc }) => {
       if (stage === "recorded") {
         progress("recording_response", `${doc.title} 문서 초안 구성 중`, doc.type);
@@ -10555,6 +10691,54 @@ async function writeAllDay1DocHandoff({
     },
   });
   state.iddSetup = await persistIddSetupState(workspaceRoot, result.state);
+
+  if (result.blocked) {
+    progress("judge_blocked", "Office Hours 증거 judge가 문서 저장을 보류했습니다.", "all");
+    telemetry.captureEvent("mac_sidecar_day1_doc_handoff_write_all_blocked", {
+      session_id: session?.id ?? "",
+      provider: seed.provider,
+      judge_score: result.judgeResult?.score ?? 0,
+      judge_status: result.judgeResult?.status || "failed",
+    });
+    if (session) {
+      const followUps = Array.isArray(result.judgeResult?.followUpQuestions)
+        ? result.judgeResult.followUpQuestions
+        : [];
+      const content = [
+        `GOAL/ICP/VALUES/SPEC 저장을 보류했습니다. Office Hours 문서 judge 점수는 ${result.judgeResult?.score ?? 0}/10이고, 기준은 8/10입니다.`,
+        result.evidenceDebtCard || "",
+        followUps.length ? "다음 질문:" : "",
+        ...followUps.slice(0, 2).map((question, index) => `${index + 1}. ${question}`),
+      ].filter(Boolean).join("\n\n");
+      session.runtime = {
+        ...(session.runtime || {}),
+        iddMode: null,
+        pendingIddContinuation: null,
+        iddPendingAdaptiveContinuation: null,
+      };
+      session.pendingUserInput = null;
+      session.status = "idle";
+      session.error = result.judgeResult?.summary || "Office Hours evidence judge blocked document save.";
+      session.messages.push(makeMessage({
+        role: "assistant",
+        provider: session.provider,
+        content,
+        state: "final",
+      }));
+      touch(session);
+    }
+    broadcast({
+      type: "idd_setup_state",
+      ...serializeIddSetupFields(state.iddSetup),
+      ...serializeBipSetupGate(currentBipSetupGate()),
+    });
+    broadcastBipSetupGateState(currentBipSetupGate());
+    if (session) {
+      await persistSessions();
+      broadcast({ type: "session_updated", session });
+    }
+    return state.iddSetup;
+  }
 
   progress("bulk_written", "GOAL/ICP/VALUES/SPEC 문서 저장 완료", "all");
   telemetry.captureEvent("mac_sidecar_day1_doc_handoff_write_all_completed", {
@@ -10578,7 +10762,10 @@ async function writeAllDay1DocHandoff({
     session.messages.push(makeMessage({
       role: "assistant",
       provider: session.provider,
-      content: "Day 1 확정 가설로 GOAL/ICP/VALUES/SPEC 문서를 저장했습니다.",
+      content: [
+        "Day 1 확정 가설로 GOAL/ICP/VALUES/SPEC 문서를 저장했습니다.",
+        result.evidenceDebtCard || "",
+      ].filter(Boolean).join("\n\n"),
       state: "final",
     }));
     touch(session);
@@ -12027,18 +12214,53 @@ function currentExaApiKey() {
   return String(state.integrationSettings?.exaApiKey || process.env.EXA_API_KEY || "").trim();
 }
 
+function boundedIntegerEnv(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
+  const normalizedMin = Number.isFinite(min) ? Math.trunc(min) : 1;
+  const normalizedMax = Number.isFinite(max) ? Math.trunc(max) : normalizedMin;
+  const normalizedFallback = Number.isFinite(fallback) ? Math.trunc(fallback) : normalizedMin;
+  const candidate = Number.isFinite(parsed) ? parsed : normalizedFallback;
+  return Math.max(normalizedMin, Math.min(normalizedMax, candidate));
+}
+
+function createAsyncSemaphore(limit = 1) {
+  const maxActive = Math.max(1, Math.trunc(limit));
+  const queue = [];
+  let active = 0;
+
+  function drain() {
+    while (active < maxActive && queue.length > 0) {
+      const resolve = queue.shift();
+      active += 1;
+      resolve();
+    }
+  }
+
+  return async function runWithSemaphore(task) {
+    if (typeof task !== "function") {
+      throw new TypeError("Semaphore task must be a function.");
+    }
+    await new Promise((resolve) => {
+      queue.push(resolve);
+      drain();
+    });
+    try {
+      return await task();
+    } finally {
+      active = Math.max(0, active - 1);
+      drain();
+    }
+  };
+}
+
 function resolveNewsMarketRadarExaRoutes({
   preferredProvider = "",
 } = {}) {
-  const discovered = orderExaMcpRoutes(discoverExaMcpRoutes(), { preferredProvider });
-  const routes = [...discovered];
-  const apiKey = currentExaApiKey();
-  if (apiKey) {
-    const provider = normalizeProviderName(preferredProvider) || "codex";
-    const apiKeyRoute = buildExaApiKeyRoute({ apiKey, provider });
-    if (apiKeyRoute) routes.push(apiKeyRoute);
-  }
-  return routes;
+  return resolveExaResearchRoutes({
+    discoveredRoutes: discoverExaMcpRoutes(),
+    apiKey: currentExaApiKey(),
+    preferredProvider,
+  });
 }
 
 function normalizeProviderName(value = "") {
@@ -12557,11 +12779,13 @@ async function runNewsMarketRadarProviderResearch({
       researchSource: routeLabel,
     });
   }
-  const text = provider === "claude"
-    ? await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: route.mcpConfig })
-    : provider === "gemini"
-      ? await runNewsMarketRadarGeminiResearch({ prompt, exaMcpConfig: route.mcpConfig })
-      : await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: route.mcpConfig });
+  const text = await runWithMarketResearchProviderBudget(async () => (
+    provider === "claude"
+      ? await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: route.mcpConfig })
+      : provider === "gemini"
+        ? await runNewsMarketRadarGeminiResearch({ prompt, exaMcpConfig: route.mcpConfig })
+        : await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: route.mcpConfig })
+  ));
   return {
     text,
     provider,
@@ -12615,6 +12839,15 @@ function normalizeNewsMarketRadarProviderRoutes({
       configPath: route.configPath || null,
       mcpConfig: route.mcpConfig,
     }));
+}
+
+function withCodexExaMcpToolTimeout(mcpConfig) {
+  if (!mcpConfig || typeof mcpConfig !== "object") return mcpConfig;
+  if (Number.isFinite(mcpConfig.tool_timeout_sec)) return mcpConfig;
+  return {
+    ...mcpConfig,
+    tool_timeout_sec: CODEX_EXA_MCP_TOOL_TIMEOUT_SEC,
+  };
 }
 
 function providerLabel(provider) {
@@ -12763,7 +12996,7 @@ async function runNewsMarketRadarCodexResearch({
         computer_use: false,
       },
       mcp_servers: {
-        exa: exaMcpConfig || buildExaMcpConfig(currentExaApiKey()),
+        exa: withCodexExaMcpToolTimeout(exaMcpConfig || buildExaMcpConfig(currentExaApiKey())),
       },
     },
   });
@@ -13432,6 +13665,7 @@ function buildSidecarDiagnostics(
     sessionStoreSchemaVersion: SESSION_STORE_SCHEMA_VERSION,
     sessionStoreWarnings: state.sessionStoreWarnings,
     executionOs,
+    mcpOauthTraces: readRecentMcpOauthTraces({ appSupportPath, limit: 10 }),
   });
   snapshot.gstackVendor = describeGstackVendor();
   return snapshot;
@@ -14063,9 +14297,36 @@ async function syncPendingUserInputRequests() {
     }
     if (session.pendingUserInput?.requestId === request.requestId) continue;
 
-    const nextRequest = session.runtime?.officeHours?.active === true
-      ? prepareOfficeHoursStructuredInputRequest(request)
-      : request;
+    let nextRequest = request;
+    if (session.runtime?.officeHours?.active === true) {
+      try {
+        nextRequest = prepareOfficeHoursStructuredInputRequest(request);
+      } catch (error) {
+        const message = formatError(error);
+        await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId).catch(() => {});
+        state.resolvedUserInputIds.add(request.requestId);
+        activeRequestIds.delete(request.requestId);
+        if (session.pendingUserInput?.requestId === request.requestId) {
+          session.pendingUserInput = null;
+        }
+        session.status = "error";
+        session.error = message;
+        touch(session);
+        changedSessions.add(session.id);
+        emitOfficeHoursStatus(session, {
+          stage: "failed",
+          detail: message,
+          progressText: message,
+          requestId: request.requestId,
+        });
+        broadcast({
+          type: "error",
+          sessionId: session.id,
+          message,
+        });
+        continue;
+      }
+    }
     session.pendingUserInput = attachIddAdaptiveContinuationToRequest(session, nextRequest);
     session.status = "awaiting_input";
     touch(session);

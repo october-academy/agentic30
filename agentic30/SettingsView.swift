@@ -1137,6 +1137,7 @@ struct SettingsView: View {
         if viewModel.mcpOauthConnecting.contains("vercel") { return "MCP 연결 중" }
         if let prewarm = viewModel.mcpOauthResults["vercel"] {
             if prewarm.isReady { return "MCP 연결됨" }
+            if prewarm.isCancelled { return "중지됨" }
             if prewarm.isLoginPending { return "로그인 대기" }
             return prewarm.isVerificationPending ? "검증 대기" : "MCP 연결 실패"
         }
@@ -1152,6 +1153,7 @@ struct SettingsView: View {
         if viewModel.mcpOauthConnecting.contains("vercel") { return settingsSubtleText }
         if let prewarm = viewModel.mcpOauthResults["vercel"] {
             if prewarm.isReady { return settingsAccentColor }
+            if prewarm.isCancelled { return settingsSubtleText }
             return prewarm.isPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
         }
         if let live = viewModel.integrationStatus?.vercel, !live.isMissing {
@@ -1166,6 +1168,7 @@ struct SettingsView: View {
         if viewModel.mcpOauthConnecting.contains("cloudflare") { return "MCP 연결 중" }
         if let prewarm = viewModel.mcpOauthResults["cloudflare"] {
             if prewarm.isReady { return "MCP 연결됨" }
+            if prewarm.isCancelled { return "중지됨" }
             if prewarm.isLoginPending { return "로그인 대기" }
             return prewarm.isVerificationPending ? "검증 대기" : "MCP 연결 실패"
         }
@@ -1181,6 +1184,7 @@ struct SettingsView: View {
         if viewModel.mcpOauthConnecting.contains("cloudflare") { return settingsSubtleText }
         if let prewarm = viewModel.mcpOauthResults["cloudflare"] {
             if prewarm.isReady { return settingsAccentColor }
+            if prewarm.isCancelled { return settingsSubtleText }
             return prewarm.isPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
         }
         if let live = viewModel.integrationStatus?.cloudflare, !live.isMissing {
@@ -1190,10 +1194,10 @@ struct SettingsView: View {
         return OpenDesignDayColor.amber
     }
 
-    /// Locks MCP actions while the sidecar is checking or proving an OAuth link,
-    /// so a user cannot start overlapping provider probes.
-    private var integrationActionLocked: Bool {
-        viewModel.integrationStatusChecking || !viewModel.mcpOauthConnecting.isEmpty
+    /// Locks a specific MCP action while the sidecar is checking all integrations.
+    /// Same-server overlap is handled by the connecting row state and sidecar runKey.
+    private func integrationActionLocked(for server: String) -> Bool {
+        viewModel.integrationStatusChecking || viewModel.mcpOauthConnecting.contains(server)
     }
 
     private func mcpIntegrationControls(
@@ -1203,22 +1207,33 @@ struct SettingsView: View {
         probe: IntegrationProbeStatus?,
         identifier: String
     ) -> some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        let isConnecting = viewModel.mcpOauthConnecting.contains(server)
+        return VStack(alignment: .trailing, spacing: 6) {
             HStack(spacing: 8) {
                 odSettingsStatus(
                     statusLabel,
                     color: statusColor,
                     isLoading: viewModel.integrationStatusChecking
                 )
-                odSettingsGhostButton(
-                    title: viewModel.mcpOauthConnecting.contains(server) ? "연결 중…" : "MCP 연결",
-                    systemImage: "link",
-                    width: 96,
-                    identifier: identifier,
-                    isDisabled: integrationActionLocked,
-                    isLoading: viewModel.mcpOauthConnecting.contains(server)
-                ) {
-                    viewModel.connectMcpOauth(server: server)
+                if isConnecting {
+                    odSettingsGhostButton(
+                        title: "중지",
+                        systemImage: "xmark",
+                        width: 72,
+                        identifier: "\(identifier).stop"
+                    ) {
+                        viewModel.cancelMcpOauth(server: server)
+                    }
+                } else {
+                    odSettingsGhostButton(
+                        title: "MCP 연결",
+                        systemImage: "link",
+                        width: 96,
+                        identifier: identifier,
+                        isDisabled: integrationActionLocked(for: server)
+                    ) {
+                        viewModel.connectMcpOauth(server: server)
+                    }
                 }
             }
 
@@ -1244,6 +1259,9 @@ struct SettingsView: View {
         if let result = viewModel.mcpOauthResults[server] {
             if result.isReady {
                 return ("MCP 도구 호출 확인됨.", settingsAccentColor)
+            }
+            if result.isCancelled {
+                return ("MCP 연결 확인을 중지했습니다. 다시 시도하세요.", settingsSubtleText)
             }
             if result.isLoginPending {
                 return ("브라우저 로그인 후 다시 연결하세요.", OpenDesignDayColor.amber)
@@ -1271,6 +1289,7 @@ struct SettingsView: View {
         if viewModel.mcpOauthConnecting.contains("posthog") { return "MCP 연결 중" }
         if let prewarm = viewModel.mcpOauthResults["posthog"] {
             if prewarm.isReady { return "MCP 연결됨" }
+            if prewarm.isCancelled { return "중지됨" }
             if prewarm.isLoginPending { return "로그인 대기" }
             return prewarm.isVerificationPending ? "검증 대기" : "MCP 연결 실패"
         }
@@ -1286,6 +1305,7 @@ struct SettingsView: View {
         if viewModel.mcpOauthConnecting.contains("posthog") { return settingsSubtleText }
         if let prewarm = viewModel.mcpOauthResults["posthog"] {
             if prewarm.isReady { return settingsAccentColor }
+            if prewarm.isCancelled { return settingsSubtleText }
             return prewarm.isPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
         }
         if let live = viewModel.integrationStatus?.posthog, !live.isMissing {

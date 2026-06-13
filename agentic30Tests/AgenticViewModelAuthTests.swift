@@ -1138,6 +1138,24 @@ final class AgenticViewModelAuthTests {
         #expect(sidecar.startCallCount == 1)
     }
 
+    @Test @MainActor func cancelMcpOauthSendsCancelPayload() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        viewModel.selectedProvider = .codex
+        viewModel.connectMcpOauth(server: "vercel")
+        sidecar.resetSentPayloads()
+
+        viewModel.cancelMcpOauth(server: "vercel")
+
+        let payload = try #require(sidecar.sentPayloads.last)
+        #expect(payload["type"] as? String == "mcp_oauth_connect_cancel")
+        #expect(payload["server"] as? String == "vercel")
+        #expect(payload["preferredProvider"] as? String == "codex")
+        #expect(viewModel.mcpOauthProgress["vercel"] == "중지 중…")
+        #expect(viewModel.mcpOauthConnecting.contains("vercel"))
+    }
+
     @Test @MainActor func selectingWorkspaceAfterIntakeOnlyCompletionEnablesSidecarStart() throws {
         let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
         WorkspaceSettings.legacyWorkspaceProvider = { "" }

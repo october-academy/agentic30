@@ -80,11 +80,21 @@ const StructuredPromptResourceInputSchema = z.object({
   description: z.string().max(240).optional(),
 }).passthrough();
 
+const StructuredPromptGenerationInputSchema = z.object({
+  mode: z.string().max(80).optional(),
+  docType: z.string().max(80).optional(),
+  signalId: z.string().max(96).optional(),
+  signal_id: z.string().max(96).optional(),
+  signalLabel: z.string().max(160).optional(),
+  signal_label: z.string().max(160).optional(),
+}).passthrough();
+
 export const ClaudeStructuredInputToolInputSchema = z.object({
   title: z.string().max(120).optional(),
   intro: StructuredPromptIntroInputSchema.optional(),
   resources: z.array(StructuredPromptResourceInputSchema).max(5).optional(),
   questions: z.array(ClaudeStructuredPromptQuestionInputSchema).min(1).max(4),
+  generation: StructuredPromptGenerationInputSchema.optional(),
 }).passthrough();
 
 export const CodexStructuredInputToolInputSchema = z.object({
@@ -92,6 +102,7 @@ export const CodexStructuredInputToolInputSchema = z.object({
   intro: StructuredPromptIntroInputSchema.optional(),
   resources: z.array(StructuredPromptResourceInputSchema).max(5).optional(),
   questions: z.array(CodexStructuredPromptQuestionInputSchema).min(1).max(4),
+  generation: StructuredPromptGenerationInputSchema.optional(),
 }).passthrough();
 
 export const CodexStructuredInputToolZodShape = CodexStructuredInputToolInputSchema.shape;

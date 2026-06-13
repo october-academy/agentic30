@@ -58,6 +58,10 @@ function cleanString(value, max = 240) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+function localDevFastDaysEnabled(env = process.env) {
+  return String(env?.AGENTIC30_LOCAL_DEV_FAST_DAYS || "").trim() === "1";
+}
+
 function unique(values = []) {
   return [...new Set(values.filter(Boolean))];
 }
@@ -317,6 +321,7 @@ export async function evaluateOfficeHoursSourceGate({
   execImpl = defaultExec,
   appSupportPath = "",
   env = process.env,
+  allowLocalDevFastDays = true,
 } = {}) {
   const normalizedDay = Number.parseInt(String(day ?? ""), 10);
   const selected = normalizeOfficeHoursSelectedSources(selectedSources);
@@ -335,6 +340,29 @@ export async function evaluateOfficeHoursSourceGate({
       checkedAt,
       window,
       selectedSources: selected,
+      sources: [],
+      missingRequiredSources: [],
+      connectActions: [],
+    };
+  }
+
+  if (
+    allowLocalDevFastDays
+    && Number.isFinite(normalizedDay)
+    && normalizedDay >= 2
+    && localDevFastDaysEnabled(env)
+  ) {
+    return {
+      schemaVersion: OFFICE_HOURS_SOURCE_GATE_SCHEMA_VERSION,
+      day: normalizedDay,
+      ok: true,
+      blocking: false,
+      skipped: true,
+      reason: "local_dev_fast_days",
+      message: "Local development fast-days mode skips Day 2+ Office Hours source requirements.",
+      checkedAt,
+      window,
+      selectedSources: [],
       sources: [],
       missingRequiredSources: [],
       connectActions: [],

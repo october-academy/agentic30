@@ -479,6 +479,32 @@ struct StructuredPromptSubmissionStateTests {
         #expect(viewModel.mcpOauthResults["cloudflare"] == nil)
     }
 
+    @MainActor @Test func cancelledMcpOauthResultClearsSpinner() throws {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        viewModel.connectMcpOauth(server: "vercel")
+        #expect(viewModel.mcpOauthConnecting.contains("vercel"))
+
+        let event = try JSONDecoder().decode(SidecarEvent.self, from: Data("""
+        {
+          "type": "mcp_oauth_connect_result",
+          "mcpOauthConnect": {
+            "server": "vercel",
+            "provider": "claude",
+            "state": "cancelled",
+            "detail": "MCP 연결 확인을 중지했습니다. 다시 시도하세요.",
+            "checkedAt": "2026-06-10T09:34:00.000Z"
+          }
+        }
+        """.utf8))
+        viewModel.applySidecarEventForTesting(event)
+
+        #expect(viewModel.mcpOauthConnecting.isEmpty)
+        #expect(viewModel.mcpOauthProgress.isEmpty)
+        #expect(viewModel.mcpOauthResults["vercel"]?.state == "cancelled")
+        #expect(viewModel.mcpOauthResults["vercel"]?.isCancelled == true)
+    }
+
     @MainActor @Test func structuredPromptSubmissionKeepsPendingInputLocally() {
         let viewModel = AgenticViewModel(activateAppForAuth: {})
         let prompt = Self.makePrompt()
@@ -519,6 +545,17 @@ struct StructuredPromptSubmissionStateTests {
         viewModel.synchronizeStructuredPromptDrafts(with: prompt)
         viewModel.toggleStructuredPromptOption("Provider", for: question, in: prompt)
         viewModel.updateStructuredPromptFreeText(
+            "기존 직접 입력 초안",
+            for: question,
+            in: prompt
+        )
+        viewModel.activateStructuredPromptFreeText(for: question, in: prompt)
+
+        let activated = viewModel.structuredPromptDraft(for: question, in: prompt)
+        #expect(activated.selectedOptions == ["Provider"])
+        #expect(activated.freeText == "기존 직접 입력 초안")
+
+        viewModel.updateStructuredPromptFreeText(
             "macOS 메뉴바 앱을 쓰는 1인 개발자",
             for: question,
             in: prompt
@@ -539,6 +576,50 @@ struct StructuredPromptSubmissionStateTests {
         #expect(submissions.count == 1)
         #expect(submissions[0].selectedOptions == ["Provider"])
         #expect(submissions[0].freeText == "macOS 메뉴바 앱을 쓰는 1인 개발자")
+    }
+
+    @MainActor @Test func selectingOptionAfterFreeTextKeepsOptionalFreeText() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makePrompt()
+        let question = prompt.questions[0]
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+
+        viewModel.synchronizeStructuredPromptDrafts(with: prompt)
+        viewModel.updateStructuredPromptFreeText("직접 입력한 답", for: question, in: prompt)
+        viewModel.toggleStructuredPromptOption("Provider", for: question, in: prompt)
+
+        let draft = viewModel.structuredPromptDraft(for: question, in: prompt)
+        #expect(draft.selectedOptions == ["Provider"])
+        #expect(draft.freeText == "직접 입력한 답")
+
+        let submissions = viewModel.structuredPromptSubmissions(for: prompt)
+        #expect(submissions.count == 1)
+        #expect(submissions[0].selectedOptions == ["Provider"])
+        #expect(submissions[0].freeText == "직접 입력한 답")
+    }
+
+    @MainActor @Test func optionQuestionWithRequiresFreeTextSubmitsOnSelectionOnly() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makeIddPrompt(docType: "icp")
+        let question = prompt.questions[0]
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+
+        viewModel.synchronizeStructuredPromptDrafts(with: prompt)
+        #expect(viewModel.canSubmitStructuredPrompt(prompt) == false)
+
+        viewModel.toggleStructuredPromptOption("선택", for: question, in: prompt)
+        #expect(viewModel.canSubmitStructuredPrompt(prompt) == true)
+
+        let submissions = viewModel.structuredPromptSubmissions(for: prompt)
+        #expect(submissions.count == 1)
+        #expect(submissions[0].selectedOptions == ["선택"])
+        #expect(submissions[0].freeText.isEmpty)
     }
 
     @MainActor @Test func officeHoursDemandEvidenceCardIsSingleClick() {

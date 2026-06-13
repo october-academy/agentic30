@@ -15,6 +15,7 @@ extension Notification.Name {
     static let agenticOpenDesignSearchRequested = Notification.Name("agenticOpenDesignSearchRequested")
     static let agenticOpenDesignSettingsRequested = Notification.Name("agenticOpenDesignSettingsRequested")
     static let agenticOpenDesignRouteRequested = Notification.Name("agenticOpenDesignRouteRequested")
+    static let agenticAppRouteRequested = Notification.Name("agenticAppRouteRequested")
     static let agenticShowAppUpdateStatusPanelRequested = Notification.Name("agenticShowAppUpdateStatusPanelRequested")
 }
 
@@ -268,6 +269,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            handleAppRouteURL(url)
+        }
+    }
+
     @MainActor
     func openWorkspaceWindow() {
         if makeWorkspaceWindowKey() {
@@ -295,7 +302,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             authSession: viewModel.macAuthSession
         )
         openWorkspaceWindow()
-        requestOpenDesignSettingsRoute(section: section)
+        requestAgenticAppRoute(AgenticAppRoute(
+            destination: .settings(section: section),
+            telemetrySource: source
+        ))
+    }
+
+    @MainActor
+    func handleAppRouteURL(_ url: URL) {
+        guard let route = AgenticAppRoute(url: url) else {
+            PostHogTelemetry.capture(
+                "mac_deep_link_ignored",
+                properties: [
+                    "scheme": url.scheme ?? "",
+                    "host": url.host(percentEncoded: false) ?? "",
+                    "path": url.path,
+                ],
+                authSession: viewModel.macAuthSession
+            )
+            return
+        }
+
+        handleAppRoute(route)
+    }
+
+    @MainActor
+    func handleAppRoute(_ route: AgenticAppRoute) {
+        PostHogTelemetry.capture(
+            "mac_app_route_requested",
+            properties: [
+                "source": route.telemetrySource,
+                "destination": route.telemetryDestination,
+            ],
+            authSession: viewModel.macAuthSession
+        )
+
+        openWorkspaceWindow()
+        if case .officeHoursQuestion(let sessionId, let requestId) = route.destination {
+            viewModel.requestOfficeHoursQuestionReadyOpen(
+                sessionId: sessionId,
+                requestId: requestId,
+                source: route.telemetrySource
+            )
+        }
+        if case .document(let path) = route.destination {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            return
+        }
+        requestAgenticAppRoute(route)
     }
 
     private func requestOpenDesignSettingsRoute(section: SettingsSection? = nil) {
@@ -325,6 +379,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             NotificationCenter.default.post(name: .agenticOpenDesignRouteRequested, object: nil, userInfo: userInfo)
+        }
+    }
+
+    private func requestAgenticAppRoute(_ route: AgenticAppRoute) {
+        let userInfo = AgenticAppRoute.routeURLUserInfo(route)
+        NotificationCenter.default.post(name: .agenticAppRouteRequested, object: nil, userInfo: userInfo)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .agenticAppRouteRequested, object: nil, userInfo: userInfo)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            NotificationCenter.default.post(name: .agenticAppRouteRequested, object: nil, userInfo: userInfo)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            NotificationCenter.default.post(name: .agenticAppRouteRequested, object: nil, userInfo: userInfo)
         }
     }
 
@@ -665,22 +733,32 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         let request = response.notification.request
+        if let route = AgenticAppRoute(
+            notificationUserInfo: request.content.userInfo,
+            telemetrySource: "notification_center"
+        ) {
+            await MainActor.run {
+                handleAppRoute(route)
+            }
+            return
+        }
+
         if let questionReady = OfficeHoursQuestionReadyNotification(
             notificationUserInfo: request.content.userInfo,
             identifier: request.identifier
         ) {
             await MainActor.run {
-                openOfficeHoursQuestionReady(sessionId: questionReady.sessionId, source: "notification_center")
+                handleAppRoute(questionReady.appRoute)
             }
             return
         }
 
-        if McpOauthConnectedNotification(
+        if let notification = McpOauthConnectedNotification(
             notificationUserInfo: request.content.userInfo,
             identifier: request.identifier
-        ) != nil {
+        ) {
             await MainActor.run {
-                openSettingsInWorkspace(source: "mcp_oauth_connected_notification", section: .integrations)
+                handleAppRoute(notification.appRoute)
             }
             return
         }
@@ -690,7 +768,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             identifier: request.identifier
         ) {
             await MainActor.run {
-                openLongRunningCompletionNotification(completion)
+                handleAppRoute(AgenticAppRoute.defaultRoute(for: completion))
             }
         }
     }

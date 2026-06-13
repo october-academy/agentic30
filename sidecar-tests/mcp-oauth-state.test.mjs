@@ -162,6 +162,32 @@ test("providerLimited failure keeps a previously ready provider (no downgrade)",
   }
 });
 
+test("cancelled connect result does not downgrade a previously ready provider", async () => {
+  const appSupportPath = await makeTempAppSupport();
+  try {
+    await persistMcpOauthConnectResult({
+      appSupportPath,
+      result: { server: "vercel", provider: "codex", state: "ready", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
+    });
+    await persistMcpOauthConnectResult({
+      appSupportPath,
+      result: {
+        server: "vercel",
+        provider: "codex",
+        state: "cancelled",
+        detail: "MCP 연결 확인을 중지했습니다. 다시 시도하세요.",
+        checkedAt: "2026-06-10T12:00:00.000Z",
+      },
+    });
+
+    const state = readMcpOauthState(appSupportPath);
+    assert.equal(isMcpOauthServerReady(state, "vercel", "codex"), true);
+    assert.equal(state.servers.vercel.providers.codex.detail, "ok");
+  } finally {
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+});
+
 test("persist ignores unknown servers, unknown providers, and progress states; read survives corrupt files", async () => {
   const appSupportPath = await makeTempAppSupport();
   try {

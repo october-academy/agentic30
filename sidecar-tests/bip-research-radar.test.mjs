@@ -170,6 +170,12 @@ test("BIP research provider prompt requires adaptive X Threads Instagram researc
     assert.match(prompt, /Context\.adaptiveProfile/);
     assert.match(prompt, /Do not add fixed customer-type, geography, tool-stack, product-platform/);
     assert.match(prompt, /Context\.querySeeds as the search plan/);
+    assert.match(prompt, /Use at most 6 Context\.querySeeds/);
+    assert.match(prompt, /Use at most two web_search_advanced_exa calls total/);
+    assert.match(prompt, /type:"fast"/);
+    assert.match(prompt, /numResults <= 6/);
+    assert.match(prompt, /enableSummary:false/);
+    assert.match(prompt, /web_fetch_exa for at most 8 candidate URLs total/);
     assert.match(prompt, new RegExp(BIP_RESEARCH_PROMPT_PROFILE));
   });
 });
@@ -202,6 +208,9 @@ test("BIP research reuses fresh same-day same-context cache when force is false"
 
     assert.equal(calls, 1);
     assert.equal(first.status.state, "ready");
+    assert.match(first.status.startedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.match(first.status.completedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(Number.isFinite(first.status.durationMs), true);
     assert.equal(second.status.state, "ready");
     assert.equal(second.candidates.length, 1);
   });
