@@ -215,7 +215,7 @@
       "proofs": []
     },
     "expected_visible_outcome": {
-      "must_include": ["지금", "고객"],
+      "must_include": ["오늘", "고객"],
       "must_not_include": ["설정 완료 후"],
       "requires_one_next_action": true,
       "requires_proof_target": true
