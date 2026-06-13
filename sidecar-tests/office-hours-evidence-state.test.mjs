@@ -10,8 +10,10 @@ import {
 } from "../sidecar/office-hours-evidence-state.mjs";
 import {
   OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE,
+  OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT,
   buildOfficeHoursEvidenceJudgePrompt,
   deterministicOfficeHoursEvidenceJudge,
+  judgeOfficeHoursEvidenceDocuments,
   parseOfficeHoursEvidenceJudgeJson,
 } from "../sidecar/office-hours-evidence-judge.mjs";
 import { writeAllDay1HandoffDocuments } from "../sidecar/idd-doc-gate.mjs";
@@ -41,6 +43,7 @@ async function writeFailureFixture(root) {
           mapsTo: "GOAL.activation_action",
           evidenceTarget: "첫 가치 완료 이벤트, 실행 기록, 검증 행동, 다음 과제",
           failureMode: "가입이나 관심 표현만 있으면 활성 사용자로 세지 않는다.",
+          nextIntent: "first_value_completed",
         }),
       ],
     }),
@@ -110,6 +113,7 @@ async function writeFailureFixture(root) {
           mapsTo: "SPEC.smallest_paid_entry",
           evidenceTarget: "3만원 유료 세션 제안, 일정 확정 또는 결제 의향",
           failureMode: "가격이나 일정이 없으면 관심 신호로 낮춘다.",
+          nextIntent: "concrete_purchase_conditions",
         }),
       ],
       freeText: "첫 paid entry는 3만원 1회 검증 세션이다.",
@@ -405,6 +409,123 @@ test("Office Hours evidence judge contract requires docs plus next question and 
   }));
   assert.equal(parsed.passed, false);
   assert.equal(parsed.score, OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE - 1);
+});
+
+test("Hard-evidence gate blocks self-report-only evidence and records debt (ER-1)", async () => {
+  const documents = { goal: "x", icp: "x", spec: "x", values: "x" };
+  const selfReport = {
+    references: [{ sourceType: "office_hours_turn", id: "t1", nextIntent: "verbal_interest_or_no_evidence" }],
+    facts: {},
+    nextQuestion: "",
+  };
+  const withHard = {
+    references: [{ sourceType: "office_hours_turn", id: "t1", nextIntent: "actual_payment_or_contract" }],
+    facts: {},
+    nextQuestion: "",
+  };
+  const r1 = await judgeOfficeHoursEvidenceDocuments({ provider: "deterministic", evidenceState: selfReport, documents });
+  assert.equal(r1.passed, false);
+  assert.ok((r1.evidenceDebt || []).includes(OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT));
+  // With hard evidence present the gate stops adding the debt (the verdict may
+  // still fail for weak docs, but not because hard evidence is missing).
+  const r2 = await judgeOfficeHoursEvidenceDocuments({ provider: "deterministic", evidenceState: withHard, documents });
+  assert.ok(!(r2.evidenceDebt || []).includes(OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT));
+  // Active-user *definition* grades are NOT hard evidence (they define what
+  // counts as active, not proof it happened) — must still fail closed.
+  const definitionOnly = {
+    references: [{ sourceType: "office_hours_turn", id: "t2", nextIntent: "first_value_completed" }],
+    facts: {},
+    nextQuestion: "",
+  };
+  const r3 = await judgeOfficeHoursEvidenceDocuments({ provider: "deterministic", evidenceState: definitionOnly, documents });
+  assert.ok((r3.evidenceDebt || []).includes(OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT));
+  // A hard intent on a non-turn reference (e.g. commitment) must not count.
+  const commitmentIntent = {
+    references: [{ sourceType: "office_hours_commitment", id: "cm", nextIntent: "actual_payment_or_contract" }],
+    facts: {},
+    nextQuestion: "",
+  };
+  const r4 = await judgeOfficeHoursEvidenceDocuments({ provider: "deterministic", evidenceState: commitmentIntent, documents });
+  assert.ok((r4.evidenceDebt || []).includes(OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT));
+});
+
+test("Day1 handoff fails closed when judge is requested but workspace has no evidence (GATE-01)", async () => {
+  await withTempWorkspace(async (root) => {
+    const result = await writeAllDay1HandoffDocuments(root, {}, {
+      provider: "deterministic",
+      runEvidenceJudge: true,
+      day1Handoff: shallowHandoff(),
+    });
+    assert.equal(result.blocked, true);
+    assert.equal(result.judgeResult.passed, false);
+    assert.ok((result.judgeResult.evidenceDebt || []).includes(OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT));
+    assert.equal(result.written.length, 0);
+  });
+});
+
+test("Reducer dedupes duplicate turns so references and confidence do not inflate (IDEM-1)", async () => {
+  await withTempWorkspace(async (root) => {
+    const dup = turn({
+      id: "turn-alternative",
+      questionId: "current_alternative",
+      header: "현재 대안",
+      question: "지금 이 문제를 어떤 현재 대안으로 버티고 있나요?",
+      label: "혼자 더 만들기",
+      options: [option("혼자 더 만들기", { mapsTo: "PROBLEM.status_quo", evidenceTarget: "x", nextIntent: "verbal_interest_or_no_evidence" })],
+    });
+    await fs.writeFile(
+      path.join(root, ".agentic30", "memory", "office-hours-turns.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        schema: "agentic30.office_hours_turns.v1",
+        updatedAt: "2026-06-13T00:00:00.000Z",
+        turns: [dup, dup, dup, dup],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    const state = await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} });
+    const turnRefs = (state.references || []).filter((ref) => ref.sourceType === "office_hours_turn");
+    assert.equal(turnRefs.length, 1);
+  });
+});
+
+test("Provider judge path parses stream output and applies the hard-evidence gate (TQ-3)", async () => {
+  const savedStub = process.env.AGENTIC30_TEST_STUB_PROVIDER;
+  const savedMode = process.env.AGENTIC30_OFFICE_HOURS_DOC_JUDGE_MODE;
+  delete process.env.AGENTIC30_TEST_STUB_PROVIDER;
+  delete process.env.AGENTIC30_OFFICE_HOURS_DOC_JUDGE_MODE;
+  try {
+    const documents = { goal: "x", icp: "x", spec: "x", values: "x" };
+    const judgeJson = (score) => JSON.stringify({
+      score,
+      passed: true,
+      summary: "ok",
+      criteria: [{ id: "c1", passed: true, reason: "근거" }],
+      follow_up_questions: ["다음 질문"],
+      evidence_debt: [],
+    });
+    // Real provider stream path: runJudge output is parsed and the 8+ threshold honored.
+    const pass = await judgeOfficeHoursEvidenceDocuments({
+      provider: "claude",
+      evidenceState: { references: [{ sourceType: "office_hours_turn", nextIntent: "actual_payment_or_contract" }], facts: {}, nextQuestion: "" },
+      documents,
+      runJudge: async () => "```json\n" + judgeJson(9) + "\n```",
+    });
+    assert.equal(pass.passed, true);
+    assert.equal(pass.score, 9);
+    // Even a perfect provider score cannot pass when hard evidence is missing.
+    const blocked = await judgeOfficeHoursEvidenceDocuments({
+      provider: "claude",
+      evidenceState: { references: [{ sourceType: "office_hours_turn", nextIntent: "verbal_interest_or_no_evidence" }], facts: {}, nextQuestion: "" },
+      documents,
+      runJudge: async () => judgeJson(10),
+    });
+    assert.equal(blocked.passed, false);
+    assert.ok((blocked.evidenceDebt || []).includes(OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT));
+  } finally {
+    if (savedStub !== undefined) process.env.AGENTIC30_TEST_STUB_PROVIDER = savedStub;
+    if (savedMode !== undefined) process.env.AGENTIC30_OFFICE_HOURS_DOC_JUDGE_MODE = savedMode;
+  }
 });
 
 function shallowHandoff() {

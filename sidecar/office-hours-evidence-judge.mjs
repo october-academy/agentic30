@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { runProviderStream } from "./provider-runner.mjs";
+import { officeHoursEvidenceHasHardEvidence } from "./office-hours-evidence-state.mjs";
+
+export const OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT = "hard_evidence_missing";
 
 export const OFFICE_HOURS_EVIDENCE_JUDGE_SCHEMA_VERSION = 1;
 export const OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE = 8;
@@ -53,7 +56,10 @@ export async function judgeOfficeHoursEvidenceDocuments({
   now = () => new Date(),
 } = {}) {
   if (shouldUseDeterministicJudge(provider)) {
-    return deterministicOfficeHoursEvidenceJudge({ evidenceState, documents, now });
+    return applyHardEvidenceGate(
+      deterministicOfficeHoursEvidenceJudge({ evidenceState, documents, now }),
+      evidenceState,
+    );
   }
 
   const bestPracticeDocs = await readBestPracticeDocs(workspaceRoot);
@@ -68,7 +74,7 @@ export async function judgeOfficeHoursEvidenceDocuments({
       timeoutMs,
     });
     const parsed = parseOfficeHoursEvidenceJudgeJson(rawOutput);
-    return {
+    return applyHardEvidenceGate({
       schemaVersion: OFFICE_HOURS_EVIDENCE_JUDGE_SCHEMA_VERSION,
       schema: "agentic30.office_hours.evidence_judge.v1",
       status: parsed.passed ? "passed" : "failed",
@@ -86,16 +92,18 @@ export async function judgeOfficeHoursEvidenceDocuments({
       model,
       rawJudgeOutput: String(rawOutput || ""),
       raw_judge_output: String(rawOutput || ""),
-    };
+    }, evidenceState);
   } catch (error) {
     const message = error?.message || String(error);
-    return errorJudgeResult({
+    // Route the infra-error result through the gate too, so it records the
+    // hard-evidence debt when applicable; the gate preserves status "error".
+    return applyHardEvidenceGate(errorJudgeResult({
       provider,
       model,
       judgedAt,
       message: `Office Hours evidence judge unavailable or invalid: ${message}`,
       evidenceDebt: ["judge_unavailable"],
-    });
+    }), evidenceState);
   }
 }
 
@@ -197,6 +205,40 @@ export function deterministicOfficeHoursEvidenceJudge({
     rawJudgeOutput: "",
     raw_judge_output: "",
   };
+}
+
+// GATE-01 + ER-1: a verdict only counts as passed when the underlying evidence
+// includes at least one hard-evidence turn (real transaction or completed
+// behavior). New/Day0 sessions (empty references) and self-report-only sessions
+// both fail here, regardless of the doc text or the provider-reported score.
+// Infra errors (status==="error") keep their own status but record the debt.
+function applyHardEvidenceGate(result, evidenceState) {
+  if (!result || officeHoursEvidenceHasHardEvidence(evidenceState)) return result;
+  const debt = appendJudgeDebt(result.evidenceDebt, OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT);
+  // Infra errors keep their own status/score (0); only record the debt.
+  if (result.status === "error") {
+    return { ...result, evidenceDebt: debt, evidence_debt: debt };
+  }
+  // Any non-error verdict without hard evidence is forced to a failed save with
+  // a capped score, so we never leave a "10/10 but blocked" contradiction.
+  const cappedScore = Math.min(clampNumber(result.score, 0, 10), OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE - 1);
+  return {
+    ...result,
+    status: "failed",
+    passed: false,
+    score: cappedScore,
+    summary: trimText(
+      `${result.summary || ""} 하드 증거 없음: 결제·계약·완료 행동 기록이 evidence에 없어 자기보고만으로는 통과할 수 없습니다.`,
+      1200,
+    ),
+    evidenceDebt: debt,
+    evidence_debt: debt,
+  };
+}
+
+function appendJudgeDebt(list, item) {
+  const arr = normalizeStringList(list);
+  return arr.includes(item) ? arr : [...arr, item];
 }
 
 function shouldUseDeterministicJudge(provider) {

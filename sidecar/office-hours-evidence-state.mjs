@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { projectDocPath } from "./project-doc-paths.mjs";
+import { dedupeOfficeHoursTurnsKeepLast } from "./office-hours-resume.mjs";
 
 export const OFFICE_HOURS_EVIDENCE_SCHEMA_VERSION = 1;
 export const OFFICE_HOURS_EVIDENCE_SCHEMA = "agentic30.office_hours.evidence.v1";
@@ -162,7 +163,11 @@ export function renderOfficeHoursEvidenceDebtCard(evidenceState = {}) {
 }
 
 function normalizeTurns(value) {
-  return (Array.isArray(value) ? value : [])
+  // IDEM-1: dedupe raw turns first (resume re-seeds the same question on every
+  // relaunch). Without this, duplicate turns inflate reference counts and the
+  // confidence score (turns.length >= 4) even though no new evidence arrived.
+  const deduped = dedupeOfficeHoursTurnsKeepLast(Array.isArray(value) ? value : []);
+  return deduped
     .map((turn, index) => normalizeTurn(turn, index))
     .filter(Boolean);
 }
@@ -416,6 +421,28 @@ function buildNextQuestion({ facts, evidenceDebt, commitments }) {
   return `${target}이 ${alternative}으로 버티는 비용을 숫자로 말할 수 있나요? 지금 가장 큰 증거부채는 "${debt}"입니다.`;
 }
 
+// ER-1 / GATE-01: hard evidence = the Q1 Demand-Reality grades that mean a real
+// transaction or a concrete purchase commitment. CRITICALLY, the active-user
+// *definition* grades (first_value_completed / repeat_use_completed /
+// manual_pilot_success) are NOT hard evidence — they answer "what counts as an
+// active user" (a definition), not proof that anyone completed it. Likewise
+// "verbal_interest_or_no_evidence" (self-report) and "paid_or_time_current_alternative"
+// (status-quo problem signal) are excluded. Only demand-evidence turns qualify;
+// the sourceType check below pins this to real office-hours turns, not commitments
+// or digests. Tune as the bar evolves (see structured-input.mjs
+// DEMAND_EVIDENCE_OPTIONS vs ACTIVE_USER_DEFINITION_OPTIONS).
+export const OFFICE_HOURS_HARD_EVIDENCE_INTENTS = Object.freeze([
+  "actual_payment_or_contract",
+  "concrete_purchase_conditions",
+]);
+
+export function officeHoursEvidenceHasHardEvidence(evidenceState = {}) {
+  const refs = Array.isArray(evidenceState?.references) ? evidenceState.references : [];
+  const hard = new Set(OFFICE_HOURS_HARD_EVIDENCE_INTENTS);
+  return refs.some((ref) =>
+    ref?.sourceType === "office_hours_turn" && hard.has(cleanText(ref?.nextIntent)));
+}
+
 function buildReferences({ turns, commitments, dailyDigest }) {
   const refs = [];
   for (const turn of turns) {
@@ -433,6 +460,11 @@ function buildReferences({ turns, commitments, dailyDigest }) {
       risk: turn.selectedOption?.risk || "",
       evidenceTarget: turn.selectedOption?.evidenceTarget || "",
       failureMode: turn.selectedOption?.failureMode || "",
+      // ER-1: keep the structured-input evidence ladder grade and the user's
+      // free text so the judge can tell hard evidence from self-report instead
+      // of only seeing that some text exists.
+      nextIntent: turn.selectedOption?.nextIntent || "",
+      freeText: turn.freeText || "",
       occurredAt: turn.occurredAt,
     });
   }

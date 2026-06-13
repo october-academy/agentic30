@@ -2079,7 +2079,11 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
     ? mergeDay1HandoffWithEvidence(day1Handoff, evidenceState)
     : day1Handoff;
   let judgeResult = null;
-  if (runEvidenceJudge && hasEvidence) {
+  // GATE-01: fail-closed. When the judge is requested we always run it, even
+  // with no reducer evidence — the judge's hard-evidence gate turns "no
+  // evidence" into a blocked save instead of silently writing the docs. The
+  // previous `&& hasEvidence` let new/Day0 users bypass the judge entirely.
+  if (runEvidenceJudge) {
     const documents = Object.fromEntries(DAY1_HANDOFF_DOC_TYPES.map((type) => {
       const doc = day1HandoffDocByType(type);
       return [type, doc ? buildDay1HandoffResponseText(doc, { day1Handoff: mergedHandoff }) : ""];
@@ -2146,8 +2150,11 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
 }
 
 function hasOfficeHoursReducerEvidence(evidenceState = {}) {
+  // daily_digest is a derived aggregate, not a direct user signal. Requiring a
+  // real turn or commitment keeps "merge evidence into the handoff" honest;
+  // digest-only sessions fall through to the fail-closed judge gate instead.
   return (Array.isArray(evidenceState.references) ? evidenceState.references : [])
-    .some((ref) => ["office_hours_turn", "office_hours_commitment", "daily_digest"].includes(ref?.sourceType));
+    .some((ref) => ["office_hours_turn", "office_hours_commitment"].includes(ref?.sourceType));
 }
 
 export function isDay1HandoffDocWritten(state, type) {

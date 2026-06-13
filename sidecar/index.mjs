@@ -315,6 +315,10 @@ import {
   writeAllDay1HandoffDocuments,
   writeDay1HandoffDocument,
 } from "./idd-doc-gate.mjs";
+import {
+  buildOfficeHoursEvidenceState,
+  officeHoursEvidenceHasHardEvidence,
+} from "./office-hours-evidence-state.mjs";
 import { buildMiniActionSessionTriggerEvent } from "./adaptive-curriculum.mjs";
 import {
   appendCurriculumAnswer,
@@ -1910,6 +1914,30 @@ async function handleClientMessage(socket, payload) {
             return;
           }
 
+          // GATE-02: the single-doc path must honor the same hard-evidence bar
+          // as the bulk write_all path. Without this, the two entry points that
+          // write the same canonical docs have different safety guarantees.
+          const perDocEvidence = await buildOfficeHoursEvidenceState({
+            workspaceRoot,
+            day1Handoff: session.runtime?.day1Handoff || {},
+          }).catch(() => null);
+          // Fail closed: a build failure (null) or missing hard evidence both
+          // block the save, matching the bulk write_all path's safety bar.
+          if (!perDocEvidence || !officeHoursEvidenceHasHardEvidence(perDocEvidence)) {
+            broadcastIddSubmitProgress("blocked", "하드 증거가 없어 단일 문서 저장을 보류", completedDoc.type);
+            session.messages.push(makeMessage({
+              role: "assistant",
+              provider: session.provider,
+              content: `${completedDoc.title} 저장을 보류했습니다. 결제·계약·완료 행동 같은 하드 증거가 evidence에 있어야 정식 문서로 승격됩니다.`,
+              state: "final",
+            }));
+            session.status = "idle";
+            session.error = null;
+            session.runtime = { ...(session.runtime || {}), day1HandoffFollowupCount: 0 };
+            await persistSessions();
+            broadcast({ type: "session_updated", session });
+            return;
+          }
           broadcastIddSubmitProgress("writing_file", `${completedDoc.canonicalPath} 저장 중`, completedDoc.type);
           state.iddSetup = await writeDay1HandoffDocument(workspaceRoot, state.iddSetup, completedDoc, {
             day1Handoff: session.runtime?.day1Handoff || {},

@@ -782,6 +782,7 @@ test("Day 1 document handoff writes one canonical doc immediately without auto-s
   await fs.mkdir(path.join(root, "archive"), { recursive: true });
   await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
   await fs.writeFile(path.join(root, "archive", "GOAL.md"), "# GOAL\n\n기존 목표는 보존한다.\n");
+  await seedHardEvidenceTurn(root);
 
   const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
     cwd: packageRoot,
@@ -882,6 +883,7 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
   await fs.mkdir(path.join(root, "archive"), { recursive: true });
   await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
   await fs.writeFile(path.join(root, "archive", "GOAL.md"), "# GOAL\n\n기존 목표는 보존한다.\n");
+  await seedHardEvidenceTurn(root);
 
   const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
     cwd: packageRoot,
@@ -1717,6 +1719,57 @@ test("Day 1 ICP user completes a five-turn live Codex SDK conversation", {
 
   assert.doesNotMatch(stderr, /AGENTIC30_TEST_STUB_PROVIDER/);
 });
+
+// Production renders the Day 1 handoff / write_all actions only after office
+// hours has recorded turns, so the evidence judge always has reducer evidence.
+// Seed one hard-evidence turn to mirror that precondition; without it the
+// fail-closed judge gate (GATE-01) correctly blocks the save.
+async function seedHardEvidenceTurn(root) {
+  await fs.mkdir(path.join(root, ".agentic30", "memory"), { recursive: true });
+  const mkTurn = (id, questionId, mapsTo, label, { question, option = {}, freeText = "" }) => ({
+    id,
+    day: 1,
+    sessionId: "session-day1",
+    requestId: `${id}-request`,
+    questionText: question,
+    responseText: label,
+    promptSnapshot: {
+      questions: [{ questionId, question, options: [{ label, mapsTo, ...option }] }],
+    },
+    submissions: [{ selectedOptions: [label], freeText }],
+  });
+  // Mirror the post-office-hours precondition with hard evidence (a sent
+  // payment request) plus the measurement/pressure facts the judge needs.
+  const turns = [
+    mkTurn("turn-activation", "activation_action", "GOAL.activation_action", "실명 고객 3명에게 3만원 결제 요청 발송 완료", {
+      question: "이번 주 반드시 끝내야 하는 검증 행동은 무엇인가요?",
+      option: {
+        evidenceTarget: "실명 고객 3명에게 보낸 결제 요청 캡처와 보낸 시각",
+        failureMode: "오늘 3명에게 결제 요청을 못 보내면 이번 cycle은 실패다.",
+        nextIntent: "actual_payment_or_contract",
+      },
+      freeText: "3명에게 3만원 결제 요청을 보냈고 보낸 시각 캡처가 있다.",
+    }),
+    mkTurn("turn-alternative", "current_alternative", "PROBLEM.status_quo", "노션과 스프레드시트로 인터뷰 메모를 복사함", {
+      question: "지금 이 문제를 어떤 현재 대안으로 버티고 있나요?",
+      option: {
+        evidenceTarget: "최근 2주 기능 개발 12시간, 고객 대화 0명",
+        failureMode: "고객 접촉 없이 기능만 늘리면 수요 공백이 남는다.",
+      },
+      freeText: "최근 2주 기능 개발 12시간, 고객 대화 0명.",
+    }),
+  ];
+  await fs.writeFile(
+    path.join(root, ".agentic30", "memory", "office-hours-turns.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      schema: "agentic30.office_hours_turns.v1",
+      updatedAt: "2026-06-13T00:00:00.000Z",
+      turns,
+    }, null, 2)}\n`,
+    "utf8",
+  );
+}
 
 async function writeDay1Fixture(root, appSupportPath) {
   await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
