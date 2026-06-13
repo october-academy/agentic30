@@ -229,6 +229,23 @@ export async function runProviderStream({
     throw forcedTestError;
   }
   if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
+    if (
+      process.env.AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST === "1"
+      && executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE
+    ) {
+      const stubRequest = await createStubOfficeHoursUserInputRequest({ sessionIdForMcp });
+      if (stubRequest) {
+        onRunEvent?.({
+          phase: "provider.stub_user_input_request",
+          provider,
+          requestId: stubRequest.requestId,
+          questionCount: stubRequest.questions.length,
+        });
+      }
+      await delayTestStubOfficeHoursMcpRequestIfNeeded();
+      onRunEvent?.({ phase: "provider.stub_response", provider });
+      return { runtime: sessionRuntime };
+    }
     const stubText = buildStubResponse(prompt);
     onTextReplace?.(stubText);
     const stubRequest = await createStubIddUserInputRequest({
@@ -243,6 +260,7 @@ export async function runProviderStream({
         docType: sessionRuntime?.iddPendingAdaptiveContinuation?.docType || "",
       });
     }
+    await delayTestStubProviderIfNeeded();
     onRunEvent?.({ phase: "provider.stub_response", provider });
     return { runtime: sessionRuntime };
   }
@@ -2321,6 +2339,63 @@ async function createStubIddUserInputRequest({
     appSupportPath,
     pending.docType === "icp" ? decorateIcpStructuredInput(payload) : payload,
   );
+}
+
+async function createStubOfficeHoursUserInputRequest({ sessionIdForMcp } = {}) {
+  if (!sessionIdForMcp) return null;
+  return createUserInputRequest(appSupportPath, {
+    sessionId: sessionIdForMcp,
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: "Office Hours",
+    questions: [
+      {
+        questionId: "office_hours_demand_evidence",
+        header: "수요 증거",
+        question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
+        helperText: "느낌이나 칭찬이 아니라 날짜와 행동으로 설명할 수 있는 증거를 고릅니다.",
+        options: [
+          {
+            label: "실제 결제/계약이 있었다",
+            description: "돈이 이미 움직였으므로 가장 강한 수요 증거입니다.",
+          },
+          {
+            label: "구매 조건이 구체적으로 확인됐다",
+            description: "가격, 범위, 일정 조건이 있으면 다음 검증은 실제 결제 전환입니다.",
+          },
+          {
+            label: "현재 대안에 돈/시간을 쓰고 있다",
+            description: "유료 대안이나 반복 행동이 있어도 전환 이유와 대체 우위는 남습니다.",
+          },
+          {
+            label: "관심만 있거나 아직 증거가 없다",
+            description: "칭찬, 가격 질문, 막연한 관심은 수요가 아니며 첫 행동 증거가 필요합니다.",
+          },
+        ],
+        multiSelect: false,
+        allowFreeText: true,
+        requiresFreeText: false,
+        textMode: "short",
+      },
+    ],
+  });
+}
+
+async function delayTestStubOfficeHoursMcpRequestIfNeeded() {
+  const delayMs = Number.parseInt(
+    String(process.env.AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST_DELAY_MS || ""),
+    10,
+  );
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, 5_000)));
+}
+
+async function delayTestStubProviderIfNeeded() {
+  const delayMs = Number.parseInt(
+    String(process.env.AGENTIC30_TEST_STUB_PROVIDER_DELAY_MS || ""),
+    10,
+  );
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, 5_000)));
 }
 
 function extractStubContextFiles(prompt) {

@@ -3,24 +3,29 @@ import assert from "node:assert/strict";
 import {
   buildOfficeHoursResumePreamble,
   countOfficeHoursResumeTurnsFromOtherSessions,
+  dedupeOfficeHoursTurnsKeepLast,
   hasOfficeHoursTerminalResumeTurn,
   isPastOfficeHoursSnapshotDay,
   selectOfficeHoursResumeTurns,
   selectOfficeHoursSnapshotTurns,
   shouldSeedOfficeHoursResumeTranscript,
+  stripOfficeHoursResumePreambleBlocks,
 } from "../sidecar/office-hours-resume.mjs";
 
-const makeTurn = (overrides = {}) => ({
-  id: `oh-1-${Math.floor(Math.random() * 1e9)}`,
-  day: 1,
-  sessionId: "prior-session",
-  requestId: "req-1",
-  mode: "office_hours_tool",
-  questionText: "지금까지 나온 가장 강한 실제 신호는 무엇인가요?",
-  responseText: "답장이 왔고 현재 대안/비용을 말했다",
-  occurredAt: "2026-06-09T23:32:34.881Z",
-  ...overrides,
-});
+const makeTurn = (overrides = {}) => {
+  const id = overrides.id || `oh-1-${Math.floor(Math.random() * 1e9)}`;
+  return {
+    id,
+    day: 1,
+    sessionId: "prior-session",
+    requestId: `req-${id}`,
+    mode: "office_hours_tool",
+    questionText: "지금까지 나온 가장 강한 실제 신호는 무엇인가요?",
+    responseText: "답장이 왔고 현재 대안/비용을 말했다",
+    occurredAt: "2026-06-09T23:32:34.881Z",
+    ...overrides,
+  };
+};
 
 const day1ActiveProgress = (overrides = {}) => ({
   schemaVersion: 1,
@@ -194,6 +199,41 @@ test("selectOfficeHoursResumeTurns collapses re-asked questions to the latest an
   assert.equal(turns.at(-1).responseText, "새 답");
 });
 
+test("dedupeOfficeHoursTurnsKeepLast prefers revised answers by stable card identity", () => {
+  const turns = dedupeOfficeHoursTurnsKeepLast([
+    makeTurn({
+      id: "old-q1",
+      requestId: "req-q1-old",
+      questionText: "이 목표에서 활성 사용자 1명으로 세려면 어떤 행동이 필요하나요?",
+      responseText: "첫 가치 완료",
+      promptSnapshot: {
+        questions: [{ questionId: "get_users_active_user_definition" }],
+      },
+    }),
+    makeTurn({
+      id: "q2",
+      requestId: "req-q2",
+      questionText: "두 번째 질문?",
+      responseText: "두 번째 답",
+      promptSnapshot: {
+        questions: [{ questionId: "office_hours_q2" }],
+      },
+    }),
+    makeTurn({
+      id: "new-q1",
+      requestId: "req-q1-new",
+      questionText: "활성 사용자를 판단하는 핵심 기준은 무엇인가요?",
+      responseText: "반복 사용 완료",
+      promptSnapshot: {
+        questions: [{ questionId: "get_users_active_user_definition" }],
+      },
+    }),
+  ]);
+
+  assert.deepEqual(turns.map((turn) => turn.id), ["q2", "new-q1"]);
+  assert.equal(turns.at(-1).responseText, "반복 사용 완료");
+});
+
 test("countOfficeHoursResumeTurnsFromOtherSessions excludes the current session's own turns", () => {
   // The Mac retry path re-enters runOfficeHours on the SAME failed session;
   // its own turns are already counted by countOfficeHoursTurnsForSession, so
@@ -322,6 +362,34 @@ test("buildOfficeHoursResumePreamble works without an expected count", () => {
 test("buildOfficeHoursResumePreamble is empty without turns", () => {
   assert.equal(buildOfficeHoursResumePreamble({ turns: [], expected: 6 }), "");
   assert.equal(buildOfficeHoursResumePreamble({}), "");
+});
+
+test("stripOfficeHoursResumePreambleBlocks removes stale resume blocks from saved context", () => {
+  const first = buildOfficeHoursResumePreamble({
+    turns: [makeTurn({ questionText: "첫 질문", responseText: "첫 답변" })],
+    expected: 6,
+  });
+  const second = buildOfficeHoursResumePreamble({
+    turns: [
+      makeTurn({ questionText: "첫 질문", responseText: "수정 답변" }),
+      makeTurn({ questionText: "둘째 질문", responseText: "둘째 답변" }),
+    ],
+    expected: 6,
+  });
+  const context = [
+    "DAY1_LOCKED_GOAL",
+    first,
+    "Goal text: paid pilot",
+    second,
+    "Customer: B2B support lead",
+  ].join("\n\n");
+
+  const stripped = stripOfficeHoursResumePreambleBlocks(context);
+  assert.equal(stripped.includes("[Office Hours 인터뷰 이어하기"), false);
+  assert.match(stripped, /DAY1_LOCKED_GOAL/);
+  assert.match(stripped, /Goal text: paid pilot/);
+  assert.match(stripped, /Customer: B2B support lead/);
+  assert.doesNotMatch(stripped, /첫 답변|수정 답변|둘째 답변/);
 });
 
 test("buildOfficeHoursResumePreamble clips oversized question/answer text", () => {

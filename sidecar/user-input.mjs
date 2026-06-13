@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { parseStructuredPromptRequestOutput } from "./provider-sdk-contracts.mjs";
+import {
+  parseCodexStructuredInputToolOutput,
+  parseStructuredPromptRequestOutput,
+} from "./provider-sdk-contracts.mjs";
 
 const REQUESTS_DIRNAME = "user-input-requests";
 const RESPONSES_DIRNAME = "user-input-responses";
@@ -68,6 +71,18 @@ export async function createUserInputRequest(
   );
 
   return validatedRequest;
+}
+
+export function buildPendingUserInputToolOutput(request = {}) {
+  return parseCodexStructuredInputToolOutput({
+    status: "pending_user_input",
+    requestId: request.requestId,
+    title: request.title ?? null,
+    questions: Array.isArray(request.questions) ? request.questions : [],
+    answers: {},
+    annotations: {},
+    responses: [],
+  });
 }
 
 export async function listUserInputRequests(appSupportPath) {

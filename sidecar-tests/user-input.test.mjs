@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import {
+  buildPendingUserInputToolOutput,
   clearUserInputArtifacts,
   createUserInputRequest,
   deleteUserInputArtifacts,
@@ -78,6 +79,37 @@ test("user input request lifecycle round-trips through request and response file
 
   await deleteUserInputArtifacts(appSupportPath, "session-1", request.requestId);
   assert.deepEqual(await listUserInputRequests(appSupportPath), []);
+});
+
+test("buildPendingUserInputToolOutput returns non-blocking Codex Office Hours shape", async () => {
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-user-input-pending-"));
+  await ensureUserInputDirs(appSupportPath);
+
+  const request = await createUserInputRequest(appSupportPath, {
+    sessionId: "session-office-hours",
+    toolName: "agentic30_request_user_input",
+    title: "Office Hours",
+    questions: [
+      {
+        header: "수요 증거",
+        question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
+        options: [
+          { label: "실제 결제/계약이 있었다", description: "돈이 이미 움직였습니다." },
+          { label: "관심만 있거나 아직 증거가 없다", description: "첫 행동 증거가 필요합니다." },
+        ],
+        allowFreeText: true,
+      },
+    ],
+  });
+
+  const output = buildPendingUserInputToolOutput(request);
+  assert.equal(output.status, "pending_user_input");
+  assert.equal(output.requestId, request.requestId);
+  assert.equal(output.title, "Office Hours");
+  assert.equal(output.questions[0].question, request.questions[0].question);
+  assert.deepEqual(output.answers, {});
+  assert.deepEqual(output.annotations, {});
+  assert.deepEqual(output.responses, []);
 });
 
 test("clearUserInputArtifacts removes stale request and response files", async () => {

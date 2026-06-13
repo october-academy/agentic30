@@ -362,11 +362,13 @@ import {
 import {
   buildOfficeHoursResumePreamble,
   countOfficeHoursResumeTurnsFromOtherSessions,
+  dedupeOfficeHoursTurnsKeepLast,
   hasOfficeHoursTerminalResumeTurn,
   isPastOfficeHoursSnapshotDay,
   selectOfficeHoursResumeTurns,
   selectOfficeHoursSnapshotTurns,
   shouldSeedOfficeHoursResumeTranscript,
+  stripOfficeHoursResumePreambleBlocks,
 } from "./office-hours-resume.mjs";
 import {
   buildOfficeHoursCommitmentCandidatesPrompt,
@@ -1104,6 +1106,11 @@ function isAllowedWebSocketOrigin(origin) {
   }
 }
 
+async function broadcastOfficeHoursStartNoop(session) {
+  await syncPendingUserInputRequests();
+  broadcast({ type: "session_updated", session: state.sessions.get(session.id) || session });
+}
+
 async function handleClientMessage(socket, payload) {
   switch (payload.type) {
     case "list_sessions":
@@ -1347,8 +1354,20 @@ async function handleClientMessage(socket, payload) {
     }
     case "office_hours_start": {
       const session = getSession(payload.sessionId);
+      if (state.activeRuns.has(session.id)) {
+        await broadcastOfficeHoursStartNoop(session);
+        return;
+      }
       if (session.pendingUserInput) {
+        if (isOfficeHoursStructuredInputMode(session.pendingUserInput?.generation?.mode)) {
+          await broadcastOfficeHoursStartNoop(session);
+          return;
+        }
         throw new Error("This session is waiting for structured input.");
+      }
+      if (session.runtime?.officeHours?.active === true && !session.error) {
+        await broadcastOfficeHoursStartNoop(session);
+        return;
       }
       const context = String(payload.context || "").trim();
       const visiblePrompt = String(payload.visiblePrompt || "Office Hours").trim() || "Office Hours";
@@ -1375,11 +1394,7 @@ async function handleClientMessage(socket, payload) {
       }
       markWorkspaceSetupFirstInput("office_hours_start");
       if (state.activeRuns.has(session.id)) {
-        send(socket, {
-          type: "error",
-          sessionId: session.id,
-          message: "Office Hours is waiting for the current run to finish.",
-        });
+        await broadcastOfficeHoursStartNoop(session);
         return;
       }
       cancelWarmSession(session.id);
@@ -1400,12 +1415,6 @@ async function handleClientMessage(socket, payload) {
       }
       if (session.runtime?.officeHours?.active !== true) {
         throw new Error("This session is not an active Office Hours interview.");
-      }
-      if (
-        session.runtime?.officeHours?.terminalAnswered === true
-        || session.runtime?.officeHours?.completedByExpectedCount === true
-      ) {
-        throw new Error("Completed Office Hours interviews cannot be revised.");
       }
       const promptRequest = prepareOfficeHoursStructuredInputRequest(payload.prompt || {});
       if (!promptRequest?.requestId || !Array.isArray(promptRequest.questions)) {
@@ -1737,6 +1746,9 @@ async function handleClientMessage(socket, payload) {
         );
     }
       const hasActiveRun = state.activeRuns.has(session.id);
+      const hasNonBlockingOfficeHoursCardRun = hasActiveRun
+        && isCodexOfficeHoursNonBlockingPendingInput(session, pendingUserInput);
+      const hasBlockingActiveRun = hasActiveRun && !hasNonBlockingOfficeHoursCardRun;
       // Record the turn BEFORE writing the response file: that write resumes a
       // blocked Claude run, and detectIncompleteOfficeHoursInterview counts
       // these turns when that run concludes — the final answer must be durable
@@ -1807,7 +1819,7 @@ async function handleClientMessage(socket, payload) {
         requestId,
         response,
       });
-      if (!hasActiveRun) {
+      if (!hasBlockingActiveRun) {
         await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
       }
 
@@ -1816,7 +1828,7 @@ async function handleClientMessage(socket, payload) {
       const officeHoursQuestionCapReached = Boolean(officeHoursProgressAfterAnswer?.capReached);
       session.status = officeHoursQuestionCapReached
         ? "idle"
-        : hasActiveRun || Boolean(iddContinuationPromptForRun) ? "running" : "idle";
+        : hasBlockingActiveRun || Boolean(iddContinuationPromptForRun) ? "running" : "idle";
       if (officeHoursQuestionCapReached) {
         session.error = null;
         await abortActiveOfficeHoursRunAtQuestionCap(session);
@@ -1978,6 +1990,23 @@ async function handleClientMessage(socket, payload) {
       const shouldRunOfficeHoursContinuation = !hasActiveRun
         && isOfficeHoursStructuredInputResponse
         && Boolean(userResponseText);
+      const shouldQueueOfficeHoursContinuation = hasNonBlockingOfficeHoursCardRun
+        && isOfficeHoursStructuredInputResponse
+        && Boolean(userResponseText);
+      if (shouldQueueOfficeHoursContinuation) {
+        enqueueSilentPrompt(
+          session,
+          buildOfficeHoursStructuredInputContinuationPrompt({
+            responseText: userResponseText,
+            responseDescription: userResponseDescription,
+          }),
+          { executionIntent: "chat" },
+        );
+        session.status = "running";
+        await persistSessions();
+        broadcast({ type: "session_updated", session });
+        return;
+      }
       if (!shouldRunOfficeHoursContinuation) {
         broadcast({ type: "session_updated", session });
       }
@@ -3975,6 +4004,7 @@ async function runPrompt(
     officeHoursRuntimeForRun = session.runtime?.officeHours?.active === true
       ? { ...session.runtime.officeHours, context: officeHoursContext }
       : null;
+    let officeHoursStructuredInputAsked = false;
     let officeHoursStructuredInputAnswered = false;
     let routedSpecialist = specialist;
     let systemPromptOverride = "";
@@ -4136,6 +4166,7 @@ async function runPrompt(
             elapsed_ms: Math.max(0, Math.round(performance.now() - runStartedAt)),
             continuation: true,
           });
+          officeHoursStructuredInputAsked = true;
           if (isSuccessfulStructuredInputToolEvent(event)) {
             officeHoursStructuredInputAnswered = true;
           }
@@ -4143,6 +4174,9 @@ async function runPrompt(
         if (officeHoursContext) {
           const status = mapOfficeHoursToolEventToStatus(event);
           if (status) {
+            if (status.stage === "tool_running" || status.stage === "structured_input_requested") {
+              officeHoursStructuredInputAsked = true;
+            }
             emitOfficeHoursStatus(session, {
               ...status,
               messageId: assistantMessage.id,
@@ -4175,11 +4209,15 @@ async function runPrompt(
       },
       onRunEvent: (event) => {
         if (officeHoursContext && isStructuredInputResponseRunEvent(event)) {
+          officeHoursStructuredInputAsked = true;
           officeHoursStructuredInputAnswered = true;
         }
         if (officeHoursContext) {
           const status = mapOfficeHoursRunEventToStatus(event);
           if (status) {
+            if (status.stage === "structured_input_requested") {
+              officeHoursStructuredInputAsked = true;
+            }
             emitOfficeHoursStatus(session, {
               ...status,
               messageId: assistantMessage.id,
@@ -4215,6 +4253,9 @@ async function runPrompt(
     setAssistantText(session, assistantMessage.id, assistantMessage.content);
     recordMessageTiming(session, assistantMessage, runStartedAt, "provider.call_finished");
 
+    if (officeHoursContext) {
+      await syncPendingUserInputRequests();
+    }
     assistantMessage.state = "final";
     session.status = session.pendingUserInput ? "awaiting_input" : "idle";
     session.error = null;
@@ -4232,7 +4273,11 @@ async function runPrompt(
             context: officeHoursContext,
             source: "office_hours_continuation",
           });
-      const incompleteInterview = !request && !session.pendingUserInput
+      const officeHoursCurrentRunCreatedPendingQuestion = officeHoursStructuredInputAsked
+        && !officeHoursStructuredInputAnswered;
+      const incompleteInterview = !request
+        && !session.pendingUserInput
+        && !officeHoursCurrentRunCreatedPendingQuestion
         ? await detectIncompleteOfficeHoursInterview(session, officeHoursContext)
         : null;
       if (incompleteInterview) {
@@ -5213,6 +5258,23 @@ async function enqueuePrompt(session, prompt, { executionIntent = "chat" } = {})
   });
 }
 
+function enqueueSilentPrompt(session, prompt, { executionIntent = "chat" } = {}) {
+  const queue = state.promptQueues.get(session.id) || [];
+  queue.push({
+    prompt,
+    queuedAt: new Date().toISOString(),
+    executionIntent,
+  });
+  state.promptQueues.set(session.id, queue);
+  telemetry.captureEvent("mac_sidecar_prompt_queued", {
+    session_id: session.id,
+    provider: session.provider,
+    queue_depth: queue.length,
+    prompt_length: prompt.length,
+    silent: true,
+  });
+}
+
 async function runNextQueuedPrompt(sessionId) {
   if (state.activeRuns.has(sessionId)) {
     return;
@@ -5237,6 +5299,12 @@ async function runNextQueuedPrompt(sessionId) {
     displayUserMessage: false,
     executionIntent: next.executionIntent || "chat",
   });
+}
+
+function isCodexOfficeHoursNonBlockingPendingInput(session = null, pendingUserInput = null) {
+  return String(session?.provider || "") === "codex"
+    && String(pendingUserInput?.toolName || "") === CODEX_STRUCTURED_INPUT_TOOL
+    && isOfficeHoursStructuredInputMode(pendingUserInput?.generation?.mode);
 }
 
 function normalizeOfficeHoursDay(value) {
@@ -5277,7 +5345,7 @@ function buildOfficeHoursRuntime(context = "", source = "manual", day = null, se
     active: true,
     source: String(source || "manual"),
     startedAt: new Date().toISOString(),
-    context: clampOfficeHoursContext(context),
+    context: clampOfficeHoursContext(stripOfficeHoursResumePreambleBlocks(context)),
   };
   if (normalizedDay) runtime.day = normalizedDay;
   const normalizedSelectedSources = normalizeOfficeHoursSelectedSources(selectedSources);
@@ -5914,7 +5982,7 @@ function activeOfficeHoursContext(session = null) {
 function buildOfficeHoursRuntimePromptSnapshots(session, turns = [], day = null) {
   const runtimeDay = normalizeOfficeHoursDay(day)
     || normalizeOfficeHoursDay(session?.runtime?.officeHours?.day);
-  const snapshots = (Array.isArray(turns) ? turns : [])
+  const snapshots = dedupeOfficeHoursTurnsKeepLast(Array.isArray(turns) ? turns : [])
     .filter((turn) =>
       turn?.promptSnapshot
         && Array.isArray(turn?.submissions)
@@ -6164,7 +6232,6 @@ function mapOfficeHoursRunEventToStatus(event = {}) {
   if (
     phase.endsWith(".stream_opened")
     || phase.endsWith(".run_streamed_call_start")
-    || phase === "provider.entry"
   ) {
     return { stage: "provider_starting" };
   }
@@ -6243,6 +6310,17 @@ function isSuccessfulStructuredInputToolEvent(event = {}) {
   const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
   const status = String(payload.status || "").toLowerCase();
   if (status === "failed" || status === "error" || status === "cancelled" || status === "canceled") {
+    return false;
+  }
+  const resultText = [
+    payload.output,
+    payload.result,
+    payload.text,
+    payload.content,
+  ].map((value) => typeof value === "string" ? value : JSON.stringify(value ?? ""))
+    .join("\n")
+    .toLowerCase();
+  if (status === "pending_user_input" || resultText.includes("pending_user_input")) {
     return false;
   }
   const errorMessage = String(payload.errorMessage || payload.error || "").trim();
@@ -6588,6 +6666,11 @@ async function runOfficeHours(session, {
           // detectIncompleteOfficeHoursInterview on later continuations treat
           // a smart-skip conclusion (fewer answers than expected) as done.
           officeHoursRuntime.terminalAnswered = true;
+        } else if (officeHoursExpectedQuestionCount > 0
+          && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount) {
+          officeHoursRuntime.completedByExpectedCount = true;
+          officeHoursRuntime.completedQuestionCount = officeHoursResumeTurns.length;
+          officeHoursRuntime.expectedQuestionCount = officeHoursExpectedQuestionCount;
         }
         session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
         if (!session.title || session.title === "New Session") {
@@ -6838,6 +6921,7 @@ async function runOfficeHours(session, {
       mergeProviderRuntime(session.runtime, result.runtime),
       officeHoursRuntime,
     );
+    await syncPendingUserInputRequests();
     assistantMessage.state = "final";
     session.status = session.pendingUserInput ? "awaiting_input" : "idle";
     session.error = null;
@@ -6888,7 +6972,11 @@ async function runOfficeHours(session, {
       });
       return;
     }
-    const incompleteInterview = !request && !session.pendingUserInput
+    const officeHoursCurrentRunCreatedPendingQuestion = officeHoursStructuredInputAsked
+      && !officeHoursStructuredInputAnswered;
+    const incompleteInterview = !request
+      && !session.pendingUserInput
+      && !officeHoursCurrentRunCreatedPendingQuestion
       ? await detectIncompleteOfficeHoursInterview(session, officeHoursRuntime.context)
       : null;
     if (incompleteInterview) {

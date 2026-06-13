@@ -106,7 +106,7 @@ function completedTurnsForDay(turnLog, dayNumber) {
     Number.parseInt(String(turn?.day ?? ""), 10) === dayNumber
     && String(turn?.questionText || "").trim().length > 0
     && String(turn?.responseText || "").trim().length > 0);
-  return dedupeByQuestionKeepLast(eligible).slice(-MAX_RESUME_TURNS);
+  return dedupeOfficeHoursTurnsKeepLast(eligible).slice(-MAX_RESUME_TURNS);
 }
 
 // Counts the resume turns recorded by sessions OTHER than the given one. This
@@ -172,19 +172,55 @@ export function buildOfficeHoursResumePreamble({ turns = [], expected = 0 } = {}
   return lines.join("\n");
 }
 
-// Keep the LAST answer per normalized question text, preserving overall log
+export function stripOfficeHoursResumePreambleBlocks(context = "") {
+  const marker = "[Office Hours 인터뷰 이어하기 — RESUME]";
+  let text = String(context || "");
+  while (text.includes(marker)) {
+    const start = text.indexOf(marker);
+    const end = text.indexOf("\n\n", start);
+    text = end >= 0
+      ? `${text.slice(0, start)}${text.slice(end + 2)}`
+      : text.slice(0, start);
+  }
+  return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+// Keep the LAST answer per stable question identity, preserving overall log
 // order (by each question's final occurrence).
-function dedupeByQuestionKeepLast(turns = []) {
+export function dedupeOfficeHoursTurnsKeepLast(turns = []) {
   const seen = new Set();
   const output = [];
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index];
-    const key = String(turn?.questionText || "").replace(/\s+/g, " ").trim().toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const keys = officeHoursTurnDedupeKeys(turn);
+    if (keys.some((key) => seen.has(key))) continue;
+    for (const key of keys) seen.add(key);
     output.push(turn);
   }
   return output.reverse();
+}
+
+function officeHoursTurnDedupeKeys(turn = {}) {
+  const day = String(turn?.day ?? "").trim();
+  const requestId = String(turn?.requestId || "").trim();
+  const firstQuestion = Array.isArray(turn?.promptSnapshot?.questions)
+    ? turn.promptSnapshot.questions[0]
+    : null;
+  const questionId = String(
+    firstQuestion?.questionId
+      || firstQuestion?.id
+      || firstQuestion?.signalId
+      || "",
+  ).trim().toLowerCase();
+  const questionText = String(turn?.questionText || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  return [
+    requestId ? `request:${requestId}` : "",
+    questionId ? `day:${day}:question_id:${questionId}` : "",
+    questionText ? `day:${day}:question:${questionText}` : "",
+  ].filter(Boolean);
 }
 
 function clipResumeText(value, maxLength) {

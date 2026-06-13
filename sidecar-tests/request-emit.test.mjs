@@ -143,7 +143,11 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
 });
 
 test("office_hours_start preserves custom source and ignores duplicate concurrent starts", async () => {
-  const harness = await spawnSidecar();
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_PROVIDER_DELAY_MS: "500",
+    },
+  });
   let ws;
   try {
     await initGitRepo(harness.workspacePath);
@@ -172,18 +176,18 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
       day: 2,
     };
     ws.send(JSON.stringify(officeHoursStartPayload));
-    ws.send(JSON.stringify(officeHoursStartPayload));
 
     const started = await waitForEvent(ws.events, (event) =>
       event.type === "session_updated"
         && event.session?.id === created.session.id
         && event.session?.runtime?.officeHours?.source === "office_hours_day_2",
     );
-    const duplicateError = await waitForEvent(ws.events, (event) =>
-      event.type === "error"
+    await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_status"
         && event.sessionId === created.session.id
-        && /waiting for the current run/i.test(event.message || ""),
+        && event.stage === "provider_starting",
     );
+    ws.send(JSON.stringify(officeHoursStartPayload));
     const questionReadyStatus = await waitForEvent(ws.events, (event) =>
       event.type === "office_hours_status"
         && event.sessionId === created.session.id
@@ -226,11 +230,33 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
     assert.equal(questionReadyStatus.title, "첫 질문 준비 완료");
     assert.equal(questionReadyStatus.progressText, "첫 질문 준비 완료");
     assert.equal(typeof providerStatus.elapsedMs, "number");
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "error"
+          && event.sessionId === created.session.id
+          && /waiting for the current run/i.test(event.message || "")
+      ),
+      false,
+      "duplicate Office Hours starts while a run is active must be idempotent",
+    );
+    const providerStartingEventsBeforeSubmit = ws.events.filter((event) =>
+      event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "provider_starting"
+    );
+    assert.equal(
+      providerStartingEventsBeforeSubmit.length,
+      1,
+      `duplicate Office Hours starts must not spawn a second provider run; saw ${JSON.stringify(providerStartingEventsBeforeSubmit.map((event) => ({
+        title: event.title,
+        detail: event.detail,
+        progressText: event.progressText,
+      })))}`,
+    );
     assert.equal(started.session.runtime.officeHours.active, true);
     assert.equal(started.session.runtime.officeHours.source, "office_hours_day_2");
     assert.equal(started.session.runtime.officeHours.day, 2);
     assert.match(started.session.runtime.officeHours.context, /Revenue analytics dashboard/);
-    assert.equal(duplicateError.sessionId, created.session.id);
     assert.equal(
       started.session.messages.filter((message) =>
         message.role === "user" && message.content === "Test Office Hours on current project",
@@ -390,6 +416,112 @@ test("office_hours_start reports provider auth preflight failures as recoverable
   }
 });
 
+test("office_hours Codex-style MCP request waits for submit before continuation", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST_DELAY_MS: "150",
+    },
+  });
+  let ws;
+  try {
+    await initGitRepo(harness.workspacePath);
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    const officeHoursStartPayload = {
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: [
+        "DAY1_LOCKED_GOAL",
+        "Flow contract: locked Day 1 goal interview.",
+        "Office Hours mode: Startup",
+        "Expected question count: 6",
+        "Goal lane: make_money / 첫 매출 달성",
+        "Goal text: Support leads will pay to avoid missed Slack escalations.",
+        "Customer: B2B support lead",
+        "Problem: Slack escalation을 놓친다",
+        "Validation action: 유료 파일럿 ask",
+      ].join("\n"),
+      visiblePrompt: "Test non-blocking Codex Office Hours",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    };
+    ws.send(JSON.stringify(officeHoursStartPayload));
+
+    const pending = await waitForPendingOfficeHoursPrompt(ws, created.session.id);
+    const pendingIndex = ws.events.findIndex((event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput?.requestId === pending.requestId
+    );
+    assert.equal(pending.toolName, "agentic30_request_user_input");
+    assert.equal(pending.generation?.mode?.startsWith("office_hours"), true);
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "error"
+          && event.sessionId === created.session.id
+          && /질문 6개 중 1개만/.test(event.message || "")
+      ),
+      false,
+      "non-blocking card creation must not be treated as a 1/6 incomplete interview",
+    );
+    assert.equal(
+      ws.events.slice(pendingIndex + 1).some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "provider_starting"
+      ),
+      false,
+      "the next provider run must wait for submit_user_input",
+    );
+
+    const marker = ws.events.length;
+    submitStructuredAnswer(ws, created.session.id, pending);
+
+    await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "provider_starting"
+    );
+    ws.send(JSON.stringify(officeHoursStartPayload));
+    const followup = await waitForPendingOfficeHoursPrompt(ws, created.session.id, pending.requestId);
+    assert.notEqual(followup.requestId, pending.requestId);
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "error"
+          && event.sessionId === created.session.id
+          && /waiting for the current run/i.test(event.message || "")
+      ),
+      false,
+      "duplicate start during the continuation run must not surface an active-run error",
+    );
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "error"
+          && event.sessionId === created.session.id
+          && /질문 6개 중 1개만/.test(event.message || "")
+      ),
+      false,
+      "answered Q1 should schedule the next card instead of failing incomplete",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("office_hours Day 1 stops at expected six questions and suppresses stray seventh request", async () => {
   const harness = await spawnSidecar();
   let ws;
@@ -407,6 +539,7 @@ test("office_hours Day 1 stops at expected six questions and suppresses stray se
     const created = await waitForEvent(ws.events, (event) =>
       event.type === "session_created" && event.session?.status === "idle"
     );
+    await seedDay1ActiveProgress(harness.workspacePath);
 
     ws.send(JSON.stringify({
       type: "office_hours_start",
@@ -512,6 +645,42 @@ test("office_hours Day 1 stops at expected six questions and suppresses stray se
         .some((request) => request.requestId === strayRequest.requestId),
       false,
       "sync must remove the stray seventh request artifact",
+    );
+
+    const revisedLabel = pending.questions[0].options[1].label;
+    const revisionMarker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_revise_answer",
+      sessionId: created.session.id,
+      requestId: pending.requestId,
+      prompt: pending,
+      responses: [
+        {
+          question: pending.questions[0].question,
+          selectedOptions: [revisedLabel],
+          freeText: "",
+        },
+      ],
+    }));
+    const revised = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= revisionMarker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput == null
+        && event.session?.status === "idle"
+        && event.session?.runtime?.officeHours?.completedByExpectedCount === true
+    );
+    const revisedSnapshot = revised.session.runtime.officeHours.promptSnapshots
+      ?.find((snapshot) => snapshot.requestId === pending.requestId);
+    assert.equal(revisedSnapshot?.submissions?.[0]?.selectedOptions?.[0], revisedLabel);
+    assert.equal(
+      ws.events.slice(revisionMarker).some((event) =>
+        event.type === "error"
+          && event.sessionId === created.session.id
+          && /cannot be revised/i.test(event.message || "")
+      ),
+      false,
+      "completed Office Hours interviews must remain editable",
     );
   } finally {
     ws?.close();
@@ -823,6 +992,7 @@ async function waitForPendingOfficeHoursPrompt(ws, sessionId, previousRequestId 
   const event = await waitForEvent(ws.events, (candidate) =>
     candidate.type === "session_updated"
       && candidate.session?.id === sessionId
+      && candidate.session?.status === "awaiting_input"
       && candidate.session?.pendingUserInput?.requestId
       && candidate.session.pendingUserInput.requestId !== prior
       && candidate.session.pendingUserInput.generation?.mode?.startsWith("office_hours")
@@ -845,6 +1015,39 @@ function submitStructuredAnswer(ws, sessionId, prompt) {
       },
     ],
   }));
+}
+
+async function seedDay1ActiveProgress(workspacePath) {
+  const agentic30Dir = path.join(workspacePath, ".agentic30");
+  await fs.mkdir(agentic30Dir, { recursive: true });
+  await fs.writeFile(
+    path.join(agentic30Dir, "day-progress.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      schema: "agentic30.day_progress.v1",
+      challengeStartedAt: localDateString(new Date()),
+      days: {
+        1: {
+          day: 1,
+          kind: "day1",
+          steps: {
+            onboarding: "done",
+            scan: "done",
+            goal: "done",
+            first_interview: "active",
+          },
+        },
+      },
+    }, null, 2),
+    "utf8",
+  );
+}
+
+function localDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function execFileOk(cmd, args, cwd) {
@@ -900,5 +1103,11 @@ async function waitForEvent(events, predicate, timeoutMs = 10_000) {
     if (found) return found;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`Timed out waiting for event. Saw: ${events.map((event) => event.type).join(", ")}`);
+  const summary = events.map((event) => {
+    if (event.type === "error") return `error:${event.message || ""}`;
+    if (event.type === "office_hours_status") return `office_hours_status:${event.stage || ""}`;
+    if (event.type === "session_updated") return `session_updated:${event.session?.status || ""}`;
+    return event.type;
+  });
+  throw new Error(`Timed out waiting for event. Saw: ${summary.join(", ")}`);
 }

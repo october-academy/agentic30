@@ -13,6 +13,7 @@ import {
   parseCodexStructuredInputToolOutput,
 } from "./provider-sdk-contracts.mjs";
 import {
+  buildPendingUserInputToolOutput,
   createUserInputRequest,
   deleteUserInputArtifacts,
   ensureUserInputDirs,
@@ -52,10 +53,12 @@ const appSupportPath = process.env.AGENTIC30_APP_SUPPORT_PATH
       "agentic30",
     );
 const approvedToolExecution = process.env.AGENTIC30_APPROVED_TOOL_EXECUTION === "1";
+const executionMode = String(process.env.AGENTIC30_EXECUTION_MODE || "");
 const gwsWriteApprovalTimeoutMs = Number.parseInt(
   process.env.AGENTIC30_GWS_WRITE_APPROVAL_TIMEOUT_MS || "",
   10,
 ) || 5 * 60 * 1000;
+const OFFICE_HOURS_QUESTION_EXECUTION_MODE = "office_hours_question";
 
 const server = new McpServer({
   name: "agentic30",
@@ -389,6 +392,17 @@ function registerUserInputTool(name, description) {
       resources: resources ?? null,
       questions,
     });
+
+    if (executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE && name === CODEX_STRUCTURED_INPUT_TOOL) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(buildPendingUserInputToolOutput(request), null, 2),
+          },
+        ],
+      };
+    }
 
     try {
       const response = await waitForUserInputResponse(appSupportPath, {
