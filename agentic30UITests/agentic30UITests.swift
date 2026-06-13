@@ -1849,16 +1849,31 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").exists)
         XCTAssertTrue(q2Submitted.exists)
         let q1RevisionButton = elementWithIdentifier(in: app, "opendesign.officeHours.submittedButton.ui-test-office-hours-request")
-        XCTAssertTrue(scrollElementToVisible(
-            q1RevisionButton,
-            in: app,
-            timeout: 5,
-            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
-        ))
         XCTAssertTrue(q1RevisionButton.waitForExistence(timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedButton.ui-test-office-hours-request", containing: "Ready", timeout: 3))
         XCTAssertTrue(waitUntilEnabled(q1RevisionButton, timeout: 3))
-        XCTAssertTrue(waitUntilHittable(q1RevisionButton, timeout: 2))
+        let q1RevisionButtonHittable = waitUntilHittable(q1RevisionButton, timeout: 3)
+            || scrollElementToHittable(
+                q1RevisionButton,
+                in: app,
+                timeout: 12,
+                scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+            )
+        guard q1RevisionButtonHittable else {
+            attachWindowScreenshot(from: app, named: "Office Hours revision Q1 confirm not visible")
+            attachText(
+                """
+                target: \(elementDiagnostics(q1RevisionButton))
+                scroll: \(elementDiagnostics(officeHoursScroll))
+                window: \(elementDiagnostics(app.windows.firstMatch))
+
+                \(app.debugDescription)
+                """,
+                named: "Office Hours revision Q1 confirm visibility diagnostics"
+            )
+            XCTFail("Expected Office Hours revision Q1 confirm button to become visible.")
+            return
+        }
         tapRequired(
             q1RevisionButton,
             in: app,
@@ -4116,6 +4131,27 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    private func scrollElementToHittable(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval,
+        scrollViewIdentifier: String? = nil
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.exists && element.isHittable {
+                return true
+            }
+            let scrollView = scrollViewElement(in: app, identifier: scrollViewIdentifier)
+            if scrollView.exists {
+                scrollToward(element, in: scrollView)
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        } while Date() < deadline
+        return element.exists && element.isHittable
+    }
+
+    @MainActor
     private func scrollSettingsContentUntilHittable(
         _ element: XCUIElement,
         in app: XCUIApplication,
@@ -4177,13 +4213,23 @@ final class agentic30UITests: XCTestCase {
 
     @MainActor
     private func scrollToward(_ element: XCUIElement, in scrollView: XCUIElement) {
+        guard scrollView.exists else { return }
         guard element.exists else {
             scrollUp(in: scrollView)
             return
         }
-        if element.frame.minY < scrollView.frame.minY {
+
+        let elementFrame = element.frame
+        let visibleFrame = scrollView.frame.insetBy(dx: 0, dy: 10)
+        guard !elementFrame.isEmpty, !visibleFrame.isEmpty else { return }
+
+        if elementFrame.minY < visibleFrame.minY {
             scrollDown(in: scrollView)
-        } else {
+        } else if elementFrame.maxY > visibleFrame.maxY {
+            scrollUp(in: scrollView)
+        } else if !element.isHittable, elementFrame.midY < visibleFrame.midY {
+            scrollDown(in: scrollView)
+        } else if !element.isHittable {
             scrollUp(in: scrollView)
         }
     }
@@ -4367,6 +4413,14 @@ final class agentic30UITests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    private func elementDiagnostics(_ element: XCUIElement) -> String {
+        guard element.exists else {
+            return "exists=false"
+        }
+        return "exists=true hittable=\(element.isHittable) enabled=\(element.isEnabled) frame=\(element.frame.debugDescription) label=\(element.label)"
     }
 
     @MainActor
