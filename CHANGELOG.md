@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### 추가
+- **Codex Office Hours 카드 입력**: Codex MCP 구조화 입력 카드가 제출 전에는 pending 상태로 머물고, 사용자가 답을 제출한 뒤에만 다음 질문을 이어가도록 했습니다.
+- **인터뷰 카드 Q01 시각 스펙**: Day 1 인터뷰 첫 질문 카드의 HTML/PNG 레퍼런스를 `docs/specs/`에 추가했습니다.
+
+### 변경
+- **Office Hours Day 1 handoff**: GOAL/ICP/VALUES/SPEC 저장과 Day 1 완료를 분리하고, 문서 저장 뒤 `$plan-ceo-review` handoff를 거쳐 Day 2로 넘어가도록 정리했습니다.
+- **Settings 연동 화면**: Vercel, Cloudflare, PostHog을 compact MCP OAuth row로 정리하고 수동 토큰/URL 필드와 Exa 예비 키를 숨겼습니다.
+- **Office Hours 증거/개입 배너**: 예약 intervention은 열린 증거 부채 배너 안에 접고, 즉시 intervention은 full-width 배너로 유지하도록 했습니다.
+- **Morning Briefing drilldown**: per-source drilldown header에서 다음 소스 pill을 제거했습니다.
+
+### 수정
+- **Office Hours 재개/수정 안정성**: resume preamble 중복을 제거하고 stable question identity로 keep-last dedupe하며, 완료된 인터뷰도 이전 답변 수정이 가능하게 했습니다.
+- **Office Hours 중복 시작 방지**: 이미 실행 중이거나 구조화 입력 대기 중인 Office Hours start 요청은 오류 대신 현재 세션 상태를 재방송하도록 했습니다.
+- **개입 시작 상태 정리**: intervention trigger로 Office Hours를 시작하면 Mac 상태의 pending intervention을 즉시 지웁니다.
+- **UI 테스트 안정성**: Office Hours 제출 카드의 revision confirm 버튼을 native accessibility button으로 노출하고, 시스템 알림 dialog가 스크롤 제스처를 막을 때 닫도록 했습니다.
+
 ## [1.0.19] - 2026-06-11
 
 ### 추가
