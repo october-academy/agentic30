@@ -2018,7 +2018,7 @@ final class AgenticViewModelAuthTests {
         #expect(payload["selectedSources"] as? [String] == ["cloudflare", "github", "posthog"])
     }
 
-    @Test @MainActor func officeHoursInterventionStartSendsTriggerPayload() throws {
+    @Test @MainActor func officeHoursInterventionStartSendsTriggerPayload() async throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
         let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
@@ -2027,6 +2027,22 @@ final class AgenticViewModelAuthTests {
             workspace: workspace,
             currentDay: 15
         )
+        try sidecar.emit("""
+        {
+          "type": "office_hours_intervention_required",
+          "workspaceRoot": "\(workspace.path)",
+          "intervention": {
+            "triggerId": "gate_blocked_G4",
+            "severity": "immediate",
+            "source": "gate_engine",
+            "gateId": "G4",
+            "questions": ["오늘 ask를 보낼 1명의 이름과 채널은 무엇인가?"],
+            "day": 15
+          }
+        }
+        """)
+        await Task.yield()
+        #expect(viewModel.ohInterventionRequired?.triggerId == "gate_blocked_G4")
         sidecar.resetSentPayloads()
 
         let sent = viewModel.startOfficeHours(
@@ -2042,6 +2058,7 @@ final class AgenticViewModelAuthTests {
         #expect(payload["type"] as? String == "office_hours_start")
         #expect(payload["sessionId"] as? String == "session-g4")
         #expect(payload["trigger"] as? String == "gate_blocked_G4")
+        #expect(viewModel.ohInterventionRequired == nil)
     }
 
     @Test @MainActor func markDayStepSendsSessionScopedPayload() throws {

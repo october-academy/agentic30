@@ -471,26 +471,6 @@ struct MorningBriefingDrilldownView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("morningBriefing.drilldown.back")
-
-            if let nextID = nextSourceID {
-                Button {
-                    onSelectSource(nextID)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(sourceDisplayName(nextID))
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 10, weight: .bold))
-                    }
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(OpenDesignDayColor.bgDeep)
-                    .padding(.horizontal, 14)
-                    .frame(height: 28)
-                    .background(Capsule().fill(OpenDesignDayColor.accent))
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("morningBriefing.drilldown.next")
-            }
         }
         .padding(.horizontal, 28)
         .frame(height: 70)

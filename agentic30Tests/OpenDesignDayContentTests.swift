@@ -2641,4 +2641,115 @@ struct OpenDesignDayContentTests {
         #expect(OfficeHoursTranscriptScrollPolicy.repinDelays.allSatisfy { $0 > 0 && $0 <= 1.5 })
     }
 
+    @Test func officeHoursBannerPresentationFoldsScheduledInterventionIntoEvidenceDebt() {
+        let presentation = OfficeHoursBannerPresentation.resolve(
+            memory: OfficeHoursMemorySummary(compiledTruth: "Cycle 1. 마지막 약속: DM 보내기.", openThreads: ["DM 보내기"]),
+            evidenceOS: Self.evidenceOS(openDebts: [Self.commitment(id: "cm-open")]),
+            intervention: Self.intervention(severity: "scheduled", ruleId: "AR-02")
+        )
+
+        #expect(!presentation.showMemoryBanner)
+        #expect(presentation.showEvidenceOSBanner)
+        #expect(!presentation.showFullInterventionBanner)
+        #expect(presentation.showInlineScheduledIntervention)
+    }
+
+    @Test func officeHoursBannerPresentationKeepsImmediateInterventionFullWidth() {
+        let presentation = OfficeHoursBannerPresentation.resolve(
+            memory: OfficeHoursMemorySummary(compiledTruth: "Cycle 1. 마지막 약속: DM 보내기.", openThreads: ["DM 보내기"]),
+            evidenceOS: Self.evidenceOS(openDebts: [Self.commitment(id: "cm-open")]),
+            intervention: Self.intervention(severity: "immediate", ruleId: "AR-07")
+        )
+
+        #expect(!presentation.showMemoryBanner)
+        #expect(presentation.showEvidenceOSBanner)
+        #expect(presentation.showFullInterventionBanner)
+        #expect(!presentation.showInlineScheduledIntervention)
+    }
+
+    @Test func officeHoursBannerPresentationKeepsNonDuplicateMemorySignalsWithOpenDebt() {
+        let abandonedPresentation = OfficeHoursBannerPresentation.resolve(
+            memory: OfficeHoursMemorySummary(
+                compiledTruth: "Cycle 1. 마지막 약속: DM 보내기.",
+                openThreads: ["DM 보내기"],
+                abandonedThreads: ["\"DM 보내기\" — 2 사이클째 증거 0."]
+            ),
+            evidenceOS: Self.evidenceOS(openDebts: [Self.commitment(id: "cm-open")]),
+            intervention: nil
+        )
+        let calibrationPresentation = OfficeHoursBannerPresentation.resolve(
+            memory: OfficeHoursMemorySummary(calibrationLine: "예측 적중 1/3 — 2개 빗나갔어."),
+            evidenceOS: Self.evidenceOS(openDebts: [Self.commitment(id: "cm-open")]),
+            intervention: nil
+        )
+
+        #expect(abandonedPresentation.showMemoryBanner)
+        #expect(calibrationPresentation.showMemoryBanner)
+        #expect(abandonedPresentation.showEvidenceOSBanner)
+        #expect(calibrationPresentation.showEvidenceOSBanner)
+    }
+
+    @Test func officeHoursBannerPresentationKeepsScheduledInterventionFullWidthWithoutOpenDebt() {
+        let presentation = OfficeHoursBannerPresentation.resolve(
+            memory: OfficeHoursMemorySummary(compiledTruth: "Cycle 1."),
+            evidenceOS: EvidenceOSSummary(currentDay: 2),
+            intervention: Self.intervention(severity: "scheduled", ruleId: "AR-02")
+        )
+
+        #expect(presentation.showMemoryBanner)
+        #expect(!presentation.showEvidenceOSBanner)
+        #expect(presentation.showFullInterventionBanner)
+        #expect(!presentation.showInlineScheduledIntervention)
+    }
+
+    private static func evidenceOS(
+        openDebts: [CommitmentRecord] = [],
+        overdueDebts: [CommitmentRecord] = []
+    ) -> EvidenceOSSummary {
+        EvidenceOSSummary(
+            currentDay: 2,
+            openDebts: openDebts,
+            overdueDebts: overdueDebts,
+            provenEvidence: [],
+            dayStates: [:]
+        )
+    }
+
+    private static func commitment(id: String) -> CommitmentRecord {
+        CommitmentRecord(
+            id: id,
+            cycle: 1,
+            day: 1,
+            createdAt: "2026-06-13T00:00:00.000Z",
+            text: "최근 질문한 지인에게 오늘 첫 실행 약속을 잡아라",
+            customer: "Jane",
+            channel: "DM",
+            message: "오늘 첫 실행 약속 잡기",
+            expectedEvidenceKind: "screenshot",
+            dueDay: 2,
+            confirmedByUser: true,
+            status: "open",
+            evidence: nil
+        )
+    }
+
+    private static func intervention(
+        severity: String,
+        ruleId: String? = nil,
+        gateId: String? = nil
+    ) -> SidecarEvent.OhInterventionRequired {
+        SidecarEvent.OhInterventionRequired(
+            triggerId: ruleId.map { "rule_\($0.replacingOccurrences(of: "-", with: ""))" } ?? gateId.map { "gate_blocked_\($0)" },
+            severity: severity,
+            source: ruleId == nil ? "gate_engine" : "adaptive_rule",
+            gateId: gateId,
+            ruleId: ruleId,
+            abbreviated: false,
+            questions: ["이번 주 인터뷰 쿼터가 미달이다. 막고 있는 것은 후보 부족인가, 발송 공포인가?"],
+            exitCondition: "구조화 커밋먼트 1개 확정",
+            postSessionEvidence: "strong 증거 제출",
+            day: 2
+        )
+    }
+
 }

@@ -17,6 +17,9 @@ final class agentic30UITests: XCTestCase {
 
         // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
+        addUIInterruptionMonitor(withDescription: "Dismiss system alerts") { alert in
+            self.dismissSystemAlert(alert)
+        }
 
         // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
     }
@@ -1530,7 +1533,12 @@ final class agentic30UITests: XCTestCase {
         ]
         for (questionId, label, requestId) in remainingOfficeHoursChoices {
             let choice = app.buttons["assistant.structuredChoice.\(questionId).\(label)"]
-            XCTAssertTrue(choice.waitForExistence(timeout: 8))
+            XCTAssertTrue(scrollElementToVisible(
+                choice,
+                in: app,
+                timeout: 8,
+                scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+            ))
             RunLoop.current.run(until: Date().addingTimeInterval(0.7))
             if !choice.isHittable {
                 XCTAssertTrue(scrollElementToVisible(
@@ -1562,6 +1570,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(officeHoursDocReady.waitForExistence(timeout: 8))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.bridgeStatus", containing: "doc ready", timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff").waitForExistence(timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.planCeoReviewHandoff").exists)
         let docConfirm = app.buttons["opendesign.officeHours.docHandoff.confirm"]
         XCTAssertTrue(scrollElementToVisible(
             docConfirm,
@@ -1569,6 +1578,11 @@ final class agentic30UITests: XCTestCase {
             timeout: 5,
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
+        for docType in ["goal", "icp", "values", "spec"] {
+            let row = elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff.doc.\(docType)")
+            XCTAssertTrue(row.exists, "\(docType) document row should exist before save")
+            XCTAssertLessThan(row.frame.minY, docConfirm.frame.minY, "\(docType) document row should appear above the save button")
+        }
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "4개 문서 저장", timeout: 3))
         tapRequired(docConfirm, in: app, named: "Office Hours document handoff confirm")
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 저장 중", timeout: 3))
@@ -1585,10 +1599,15 @@ final class agentic30UITests: XCTestCase {
                 return
             }
         }
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "Day 1 완료", timeout: 3))
-        RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 저장 완료", timeout: 3))
+        let planCeoReviewHandoff = elementWithIdentifier(in: app, "opendesign.officeHours.planCeoReviewHandoff")
+        XCTAssertTrue(planCeoReviewHandoff.waitForExistence(timeout: 5))
+        let planCeoReviewButton = app.buttons["opendesign.officeHours.planCeoReview"]
+        XCTAssertTrue(waitUntilHittable(planCeoReviewButton, timeout: 5), "plan-ceo-review handoff should be visible after document save without manual scroll")
+        let completeDayButton = app.buttons["opendesign.officeHours.planCeoReview.completeDay"]
+        XCTAssertTrue(waitUntilHittable(completeDayButton, timeout: 5), "Day 1 completion should live after the plan-ceo-review handoff")
         attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Final Doc")
-        tapRequired(docConfirm, in: app, named: "Office Hours Day 1 complete")
+        tapRequired(completeDayButton, in: app, named: "Office Hours Day 1 complete")
         if !day2Main.waitForExistence(timeout: 5) {
             attachScreenshot(from: app, named: "OpenDesign Day2 Missing After Office Hours Completion")
             attachText(app.debugDescription, named: "OpenDesign Day2 Missing Tree")
@@ -1703,7 +1722,29 @@ final class agentic30UITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         XCTAssertTrue(q1RevisedChoice.exists && q1RevisedChoice.isHittable)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.업무에 이미 의존함", containing: "완료된 미선택", timeout: 3))
         tapRequired(q1RevisedChoice, in: app, named: "Office Hours revision Q1 revised choice")
+
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.업무에 이미 의존함", containing: "수정 예정", timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").exists)
+        XCTAssertTrue(q2Submitted.exists)
+        let q1RevisionButton = elementWithIdentifier(in: app, "opendesign.officeHours.submittedButton.ui-test-office-hours-request")
+        XCTAssertTrue(scrollElementToVisible(
+            q1RevisionButton,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        XCTAssertTrue(q1RevisionButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedButton.ui-test-office-hours-request", containing: "Ready", timeout: 3))
+        XCTAssertTrue(waitUntilEnabled(q1RevisionButton, timeout: 3))
+        XCTAssertTrue(waitUntilHittable(q1RevisionButton, timeout: 2))
+        tapRequired(
+            q1RevisionButton,
+            in: app,
+            named: "Office Hours revision Q1 confirm",
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        )
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").waitForExistence(timeout: 3))
         XCTAssertTrue(waitForElementToDisappear(q2Submitted, timeout: 3))
@@ -2248,6 +2289,74 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsIntegrationsShowsCompactMcpRowsAndHidesManualFields() throws {
+        let runID = UUID().uuidString
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-settings-integrations-\(runID)", isDirectory: true)
+        let appSupportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-settings-integrations-support-\(runID)", isDirectory: true)
+        resetDirectory(at: workspaceURL.path)
+        resetDirectory(at: appSupportURL.path)
+
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-workspace=\(workspaceURL.path)",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-open-settings",
+                "--ui-testing-open-settings-section=integrations",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "AGENTIC30_APP_SUPPORT_PATH": appSupportURL.path,
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            ]
+        )
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspaceURL.path)
+            self.removeDirectory(at: appSupportURL.path)
+        }
+
+        XCTAssertTrue(openSettingsWindow(in: app))
+        XCTAssertTrue(openSettingsSection(in: app, "integrations"))
+
+        XCTAssertTrue(app.staticTexts["Vercel"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Cloudflare"].exists)
+        XCTAssertTrue(app.staticTexts["PostHog"].exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "settings.vercel.mcpConnectButton").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "settings.cloudflare.mcpConnectButton").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "settings.posthog.mcpConnectButton").exists)
+
+        let hiddenFieldIdentifiers = [
+            "settings.cloudflare.apiTokenField",
+            "settings.cloudflare.mcpUrlField",
+            "settings.posthog.apiKeyField",
+            "settings.posthog.projectApiKeyField",
+            "settings.posthog.hostField",
+            "settings.posthog.mcpUrlField",
+            "settings.posthog.mcpFeaturesField",
+            "settings.exa.apiKeyField",
+            "settings.vercel.refreshStatusButton",
+            "settings.cloudflare.refreshStatusButton",
+            "settings.posthog.refreshStatusButton",
+        ]
+        for identifier in hiddenFieldIdentifiers {
+            XCTAssertFalse(elementWithIdentifier(in: app, identifier).exists, "\(identifier) should stay hidden in the compact MCP settings UI")
+        }
+        XCTAssertFalse(app.staticTexts["Exa Research"].exists)
+        XCTAssertFalse(app.staticTexts["Codemode"].exists)
+        XCTAssertFalse(app.staticTexts["Readonly"].exists)
+
+        attachScreenshot(from: app, named: "Settings MCP Integrations Compact")
+    }
+
+    @MainActor
     func testSettingsResetLocalDataReturnsToOnboardingBootIntro() throws {
         let runID = UUID().uuidString
         let tempRoot = FileManager.default.temporaryDirectory
@@ -2527,6 +2636,7 @@ final class agentic30UITests: XCTestCase {
         // Per-source head badge is the reliable leaf identifier; the screen-sized
         // container identifier does not surface in the accessibility tree.
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.head.github").waitForExistence(timeout: 10))
+        XCTAssertFalse(elementWithIdentifier(in: app, "morningBriefing.drilldown.next").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.kpis").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.chart").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.scan").exists)
@@ -3706,6 +3816,31 @@ final class agentic30UITests: XCTestCase {
         for application in NSWorkspace.shared.runningApplications where shouldHideForUITest(application) {
             application.unhide()
         }
+    }
+
+    private func dismissSystemAlert(_ alert: XCUIElement) -> Bool {
+        let preferredButtons = [
+            "허용 안 함",
+            "Don’t Allow",
+            "Don't Allow",
+            "나중에",
+            "취소",
+            "Cancel",
+            "닫기",
+            "Close",
+            "확인",
+            "OK",
+            "action-button-2",
+            "action-button-1",
+        ]
+        for label in preferredButtons {
+            let button = alert.buttons[label]
+            if button.exists {
+                button.click()
+                return true
+            }
+        }
+        return false
     }
 
     private func shouldHideForUITest(_ application: NSRunningApplication) -> Bool {

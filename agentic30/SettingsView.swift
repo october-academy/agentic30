@@ -1058,131 +1058,32 @@ struct SettingsView: View {
                         }
                     }
                 }
-                odSettingsRow(title: "Vercel", detail: "공식 Vercel MCP는 OAuth로 연결합니다. 키 저장 없이 브라우저 로그인 후 프로젝트, 배포, 로그 맥락을 AI 실행에서 사용할 수 있습니다.", iconName: "BrandVercel", stacked: true) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 8) {
-                            odSettingsStatus(
-                                vercelMcpStatusLabel,
-                                color: vercelMcpStatusColor,
-                                isLoading: viewModel.integrationStatusChecking
-                            )
-                            Text("https://mcp.vercel.com")
-                                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                                .foregroundStyle(settingsSubtleText)
-                            Spacer(minLength: 8)
-                            odSettingsGhostButton(
-                                title: "상태 확인",
-                                systemImage: "arrow.clockwise",
-                                width: 88,
-                                identifier: "settings.vercel.refreshStatusButton",
-                                isDisabled: integrationActionLocked,
-                                isLoading: viewModel.integrationStatusChecking
-                            ) {
-                                viewModel.refreshIntegrationStatus()
-                            }
-                            odSettingsGhostButton(
-                                title: viewModel.mcpOauthConnecting.contains("vercel") ? "연결 중…" : "MCP 연결",
-                                systemImage: "link",
-                                width: 96,
-                                identifier: "settings.vercel.mcpConnectButton",
-                                isDisabled: integrationActionLocked,
-                                isLoading: viewModel.mcpOauthConnecting.contains("vercel")
-                            ) {
-                                viewModel.connectMcpOauth(server: "vercel")
-                            }
-                        }
-                        integrationProbeCaption(viewModel.integrationStatus?.vercel, server: "vercel")
-                        mcpOauthResultCaption("vercel")
-                    }
+                odSettingsRow(title: "Vercel", detail: "브라우저 OAuth 로그인으로 프로젝트, 배포, 로그 MCP 도구를 AI 실행에 연결합니다.", iconName: "BrandVercel") {
+                    mcpIntegrationControls(
+                        server: "vercel",
+                        statusLabel: vercelMcpStatusLabel,
+                        statusColor: vercelMcpStatusColor,
+                        probe: viewModel.integrationStatus?.vercel,
+                        identifier: "settings.vercel.mcpConnectButton"
+                    )
                 }
-                odSettingsRow(title: "Cloudflare", detail: "AI 실행의 Cloudflare MCP는 OAuth가 기본 — 키 없이 첫 사용 시 브라우저 로그인. API 토큰은 선택: 저장하면 아침 브리핑 트래픽 드릴다운 숫자를 직접 집계(GraphQL Analytics)합니다.", iconName: "BrandCloudflare", stacked: true) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 8) {
-                            odSettingsStatus(
-                                cloudflareMcpStatusLabel,
-                                color: cloudflareMcpStatusColor,
-                                isLoading: viewModel.integrationStatusChecking
-                            )
-                            Text("Codemode")
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundStyle(settingsSubtleText)
-                            odSettingsToggle(isOn: $cloudflareMcpCodemode)
-                            Spacer(minLength: 8)
-                            odSettingsGhostButton(
-                                title: "상태 확인",
-                                systemImage: "arrow.clockwise",
-                                width: 88,
-                                identifier: "settings.cloudflare.refreshStatusButton",
-                                isDisabled: integrationActionLocked,
-                                isLoading: viewModel.integrationStatusChecking
-                            ) {
-                                viewModel.refreshIntegrationStatus()
-                            }
-                            odSettingsGhostButton(
-                                title: viewModel.mcpOauthConnecting.contains("cloudflare") ? "연결 중…" : "MCP 연결",
-                                systemImage: "link",
-                                width: 96,
-                                identifier: "settings.cloudflare.mcpConnectButton",
-                                isDisabled: integrationActionLocked,
-                                isLoading: viewModel.mcpOauthConnecting.contains("cloudflare")
-                            ) {
-                                // OAuth 트리거+검증: AI가 Cloudflare MCP 도구를 1회 호출 —
-                                // 처음이면 브라우저 로그인 창이 뜨고, 응답이 오면 연결 실증.
-                                viewModel.connectMcpOauth(server: "cloudflare")
-                            }
-                        }
-                        secureAgentField(label: "CLOUDFLARE_API_TOKEN (선택 · 드릴다운 직접 집계)", placeholder: "Cloudflare API token (Analytics Read 권한)", text: $cloudflareApiToken, identifier: "settings.cloudflare.apiTokenField")
-                        plainAgentField(label: "CLOUDFLARE_MCP_URL", placeholder: KeychainHelper.Settings.defaultCloudflareMcpURL, text: $cloudflareMcpURL, identifier: "settings.cloudflare.mcpUrlField")
-                        integrationProbeCaption(viewModel.integrationStatus?.cloudflare, server: "cloudflare")
-                        mcpOauthResultCaption("cloudflare")
-                    }
+                odSettingsRow(title: "Cloudflare", detail: "브라우저 OAuth 로그인으로 Cloudflare MCP 도구를 AI 실행에 연결합니다.", iconName: "BrandCloudflare") {
+                    mcpIntegrationControls(
+                        server: "cloudflare",
+                        statusLabel: cloudflareMcpStatusLabel,
+                        statusColor: cloudflareMcpStatusColor,
+                        probe: viewModel.integrationStatus?.cloudflare,
+                        identifier: "settings.cloudflare.mcpConnectButton"
+                    )
                 }
-                odSettingsRow(title: "Exa Research", detail: "뉴스·시장 리서치 예비 키입니다. AI 프로바이더의 웹 검색 도구가 없을 때만 사용합니다.", iconName: "BrandExa", stacked: true) {
-                    secureAgentField(label: "EXA_API_KEY", placeholder: "exa_...", text: $exaApiKey, identifier: "settings.exa.apiKeyField")
-                }
-                odSettingsRow(title: "PostHog", detail: "AI 실행의 PostHog MCP는 OAuth가 기본 — 키 없이 첫 사용 시 브라우저 로그인. phx_/pha_ 키는 선택: 저장하면 아침 브리핑 리텐션·웹 드릴다운 숫자를 직접 집계(HogQL)합니다.", iconName: "BrandPostHog", stacked: true) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 8) {
-                            odSettingsStatus(
-                                posthogMcpStatusLabel,
-                                color: posthogMcpStatusColor,
-                                isLoading: viewModel.integrationStatusChecking
-                            )
-                            odSettingsSegmented(values: ["US", "EU"], selection: posthogMcpRegionSelection)
-                            Text("Readonly")
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundStyle(settingsSubtleText)
-                            odSettingsToggle(isOn: $posthogMcpReadonly)
-                            Spacer(minLength: 8)
-                            odSettingsGhostButton(
-                                title: "상태 확인",
-                                systemImage: "arrow.clockwise",
-                                width: 88,
-                                identifier: "settings.posthog.refreshStatusButton",
-                                isDisabled: integrationActionLocked,
-                                isLoading: viewModel.integrationStatusChecking
-                            ) {
-                                viewModel.refreshIntegrationStatus()
-                            }
-                            odSettingsGhostButton(
-                                title: viewModel.mcpOauthConnecting.contains("posthog") ? "연결 중…" : "MCP 연결",
-                                systemImage: "link",
-                                width: 96,
-                                identifier: "settings.posthog.mcpConnectButton",
-                                isDisabled: integrationActionLocked,
-                                isLoading: viewModel.mcpOauthConnecting.contains("posthog")
-                            ) {
-                                viewModel.connectMcpOauth(server: "posthog")
-                            }
-                        }
-                        secureAgentField(label: "POSTHOG_MCP_API_KEY (선택 · 드릴다운 직접 집계)", placeholder: "phx_... 또는 pha_...", text: $posthogApiKey, identifier: "settings.posthog.apiKeyField")
-                        plainAgentField(label: "POSTHOG_PROJECT_API_KEY", placeholder: "phc_... (선택)", text: $posthogProjectAPIKey, identifier: "settings.posthog.projectApiKeyField")
-                        plainAgentField(label: "POSTHOG_HOST", placeholder: "https://us.posthog.com", text: $posthogHost, identifier: "settings.posthog.hostField")
-                        plainAgentField(label: "POSTHOG_MCP_URL", placeholder: KeychainHelper.Settings.defaultPostHogMcpURL, text: $posthogMcpURL, identifier: "settings.posthog.mcpUrlField")
-                        plainAgentField(label: "POSTHOG_MCP_FEATURES", placeholder: KeychainHelper.Settings.defaultPostHogMcpFeatures, text: $posthogMcpFeatures, identifier: "settings.posthog.mcpFeaturesField")
-                        integrationProbeCaption(viewModel.integrationStatus?.posthog, server: "posthog")
-                        mcpOauthResultCaption("posthog")
-                    }
+                odSettingsRow(title: "PostHog", detail: "브라우저 OAuth 로그인으로 PostHog MCP 도구를 AI 실행에 연결합니다.", iconName: "BrandPostHog") {
+                    mcpIntegrationControls(
+                        server: "posthog",
+                        statusLabel: posthogMcpStatusLabel,
+                        statusColor: posthogMcpStatusColor,
+                        probe: viewModel.integrationStatus?.posthog,
+                        identifier: "settings.posthog.mcpConnectButton"
+                    )
                 }
             }
         }
@@ -1271,12 +1172,9 @@ struct SettingsView: View {
         if viewModel.integrationStatusChecking { return "확인 중…" }
         if let live = viewModel.integrationStatus?.cloudflare, !live.isMissing {
             if live.isOauthDelegated { return "OAuth 연결 필요" }
-            return live.isReady ? "연결됨" : "검증 실패"
+            return live.isReady ? "연결됨" : "OAuth 연결 필요"
         }
-        // MCP auth is OAuth-first; the token only upgrades drilldown numbers.
-        return cloudflareApiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "OAuth 연결 필요"
-            : "토큰 저장됨 · 미검증"
+        return "OAuth 연결 필요"
     }
 
     private var cloudflareMcpStatusColor: Color {
@@ -1287,55 +1185,86 @@ struct SettingsView: View {
         }
         if let live = viewModel.integrationStatus?.cloudflare, !live.isMissing {
             if live.isOauthDelegated { return OpenDesignDayColor.amber }
-            return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
+            return live.isReady ? settingsAccentColor : OpenDesignDayColor.amber
         }
         return OpenDesignDayColor.amber
     }
 
-    /// Live-check caption shown under an integration's fields once the sidecar
-    /// verified (or failed to verify) the stored credential.
+    /// Locks MCP actions while the sidecar is checking or proving an OAuth link,
+    /// so a user cannot start overlapping provider probes.
     private var integrationActionLocked: Bool {
         viewModel.integrationStatusChecking || !viewModel.mcpOauthConnecting.isEmpty
     }
 
-    private func integrationProbeCaption(_ probe: IntegrationProbeStatus?, server: String) -> some View {
-        Group {
-            if viewModel.mcpOauthConnecting.contains(server) || viewModel.mcpOauthResults[server] != nil {
-                EmptyView()
-            } else if let detail = probe?.detail, !detail.isEmpty, probe?.isMissing != true {
-                Text(detail)
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundStyle(
-                        probe?.isReady == true
-                            ? settingsAccentColor
-                            : (probe?.isOauthDelegated == true ? OpenDesignDayColor.amber : OpenDesignDayColor.rose)
-                    )
+    private func mcpIntegrationControls(
+        server: String,
+        statusLabel: String,
+        statusColor: Color,
+        probe: IntegrationProbeStatus?,
+        identifier: String
+    ) -> some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 8) {
+                odSettingsStatus(
+                    statusLabel,
+                    color: statusColor,
+                    isLoading: viewModel.integrationStatusChecking
+                )
+                odSettingsGhostButton(
+                    title: viewModel.mcpOauthConnecting.contains(server) ? "연결 중…" : "MCP 연결",
+                    systemImage: "link",
+                    width: 96,
+                    identifier: identifier,
+                    isDisabled: integrationActionLocked,
+                    isLoading: viewModel.mcpOauthConnecting.contains(server)
+                ) {
+                    viewModel.connectMcpOauth(server: server)
+                }
+            }
+
+            if let caption = mcpCompactCaption(server: server, probe: probe) {
+                Text(caption.text)
+                    .font(.system(size: 10.8, weight: .regular, design: .monospaced))
+                    .foregroundStyle(caption.color)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 320, alignment: .trailing)
+                    .accessibilityIdentifier("settings.\(server).mcpCaption")
             }
         }
+        .frame(maxWidth: 360, alignment: .trailing)
     }
 
-    /// Caption under an integration's fields: live progress while the "MCP 연결"
-    /// prewarm runs, then the verdict (success proof, login-pending guidance, or
-    /// failure reason from the live tool call).
-    private func mcpOauthResultCaption(_ server: String) -> some View {
-        Group {
-            if viewModel.mcpOauthConnecting.contains(server) {
-                Text(viewModel.mcpOauthProgress[server] ?? "연결 확인 중…")
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundStyle(settingsSubtleText)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if let result = viewModel.mcpOauthResults[server], let detail = result.detail, !detail.isEmpty {
-                Text(detail)
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundStyle(
-                        result.isReady
-                            ? settingsAccentColor
-                            : (result.isPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose)
-                    )
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+    private func mcpCompactCaption(server: String, probe: IntegrationProbeStatus?) -> (text: String, color: Color)? {
+        if viewModel.mcpOauthConnecting.contains(server) {
+            return (viewModel.mcpOauthProgress[server] ?? "MCP 연결을 확인하는 중입니다.", settingsSubtleText)
         }
+
+        if let result = viewModel.mcpOauthResults[server] {
+            if result.isReady {
+                return ("MCP 도구 호출 확인됨.", settingsAccentColor)
+            }
+            if result.isLoginPending {
+                return ("브라우저 로그인 후 다시 연결하세요.", OpenDesignDayColor.amber)
+            }
+            if result.isVerificationPending {
+                return ("로그인 반영 대기 중. 다시 검증하세요.", OpenDesignDayColor.amber)
+            }
+            return ("MCP 연결 실패. 다시 시도하세요.", OpenDesignDayColor.rose)
+        }
+
+        guard let probe, probe.isMissing != true else { return nil }
+        if probe.isReady {
+            return ("연결 상태 확인됨.", settingsAccentColor)
+        }
+        if probe.isOauthDelegated {
+            return ("브라우저 OAuth 로그인이 필요합니다.", OpenDesignDayColor.amber)
+        }
+        if server == "cloudflare" || server == "posthog" {
+            return ("MCP 연결로 브라우저 로그인을 검증하세요.", OpenDesignDayColor.amber)
+        }
+        return ("최근 상태 확인 실패. 다시 검증하세요.", OpenDesignDayColor.rose)
     }
 
     private var posthogMcpStatusLabel: String {
@@ -1348,16 +1277,8 @@ struct SettingsView: View {
         if viewModel.integrationStatusChecking { return "확인 중…" }
         if let live = viewModel.integrationStatus?.posthog, !live.isMissing {
             if live.isOauthDelegated { return "OAuth 연결 필요" }
-            return live.isReady ? "연결됨" : "검증 실패"
+            return live.isReady ? "연결됨" : "OAuth 연결 필요"
         }
-        let apiKey = posthogApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isValidPostHogMcpAPIKey(apiKey) {
-            return "키 저장됨 · 미검증"
-        }
-        if apiKey.hasPrefix("phc_") {
-            return "Personal key 필요"
-        }
-        // MCP auth is OAuth-first; the key only upgrades drilldown numbers.
         return "OAuth 연결 필요"
     }
 
@@ -1369,44 +1290,9 @@ struct SettingsView: View {
         }
         if let live = viewModel.integrationStatus?.posthog, !live.isMissing {
             if live.isOauthDelegated { return OpenDesignDayColor.amber }
-            return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
-        }
-        let apiKey = posthogApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if apiKey.hasPrefix("phc_") {
-            return OpenDesignDayColor.amber
+            return live.isReady ? settingsAccentColor : OpenDesignDayColor.amber
         }
         return OpenDesignDayColor.amber
-    }
-
-    private var posthogMcpRegionSelection: Binding<String> {
-        Binding(
-            get: { posthogMcpRegion == "eu" ? "EU" : "US" },
-            set: { updatePostHogMcpRegion($0) }
-        )
-    }
-
-    private func updatePostHogMcpRegion(_ value: String) {
-        let previousRegion = posthogMcpRegion
-        let previousDefaultURL = posthogDefaultMcpURL(for: previousRegion)
-        let nextRegion = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "eu" ? "eu" : "us"
-        posthogMcpRegion = nextRegion
-        let currentURL = posthogMcpURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if currentURL.isEmpty
-            || currentURL == previousDefaultURL
-            || currentURL == KeychainHelper.Settings.defaultPostHogMcpURL
-            || currentURL == KeychainHelper.Settings.defaultPostHogEuMcpURL {
-            posthogMcpURL = posthogDefaultMcpURL(for: nextRegion)
-        }
-    }
-
-    private func posthogDefaultMcpURL(for region: String) -> String {
-        region.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "eu"
-            ? KeychainHelper.Settings.defaultPostHogEuMcpURL
-            : KeychainHelper.Settings.defaultPostHogMcpURL
-    }
-
-    private func isValidPostHogMcpAPIKey(_ value: String) -> Bool {
-        value.hasPrefix("phx_") || value.hasPrefix("pha_")
     }
 
     private func beginGitHubCliAuth() {

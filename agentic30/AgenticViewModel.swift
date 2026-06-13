@@ -3977,7 +3977,11 @@ final class AgenticViewModel: ObservableObject {
         if let trimmedTrigger {
             payload["trigger"] = trimmedTrigger
         }
-        return sidecar.send(payload: payload)
+        let sent = sidecar.send(payload: payload)
+        if sent, trimmedTrigger != nil {
+            ohInterventionRequired = nil
+        }
+        return sent
     }
 
     @discardableResult
