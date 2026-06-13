@@ -231,9 +231,68 @@ async function runScenario({ ws, events, sessionId, scenario, transcript, starte
       return structuredDecisionScenario({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset });
     case "mission-completion":
       return missionCompletionScenario({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset });
+    case "gate-blocked-day-entry":
+      return gateBlockedDayEntryScenario({ ws, events, scenario, transcript, startedAt, eventOffset, workspaceRoot });
     default:
       return sendPromptScenario({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset });
   }
+}
+
+// Milestone-gate dogfood (spec §10.1/§10.2): a Day 8 day_progress_patch with no G2
+// evidence in the proof ledger must come back as a WITHHELD patch — the sidecar
+// answers with day_progress_state carrying `gateBlocked` (G2) instead of patching.
+async function gateBlockedDayEntryScenario({ ws, events, scenario, transcript, startedAt, eventOffset, workspaceRoot }) {
+  ws.send(JSON.stringify({
+    type: "day_progress_patch",
+    workspaceRoot,
+    day: 8,
+    stepId: "scan",
+    status: "done",
+  }));
+  const blockedEvent = await waitForEventAfter(
+    events,
+    eventOffset,
+    (event) => event.type === "day_progress_state" && Boolean(event.gateBlocked),
+    30_000,
+  );
+  const gate = blockedEvent.gateBlocked ?? null;
+  const message = String(blockedEvent.message || "");
+  // §15.3: the block also records the gate's recovery-mission substitutions
+  // (fire-and-forget) — poll the gate ledger briefly for the G2 rows.
+  const ledgerPath = path.join(workspaceRoot, ".agentic30", "gate-ledger.json");
+  let gateSubstitutions = [];
+  const substitutionDeadline = Date.now() + 5_000;
+  while (Date.now() < substitutionDeadline) {
+    try {
+      const ledger = JSON.parse(await fs.readFile(ledgerPath, "utf8"));
+      gateSubstitutions = (ledger.substitutions || [])
+        .filter((row) => (row.failedGate ?? row.failed_gate) === "G2")
+        .map((row) => ({
+          day: row.day,
+          replacementMissionId: row.replacementMissionId ?? row.replacement_mission_id,
+          reason: row.reason,
+        }));
+      if (gateSubstitutions.length) break;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  transcript.push(
+    "USER: day_progress_patch day=8 step=scan (G2 증거 없음)",
+    `SYSTEM: ${message || "(no gate message)"}`,
+    `SYSTEM: substitutions recorded: ${gateSubstitutions.map((row) => `day${row.day}:${row.replacementMissionId}`).join(", ") || "(none)"}`,
+  );
+  return {
+    latency_ms: eventElapsed(blockedEvent, startedAt),
+    observed: {
+      gateBlocked: gate,
+      gateMessage: message,
+      gateSubstitutions,
+      assistantMessages: message ? [message] : [],
+      systemOutcomes: gate
+        ? [`day_progress_patch withheld by ${gate.gateId} (${gate.blockedReason})`]
+        : ["no gateBlocked response observed"],
+    },
+  };
 }
 
 async function submitBootstrapInput({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset }) {
@@ -1191,6 +1250,9 @@ function finalizeObserved({ scenario = {}, observed = {}, events, latency }) {
     selectedOptions: observed.selectedOptions,
     completionProof: observed.completionProof,
     workspaceScan: observed.workspaceScan,
+    gateBlocked: observed.gateBlocked,
+    gateMessage: observed.gateMessage,
+    gateSubstitutions: observed.gateSubstitutions,
     error: observed.error,
     visible_outputs: {
       assistant_messages: assistantMessages,

@@ -1523,6 +1523,178 @@ struct SidecarEventDecodingTests {
         #expect(event.officeHoursMemory?.abandonedThreads.first?.contains("2 사이클 silent") == true)
     }
 
+    @MainActor @Test func decodesDayProgressStateWithMilestoneGateBlocked() throws {
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 8,
+          "message": "G2 Foundation Go/No-Go 게이트가 잠겨 있어 Day 8+ 진입이 차단됐어.",
+          "gateBlocked": {
+            "gateId": "G2",
+            "title": "Foundation Go/No-Go",
+            "blockedReason": "foundation_closure_closed",
+            "blockedStep": null,
+            "requiredEvidence": [
+              { "id": "foundation_closure_closed", "label": "foundation closure status=closed" },
+              { "id": "interview_strong_evidence", "label": "인터뷰 strong 증거 ≥1" }
+            ]
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "day_progress_state")
+        #expect(event.gateBlocked?.gateId == "G2")
+        #expect(event.gateBlocked?.title == "Foundation Go/No-Go")
+        #expect(event.gateBlocked?.blockedReason == "foundation_closure_closed")
+        #expect(event.gateBlocked?.blockedStep == nil)
+        #expect(event.gateBlocked?.requiredEvidence?.count == 2)
+        #expect(event.gateBlocked?.requiredEvidence?.first?.id == "foundation_closure_closed")
+        #expect(event.message?.contains("G2") == true)
+    }
+
+    @MainActor @Test func decodesDayProgressStateWithoutGateBlockedAsNil() throws {
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 3
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.gateBlocked == nil)
+    }
+
+    @MainActor @Test func decodesMissionCardEvent() throws {
+        let payload = """
+        {
+          "type": "mission_card",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "missionCard": {
+            "schemaVersion": 1,
+            "day": 9,
+            "source": "idd",
+            "mission": {
+              "day": 9,
+              "title": "입력→처리→출력 흐름을 고정한다",
+              "shortTitle": "Input Flow",
+              "summary": "사용자가 바로 써볼 수 있게 입력, 처리, 결과 화면을 한 번에 지나가게 만든다.",
+              "tasks": ["첫 입력 포맷 1개만 선택", "처리 실패와 빈 입력 폴백 작성", "결과 화면까지 30초 이내인지 재기"],
+              "output": "input-process-output flow",
+              "dayType": "action",
+              "phase": "build",
+              "curriculumWeek": 2,
+              "substituted": false,
+              "substitutionReason": "",
+              "exitCondition": ""
+            },
+            "evidenceSpec": {
+              "evidenceRequired": true,
+              "artifact": "input-process-output flow",
+              "allowedEvidenceTypes": ["link", "file"],
+              "minimumStrength": "medium",
+              "completionSignal": "증거 제출 후 판정이 accepted 또는 verified가 되어야 합니다."
+            },
+            "gateContext": {
+              "day": 9,
+              "blockingGateId": null,
+              "states": { "G1": "passed", "G2": "passed", "G4": "locked" }
+            },
+            "generatedAt": "2026-06-12T09:00:00.000Z"
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "mission_card")
+        #expect(event.missionCard?.day == 9)
+        #expect(event.missionCard?.source == "idd")
+        #expect(event.missionCard?.mission?.shortTitle == "Input Flow")
+        #expect(event.missionCard?.mission?.tasks?.count == 3)
+        #expect(event.missionCard?.evidenceSpec?.evidenceRequired == true)
+        #expect(event.missionCard?.evidenceSpec?.allowedEvidenceTypes == ["link", "file"])
+        #expect(event.missionCard?.gateContext?.states?["G2"] == "passed")
+        #expect(event.missionCard?.gateContext?.blockingGateId == nil)
+    }
+
+    @MainActor @Test func decodesSubstitutedMissionCard() throws {
+        let payload = """
+        {
+          "type": "mission_card",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "missionCard": {
+            "day": 15,
+            "source": "idd",
+            "mission": {
+              "day": 15,
+              "title": "유료 ask 재작성+발송",
+              "shortTitle": "Revenue Dry Run",
+              "substituted": true,
+              "substitutionReason": "G4_failed",
+              "exitCondition": "paymentIntent strong ≥1 + first_value ≥1행"
+            }
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.missionCard?.mission?.substituted == true)
+        #expect(event.missionCard?.mission?.substitutionReason == "G4_failed")
+        #expect(event.missionCard?.evidenceSpec == nil)
+    }
+
+    @MainActor @Test func decodesOfficeHoursInterventionRequiredEvent() throws {
+        let payload = """
+        {
+          "type": "office_hours_intervention_required",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "intervention": {
+            "triggerId": "gate_blocked_G4",
+            "severity": "immediate",
+            "source": "gate_engine",
+            "gateId": "G4",
+            "ruleId": null,
+            "abbreviated": false,
+            "questions": [
+              "가격·받을 약속·기한이 있는 유료 ask를 보내지 못한 진짜 이유는 무엇인가?",
+              "first_value 계측이 빠졌다면, 사용자의 첫 가치 행동을 한 문장으로 정의할 수 있는가?"
+            ],
+            "exitCondition": "구조화 커밋먼트 1개(고객·채널·메시지·기대증거·기한, user-origin, audience=customer) 확정",
+            "postSessionEvidence": "커밋먼트의 expectedEvidenceKind에 따른 strong 증거를 dueDay 안에 제출",
+            "day": 15
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "office_hours_intervention_required")
+        #expect(event.intervention?.triggerId == "gate_blocked_G4")
+        #expect(event.intervention?.severity == "immediate")
+        #expect(event.intervention?.gateId == "G4")
+        #expect(event.intervention?.ruleId == nil)
+        #expect(event.intervention?.questions?.count == 2)
+        #expect(event.intervention?.day == 15)
+        #expect(event.intervention?.exitCondition?.contains("커밋먼트") == true)
+    }
+
+    @MainActor @Test func decodesConfessionInterventionEvent() throws {
+        let payload = """
+        {
+          "type": "office_hours_intervention_required",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "intervention": {
+            "triggerId": "interview_confession",
+            "severity": "immediate",
+            "source": "interview_gate",
+            "abbreviated": true,
+            "questions": ["이 인터뷰를 닫지 못하게 막는 것을 한 문장으로 말하라."],
+            "day": 4
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.intervention?.triggerId == "interview_confession")
+        #expect(event.intervention?.abbreviated == true)
+        #expect(event.intervention?.gateId == nil)
+    }
+
     @MainActor @Test func decodesDayProgressStateWithOfficeHoursHistoryRollup() throws {
         let payload = """
         {

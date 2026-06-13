@@ -235,3 +235,57 @@ test("loadDayProgress returns null when file is absent", async () => {
     await fs.rm(ws, { recursive: true, force: true });
   }
 });
+
+// --- Milestone gate ordering (spec §10.1): the day_progress_patch handler runs
+// evaluateDayProgressPatchGate BEFORE patchDayStep. These tests pin that contract
+// at the module level: a blocked milestone gate withholds the patch entirely.
+test("milestone gate withholds a Day 8 patch until G2 evidence exists, then allows it", async () => {
+  const { evaluateDayProgressPatchGate } = await import("../sidecar/program-gate-engine.mjs");
+  const { appendProofLedgerEvent } = await import("../sidecar/execution-os.mjs");
+  const ws = await tmpWorkspace();
+  try {
+    const now = new Date("2026-06-12T09:00:00.000Z");
+    const blocked = await evaluateDayProgressPatchGate({ workspaceRoot: ws, day: 8, stepId: "scan", now });
+    assert.equal(blocked.blocked, true);
+    assert.equal(blocked.gate.gateId, "G2");
+    // Handler contract: a blocked check means patchDayStep is never called, so
+    // no day-progress file is created by the withheld patch.
+    assert.equal(await loadDayProgress({ workspaceRoot: ws }), null);
+
+    for (const event of [
+      { id: "supporting-1", type: "landing_metric", day: 6, status: "verified", strength: "medium", polarity: "supporting" },
+      { id: "counter-1", type: "interview", day: 5, status: "verified", strength: "strong", polarity: "counter" },
+      { id: "decision-1", type: "day_decision", day: 7, status: "accepted", decision: "continue" },
+    ]) {
+      await appendProofLedgerEvent({ workspaceRoot: ws, event, now });
+    }
+    const allowed = await evaluateDayProgressPatchGate({ workspaceRoot: ws, day: 8, stepId: "scan", now });
+    assert.equal(allowed.blocked, false);
+    const progress = await patchDayStep({ workspaceRoot: ws, day: 8, stepId: "scan", status: "done", now });
+    assert.equal(progress.days["8"].steps.scan, "done");
+  } finally {
+    await fs.rm(ws, { recursive: true, force: true });
+  }
+});
+
+test("G1 blocks only the Day 4 goal step and later steps, not scan/retro", async () => {
+  const { evaluateDayProgressPatchGate } = await import("../sidecar/program-gate-engine.mjs");
+  const ws = await tmpWorkspace();
+  try {
+    const now = new Date("2026-06-12T09:00:00.000Z");
+    const scan = await evaluateDayProgressPatchGate({ workspaceRoot: ws, day: 4, stepId: "scan", now });
+    assert.equal(scan.blocked, false);
+    const retro = await evaluateDayProgressPatchGate({ workspaceRoot: ws, day: 4, stepId: "retro", now });
+    assert.equal(retro.blocked, false);
+    const goal = await evaluateDayProgressPatchGate({ workspaceRoot: ws, day: 4, stepId: "goal", now });
+    assert.equal(goal.blocked, true);
+    assert.equal(goal.gate.gateId, "G1");
+    const execution = await evaluateDayProgressPatchGate({ workspaceRoot: ws, day: 4, stepId: "execution", now });
+    assert.equal(execution.blocked, true);
+    // Day 1-3 are never milestone-blocked.
+    const day3 = await evaluateDayProgressPatchGate({ workspaceRoot: ws, day: 3, stepId: "goal", now });
+    assert.equal(day3.blocked, false);
+  } finally {
+    await fs.rm(ws, { recursive: true, force: true });
+  }
+});

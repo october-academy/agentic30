@@ -2241,6 +2241,20 @@ final class AgenticViewModel: ObservableObject {
     /// The step the gate held (event.gatedStep), so the nudge is scoped to the matching
     /// commitment bar and never bleeds onto a different step's surface.
     @Published private(set) var commitmentGateStep: String?
+    /// Milestone-gate hard block surfaced on day_progress_state (spec §10.2): set when
+    /// the sidecar withholds a day patch because a program gate (G1/G2/G4…) is blocked;
+    /// cleared on the next non-blocked update. The P2 blocked-gate screen renders this.
+    @Published private(set) var dayGateBlocked: SidecarEvent.DayGateBlocked?
+    /// User-facing one-liner accompanying `dayGateBlocked` (sidecar-rendered message).
+    @Published private(set) var dayGateBlockedMessage: String?
+    /// IDD mission card for the execution step (spec §11.0/§17.2): set when the
+    /// sidecar emits `mission_card` on execution-step entry. The execution surface
+    /// renders the mission + evidence spec + gate chips from this.
+    @Published private(set) var executionMissionCard: SidecarEvent.MissionCard?
+    /// System-triggered Office Hours intervention (spec §13.1): the latest
+    /// `office_hours_intervention_required` payload. Severity "immediate" renders
+    /// as a blocking card, "scheduled" as a briefing banner (P2 surface).
+    @Published private(set) var ohInterventionRequired: SidecarEvent.OhInterventionRequired?
     @Published private(set) var isBipCoachRefreshing = false
     @Published private(set) var isBipCoachGenerating = false
     @Published private(set) var isBipCoachCompleting = false
@@ -7332,6 +7346,23 @@ final class AgenticViewModel: ObservableObject {
                 commitmentGateMessage = nil
                 commitmentGateStep = nil
             }
+            // Milestone gate: surface the hard block when a day patch was withheld;
+            // clear it on any non-blocked update (mirrors the interview-gate nudge).
+            if let gate = event.gateBlocked {
+                dayGateBlocked = gate
+                dayGateBlockedMessage = event.message
+            } else {
+                dayGateBlocked = nil
+                dayGateBlockedMessage = nil
+            }
+        case "mission_card":
+            if let card = event.missionCard {
+                executionMissionCard = card
+            }
+        case "office_hours_intervention_required":
+            if let intervention = event.intervention {
+                ohInterventionRequired = intervention
+            }
         case "doc_creation_started":
             isCreatingDoc = event.docType
             docCreationLogs = []
@@ -11898,6 +11929,77 @@ struct SidecarEvent: Decodable {
     // below); gatedStep names the step that was held.
     let needsCommitment: Bool?
     let gatedStep: String?
+    /// Milestone-gate hard block (day_progress_state): the sidecar withheld a
+    /// day-progress patch because a program gate (G1/G2/G4…) is blocked
+    /// (spec §10.2). Additive — absent on non-blocked updates.
+    struct DayGateBlocked: Codable, Equatable {
+        struct RequiredEvidence: Codable, Equatable {
+            let id: String?
+            let label: String?
+        }
+        let gateId: String?
+        let title: String?
+        let blockedReason: String?
+        let blockedStep: String?
+        let requiredEvidence: [RequiredEvidence]?
+    }
+    let gateBlocked: DayGateBlocked?
+    /// IDD mission card for the execution step (`type: "mission_card"`,
+    /// spec §11.0/§17.2): the day's curriculum mission + evidence spec +
+    /// milestone-gate context, emitted when the Day 2+ loop reaches execution.
+    struct MissionCard: Codable, Equatable {
+        struct Mission: Codable, Equatable {
+            let day: Int?
+            let title: String?
+            let shortTitle: String?
+            let summary: String?
+            let tasks: [String]?
+            let output: String?
+            let dayType: String?
+            let phase: String?
+            let curriculumWeek: Int?
+            let substituted: Bool?
+            let substitutionReason: String?
+            let exitCondition: String?
+        }
+        struct EvidenceSpec: Codable, Equatable {
+            let evidenceRequired: Bool?
+            let artifact: String?
+            let allowedEvidenceTypes: [String]?
+            let minimumStrength: String?
+            let completionSignal: String?
+        }
+        struct GateContext: Codable, Equatable {
+            let day: Int?
+            let blockingGateId: String?
+            let states: [String: String]?
+        }
+        let day: Int?
+        let source: String?
+        let mission: Mission?
+        let evidenceSpec: EvidenceSpec?
+        let gateContext: GateContext?
+        let generatedAt: String?
+    }
+    let missionCard: MissionCard?
+    /// System-triggered Office Hours intervention (spec §13.1,
+    /// `type: "office_hours_intervention_required"`): a blocked milestone
+    /// gate (G2/G4/G5/G7) or an interview confession surfaces a card whose
+    /// CTA opens an intervention-framed Office Hours session
+    /// (`office_hours_start` + `trigger`).
+    struct OhInterventionRequired: Codable, Equatable {
+        let triggerId: String?
+        let severity: String?
+        let source: String?
+        let gateId: String?
+        let ruleId: String?
+        let abbreviated: Bool?
+        let questions: [String]?
+        let exitCondition: String?
+        let postSessionEvidence: String?
+        let day: Int?
+    }
+    let intervention: OhInterventionRequired?
     let error: String?
     /// Set by the sidecar on `type: "error"` envelopes that represent an
     /// expected, recoverable upstream provider condition (`"provider_usage_limit"`
@@ -12024,6 +12126,9 @@ struct SidecarEvent: Decodable {
         evidenceOS: EvidenceOSSummary? = nil,
         needsCommitment: Bool? = nil,
         gatedStep: String? = nil,
+        gateBlocked: DayGateBlocked? = nil,
+        missionCard: MissionCard? = nil,
+        intervention: OhInterventionRequired? = nil,
         error: String?,
         errorKind: String? = nil,
         docType: String?,
@@ -12132,6 +12237,9 @@ struct SidecarEvent: Decodable {
         self.evidenceOS = evidenceOS
         self.needsCommitment = needsCommitment
         self.gatedStep = gatedStep
+        self.gateBlocked = gateBlocked
+        self.missionCard = missionCard
+        self.intervention = intervention
         self.error = error
         self.errorKind = errorKind
         self.docType = docType
@@ -12528,6 +12636,9 @@ extension SidecarEvent {
         case evidenceOS
         case needsCommitment
         case gatedStep
+        case gateBlocked
+        case missionCard
+        case intervention
         case error
         case errorKind
         case docType
@@ -12645,6 +12756,9 @@ extension SidecarEvent {
         evidenceOS = Self.decodeIfPresent(EvidenceOSSummary.self, from: container, forKey: .evidenceOS)
         needsCommitment = Self.decodeIfPresent(Bool.self, from: container, forKey: .needsCommitment)
         gatedStep = Self.decodeIfPresent(String.self, from: container, forKey: .gatedStep)
+        gateBlocked = Self.decodeIfPresent(DayGateBlocked.self, from: container, forKey: .gateBlocked)
+        missionCard = Self.decodeIfPresent(MissionCard.self, from: container, forKey: .missionCard)
+        intervention = Self.decodeIfPresent(OhInterventionRequired.self, from: container, forKey: .intervention)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
         let structuredError = Self.decodeIfPresent(BipReadinessError.self, from: container, forKey: .error)

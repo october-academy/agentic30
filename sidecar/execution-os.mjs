@@ -9,7 +9,9 @@ import { getFoundationValueContract } from "./foundation-contracts.mjs";
 import { resolveActionEvidenceInputMode } from "./action-day-evidence-submission.mjs";
 
 export const EXECUTION_OS_SCHEMA_VERSION = 1;
-export const PROOF_LEDGER_SCHEMA_VERSION = 1;
+// v2: event type enum extended with payment_record / payment_failure / refund /
+// traffic_snapshot (spec §15.2). v1 events pass through unchanged.
+export const PROOF_LEDGER_SCHEMA_VERSION = 2;
 export const DAILY_MISSION_CARD_SCHEMA_VERSION = 1;
 export const PILOT_READINESS_SCHEMA_VERSION = 1;
 export const EXECUTION_OS_METRICS_SCHEMA_VERSION = 1;
@@ -26,6 +28,10 @@ export const PROOF_EVENT_TYPES = Object.freeze({
   actionEvidence: "action_evidence",
   dayDecision: "day_decision",
   referral: "referral",
+  paymentRecord: "payment_record",
+  paymentFailure: "payment_failure",
+  refund: "refund",
+  trafficSnapshot: "traffic_snapshot",
 });
 
 const PROOF_EVENT_TYPE_VALUES = new Set(Object.values(PROOF_EVENT_TYPES));
@@ -56,7 +62,7 @@ export function makeDefaultProofLedger(now = new Date()) {
   return {
     schemaVersion: PROOF_LEDGER_SCHEMA_VERSION,
     schema_version: PROOF_LEDGER_SCHEMA_VERSION,
-    schema: "agentic30.proof_ledger.v1",
+    schema: "agentic30.proof_ledger.v2",
     createdAt: generatedAt,
     created_at: generatedAt,
     updatedAt: generatedAt,
@@ -126,7 +132,7 @@ export function normalizeProofLedger(value = {}, { now = new Date() } = {}) {
   return {
     schemaVersion: PROOF_LEDGER_SCHEMA_VERSION,
     schema_version: PROOF_LEDGER_SCHEMA_VERSION,
-    schema: "agentic30.proof_ledger.v1",
+    schema: "agentic30.proof_ledger.v2",
     createdAt,
     created_at: createdAt,
     updatedAt,
@@ -846,7 +852,13 @@ function foundationClosureNextAction(status) {
 }
 
 function isEvidenceEvent(event) {
-  return ![PROOF_EVENT_TYPES.setup, PROOF_EVENT_TYPES.mission].includes(event.type);
+  // traffic_snapshot is system-collected (provenance=system): it must not
+  // auto-satisfy per-day proof prerequisites (fail-closed, spec §9.3 주).
+  return ![
+    PROOF_EVENT_TYPES.setup,
+    PROOF_EVENT_TYPES.mission,
+    PROOF_EVENT_TYPES.trafficSnapshot,
+  ].includes(event.type);
 }
 
 function isSubmittedProofEvent(event) {
@@ -858,7 +870,13 @@ function isCompletedProofEvent(event) {
 }
 
 function inferProofStrength({ type, status }) {
-  if (type === PROOF_EVENT_TYPES.paymentIntent || status === "verified") return "strong";
+  if (
+    type === PROOF_EVENT_TYPES.paymentIntent
+    || type === PROOF_EVENT_TYPES.paymentRecord
+    || status === "verified"
+  ) {
+    return "strong";
+  }
   if (status === "accepted" || type === PROOF_EVENT_TYPES.dmAsk) return "medium";
   return "weak";
 }

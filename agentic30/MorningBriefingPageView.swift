@@ -39,6 +39,7 @@ struct MorningBriefingPageView: View {
     private var day: Int { displayBriefing?.day ?? fallbackDay }
     private var totalDays: Int { displayBriefing?.totalDays ?? 30 }
     private var isLocked: Bool { displayBriefing?.status?.state == "locked" }
+    private var isCollectingWithoutBriefing: Bool { displayBriefing == nil && collecting }
     private var phaseLabel: String {
         if let phase = displayBriefing?.phase, !phase.isEmpty { return phase }
         return AgenticCurriculumDay.days.first(where: { $0.day == day })?.phase.title ?? ""
@@ -196,19 +197,23 @@ struct MorningBriefingPageView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     groupLabel("이 브리핑", trailing: displayBriefing?.sync?.syncedAtLabel.map { "오늘 \($0)" } ?? "")
 
-                    ForEach(sections) { section in
-                        sectionNavRow(section)
-                    }
-
-                    if let entries = displayBriefing?.historyEntries, !entries.isEmpty {
-                        groupLabel("지난 브리핑", trailing: "")
-                        ForEach(entries) { entry in
-                            pastBriefingRow(entry)
+                    if isCollectingWithoutBriefing {
+                        collectingNavPlaceholder
+                    } else {
+                        ForEach(sections) { section in
+                            sectionNavRow(section)
                         }
-                    } else if let dates = displayBriefing?.historyDates, !dates.isEmpty {
-                        groupLabel("지난 브리핑", trailing: "")
-                        ForEach(dates, id: \.self) { date in
-                            pastBriefingRow(MorningBriefingHistoryEntry(date: date))
+
+                        if let entries = displayBriefing?.historyEntries, !entries.isEmpty {
+                            groupLabel("지난 브리핑", trailing: "")
+                            ForEach(entries) { entry in
+                                pastBriefingRow(entry)
+                            }
+                        } else if let dates = displayBriefing?.historyDates, !dates.isEmpty {
+                            groupLabel("지난 브리핑", trailing: "")
+                            ForEach(dates, id: \.self) { date in
+                                pastBriefingRow(MorningBriefingHistoryEntry(date: date))
+                            }
                         }
                     }
                 }
@@ -218,6 +223,32 @@ struct MorningBriefingPageView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("morningBriefing.nav")
+    }
+
+    private var collectingNavPlaceholder: some View {
+        HStack(alignment: .top, spacing: 9) {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 14, height: 14)
+                .padding(.top, 3)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("신호 수집 중")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+                Text("요약이 준비되면 섹션 표시")
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("morningBriefing.nav.collecting")
     }
 
     private func groupLabel(_ title: String, trailing: String) -> some View {

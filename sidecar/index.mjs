@@ -80,7 +80,15 @@ import {
   buildQmdMcpConfig,
   getQmdState,
 } from "./qmd-support.mjs";
-import { buildPostHogClaudeMcpConfigFromSources } from "./posthog-mcp-config.mjs";
+import {
+  buildPostHogClaudeMcpConfigFromSources,
+  resolvePostHogMcpSettings,
+} from "./posthog-mcp-config.mjs";
+import { resolveCloudflareMcpSettings } from "./cloudflare-mcp-config.mjs";
+import {
+  collectActiveUserSnapshot,
+  latestFirstValueSignal,
+} from "./active-users-snapshot.mjs";
 import { createTelemetryClient } from "./telemetry.mjs";
 import { reportError, setTelemetryClient as setSharedTelemetryClient, swallow } from "./error-telemetry.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
@@ -128,6 +136,34 @@ import {
   patchDayStep,
   setDayActiveStep,
 } from "./day-progress-state.mjs";
+import {
+  buildGateBlockedMessage,
+  evaluateDayProgressPatchGate,
+  loadGateLedger,
+  recordMissionSubstitution,
+  resolveActiveGate,
+  resolveDueSubstitutions,
+  resolveProgramPhase,
+} from "./program-gate-engine.mjs";
+import { judgeActionEvidence } from "./action-evidence-judge.mjs";
+import { buildMissionCardEvent } from "./mission-card.mjs";
+import {
+  buildInterventionContextBlock,
+  buildInterventionRequiredEvent,
+  interventionTriggerForGate,
+  issueInterventionTokenForCommitment,
+} from "./oh-intervention.mjs";
+import { resolveInterventionPrompt } from "./oh-intervention-prompts.mjs";
+import {
+  isNewCommitmentBlockedByAr17,
+  labelAdaptiveRuleEvent,
+  runAdaptiveRulesCycle,
+} from "./adaptive-rules.mjs";
+
+// §13.4: intervention 세션이 열렸을 때 어느 gate의 통과 토큰을 기다리는지
+// 워크스페이스별로 기억한다(in-memory — 재시작 시 founder가 intervention을
+// 다시 트리거하면 된다; 영속 산출물은 gate-ledger의 토큰뿐).
+const pendingInterventionGates = new Map();
 import {
   abandonCommitment,
   appendCommitment,
@@ -1315,6 +1351,26 @@ async function handleClientMessage(socket, payload) {
       const context = String(payload.context || "").trim();
       const visiblePrompt = String(payload.visiblePrompt || "Office Hours").trim() || "Office Hours";
       const day = normalizeOfficeHoursDay(payload.day ?? payload.officeHoursDay ?? session.runtime?.officeHours?.day);
+      // §13.1 (additive): an intervention-framed start carries payload.trigger.
+      // Unregistered triggers are ignored (fail-closed §13.3 — the session runs
+      // as a normal Office Hours without the intervention contract).
+      const interventionTriggerId = String(payload.trigger || "").trim();
+      const interventionPack = interventionTriggerId
+        ? resolveInterventionPrompt(interventionTriggerId)
+        : null;
+      const interventionContext = interventionPack
+        ? buildInterventionContextBlock(interventionTriggerId, { abbreviated: interventionPack.abbreviated })
+        : "";
+      if (interventionPack?.gateId) {
+        // §13.4: remember which gate this session is expected to unlock — the
+        // commitment confirm patch issues the pass-through token from this.
+        pendingInterventionGates.set(path.resolve(workspaceRoot), {
+          gateId: interventionPack.gateId,
+          triggerId: interventionPack.triggerId,
+          sessionId: session.id,
+          createdAt: new Date().toISOString(),
+        });
+      }
       markWorkspaceSetupFirstInput("office_hours_start");
       if (state.activeRuns.has(session.id)) {
         send(socket, {
@@ -1326,7 +1382,7 @@ async function handleClientMessage(socket, payload) {
       }
       cancelWarmSession(session.id);
       await runOfficeHours(session, {
-        context,
+        context: [context, interventionContext].filter(Boolean).join("\n\n"),
         originalPrompt: visiblePrompt,
         source: payload.source || "manual",
         day,
@@ -2038,6 +2094,121 @@ async function handleClientMessage(socket, payload) {
     }
     case "day_progress_get": {
       await handleDayProgressGet(socket, payload);
+      return;
+    }
+    case "submit_revenue_evidence": {
+      // §17.1/§24-7: revenue evidence path — submit_action_evidence와 동형,
+      // paymentRecord 계열 proof 이벤트로 기록. §3.2: LLM judge가 sufficiency
+      // 판정(캡처/URL + 발송·수신 시각, §9.3-4). judge error는 §21 보류 —
+      // 아무것도 기록하지 않는다.
+      const root = resolveDay1GoalWorkspaceRoot(payload);
+      const kindToken = String(payload.kind || "").trim().toLowerCase();
+      const REVENUE_KIND_TO_EVENT_TYPE = {
+        payment_record: "payment_record",
+        payment_failure: "payment_failure",
+        refund: "refund",
+        refusal: "payment_failure",
+      };
+      const eventType = REVENUE_KIND_TO_EVENT_TYPE[kindToken];
+      if (!eventType) {
+        throw new Error("submit_revenue_evidence requires kind: payment_record|payment_failure|refund|refusal.");
+      }
+      const content = String(payload.content || "").trim();
+      if (!content) {
+        throw new Error("submit_revenue_evidence requires content (capture URL or local file path).");
+      }
+      const note = String(payload.note || "").trim();
+      const revenueDay = Number.parseInt(payload.day, 10) || null;
+      const evidenceType = /^https?:\/\//i.test(content) ? "link" : "file";
+      const judgment = await judgeActionEvidence({
+        guideline: {
+          dayId: revenueDay,
+          actionId: `revenue-${kindToken}`,
+          actionType: "revenue_evidence",
+          goal: "첫 매출(결제 완료/예약판매 입금) 또는 명시적 거절을 증거로 기록한다",
+          completionSignal: "결제 provider 기록·입금 캡처·거절 원문에서 시각과 상대를 식별할 수 있다",
+          sufficiencyCriteria: [
+            {
+              type: "evidence",
+              label: "원문/캡처",
+              description: "결제 provider 대시보드 URL, 입금/결제 화면 캡처, 또는 거절 원문",
+              required: true,
+            },
+            {
+              type: "quality",
+              label: "시각·발신 식별",
+              description: "발송·수신 시각과 상대(고객)를 식별할 수 있어야 한다",
+              required: true,
+            },
+          ],
+        },
+        evidence: { type: evidenceType, content, note },
+        workspaceRoot: root,
+      });
+      if (judgment.status !== "accepted" && judgment.status !== "insufficient") {
+        send(socket, {
+          type: "submit_revenue_evidence_result",
+          workspaceRoot: root,
+          success: false,
+          status: "error",
+          message: "판정기를 사용할 수 없어 보류했어. 잠시 후 다시 제출해줘.",
+        });
+        return;
+      }
+      const accepted = judgment.status === "accepted";
+      await appendProofLedgerEvent({
+        workspaceRoot: root,
+        event: {
+          type: eventType,
+          day: revenueDay,
+          status: accepted ? "accepted" : "insufficient",
+          strength: accepted ? "strong" : "weak",
+          evidenceType,
+          sourceUrl: evidenceType === "link" ? content : "",
+          artifactPath: evidenceType === "file" ? content : "",
+          summary: note || judgment.agentAssessment,
+          amount: payload.amount,
+          metadata: {
+            kind: kindToken,
+            verifiedBy: "judge",
+            judgeConfidence: judgment.confidence,
+          },
+        },
+      });
+      telemetry.captureEvent("mac_sidecar_revenue_evidence_recorded", {
+        kind: kindToken,
+        amount_band: bandRevenueAmount(payload.amount),
+        accepted,
+      });
+      send(socket, {
+        type: "submit_revenue_evidence_result",
+        workspaceRoot: root,
+        success: accepted,
+        status: judgment.status,
+        message: judgment.miniActionSuggestion || judgment.agentAssessment,
+      });
+      return;
+    }
+    case "adaptive_rule_label": {
+      // §12 오탐 대응 ②: user-origin label — the founder disputes a firing.
+      // Marks the latest unlabeled event for the rule (48h cooldown follows).
+      const root = resolveDay1GoalWorkspaceRoot(payload);
+      const ruleId = String(payload.ruleId ?? payload.rule_id ?? "").trim();
+      const label = String(payload.label ?? "").trim() || "false_positive";
+      if (!ruleId) {
+        throw new Error("adaptive_rule_label requires ruleId.");
+      }
+      const { labeled } = await labelAdaptiveRuleEvent({ workspaceRoot: root, ruleId, label });
+      telemetry.captureEvent("mac_sidecar_adaptive_rule_fired", {
+        rule_id: ruleId,
+        confidence: "",
+        user_label: label,
+      });
+      send(socket, {
+        type: "adaptive_rule_label_result",
+        workspaceRoot: root,
+        success: Boolean(labeled),
+      });
       return;
     }
     case "day_progress_patch": {
@@ -3240,6 +3411,16 @@ async function applyPredictionPatch({ workspaceRoot, cycle, predictionText, pred
   }
 }
 
+// §16.2 privacy: 금액 원값은 전송 금지 — KRW 기준 구간만 보낸다.
+function bandRevenueAmount(amount) {
+  const number = Number(amount);
+  if (!Number.isFinite(number) || number < 0) return "unknown";
+  if (number < 10_000) return "lt_10k";
+  if (number < 100_000) return "10k_100k";
+  if (number < 1_000_000) return "100k_1m";
+  return "gte_1m";
+}
+
 async function handleDayProgressPatch(socket, payload = {}) {
   const root = resolveDay1GoalWorkspaceRoot(payload);
   const stepId = payload.stepId ?? payload.step ?? payload.step_id;
@@ -3282,6 +3463,209 @@ async function handleDayProgressPatch(socket, payload = {}) {
         workspace_basename: path.basename(root),
       });
       return;
+    }
+    // §13.4: a commitment closing an intervention session issues the gate's
+    // pass-through token BEFORE the milestone evaluation, so the confirming
+    // patch itself passes via the token instead of deadlocking on the still-
+    // blocked gate. Once-per-gate + program-wide cap live in the engine.
+    // Armed interventions go stale after 24h: an abandoned intervention
+    // session must not let an unrelated later commitment mint the gate token
+    // (§13.4 "참여+커밋먼트 확정" — participation and confirmation belong to
+    // the same intervention, fail-closed).
+    let pendingIntervention = pendingInterventionGates.get(path.resolve(root)) ?? null;
+    if (pendingIntervention && Date.now() - Date.parse(pendingIntervention.createdAt) > 24 * 60 * 60 * 1000) {
+      pendingInterventionGates.delete(path.resolve(root));
+      pendingIntervention = null;
+    }
+    // §12 AR-17 진행 효과: 증거 0인 약속 위에 새 약속을 쌓는 중이면 신규
+    // 커밋먼트를 보류한다. intervention-armed 커밋은 예외(§13.4 토큰 경로),
+    // 오탐 라벨(adaptive_rule_label)이 사용자 해제 수단이다.
+    if (
+      gate.mode === "commit"
+      && !pendingIntervention
+      && await isNewCommitmentBlockedByAr17({ workspaceRoot: root })
+    ) {
+      const current = await loadDayProgress({ workspaceRoot: root });
+      const ar17CurrentDay = current
+        ? computeDayNumber({ challengeStartedAt: current.challengeStartedAt })
+        : null;
+      send(socket, {
+        type: "day_progress_state",
+        workspaceRoot: root,
+        dayProgress: current,
+        currentDay: ar17CurrentDay,
+        needsCommitment: true,
+        gatedStep: String(stepId || ""),
+        message: "증거 없이 열려 있는 약속이 있어. 새 약속을 쌓기 전에 기존 약속 1개를 먼저 닫거나(증거 제출), 이 판정이 오탐이면 그렇게 표시해줘.",
+        officeHoursMemory: await loadOfficeHoursMemorySummary(root, ar17CurrentDay),
+        officeHoursHistory: await loadOfficeHoursHistorySummary(root, ar17CurrentDay),
+        dayReviews: await loadOfficeHoursDayReviews(root, current, ar17CurrentDay),
+        evidenceOS: await loadOfficeHoursEvidenceOS(root, current, ar17CurrentDay),
+      });
+      return;
+    }
+    if (gate.mode === "commit" && pendingIntervention) {
+      try {
+        const issuance = await issueInterventionTokenForCommitment({
+          workspaceRoot: root,
+          gateId: pendingIntervention.gateId,
+          commitment: structuredCommitment,
+          day: Number.parseInt(day, 10) || null,
+        });
+        pendingInterventionGates.delete(path.resolve(root));
+        telemetry.captureEvent("mac_sidecar_oh_intervention_completed", {
+          trigger_id: pendingIntervention.triggerId,
+          gate_id: pendingIntervention.gateId,
+          commitment_confirmed: true,
+          token_issued: issuance.issued,
+          token_refused_reason: issuance.issued ? "" : issuance.reason,
+        });
+      } catch (error) {
+        telemetry.captureException(error, {
+          operation: "oh_intervention_token_issue",
+          workspace_root: root,
+        });
+      }
+    }
+    // Milestone gate (spec §10.1): evaluated against the proof ledger right before
+    // the authoritative patch. A blocked milestone gate (G1 Day4 goal-step, G2 Day8+,
+    // G4 Day15+) withholds the patch — fail-closed; release paths are strong evidence
+    // or a confession-issued intervention token (§13.4). Confess-mode patches are
+    // exempt: confession is the §10.2 safety valve and records outcome=blocked, so
+    // withholding it would deadlock the release path itself.
+    const gateTargetDay = Number.parseInt(day, 10) || null;
+    let gateCheck = null;
+    if (gateTargetDay && gate.mode !== "confess") {
+      // G4② input (spec §15.4/§21): latest persisted first_value snapshot plus
+      // PostHog source availability — both local reads, no network on this path.
+      gateCheck = await evaluateDayProgressPatchGate({
+        workspaceRoot: root,
+        day: gateTargetDay,
+        stepId,
+        firstValue: await latestFirstValueSignal({ workspaceRoot: root }),
+        sources: {
+          posthogAvailable: resolvePostHogMcpSettings({
+            env: process.env,
+            appSupportPath,
+          })?.tokenValid === true,
+          cloudflareAvailable: resolveCloudflareMcpSettings({
+            env: process.env,
+            appSupportPath,
+          })?.tokenValid === true,
+        },
+      });
+      // §16.1: refresh the program context attached to every telemetry event.
+      const activeGate = resolveActiveGate(gateCheck.evaluation);
+      telemetry.setProgramContext({
+        programDay: gateTargetDay,
+        programPhase: resolveProgramPhase(gateCheck.evaluation),
+        activeGate: activeGate?.gateId ?? "",
+        gateState: activeGate?.state ?? "",
+      });
+      // §16.2: per-gate state transitions — gate_evaluated on every change,
+      // gate_unblocked when a previously blocked gate opens or passes.
+      for (const [gateId, gateState] of Object.entries(gateCheck.evaluation?.gates ?? {})) {
+        const previousState = gateCheck.previousStates?.[gateId];
+        if (previousState === gateState.state) continue;
+        telemetry.captureEvent("mac_sidecar_gate_evaluated", {
+          gate_id: gateId,
+          state: gateState.state,
+          blocked_reason: gateState.blockedReason || "",
+          evidence_count: (gateState.conditions ?? []).filter((condition) => condition.satisfied).length,
+        });
+        if (previousState === "blocked" && gateState.state !== "blocked") {
+          telemetry.captureEvent("mac_sidecar_gate_unblocked", {
+            gate_id: gateId,
+            resolution_path: gateState.resolutionPath || "",
+          });
+        }
+      }
+      // §15.3/§11.1: record due recovery-mission substitutions (once per
+      // failed gate — idempotent). Mission cards consume the rows; failures
+      // never break the patch.
+      void (async () => {
+        const substitutionLedger = await loadGateLedger({ workspaceRoot: root });
+        const due = resolveDueSubstitutions({
+          evaluation: gateCheck.evaluation,
+          ledger: substitutionLedger,
+        });
+        for (const substitution of due) {
+          await recordMissionSubstitution({ workspaceRoot: root, substitution });
+          telemetry.captureEvent("mac_sidecar_mission_substituted", {
+            day: substitution.day,
+            reason: substitution.reason,
+          });
+        }
+      })().catch((substitutionError) => {
+        telemetry.captureException(substitutionError, {
+          operation: "mission_substitution_record",
+          workspace_root: root,
+        });
+      });
+      // §13.4 token expiry surfaced by this evaluation: dueDay passed without
+      // strong post-session evidence — the gate re-blocks (handled below).
+      // Emitted BEFORE the blocked branch so an expiring-and-blocking gate
+      // still reports the miss (escalation-queue data source, §16.2/§20-④).
+      const expiredGateIds = gateCheck?.evaluation?.expiredTokenGateIds ?? [];
+      if (expiredGateIds.length) {
+        const gateLedgerSnapshot = await loadGateLedger({ workspaceRoot: root });
+        const expiredTotal = Object.values(gateLedgerSnapshot.gates)
+          .filter((entry) => entry?.interventionToken?.expired === true)
+          .length;
+        for (const expiredGateId of expiredGateIds) {
+          telemetry.captureEvent("mac_sidecar_oh_intervention_evidence_missed", {
+            gate_id: expiredGateId,
+            trigger_id: interventionTriggerForGate(expiredGateId) || "interview_confession",
+            consecutive_count: expiredTotal,
+          });
+        }
+      }
+      if (gateCheck.blocked) {
+        const current = await loadDayProgress({ workspaceRoot: root });
+        const blockedCurrentDay = current
+          ? computeDayNumber({ challengeStartedAt: current.challengeStartedAt })
+          : null;
+        send(socket, {
+          type: "day_progress_state",
+          workspaceRoot: root,
+          dayProgress: current,
+          currentDay: blockedCurrentDay,
+          gateBlocked: {
+            gateId: gateCheck.gate.gateId,
+            title: gateCheck.gate.title,
+            blockedReason: gateCheck.gate.blockedReason,
+            blockedStep: gateCheck.gate.blockedStep,
+            requiredEvidence: gateCheck.gate.requiredEvidence,
+          },
+          message: buildGateBlockedMessage(gateCheck.gate),
+        });
+        if (gateCheck.stateChanged) {
+          telemetry.captureEvent("mac_sidecar_gate_blocked", {
+            gate_id: gateCheck.gate.gateId,
+            blocked_reason: gateCheck.gate.blockedReason,
+            day: gateTargetDay,
+            workspace_basename: path.basename(root),
+          });
+          // §13.1: milestone gate 실패(G2/G4/G5/G7)는 즉시·강제 표면화되는
+          // intervention 트리거다. G1은 confession 경로로만 표면화된다.
+          const interventionTrigger = interventionTriggerForGate(gateCheck.gate.gateId);
+          const interventionEvent = interventionTrigger
+            ? buildInterventionRequiredEvent({
+                workspaceRoot: root,
+                triggerId: interventionTrigger,
+                day: gateTargetDay,
+              })
+            : null;
+          if (interventionEvent) {
+            broadcast(interventionEvent);
+            telemetry.captureEvent("mac_sidecar_oh_intervention_triggered", {
+              trigger_id: interventionTrigger,
+              severity: "immediate",
+            });
+          }
+        }
+        return;
+      }
     }
     // Patch the step FIRST: patchDayStep validates day/step and throws on a day-kind
     // mismatch or out-of-range day BEFORE any memory write, so a rejected patch never
@@ -3327,6 +3711,22 @@ async function handleDayProgressPatch(socket, payload = {}) {
       await refreshDayMemory({ workspaceRoot: root, day: cycleNo }).catch((error) => {
         telemetry.captureException(error, { operation: "day_memory_refresh_after_interview_confess" });
       });
+      // §13.1: confession은 즉시 축약형(§13.3a) intervention을 표면화한다 —
+      // G1 포함 모든 interview 스텝 동일. 카드의 OH 시작이 office_hours_start
+      // payload.trigger로 이어져 같은 계약(§13.3)을 주입받는다.
+      const confessionEvent = buildInterventionRequiredEvent({
+        workspaceRoot: root,
+        triggerId: "interview_confession",
+        abbreviated: true,
+        day: cycleNo,
+      });
+      if (confessionEvent) {
+        broadcast(confessionEvent);
+        telemetry.captureEvent("mac_sidecar_oh_intervention_triggered", {
+          trigger_id: "interview_confession",
+          severity: "immediate",
+        });
+      }
     }
     telemetry.captureEvent("mac_sidecar_day_progress_updated", {
       day: Number(day) || null,
@@ -3348,6 +3748,69 @@ async function handleDayProgressPatch(socket, payload = {}) {
       dayReviews: await loadOfficeHoursDayReviews(root, dayProgress, currentDay),
       evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
     });
+    // §11.0/§17.2: entering the execution step loads the day's IDD mission as a
+    // mission_card. Emission points: a Day 2+ interview close (execution becomes
+    // the active surface) or an explicit non-done execution-step patch. Emission
+    // failures never break the patch (additive surface).
+    const missionDay = Number.parseInt(day, 10) || null;
+    const executionEntered = missionDay && missionDay >= 2 && (
+      (String(stepId) === "interview" && String(status) === "done")
+      || (String(stepId) === "execution" && String(status) !== "done")
+    );
+    if (executionEntered) {
+      try {
+        const gateLedger = await loadGateLedger({ workspaceRoot: root });
+        const missionCard = buildMissionCardEvent({
+          workspaceRoot: root,
+          day: missionDay,
+          gateEvaluation: gateCheck?.evaluation ?? null,
+          substitutions: gateLedger.substitutions,
+        });
+        if (missionCard) broadcast(missionCard);
+      } catch (missionError) {
+        telemetry.captureException(missionError, {
+          operation: "mission_card_emit",
+          workspace_root: root,
+        });
+      }
+    }
+    // §12: adaptive rules evaluate on the day loop's authoritative write —
+    // fire-and-forget, persisted to gate-ledger adaptiveEvents, one firing
+    // per rule per day. Immediate-grade firings surface the registered
+    // intervention card (§13.1); evaluation failures never break the patch.
+    if (missionDay) {
+      void runAdaptiveRulesCycle({ workspaceRoot: root, day: missionDay })
+        .then(({ fired }) => {
+          for (const rule of fired) {
+            telemetry.captureEvent("mac_sidecar_adaptive_rule_fired", {
+              rule_id: rule.ruleId,
+              confidence: rule.confidence,
+              user_label: "",
+            });
+            const triggerId = `rule_${rule.ruleId.replace(/-/g, "")}`;
+            const interventionEvent = rule.ohEscalation !== "none" && rule.ohEscalation !== "joins_G5"
+              ? buildInterventionRequiredEvent({
+                  workspaceRoot: root,
+                  triggerId,
+                  day: missionDay,
+                })
+              : null;
+            if (interventionEvent) {
+              broadcast(interventionEvent);
+              telemetry.captureEvent("mac_sidecar_oh_intervention_triggered", {
+                trigger_id: triggerId,
+                severity: interventionEvent.intervention.severity,
+              });
+            }
+          }
+        })
+        .catch((ruleError) => {
+          telemetry.captureException(ruleError, {
+            operation: "adaptive_rules_cycle",
+            workspace_root: root,
+          });
+        });
+    }
   } catch (error) {
     telemetry.captureException(error, {
       operation: "day_progress_patch",
@@ -5118,6 +5581,24 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     const localSignals = await collectLocalDailyOfficeHoursSignals({ workspaceRoot, gate });
     if (githubTracked) progress.log("github", "git 커밋 · gh CLI 신호 집계 완료");
     const external = await collectMorningBriefingExternalSignals({ gate, preferredProvider, progress });
+    // §15.4: 활성 사용자 스냅샷은 브리핑 수집 사이클에 편승한다(일 1회 — 같은
+    // 날짜 스냅샷은 모듈이 교체). 미연동/실패는 아무것도 기록하지 않는다
+    // (fail-closed — G4②는 §21 provisional 경로로 처리). 브리핑을 막지 않는다.
+    void collectActiveUserSnapshot({
+      workspaceRoot,
+      day: Number.isFinite(day) ? day : null,
+      env: process.env,
+      appSupportPath,
+    }).then((result) => {
+      if (result.status === "ok") {
+        telemetry.captureEvent("mac_sidecar_active_user_snapshot", {
+          active_user_count: result.snapshot.activeUserCount,
+          day: result.snapshot.day,
+        });
+      }
+    }).catch((error) => {
+      telemetry.captureException(error, { operation: "active_user_snapshot" });
+    });
     const digest = finalizeDailyOfficeHoursDigest({
       gate,
       localSignals,

@@ -136,3 +136,59 @@ test("completed, disabled, future, and graduated Days do not register notificati
     assert.equal(result.notificationRequest, null);
   }
 });
+
+// --- §19 확장: program 알림 2종 (P2) ---
+test("program notifications: gate-blocked morning + commitment dueDay with dedup and daily cap", async () => {
+  const { buildProgramNotificationSchedule, GATE_BLOCKED_MORNING_NOTIFICATION_IDENTIFIER, COMMITMENT_DUE_NOTIFICATION_IDENTIFIER, PROGRAM_NOTIFICATION_DAILY_LIMIT } =
+    await import("../sidecar/curriculum-notification-scheduler.mjs");
+  const now = new Date(2026, 5, 12, 8, 0, 0);
+  const gates = {
+    G4: {
+      gateId: "G4",
+      state: "blocked",
+      provisional: null,
+      requiredEvidence: [{ id: "paid_ask_strong_evidence", label: "유료 ask 발송 증거 ≥1 (paymentIntent, strong)" }],
+    },
+  };
+  const commitments = [
+    { status: "open", dueDay: 15, text: "조은성에게 결제 요청 보내기" },
+  ];
+
+  const schedule = buildProgramNotificationSchedule({ gates, commitments, currentDay: 15, lastSent: {}, now });
+  assert.equal(schedule.notifications.length, 2);
+  assert.equal(schedule.dailyLimit, PROGRAM_NOTIFICATION_DAILY_LIMIT);
+  const [gateNotice, dueNotice] = schedule.notifications;
+  assert.equal(gateNotice.identifier, GATE_BLOCKED_MORNING_NOTIFICATION_IDENTIFIER);
+  assert.match(gateNotice.title, /G4/);
+  assert.match(gateNotice.body, /유료 ask 발송 증거/);
+  assert.equal(gateNotice.trigger.hour, 9);
+  assert.equal(dueNotice.identifier, COMMITMENT_DUE_NOTIFICATION_IDENTIFIER);
+  assert.match(dueNotice.body, /조은성에게 결제 요청 보내기/);
+  assert.equal(schedule.lastSentPatch[GATE_BLOCKED_MORNING_NOTIFICATION_IDENTIFIER], "2026-06-12");
+
+  // 같은 날 재실행: lastSent dedup으로 둘 다 skip.
+  const deduped = buildProgramNotificationSchedule({
+    gates,
+    commitments,
+    currentDay: 15,
+    lastSent: schedule.lastSentPatch,
+    now,
+  });
+  assert.equal(deduped.notifications.length, 0);
+  assert.equal(deduped.skipped.length, 2);
+  assert.ok(deduped.skipped.every((entry) => entry.reason === "already_sent_today"));
+});
+
+test("program notifications respect provisional gates and non-due commitments", async () => {
+  const { buildProgramNotificationSchedule } = await import("../sidecar/curriculum-notification-scheduler.mjs");
+  const now = new Date(2026, 5, 12, 8, 0, 0);
+  // Provisional-active block (§21 grace) does not nag in the morning.
+  const provisional = buildProgramNotificationSchedule({
+    gates: { G4: { gateId: "G4", state: "blocked", provisional: { active: true }, requiredEvidence: [] } },
+    commitments: [{ status: "open", dueDay: 16, text: "내일 기한" }],
+    currentDay: 15,
+    lastSent: {},
+    now,
+  });
+  assert.equal(provisional.notifications.length, 0);
+});

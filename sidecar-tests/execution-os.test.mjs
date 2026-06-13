@@ -318,6 +318,97 @@ test("telemetry helper emits milestone events once against previous metrics", ()
   assert.equal(events.every((event) => event.properties.current_day === 8), true);
 });
 
+test("proof ledger v1 documents migrate to v2 with events passing through unchanged", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-proof-ledger-v1-"));
+  const ledgerPath = resolveProofLedgerPath(root);
+  await fs.mkdir(path.dirname(ledgerPath), { recursive: true });
+  const v1Events = [
+    { id: "v1-setup", type: "setup", status: "accepted", createdAt: "2026-06-01T00:00:00.000Z" },
+    { id: "v1-interview", type: "interview", day: 1, status: "accepted", strength: "medium", createdAt: "2026-06-01T01:00:00.000Z" },
+    { id: "v1-dm", type: "dm_ask", day: 6, status: "accepted", strength: "strong", createdAt: "2026-06-06T01:00:00.000Z" },
+    { id: "v1-decision", type: "day_decision", day: 7, status: "verified", decision: "continue", createdAt: "2026-06-07T01:00:00.000Z" },
+  ];
+  await fs.writeFile(ledgerPath, JSON.stringify({
+    schemaVersion: 1,
+    schema_version: 1,
+    schema: "agentic30.proof_ledger.v1",
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-07T01:00:00.000Z",
+    events: v1Events,
+  }));
+
+  const loaded = await loadProofLedger({ workspaceRoot: root });
+
+  assert.equal(loaded.schemaVersion, 2);
+  assert.equal(loaded.schema, "agentic30.proof_ledger.v2");
+  assert.equal(loaded.events.length, v1Events.length);
+  for (const [index, original] of v1Events.entries()) {
+    assert.equal(loaded.events[index].id, original.id);
+    assert.equal(loaded.events[index].type, original.type);
+    assert.equal(loaded.events[index].status, original.status);
+    assert.equal(loaded.events[index].createdAt, original.createdAt);
+  }
+  assert.equal(loaded.events[1].strength, "medium");
+  assert.equal(loaded.events[2].strength, "strong");
+  assert.equal(loaded.events[3].decision, "continue");
+});
+
+test("proof ledger v2 accepts revenue and traffic event types", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-proof-ledger-v2-"));
+
+  const record = await appendProofLedgerEvent({
+    workspaceRoot: root,
+    now: new Date("2026-06-08T01:00:00.000Z"),
+    event: { id: "pay-1", type: "payment_record", day: 14, status: "accepted" },
+  });
+  assert.equal(record.event.type, "payment_record");
+  assert.equal(record.event.strength, "strong");
+
+  const failure = await appendProofLedgerEvent({
+    workspaceRoot: root,
+    now: new Date("2026-06-08T01:05:00.000Z"),
+    event: { id: "fail-1", type: "payment_failure", day: 14, status: "submitted" },
+  });
+  assert.equal(failure.event.type, "payment_failure");
+
+  const refund = await appendProofLedgerEvent({
+    workspaceRoot: root,
+    now: new Date("2026-06-08T01:10:00.000Z"),
+    event: { id: "refund-1", type: "refund", day: 15, status: "submitted" },
+  });
+  assert.equal(refund.event.type, "refund");
+
+  const traffic = await appendProofLedgerEvent({
+    workspaceRoot: root,
+    now: new Date("2026-06-08T01:15:00.000Z"),
+    event: { id: "traffic-1", type: "traffic_snapshot", day: 15, status: "verified" },
+  });
+  assert.equal(traffic.event.type, "traffic_snapshot");
+
+  const loaded = await loadProofLedger({ workspaceRoot: root });
+  assert.equal(loaded.schemaVersion, 2);
+  assert.deepEqual(
+    loaded.events.map((event) => event.type),
+    ["payment_record", "payment_failure", "refund", "traffic_snapshot"],
+  );
+});
+
+test("traffic_snapshot events do not satisfy per-day proof prerequisites", () => {
+  const requirements = buildProofPrerequisiteRequirements({
+    currentDay: 3,
+    proofLedger: {
+      events: [
+        { id: "day-1-proof", type: "action_evidence", day: 1, status: "accepted" },
+        { id: "day-2-traffic", type: "traffic_snapshot", day: 2, status: "verified" },
+      ],
+    },
+  });
+
+  const day2 = requirements.requirements.find((entry) => entry.sourceDay === 2);
+  assert.equal(day2.verified, false);
+  assert.equal(day2.status, "unmet");
+});
+
 test("buildProofPrerequisiteRequirements adds Day 7 decision for post-foundation unlock", () => {
   const requirements = buildProofPrerequisiteRequirements({
     currentDay: 8,

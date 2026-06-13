@@ -2545,6 +2545,9 @@ struct ContentView: View {
                     officeHoursMemoryBanner()
                     officeHoursEvidenceOSBanner()
                     officeHoursSourceGateBanner(activeDay: activeDay)
+                    officeHoursGateBlockedBanner()
+                    officeHoursInterventionBanner()
+                    officeHoursMissionCardBanner()
                     officeHoursMainColumn(
                         session: conversationSession,
                         day1Content: day1Content,
@@ -3448,6 +3451,139 @@ struct ContentView: View {
         .accessibilityIdentifier("opendesign.officeHours.commitmentDebtBanner")
     }
 
+    // §18 gate 차단 화면: milestone gate가 day 패치를 보류했을 때의 하드블록
+    // 카드. blockedReason + 필요한 증거 목록 + 두 해제 경로(증거 제출 /
+    // confession→Office Hours)를 보여준다. 데이터는 day_progress_state의
+    // gateBlocked(additive)에서 온다 — 스텁 환경에서도 결정적으로 렌더링.
+    @ViewBuilder
+    private func officeHoursGateBlockedBanner() -> some View {
+        if let gate = viewModel.dayGateBlocked {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                    Text("\(gate.gateId ?? "milestone") \(gate.title ?? "") 게이트 잠김")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    Spacer(minLength: 0)
+                }
+                if let message = viewModel.dayGateBlockedMessage, !message.isEmpty {
+                    Text(message)
+                        .font(.system(size: 12))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach((gate.requiredEvidence ?? []).prefix(3), id: \.id) { evidence in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("·")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                        Text(evidence.label ?? evidence.id ?? "")
+                            .font(.system(size: 11))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Text("해제 경로: 위 증거 제출, 또는 인터뷰에서 confession → Office Hours intervention")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(OpenDesignOfficeHoursColor.rose.opacity(0.10))
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(OpenDesignOfficeHoursColor.rose.opacity(0.35)).frame(height: 1)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("opendesign.officeHours.gateBlockedBanner")
+        }
+    }
+
+    // §13.1 OH intervention 카드: 차단형(immediate)은 강조, 예약형(scheduled)은
+    // 배너 톤. 고정 질문 첫 항목으로 세션의 초점을 미리 보여준다.
+    @ViewBuilder
+    private func officeHoursInterventionBanner() -> some View {
+        if let intervention = viewModel.ohInterventionRequired {
+            let isImmediate = intervention.severity == "immediate"
+            let tint = isImmediate ? OpenDesignOfficeHoursColor.rose : OpenDesignOfficeHoursColor.amber
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: isImmediate ? "exclamationmark.octagon.fill" : "bell.badge")
+                        .font(.system(size: 12))
+                        .foregroundStyle(tint)
+                    Text(isImmediate ? "Office Hours intervention이 필요해" : "다음 브리핑에서 다룰 intervention")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    if let gateId = intervention.gateId ?? intervention.ruleId {
+                        Text(gateId)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(tint)
+                    }
+                    Spacer(minLength: 0)
+                }
+                if let firstQuestion = intervention.questions?.first {
+                    Text(firstQuestion)
+                        .font(.system(size: 12))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(tint.opacity(0.08))
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(tint.opacity(0.3)).frame(height: 1)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("opendesign.officeHours.interventionBanner")
+        }
+    }
+
+    // §11.0/§17.2 미션 카드: execution 스텝 진입 시 로드된 IDD 미션. 치환 미션
+    // (§15.3 회복 미션)은 사유와 함께 표시된다.
+    @ViewBuilder
+    private func officeHoursMissionCardBanner() -> some View {
+        if let card = viewModel.executionMissionCard, let mission = card.mission {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "target")
+                        .font(.system(size: 12))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                    Text("Day \(mission.day ?? card.day ?? 0) 미션 · \(mission.shortTitle ?? "")")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    if mission.substituted == true {
+                        Text("회복 미션")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                    }
+                    Spacer(minLength: 0)
+                }
+                Text(mission.title ?? "")
+                    .font(.system(size: 12))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let output = mission.output, !output.isEmpty {
+                    Text("산출물: \(output)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(OpenDesignOfficeHoursColor.accentDim.opacity(0.5))
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(OpenDesignOfficeHoursColor.accentLine).frame(height: 1)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("opendesign.officeHours.missionCardBanner")
+        }
+    }
+
     // Day timeline sidebar (IA): cumulative Day list, today on top, past newest-first,
     // skipped days collapsed into a chip. Falls back to the legacy mode row pre-scan.
     private func officeHoursSessionsSidebar(session: ChatSession?, activeDay: Int) -> some View {
@@ -3616,8 +3752,14 @@ struct ContentView: View {
 
         let meta: String
         if isToday {
-            let active = record?.displaySteps.first(where: { $0.status == .active })?.label
-            meta = active.map { "오늘 · \($0)" } ?? "오늘"
+            // §18 타임라인 gate 칩: 오늘 진입이 milestone gate에 잠겨 있으면
+            // 스텝 라벨 대신 잠김 상태를 그대로 보여준다.
+            if let blockedGate = viewModel.dayGateBlocked {
+                meta = "잠김 · \(blockedGate.gateId ?? "gate")"
+            } else {
+                let active = record?.displaySteps.first(where: { $0.status == .active })?.label
+                meta = active.map { "오늘 · \($0)" } ?? "오늘"
+            }
         } else if incomplete {
             meta = dayState?.label.nonEmpty ?? "미완"
         } else {
@@ -12942,8 +13084,27 @@ private struct OfficeHoursEvidenceResolutionSheet: View {
                         Text(kind).tag(kind)
                     }
                 }
-                TextField("URL, 파일 경로, 커밋 SHA, 결제 기록 위치", text: $locator)
-                    .textFieldStyle(.roundedBorder)
+                // §18 증거 제출 표면: URL 붙여넣기 + 파일/스크린샷 picker.
+                // sidecar는 link/file을 이미 지원 — 여기는 Swift 표면만 추가한다.
+                HStack(spacing: 8) {
+                    TextField("URL, 파일 경로, 커밋 SHA, 결제 기록 위치", text: $locator)
+                        .textFieldStyle(.roundedBorder)
+                    Button("파일 선택…") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseFiles = true
+                        panel.canChooseDirectories = false
+                        panel.allowsMultipleSelection = false
+                        panel.message = "증거 파일(스크린샷·녹취·캡처)을 선택해줘"
+                        if panel.runModal() == .OK, let url = panel.url {
+                            locator = url.path
+                            let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "webp"]
+                            if imageExtensions.contains(url.pathExtension.lowercased()) {
+                                evidenceKind = "screenshot"
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("officeHours.evidence.filePicker")
+                }
                 TextField("짧은 설명", text: $note)
                     .textFieldStyle(.roundedBorder)
             } else {
