@@ -16,10 +16,11 @@ export async function buildOfficeHoursEvidenceState({
   now = () => new Date(),
 } = {}) {
   const root = path.resolve(workspaceRoot || ".");
-  const [turnLog, ledger, dailyDigest] = await Promise.all([
+  const [turnLog, ledger, dailyDigest, proofLedger] = await Promise.all([
     readJson(fsImpl, path.join(root, ".agentic30", "memory", "office-hours-turns.json")),
     readJson(fsImpl, path.join(root, ".agentic30", "memory", "office-hours-ledger.json")),
     readJson(fsImpl, path.join(root, ".agentic30", "office-hours-daily-digest.json")),
+    readJson(fsImpl, path.join(root, ".agentic30", "proof-ledger.json")),
   ]);
   const turns = normalizeTurns(turnLog?.turns);
   const commitments = normalizeCommitments(ledger?.commitments);
@@ -30,7 +31,12 @@ export async function buildOfficeHoursEvidenceState({
     dailyDigest,
     handoffFacts,
   });
-  const references = buildReferences({ turns, commitments, dailyDigest });
+  const references = buildReferences({
+    turns,
+    commitments,
+    dailyDigest,
+    proofPaymentRefs: normalizeProofLedgerPaymentRefs(proofLedger),
+  });
   const evidenceDebt = uniqueStrings([
     ...deriveEvidenceDebt({ facts, turns, commitments, dailyDigest }),
     ...facts.assumptions,
@@ -436,14 +442,58 @@ export const OFFICE_HOURS_HARD_EVIDENCE_INTENTS = Object.freeze([
   "concrete_purchase_conditions",
 ]);
 
+// Graduated pressure: early cycles pass on the ladder intent alone; once the
+// program reaches this cycle, a real payment_record artifact must also back the
+// docs. Tune as October moves the "now we demand payment" point. Trigger uses
+// commitment `cycle` only — NOT `day` (a turn can be logged on calendar day 2
+// of cycle 1, so a day threshold would misfire on first-cycle users).
+export const OFFICE_HOURS_ARTIFACT_GATE_MIN_CYCLE = 3;
+
 export function officeHoursEvidenceHasHardEvidence(evidenceState = {}) {
   const refs = Array.isArray(evidenceState?.references) ? evidenceState.references : [];
   const hard = new Set(OFFICE_HOURS_HARD_EVIDENCE_INTENTS);
-  return refs.some((ref) =>
+  const hasLadderHard = refs.some((ref) =>
     ref?.sourceType === "office_hours_turn" && hard.has(cleanText(ref?.nextIntent)));
+  const isPastEarlyCycle = refs.some((ref) =>
+    Number.isInteger(ref?.cycle) && ref.cycle >= OFFICE_HOURS_ARTIFACT_GATE_MIN_CYCLE);
+  if (!isPastEarlyCycle) return hasLadderHard;
+  const hasStrongPayment = refs.some((ref) =>
+    ref?.sourceType === "proof_ledger" && cleanText(ref?.strength) === "strong");
+  return hasLadderHard && hasStrongPayment;
 }
 
-function buildReferences({ turns, commitments, dailyDigest }) {
+// artifact gate (proof-ledger cross-check): only a real payment_record that
+// upstream already marked verified/accepted AND strong counts as a hard-evidence
+// artifact. payment_intent is excluded on purpose — inferProofStrength
+// (execution-os.mjs:914-924) stamps any payment_intent "strong" regardless of
+// status, which would let "agreed a price but never charged" pass as hard
+// evidence. strength is read, never recomputed (trust upstream). Read-only +
+// graceful: a missing/corrupt proof-ledger yields [].
+const OFFICE_HOURS_ARTIFACT_PAYMENT_STATUSES = Object.freeze(["verified", "accepted"]);
+
+function normalizeProofLedgerPaymentRefs(proofLedger) {
+  const events = Array.isArray(proofLedger?.events) ? proofLedger.events : [];
+  const refs = [];
+  for (const event of events) {
+    const type = cleanText(event?.type ?? event?.eventType ?? event?.event_type).toLowerCase();
+    if (type !== "payment_record") continue;
+    const status = cleanText(event?.status ?? event?.validationStatus ?? event?.validation_status).toLowerCase();
+    if (!OFFICE_HOURS_ARTIFACT_PAYMENT_STATUSES.includes(status)) continue;
+    const strength = cleanText(event?.strength ?? event?.proofStrength ?? event?.proof_strength).toLowerCase();
+    if (strength !== "strong") continue;
+    refs.push({
+      sourceType: "proof_ledger",
+      id: cleanText(event?.id) || `proof-payment-${refs.length + 1}`,
+      day: integerOrNull(event?.day ?? event?.dayNumber ?? event?.day_number),
+      kind: "payment_record",
+      status,
+      strength: "strong",
+    });
+  }
+  return refs;
+}
+
+function buildReferences({ turns, commitments, dailyDigest, proofPaymentRefs = [] }) {
   const refs = [];
   for (const turn of turns) {
     refs.push({
@@ -489,6 +539,7 @@ function buildReferences({ turns, commitments, dailyDigest }) {
       biggestEvidenceGap: normalizeStringList(dailyDigest.briefing?.biggestEvidenceGap).join(" "),
     });
   }
+  for (const ref of proofPaymentRefs) refs.push(ref);
   return refs.slice(0, MAX_REFS);
 }
 

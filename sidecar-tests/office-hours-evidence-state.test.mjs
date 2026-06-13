@@ -5,8 +5,10 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  OFFICE_HOURS_ARTIFACT_GATE_MIN_CYCLE,
   buildOfficeHoursEvidenceState,
   evidenceSidecarPath,
+  officeHoursEvidenceHasHardEvidence,
 } from "../sidecar/office-hours-evidence-state.mjs";
 import {
   OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE,
@@ -526,6 +528,95 @@ test("Provider judge path parses stream output and applies the hard-evidence gat
     if (savedStub !== undefined) process.env.AGENTIC30_TEST_STUB_PROVIDER = savedStub;
     if (savedMode !== undefined) process.env.AGENTIC30_OFFICE_HOURS_DOC_JUDGE_MODE = savedMode;
   }
+});
+
+async function writeArtifactGateFixture(root, { turns = [], commitments = [] }) {
+  await fs.mkdir(path.join(root, ".agentic30", "memory"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".agentic30", "memory", "office-hours-turns.json"),
+    `${JSON.stringify({ schemaVersion: 1, schema: "agentic30.office_hours_turns.v1", updatedAt: "2026-06-13T00:00:00.000Z", turns }, null, 2)}\n`,
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(root, ".agentic30", "memory", "office-hours-ledger.json"),
+    `${JSON.stringify({ schemaVersion: 3, schema: "agentic30.office_hours_memory.v1", updatedAt: "2026-06-13T00:00:00.000Z", commitments }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+async function writeProofLedgerFixture(root, events) {
+  await fs.mkdir(path.join(root, ".agentic30"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".agentic30", "proof-ledger.json"),
+    `${JSON.stringify({ schema: "agentic30.proof_ledger.v2", events }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+function paidEntryTurn(day = 1) {
+  return turn({
+    id: "turn-paid",
+    day,
+    questionId: "smallest_paid_entry",
+    header: "작은 유료 진입점",
+    question: "가장 작은 유료 진입점은 무엇인가요?",
+    label: "3만원 1회 검증 세션",
+    options: [option("3만원 1회 검증 세션", { mapsTo: "SPEC.smallest_paid_entry", nextIntent: "actual_payment_or_contract" })],
+  });
+}
+
+function cycleCommitment(cycle) {
+  return {
+    id: `cm-c${cycle}`,
+    cycle,
+    createdDay: cycle,
+    createdAt: "2026-06-13T00:00:00.000Z",
+    text: `cycle ${cycle} 약속`,
+    status: "open",
+    dueDay: cycle,
+    confirmedByUser: true,
+  };
+}
+
+test("Artifact gate: early cycle passes on ladder intent alone (cycle < MIN_CYCLE)", async () => {
+  await withTempWorkspace(async (root) => {
+    await writeArtifactGateFixture(root, { turns: [paidEntryTurn(1)], commitments: [cycleCommitment(1)] });
+    const state = await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} });
+    assert.equal(officeHoursEvidenceHasHardEvidence(state), true);
+  });
+});
+
+test("Artifact gate: at MIN_CYCLE, ladder alone is blocked without a payment_record", async () => {
+  await withTempWorkspace(async (root) => {
+    await writeArtifactGateFixture(root, { turns: [paidEntryTurn(1)], commitments: [cycleCommitment(OFFICE_HOURS_ARTIFACT_GATE_MIN_CYCLE)] });
+    const state = await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} });
+    assert.equal(officeHoursEvidenceHasHardEvidence(state), false);
+  });
+});
+
+test("Artifact gate: at MIN_CYCLE, ladder + verified strong payment_record passes", async () => {
+  await withTempWorkspace(async (root) => {
+    await writeArtifactGateFixture(root, { turns: [paidEntryTurn(1)], commitments: [cycleCommitment(OFFICE_HOURS_ARTIFACT_GATE_MIN_CYCLE)] });
+    await writeProofLedgerFixture(root, [{ id: "pe-1", type: "payment_record", status: "verified", strength: "strong", day: 5 }]);
+    const state = await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} });
+    assert.equal(officeHoursEvidenceHasHardEvidence(state), true);
+  });
+});
+
+test("Artifact gate: at MIN_CYCLE, unqualified payment evidence stays blocked", async () => {
+  await withTempWorkspace(async (root) => {
+    const fixture = { turns: [paidEntryTurn(1)], commitments: [cycleCommitment(OFFICE_HOURS_ARTIFACT_GATE_MIN_CYCLE)] };
+    // (a) payment_intent excluded even when stamped strong (inferProofStrength loophole)
+    await writeArtifactGateFixture(root, fixture);
+    await writeProofLedgerFixture(root, [{ id: "pe-a", type: "payment_intent", status: "verified", strength: "strong", day: 5 }]);
+    assert.equal(officeHoursEvidenceHasHardEvidence(await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} })), false);
+    // (b) payment_record but draft status
+    await writeProofLedgerFixture(root, [{ id: "pe-b", type: "payment_record", status: "draft", strength: "strong", day: 5 }]);
+    assert.equal(officeHoursEvidenceHasHardEvidence(await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} })), false);
+    // (c) payment_record verified but medium strength
+    await writeProofLedgerFixture(root, [{ id: "pe-c", type: "payment_record", status: "verified", strength: "medium", day: 5 }]);
+    assert.equal(officeHoursEvidenceHasHardEvidence(await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} })), false);
+  });
 });
 
 function shallowHandoff() {
