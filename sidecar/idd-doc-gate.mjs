@@ -461,7 +461,7 @@ export function buildAdaptiveIcpInitialInput({
 }
 
 export function buildGenericIddInitialInput(doc) {
-  const canonicalPath = String(doc?.canonicalPath || projectDocPath("docs") || "README.md").trim();
+  const canonicalPath = String(doc?.canonicalPath || projectDocPath("docs")).trim();
   const title = genericIddUserFacingTitle(doc);
   const focus = genericIddUserFacingFocus(doc);
   const purpose = genericIddPurposeFor(doc, canonicalPath, focus);

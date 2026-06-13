@@ -63,7 +63,7 @@ const ROLE_CONFIG = Object.freeze({
     field: "goal",
   },
   docs: {
-    names: ["docs.md", "readme.md", "index.md", "README.md"],
+    names: ["docs.md"],
     path: /^\.agentic30\/docs\/DOCS\.md$/i,
     heading: /\b(?:readme|docs|documentation|overview|소개|문서|개요)\b/i,
     body: /\b(?:overview|documentation|product|purpose|mission|소개|제품|목적|미션)\b/i,

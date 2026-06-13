@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### 변경
+- **프로젝트 문서 탐색 엄격화**: IDD 기본 입력과 workspace signal docs 역할이 루트 `README.md` 대신 `.agentic30/docs/DOCS.md` canonical 문서를 기준으로 삼도록 정리했습니다.
+
 ## [1.0.20] - 2026-06-13
 
 ### 추가
