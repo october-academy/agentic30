@@ -4,6 +4,7 @@
 
 ### 추가
 - **Codex Office Hours 카드 입력**: Codex MCP 구조화 입력 카드가 제출 전에는 pending 상태로 머물고, 사용자가 답을 제출한 뒤에만 다음 질문을 이어가도록 했습니다.
+- **완료된 Office Hours 인터뷰 복원**: 완료된 Day-scoped 인터뷰를 다시 열면 provider를 새로 시작하지 않고 저장된 Q/A 스냅샷과 제출 상태를 즉시 복원합니다.
 - **인터뷰 카드 Q01 시각 스펙**: Day 1 인터뷰 첫 질문 카드의 HTML/PNG 레퍼런스를 `docs/specs/`에 추가했습니다.
 
 ### 변경
@@ -11,6 +12,7 @@
 - **Settings 연동 화면**: Vercel, Cloudflare, PostHog을 compact MCP OAuth row로 정리하고 수동 토큰/URL 필드와 Exa 예비 키를 숨겼습니다.
 - **Office Hours 증거/개입 배너**: 예약 intervention은 열린 증거 부채 배너 안에 접고, 즉시 intervention은 full-width 배너로 유지하도록 했습니다.
 - **Morning Briefing drilldown**: per-source drilldown header에서 다음 소스 pill을 제거했습니다.
+- **Sidecar 테스트 스위트 정리**: 실제 `gws` CLI 상태에 의존하던 Google auth hang 회귀 테스트를 기본 sidecar suite에서 제거해 릴리스 검증을 hermetic하게 유지했습니다.
 
 ### 수정
 - **Office Hours 재개/수정 안정성**: resume preamble 중복을 제거하고 stable question identity로 keep-last dedupe하며, 완료된 인터뷰도 이전 답변 수정이 가능하게 했습니다.
@@ -18,6 +20,7 @@
 - **개입 시작 상태 정리**: intervention trigger로 Office Hours를 시작하면 Mac 상태의 pending intervention을 즉시 지웁니다.
 - **UI 테스트 안정성**: Office Hours 제출 카드의 revision confirm 버튼을 native accessibility button으로 노출하고, 시스템 알림 dialog가 스크롤 제스처를 막을 때 닫도록 했습니다.
 - **Swift actor-isolation 경고 정리**: 강조 span 모델을 `nonisolated`로 선언해 Swift 6 actor-isolation 진단이 릴리스 빌드에 남지 않도록 했습니다.
+- **Swift Text 조립 경고 정리**: transcript segment 렌더링에서 deprecated `Text + Text` 조합을 제거했습니다.
 
 ## [1.0.19] - 2026-06-11
 
