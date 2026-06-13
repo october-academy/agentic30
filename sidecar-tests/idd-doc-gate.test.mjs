@@ -994,7 +994,7 @@ test("IDD adaptive interview rules apply to ICP, VALUES, GOAL, ADR, and DESIGN p
   for (const doc of docs) {
     const prompt = buildIddDocumentPrompt(doc, { provider: "codex", workspaceRoot: "/workspace" });
     assert.match(prompt, /맞춤 인터뷰 규칙/, doc.type);
-    assert.match(prompt, /README, docs, package\/config, 주요 소스, 최근 git 변경/, doc.type);
+    assert.match(prompt, /README, `\.agentic30\/docs\/\*`, package\/config, 주요 소스, 최근 git 변경/, doc.type);
     assert.match(prompt, /매 질문은 관찰한 프로젝트 사실에 연결/, doc.type);
     assert.match(prompt, /어떤 프로젝트에도 그대로 붙일 수 있는 범용 질문/, doc.type);
     assert.match(prompt, new RegExp(doc.canonicalPath.replaceAll("/", "\\/")), doc.type);
@@ -1165,7 +1165,7 @@ test("IDD continuation prompt carries structured response and prevents repeating
   assert.match(prompt, /반복 사용 — B2B SaaS 창업팀/);
   assert.match(prompt, /방금 답한 질문이나 같은 선택지 라벨을 반복하지 마세요/);
   assert.match(prompt, /현재 프로젝트의 실제 맥락에 맞춰 맞춤 인터뷰/);
-  assert.match(prompt, /README, docs, package\/config, 주요 소스, 최근 git 변경/);
+  assert.match(prompt, /README, `\.agentic30\/docs\/\*`, package\/config, 주요 소스, 최근 git 변경/);
   assert.match(prompt, /범용 질문이나 템플릿 질문/);
   assert.match(prompt, /decision brief/);
   assert.match(prompt, /제품 이름, 대상 유저, 해결 문제, 제품 목적/);

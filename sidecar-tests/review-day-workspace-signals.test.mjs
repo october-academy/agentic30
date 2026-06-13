@@ -30,6 +30,7 @@ test("collectReviewDayWorkspaceSignals normalizes readable workspace docs and ex
     await fs.writeFile(path.join(root, ".agentic30", "docs", "VALUES.md"), "# VALUES\nWarm concise coaching\n");
     await fs.writeFile(path.join(root, ".agentic30", "docs", "GOAL.md"), "# GOAL\nDay 30 graduation\n");
     await fs.writeFile(path.join(root, ".agentic30", "docs", "SPEC.md"), "# SPEC\nReview dashboard metrics\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "DOCS.md"), "# DOCS\nReview source map\n");
     await fs.writeFile(path.join(root, "README.md"), "# Agentic30\n");
 
     const signals = await collectReviewDayWorkspaceSignals({

@@ -16,10 +16,19 @@ import {
   loadScenarioFixtures,
   summarizeSmokeRun,
 } from "./dogfood-judge.mjs";
+import { projectDocPath } from "../sidecar/project-doc-paths.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(packageRoot, "../../..");
 const liveMode = process.env.AGENTIC30_RUN_LIVE_PROVIDER_EVAL === "1";
+const DOGFOOD_FOUNDATION_DOC_TYPES = Object.freeze(["icp", "values", "goal", "spec"]);
+const DOGFOOD_FOUNDATION_DOC_PATHS = Object.freeze(DOGFOOD_FOUNDATION_DOC_TYPES.map((type) => projectDocPath(type)));
+const DOGFOOD_DOC_FILENAME_TO_TYPE = Object.freeze(new Map([
+  ["ICP.MD", "icp"],
+  ["VALUES.MD", "values"],
+  ["GOAL.MD", "goal"],
+  ["SPEC.MD", "spec"],
+]));
 
 export async function runDogfoodSimulation({
   outputDir = defaultOutputDir(),
@@ -593,10 +602,10 @@ async function missionCompletionScenario({ ws, events, sessionId, scenario, tran
 
 async function createWorkspaceFixture(referenceDocs, scenario = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-dogfood-workspace-"));
-  await fs.mkdir(path.join(root, "docs"), { recursive: true });
+  await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
   const docs = Array.isArray(scenario.fixture?.docs)
-    ? scenario.fixture.docs
-    : ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"];
+    ? scenario.fixture.docs.map(canonicalDogfoodDocPath)
+    : DOGFOOD_FOUNDATION_DOC_PATHS;
   for (const docPath of docs) {
     const name = path.basename(docPath);
     const content = referenceDocs[name];
@@ -647,22 +656,22 @@ async function createWorkspaceFixture(referenceDocs, scenario = {}) {
 
 async function writeBipConfig({ workspaceRoot, appSupportPath, scenario = {} }) {
   await fs.mkdir(appSupportPath, { recursive: true });
-  const docs = new Set(scenario.fixture?.docs || []);
+  const docs = new Set((scenario.fixture?.docs || []).map(canonicalDogfoodDocPath));
   if (scenario.fixture?.iddSetup === "approved") {
-    for (const name of ["ICP.md", "VALUES.md", "GOAL.md", "SPEC.md"]) {
-      docs.add(`docs/${name}`);
+    for (const docPath of DOGFOOD_FOUNDATION_DOC_PATHS) {
+      docs.add(docPath);
     }
   }
-  const docPath = (name) => docs.has(`docs/${name}`) || docs.has(name) ? `docs/${name}` : "";
+  const docPath = (type) => docs.has(projectDocPath(type)) ? projectDocPath(type) : "";
   await fs.writeFile(
     path.join(appSupportPath, "bip-config.json"),
     JSON.stringify({
       workspace: {
         root: workspaceRoot,
-        icp: docPath("ICP.md"),
-        values: docPath("VALUES.md"),
-        goal: docPath("GOAL.md"),
-        spec: docPath("SPEC.md"),
+        icp: docPath("icp"),
+        values: docPath("values"),
+        goal: docPath("goal"),
+        spec: docPath("spec"),
         designSystem: "",
         adr: "",
         docs: "",
@@ -677,10 +686,10 @@ async function writeBipConfig({ workspaceRoot, appSupportPath, scenario = {} }) 
 async function writeApprovedIddSetupFixture(workspaceRoot, referenceDocs = {}) {
   const now = new Date().toISOString();
   const foundationDocs = [
-    ["icp", "ICP", "docs/ICP.md"],
-    ["goal", "GOAL", "docs/GOAL.md"],
-    ["values", "VALUES", "docs/VALUES.md"],
-    ["spec", "SPEC", "docs/SPEC.md"],
+    ["icp", "ICP", projectDocPath("icp")],
+    ["goal", "GOAL", projectDocPath("goal")],
+    ["values", "VALUES", projectDocPath("values")],
+    ["spec", "SPEC", projectDocPath("spec")],
   ];
   const drafts = {};
   for (const [type, title, docPath] of foundationDocs) {
@@ -1078,6 +1087,7 @@ function readScore(result, dimension) {
 function hasDecisionEvidence(result = {}, evidence) {
   const observed = result.observed || {};
   const visible = observed.visible_outputs || {};
+  const icpDocPath = projectDocPath("icp");
   const assistantText = [
     ...(visible.assistant_messages || []),
     ...(observed.assistantMessages || []),
@@ -1091,9 +1101,9 @@ function hasDecisionEvidence(result = {}, evidence) {
       return Boolean(String(visible.proof_target || observed.proofTarget || "").trim());
     case "docs_path":
       return Boolean(
-        (visible.doc_paths_answered || []).includes("docs/ICP.md")
+        (visible.doc_paths_answered || []).includes(icpDocPath)
         || observed.workspaceScan?.icp === true
-        || observed.workspaceScan?.icpPath === "docs/ICP.md",
+        || observed.workspaceScan?.icpPath === icpDocPath,
       );
     case "mission_choices_3":
       return (observed.missionChoices || visible.mission_choices || observed.state_changes?.mission_choices || []).length >= 3;
@@ -1116,6 +1126,12 @@ function hasDecisionEvidence(result = {}, evidence) {
     default:
       return false;
   }
+}
+
+function canonicalDogfoodDocPath(value = "") {
+  const normalized = String(value || "").trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  const type = DOGFOOD_DOC_FILENAME_TO_TYPE.get(path.posix.basename(normalized).toUpperCase());
+  return type ? projectDocPath(type) : normalized;
 }
 
 export function renderMarkdownReport(results, mode, runGate) {

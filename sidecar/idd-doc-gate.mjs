@@ -2532,7 +2532,7 @@ export function buildIddDocumentPrompt(doc, {
     "5. 이번 주 단 하나의 구체 행동 — 전략이 아니라 행동. \"이번 주에 [구체 인물]을 만나서 [구체 질문] 확인하기\" 같은 형태. 답변에서 도출되지 않으면 다음 질문에서 반드시 요청하세요.",
     "",
     "맞춤 인터뷰 규칙:",
-    "- 질문을 만들기 전에 반드시 실행 보조 앱의 list_workspace_files, read_workspace_file, search_workspace 중 2개 이상을 사용해 현재 프로젝트의 README, docs, package/config, 주요 소스, 최근 git 변경을 확인하세요. 도구를 쓰지 못하면 질문하지 말고 실패 상태를 설명하세요.",
+    "- 질문을 만들기 전에 반드시 실행 보조 앱의 list_workspace_files, read_workspace_file, search_workspace 중 2개 이상을 사용해 현재 프로젝트의 README, `.agentic30/docs/*`, package/config, 주요 소스, 최근 git 변경을 확인하세요. 도구를 쓰지 못하면 질문하지 말고 실패 상태를 설명하세요.",
     "- 매 질문은 관찰한 프로젝트 사실에 연결되어야 합니다. 예: 실제 기능명, 화면, 사용자 흐름, 통합 서비스, 기술 제약, 최근 구현 변경, 설정된 공개 기록 문서 경로.",
     "- 사용자의 직전 답변을 다음 질문의 입력으로 삼아 선택지와 자유 입력 placeholder를 조정하세요.",
     "- 사용자가 모를 수 있는 내부 용어(ICP, ADR, BIP, MVP 등)는 질문 본문에서 먼저 쓰지 말고 쉬운 말로 풀어 쓰세요. 필요한 경우 괄호로만 짧게 보충하세요. 기준 용어표는 docs/JARGON.md입니다.",

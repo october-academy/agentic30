@@ -68,7 +68,7 @@ export function formatQuestionQualityContract({ specialistId = "" } = {}) {
     "## Agentic30 question quality contract",
     "- One question = one decision. 여러 결정을 한 카드에 묶지 않는다.",
     "- 후보군은 prose가 아니라 AskUserQuestion / request_user_input 계열 구조화 입력으로 제시한다. 각 tool call은 한 질문과 2-4개 후보 options를 가져야 한다.",
-    "- 질문은 README, docs, 최근 답변, 실행 기록, 고객 발화 중 하나 이상의 관찰 근거에 연결한다.",
+    "- 질문은 README, `.agentic30/docs/*`, 최근 답변, 실행 기록, 고객 발화 중 하나 이상의 관찰 근거에 연결한다.",
     "- 첫 ICP 질문은 제품 이름, 대상 유저, 해결 문제, 제품 목적을 진단한 뒤 더 구체적인 고객 세그먼트를 좁히는 질문이어야 한다.",
     "- 범주형 답변을 허용하지 않는다. \"개발자\", \"유저\", \"창업자\"가 나오면 실제 이름, 역할, 상황, 이미 쓰는 대안으로 좁힌다.",
     "- 좋은 느낌, 관심, waitlist는 수요로 취급하지 않는다. 돈, 시간, 우회 수단, 다음 일정 약속, 사용 관찰을 요구한다.",

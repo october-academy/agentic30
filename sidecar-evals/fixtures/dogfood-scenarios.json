@@ -7,7 +7,7 @@
     "goal": "Confirm the app can identify the creator as the target ICP and move them into Day 1.",
     "prompt": "나는 퇴사한 전업 1인 개발자이고 수익은 0원, macOS에서 Codex를 쓴다. Day 1 기준으로 내가 Agentic30 ICP에 맞는지 진단해줘.",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": ["day1-customer-interview"],
       "state": {},
       "proofs": []
@@ -27,13 +27,13 @@
     "goal": "Confirm the app can find the strategy docs that define ICP, values, goals, and spec.",
     "prompt": "ICP.md 문서 어디에 있어?",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": [],
       "state": {},
       "proofs": []
     },
     "expected_visible_outcome": {
-      "must_include": ["docs/ICP.md"],
+      "must_include": [".agentic30/docs/ICP.md"],
       "must_not_include": ["찾을 수 없습니다"],
       "requires_one_next_action": false,
       "requires_proof_target": false
@@ -45,9 +45,9 @@
     "intent_mode": "startup",
     "title": "Day 1 coaching to one concrete action",
     "goal": "Move vague founder context into one Day 1 action and one proof target.",
-    "prompt": "Day 1 시작이야. docs/ICP.md 기준으로 내가 맞는 유저인지 진단하고, 오늘 실행할 행동 1개와 proof target을 정해줘.",
+    "prompt": "Day 1 시작이야. .agentic30/docs/ICP.md 기준으로 내가 맞는 유저인지 진단하고, 오늘 실행할 행동 1개와 proof target을 정해줘.",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": ["day1-customer-interview"],
       "state": {},
       "proofs": []
@@ -67,7 +67,7 @@
     "goal": "Generate useful public execution mission choices even before every setup row is complete.",
     "prompt": "문서 준비가 아직 끝나지 않아도 오늘 실행 후보 3개를 만들어야 한다.",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/GOAL.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/GOAL.md"],
       "transcripts": ["day1-customer-interview"],
       "state": { "setup": "partial" },
       "iddSetup": "approved",
@@ -88,7 +88,7 @@
     "goal": "Confirm guided choices can be submitted without falling back to ambiguous prose.",
     "prompt": "프로젝트 전략 문서 만들기",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": [],
       "state": {},
       "proofs": []
@@ -108,7 +108,7 @@
     "goal": "Confirm the app can record public proof through a Threads URL and Sheet note.",
     "prompt": "선택한 공개 실행 미션을 완료 처리한다.",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": ["day1-customer-interview"],
       "state": { "bip": "running" },
       "iddSetup": "approved",
@@ -169,7 +169,7 @@
     "goal": "Given strategy docs, the app should turn Day 1 into one customer-facing action and proof target.",
     "prompt": "전략 문서는 있어. Day 1에 창업가 모드로 다음 진짜 행동 하나만 정해줘.",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": ["day1-customer-interview"],
       "state": {},
       "proofs": []
@@ -189,7 +189,7 @@
     "goal": "Given strategy docs, the app should ask for a shareable artifact and a fast demo proof.",
     "prompt": "전략 문서는 있어. builder 모드로 오늘 공유 가능한 artifact 하나와 demo proof를 정해줘.",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": ["day1-customer-interview"],
       "state": {},
       "proofs": []
@@ -209,7 +209,7 @@
     "goal": "With some missing setup, the app should avoid blocking and recover into one customer proof action.",
     "prompt": "문서와 Sheet 설정이 일부 빠졌어. 그래도 오늘 창업가 모드로 검증을 진행하려면 무엇을 하면 돼?",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/GOAL.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/GOAL.md"],
       "transcripts": ["day1-customer-interview"],
       "state": { "setup": "partial" },
       "proofs": []
@@ -229,7 +229,7 @@
     "goal": "With some missing setup, the app should still create a visible builder loop around a shareable artifact.",
     "prompt": "일부 설정이 빠졌지만 builder 모드로 오늘 보여줄 산출물을 정하고 공개 증거까지 남기고 싶어.",
     "fixture": {
-      "docs": ["docs/SPEC.md", "docs/GOAL.md"],
+      "docs": [".agentic30/docs/SPEC.md", ".agentic30/docs/GOAL.md"],
       "transcripts": [],
       "state": { "setup": "partial" },
       "proofs": []
@@ -249,7 +249,7 @@
     "goal": "With prior proof present, the app should choose the next customer evidence loop and numeric threshold.",
     "prompt": "어제 Threads proof가 있어. 오늘 startup 모드에서 다음 고객증거 루프와 기준 숫자를 정해줘.",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": ["day1-customer-interview"],
       "state": { "bip": "running" },
       "proofs": ["https://threads.net/@october/post/day0-proof"]
@@ -269,7 +269,7 @@
     "goal": "With prior proof present, the app should turn builder progress into a BIP/public proof loop.",
     "prompt": "이미 실행 중이고 공개 기록도 있어. builder 모드로 오늘 BIP proof를 남길 demo loop를 골라줘.",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": ["day1-customer-interview"],
       "state": { "bip": "running" },
       "proofs": ["https://threads.net/@october/post/day0-demo"]
@@ -289,7 +289,7 @@
     "goal": "When a loop is complete, the app should give a keep/change/stop verdict from evidence.",
     "prompt": "이번 루프가 끝났어. startup 모드에서 계속/전환/중단 verdict와 다음 증거 목표를 정해줘.",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": ["day1-customer-interview"],
       "state": { "bip": "complete" },
       "proofs": ["https://threads.net/@october/post/day1-proof", "https://threads.net/@october/post/day2-proof"]
@@ -309,7 +309,7 @@
     "goal": "When builder work is complete, the app should turn the result into a retro and next shareable artifact.",
     "prompt": "builder 루프를 끝냈어. retro와 다음 공유 가능한 artifact proof target을 잡아줘.",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": ["day1-customer-interview"],
       "state": { "bip": "complete" },
       "proofs": ["https://threads.net/@october/post/demo-retro"]
@@ -329,7 +329,7 @@
     "goal": "Verify the program gate engine withholds a Day 8 day-progress patch when the G2 Foundation Go/No-Go gate has no strong evidence, and names the release path.",
     "prompt": "Day 8 진입을 시도한다 (milestone gate 차단 검증 — 채팅 프롬프트 대신 day_progress_patch를 보낸다).",
     "fixture": {
-      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
       "transcripts": [],
       "state": {},
       "proofs": []

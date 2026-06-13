@@ -7681,11 +7681,19 @@ async function buildConfiguredDocPathAnswer(prompt) {
   );
   if (!match) return "";
   const [label, docPath] = match;
+  const absoluteDocPath = path.join(workspaceRoot, docPath);
+  const docStat = await fs.stat(absoluteDocPath).catch(() => null);
   const workspaceEvidence = await extractWorkspaceEvidence(workspaceRoot, {
-    scanPaths: workspace,
     includeSource: true,
   }).catch(() => null);
   const summaryLines = workspaceEvidenceSummaryLines(workspaceEvidence);
+  if (!docStat?.isFile()) {
+    return [
+      `\`${label}\`의 canonical 위치는 \`${docPath}\`이지만 파일이 없습니다.`,
+      "Legacy `docs/*` 경로는 사용하지 않습니다. `.agentic30/docs/*`에 문서를 만든 뒤 다시 실행해야 합니다.",
+      ...summaryLines,
+    ].join("\n");
+  }
   return [
     `\`${label}\`는 현재 BIP 설정 기준으로 \`${docPath}\`에 있습니다.`,
     ...summaryLines,
