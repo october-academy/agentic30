@@ -112,8 +112,9 @@ test("office-hours write-design-doc flow fixes startup questions and terminal do
   assert.match(prompt, /one-question Q1 demand evidence card/);
   assert.match(prompt, /After the sixth answer/);
   assert.match(prompt, /generated_by: office-hours/);
-  assert.match(prompt, /handoff_for: plan-ceo-review/);
-  assert.match(prompt, /문제 정의, 대상 사용자, 선택한 첫 진입점, 전제 확인, 검토한 대안, 이번에는 제외, 다음 행동, CEO 리뷰 인계/);
+  assert.match(prompt, /handoff_for: day1-docs/);
+  assert.match(prompt, /문제 정의, 대상 사용자, 선택한 첫 진입점, 전제 확인, 검토한 대안, 이번에는 제외, 다음 행동/);
+  assert.doesNotMatch(prompt, /CEO 리뷰 인계/);
   assert.match(prompt, /===DAY1_HANDOFF_JSON===/);
   assert.match(prompt, /northStarGoal, weeklyProof, targetUser, problem, currentAlternative, entryPoint, nextAction, nonGoals, assumptions, and sourceQuotes/);
   assert.match(prompt, /Do not invent reachable people, numbers, costs, or product scope/);

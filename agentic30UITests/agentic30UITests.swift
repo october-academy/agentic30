@@ -1571,7 +1571,10 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.bridgeStatus", containing: "doc ready", timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff").waitForExistence(timeout: 5))
         XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.planCeoReviewHandoff").exists)
+        XCTAssertFalse(app.buttons["opendesign.officeHours.planCeoReview"].exists)
+        XCTAssertFalse(app.buttons["opendesign.officeHours.planCeoReview.completeDay"].exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.commitmentBar").exists)
+        XCTAssertFalse(app.buttons["opendesign.officeHours.day1.completeDay"].exists)
         let docConfirm = app.buttons["opendesign.officeHours.docHandoff.confirm"]
         XCTAssertTrue(scrollElementToVisible(
             docConfirm,
@@ -1585,6 +1588,7 @@ final class agentic30UITests: XCTestCase {
             XCTAssertLessThan(row.frame.minY, docConfirm.frame.minY, "\(docType) document row should appear above the save button")
         }
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "4개 문서 저장", timeout: 3))
+        attachWindowScreenshot(from: app, named: "Office Hours Document Save Card Before Commitments")
         tapRequired(docConfirm, in: app, named: "Office Hours document handoff confirm")
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 저장 중", timeout: 3))
         for docType in ["goal", "icp", "values", "spec"] {
@@ -1601,8 +1605,9 @@ final class agentic30UITests: XCTestCase {
             }
         }
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 저장 완료", timeout: 3))
-        let planCeoReviewHandoff = elementWithIdentifier(in: app, "opendesign.officeHours.planCeoReviewHandoff")
-        XCTAssertTrue(planCeoReviewHandoff.waitForExistence(timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.planCeoReviewHandoff").exists)
+        XCTAssertFalse(app.buttons["opendesign.officeHours.planCeoReview"].exists)
+        XCTAssertFalse(app.buttons["opendesign.officeHours.planCeoReview.completeDay"].exists)
         let commitmentBar = elementWithIdentifier(in: app, "opendesign.officeHours.commitmentBar")
         XCTAssertTrue(scrollElementToVisible(
             commitmentBar,
@@ -1610,23 +1615,33 @@ final class agentic30UITests: XCTestCase {
             timeout: 8,
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
-        let planCeoReviewButton = app.buttons["opendesign.officeHours.planCeoReview"]
+        XCTAssertFalse(app.buttons["opendesign.officeHours.day1.completeDay"].exists)
+        attachWindowScreenshot(from: app, named: "Office Hours Commitment Card After Docs")
+
+        let customField = elementWithIdentifier(in: app, "opendesign.officeHours.commitmentCustomField")
         XCTAssertTrue(scrollElementToVisible(
-            planCeoReviewButton,
+            customField,
             in: app,
             timeout: 5,
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
-        XCTAssertTrue(waitUntilHittable(planCeoReviewButton, timeout: 5), "plan-ceo-review handoff should be visible after document save")
-        let completeDayButton = app.buttons["opendesign.officeHours.planCeoReview.completeDay"]
+        clickCenter(of: customField)
+        customField.typeText("Jane에게 DM으로 가격 물어보기")
+        let commitButton = elementWithIdentifier(in: app, "opendesign.officeHours.commitButton")
+        XCTAssertTrue(waitUntilHittable(commitButton, timeout: 5))
+        tapRequired(commitButton, in: app, named: "Office Hours commitment submit")
+
+        let closedCommitmentCard = elementWithIdentifier(in: app, "opendesign.officeHours.commitmentBar.closed")
+        XCTAssertTrue(closedCommitmentCard.waitForExistence(timeout: 5))
+        let completeDayButton = app.buttons["opendesign.officeHours.day1.completeDay"]
         XCTAssertTrue(scrollElementToVisible(
             completeDayButton,
             in: app,
             timeout: 5,
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
-        XCTAssertTrue(waitUntilHittable(completeDayButton, timeout: 5), "Day 1 completion should live after the plan-ceo-review handoff")
-        attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Final Doc")
+        XCTAssertTrue(waitUntilHittable(completeDayButton, timeout: 5), "Day 1 completion should appear after the commitment card closes")
+        attachWindowScreenshot(from: app, named: "Office Hours Day 1 Final Complete CTA")
         tapRequired(completeDayButton, in: app, named: "Office Hours Day 1 complete")
         if !day2Main.waitForExistence(timeout: 5) {
             attachScreenshot(from: app, named: "OpenDesign Day2 Missing After Office Hours Completion")

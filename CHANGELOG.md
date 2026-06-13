@@ -8,7 +8,7 @@
 - **인터뷰 카드 Q01 시각 스펙**: Day 1 인터뷰 첫 질문 카드의 HTML/PNG 레퍼런스를 `docs/specs/`에 추가했습니다.
 
 ### 변경
-- **Office Hours Day 1 handoff**: GOAL/ICP/VALUES/SPEC 저장과 Day 1 완료를 분리하고, 문서 저장 뒤 `$plan-ceo-review` handoff를 거쳐 Day 2로 넘어가도록 정리했습니다.
+- **Office Hours Day 1 handoff**: GOAL/ICP/VALUES/SPEC 저장과 Day 1 완료를 분리하고, 문서 저장 뒤 다음 약속 카드가 이어지며 약속을 닫은 뒤에만 Day 2로 넘어가도록 정리했습니다.
 - **Settings 연동 화면**: Vercel, Cloudflare, PostHog을 compact MCP OAuth row로 정리하고 수동 토큰/URL 필드와 Exa 예비 키를 숨겼습니다.
 - **Office Hours 증거/개입 배너**: 예약 intervention은 열린 증거 부채 배너 안에 접고, 즉시 intervention은 full-width 배너로 유지하도록 했습니다.
 - **Morning Briefing drilldown**: per-source drilldown header에서 다음 소스 pill을 제거했습니다.
@@ -21,8 +21,8 @@
 - **UI 테스트 안정성**: Office Hours 제출 카드의 revision confirm 버튼을 native accessibility button으로 노출하고, 시스템 알림 dialog가 스크롤 제스처를 막을 때 닫도록 했습니다.
 - **Swift actor-isolation 경고 정리**: 강조 span 모델을 `nonisolated`로 선언해 Swift 6 actor-isolation 진단이 릴리스 빌드에 남지 않도록 했습니다.
 - **Swift Text 조립 경고 정리**: transcript segment 렌더링에서 deprecated `Text + Text` 조합을 제거했습니다.
-- **Day 1 문서 handoff 순서**: GOAL/ICP/VALUES/SPEC 저장 전에는 commitment bar를 숨기고, 문서 저장 완료 뒤에만 다음 약속 입력과 `$plan-ceo-review` handoff가 보이도록 정리했습니다.
-- **Office Hours 완료 스크롤 안정성**: 인터뷰 완료와 해당 Day interview step 활성 상태를 함께 확인한 뒤 commitment bar를 렌더링하고, 문서 저장 완료 후 자동 스크롤이 다음 약속 입력 또는 `$plan-ceo-review` handoff로 안정적으로 향하도록 했습니다.
+- **Day 1 문서 handoff 순서**: GOAL/ICP/VALUES/SPEC 저장 전에는 commitment bar를 숨기고, 문서 저장 완료 뒤에만 다음 약속 입력이 보이도록 정리했습니다.
+- **Office Hours 완료 스크롤 안정성**: 인터뷰 완료와 해당 Day interview step 활성 상태를 함께 확인한 뒤 commitment bar를 렌더링하고, 문서 저장 완료 후 자동 스크롤이 다음 약속 입력 또는 최종 Day 2 버튼으로 안정적으로 향하도록 했습니다.
 
 ## [1.0.19] - 2026-06-11
 

@@ -3771,8 +3771,23 @@ final class AgenticViewModel: ObservableObject {
         sessionID: String? = nil,
         workspaceRoot explicitRoot: String? = nil
     ) -> Bool {
-        guard isConnected else { return false }
         let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isConnected else {
+            #if DEBUG
+            if Self.isUITesting(arguments: CommandLine.arguments),
+               CommandLine.arguments.contains("--ui-testing-disable-sidecar"),
+               ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] == "1" {
+                applyUITestingDayStepPatchLocally(
+                    day: day,
+                    stepId: stepId,
+                    status: status,
+                    goalText: goalText
+                )
+                return true
+            }
+            #endif
+            return false
+        }
         guard !root.isEmpty else { return false }
         var payload: [String: Any] = [
             "type": "day_progress_patch",
@@ -3806,6 +3821,48 @@ final class AgenticViewModel: ObservableObject {
             payload["sessionId"] = sessionID
         }
         return sidecar.send(payload: payload)
+    }
+
+    private func applyUITestingDayStepPatchLocally(
+        day: Int,
+        stepId: String,
+        status: DayStepStatus,
+        goalText: String?
+    ) {
+        #if DEBUG
+        let dayNumber = max(1, day)
+        let kind = DayLoopSteps.kind(forDay: dayNumber)
+        var steps: [String: DayStepStatus] = [:]
+        for id in DayLoopSteps.ids(forDay: dayNumber, kind: kind) {
+            steps[id] = .pending
+        }
+        let existing = dayProgress?.record(forDay: dayNumber)
+        steps.merge(existing?.steps ?? [:]) { _, current in current }
+        steps[stepId] = status
+
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: Date())
+        let updatedRecord = DayRecord(
+            day: dayNumber,
+            kind: kind,
+            steps: steps,
+            goalText: goalText ?? existing?.goalText ?? day1GoalSelection?.goalText ?? "",
+            updatedAt: today
+        )
+        var days = dayProgress?.days ?? [:]
+        days[String(dayNumber)] = updatedRecord
+        dayProgress = DayProgress(
+            challengeStartedAt: dayProgress?.challengeStartedAt ?? today,
+            days: days
+        )
+        commitmentGateMessage = nil
+        commitmentGateStep = nil
+        refreshPresentationState()
+        #endif
     }
 
     /// Ask the sidecar for commitment-close candidates derived from this interview's
