@@ -8964,11 +8964,30 @@ struct ContentView: View {
                 .foregroundColor(OpenDesignOfficeHoursColor.fg)
         }
 
-        var result = Text("")
-        for segment in segments {
-            result = result + styledTranscriptSegment(segment, baseSize: baseSize, baseWeight: baseWeight)
+        return styledTranscriptSegments(segments, baseSize: baseSize, baseWeight: baseWeight)
+    }
+
+    private static func styledTranscriptSegments(
+        _ segments: [OfficeHoursPromptTextSegment],
+        baseSize: CGFloat,
+        baseWeight: Font.Weight
+    ) -> Text {
+        styledTranscriptSegments(segments, startingAt: segments.startIndex, baseSize: baseSize, baseWeight: baseWeight)
+    }
+
+    private static func styledTranscriptSegments(
+        _ segments: [OfficeHoursPromptTextSegment],
+        startingAt index: Int,
+        baseSize: CGFloat,
+        baseWeight: Font.Weight
+    ) -> Text {
+        guard index < segments.endIndex else {
+            return Text("")
         }
-        return result
+
+        let firstText = styledTranscriptSegment(segments[index], baseSize: baseSize, baseWeight: baseWeight)
+        let remainingText = styledTranscriptSegments(segments, startingAt: segments.index(after: index), baseSize: baseSize, baseWeight: baseWeight)
+        return Text("\(firstText)\(remainingText)")
     }
 
     private static func styledTranscriptSegment(
