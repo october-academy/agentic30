@@ -3768,6 +3768,7 @@ final class AgenticViewModel: ObservableObject {
         confession: String? = nil,
         predictionText: String? = nil,
         predictionVerdict: String? = nil,
+        sessionID: String? = nil,
         workspaceRoot explicitRoot: String? = nil
     ) -> Bool {
         guard isConnected else { return false }
@@ -3800,6 +3801,9 @@ final class AgenticViewModel: ObservableObject {
         }
         if let predictionVerdict, !predictionVerdict.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             payload["predictionVerdict"] = predictionVerdict
+        }
+        if let sessionID = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines), !sessionID.isEmpty {
+            payload["sessionId"] = sessionID
         }
         return sidecar.send(payload: payload)
     }
@@ -3924,7 +3928,8 @@ final class AgenticViewModel: ObservableObject {
         context: String,
         source: String = "office_hours_screen",
         day: Int? = nil,
-        selectedSources: [String] = []
+        selectedSources: [String] = [],
+        trigger: String? = nil
     ) -> Bool {
         let trimmedSessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionID.isEmpty else { return false }
@@ -3940,6 +3945,9 @@ final class AgenticViewModel: ObservableObject {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .sorted()
+        let trimmedTrigger = trigger?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty
         PostHogTelemetry.capture(
             "mac_office_hours_start_requested",
             properties: [
@@ -3948,6 +3956,7 @@ final class AgenticViewModel: ObservableObject {
                 "source": trimmedSource,
                 "day": scopedDay ?? 0,
                 "selected_source_count": normalizedSelectedSources.count,
+                "trigger": trimmedTrigger ?? "",
             ],
             authSession: macAuthSession
         )
@@ -3964,6 +3973,9 @@ final class AgenticViewModel: ObservableObject {
         }
         if !normalizedSelectedSources.isEmpty {
             payload["selectedSources"] = normalizedSelectedSources
+        }
+        if let trimmedTrigger {
+            payload["trigger"] = trimmedTrigger
         }
         return sidecar.send(payload: payload)
     }
@@ -11587,6 +11599,10 @@ private extension AgenticViewModel {
         bipTokenExpired = nil
         bipMissionProgress = nil
         pendingWeeklyRitual = nil
+        dayGateBlocked = nil
+        dayGateBlockedMessage = nil
+        executionMissionCard = nil
+        ohInterventionRequired = nil
         providerAuthInProgress = nil
         providerAuthMessage = nil
         sentPromptPreviews = [:]

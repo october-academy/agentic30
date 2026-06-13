@@ -210,6 +210,7 @@ import {
 } from "./provider-runner.mjs";
 import { runWithSoftTimeout } from "./frontier-soft-timeout.mjs";
 import { PROVIDER_FALLBACK_CYCLE, selectNextScanProvider, selectScanProviderTargets } from "./scan-provider-select.mjs";
+import { workspaceScanBlockedLogLevel } from "./workspace-scan-telemetry.mjs";
 import {
   extractInlineDecision,
   inferInlineDecisionFromPlainText,
@@ -2200,7 +2201,7 @@ async function handleClientMessage(socket, payload) {
         throw new Error("adaptive_rule_label requires ruleId.");
       }
       const { labeled } = await labelAdaptiveRuleEvent({ workspaceRoot: root, ruleId, label });
-      telemetry.captureEvent("mac_sidecar_adaptive_rule_fired", {
+      telemetry.captureEvent("mac_sidecar_adaptive_rule_labeled", {
         rule_id: ruleId,
         confidence: "",
         user_label: label,
@@ -3478,6 +3479,18 @@ async function handleDayProgressPatch(socket, payload = {}) {
       pendingInterventionGates.delete(path.resolve(root));
       pendingIntervention = null;
     }
+    if (pendingIntervention) {
+      const patchSessionId = String(payload.sessionId ?? payload.session_id ?? "").trim();
+      if (!patchSessionId || patchSessionId !== pendingIntervention.sessionId) {
+        pendingInterventionGates.delete(path.resolve(root));
+        telemetry.captureEvent("mac_sidecar_oh_intervention_token_refused", {
+          trigger_id: pendingIntervention.triggerId,
+          gate_id: pendingIntervention.gateId,
+          reason: "session_mismatch",
+        });
+        pendingIntervention = null;
+      }
+    }
     // §12 AR-17 진행 효과: 증거 0인 약속 위에 새 약속을 쌓는 중이면 신규
     // 커밋먼트를 보류한다. intervention-armed 커밋은 예외(§13.4 토큰 경로),
     // 오탐 라벨(adaptive_rule_label)이 사용자 해제 수단이다.
@@ -3536,6 +3549,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
     // withholding it would deadlock the release path itself.
     const gateTargetDay = Number.parseInt(day, 10) || null;
     let gateCheck = null;
+    let gateLedgerAfterSubstitution = null;
     if (gateTargetDay && gate.mode !== "confess") {
       // G4② input (spec §15.4/§21): latest persisted first_value snapshot plus
       // PostHog source availability — both local reads, no network on this path.
@@ -3584,25 +3598,26 @@ async function handleDayProgressPatch(socket, payload = {}) {
       // §15.3/§11.1: record due recovery-mission substitutions (once per
       // failed gate — idempotent). Mission cards consume the rows; failures
       // never break the patch.
-      void (async () => {
+      try {
         const substitutionLedger = await loadGateLedger({ workspaceRoot: root });
         const due = resolveDueSubstitutions({
           evaluation: gateCheck.evaluation,
           ledger: substitutionLedger,
         });
         for (const substitution of due) {
-          await recordMissionSubstitution({ workspaceRoot: root, substitution });
+          const recorded = await recordMissionSubstitution({ workspaceRoot: root, substitution });
+          gateLedgerAfterSubstitution = recorded.ledger;
           telemetry.captureEvent("mac_sidecar_mission_substituted", {
             day: substitution.day,
             reason: substitution.reason,
           });
         }
-      })().catch((substitutionError) => {
+      } catch (substitutionError) {
         telemetry.captureException(substitutionError, {
           operation: "mission_substitution_record",
           workspace_root: root,
         });
-      });
+      }
       // §13.4 token expiry surfaced by this evaluation: dueDay passed without
       // strong post-session evidence — the gate re-blocks (handled below).
       // Emitted BEFORE the blocked branch so an expiring-and-blocking gate
@@ -3760,7 +3775,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
     );
     if (executionEntered) {
       try {
-        const gateLedger = await loadGateLedger({ workspaceRoot: root });
+        const gateLedger = gateLedgerAfterSubstitution ?? await loadGateLedger({ workspaceRoot: root });
         const missionCard = buildMissionCardEvent({
           workspaceRoot: root,
           day: missionDay,
@@ -11268,7 +11283,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     auth_source: failedProviderAuthState.source || "",
     auth_available: failedProviderAuthState.available === true,
   });
-  captureSidecarLog("workspace scan blocked", "error", {
+  captureSidecarLog("workspace scan blocked", workspaceScanBlockedLogLevel(reason), {
     operation: "runWorkspaceScan",
     scan_root: scanRoot,
     selected_provider: provider,

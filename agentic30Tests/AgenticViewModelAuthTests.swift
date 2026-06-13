@@ -2018,6 +2018,58 @@ final class AgenticViewModelAuthTests {
         #expect(payload["selectedSources"] as? [String] == ["cloudflare", "github", "posthog"])
     }
 
+    @Test @MainActor func officeHoursInterventionStartSendsTriggerPayload() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 15
+        )
+        sidecar.resetSentPayloads()
+
+        let sent = viewModel.startOfficeHours(
+            sessionID: "session-g4",
+            context: "G4 intervention context",
+            source: "office_hours_day_15",
+            day: 15,
+            trigger: " gate_blocked_G4 "
+        )
+
+        #expect(sent)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "office_hours_start")
+        #expect(payload["sessionId"] as? String == "session-g4")
+        #expect(payload["trigger"] as? String == "gate_blocked_G4")
+    }
+
+    @Test @MainActor func markDayStepSendsSessionScopedPayload() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 8
+        )
+        sidecar.resetSentPayloads()
+
+        let sent = viewModel.markDayStep(
+            day: 8,
+            stepId: "interview",
+            status: .done,
+            commitmentText: "고객 A에게 가격 ask 보내기",
+            sessionID: "session-g4"
+        )
+
+        #expect(sent)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "day_progress_patch")
+        #expect(payload["sessionId"] as? String == "session-g4")
+        #expect(payload["commitmentText"] as? String == "고객 A에게 가격 ask 보내기")
+    }
+
     @Test @MainActor func day1GoalDraftsSaveThroughSidecarPayload() async throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }

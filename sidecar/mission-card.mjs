@@ -40,20 +40,10 @@ export function buildMissionCardEvent({
   if (!base) return null;
 
   const substitution = latestSubstitutionForDay(substitutions, dayNumber);
-  const mission = {
-    day: dayNumber,
-    title: cleanString(substitution?.replacedMission || base.title, 300),
-    shortTitle: cleanString(base.shortTitle, 80),
-    summary: cleanString(base.summary, 600),
-    tasks: (Array.isArray(base.tasks) ? base.tasks : []).map((task) => cleanString(task, 300)),
-    output: cleanString(base.output, 300),
-    dayType: cleanString(base.dayType ?? base.day_type, 40),
-    phase: cleanString(base.phase, 40),
-    curriculumWeek: Number(base.curriculumWeek ?? base.curriculum_week) || null,
-    substituted: Boolean(substitution),
-    substitutionReason: substitution ? cleanString(substitution.reason, 120) : "",
-    exitCondition: substitution ? cleanString(substitution.exitCondition ?? substitution.exit_condition, 300) : "",
-  };
+  const mission = buildMissionPayload({ base, substitution, dayNumber });
+  const evidenceSpec = buildEvidenceSpec(mission);
+  const gateContext = buildGateContext(gateEvaluation, dayNumber);
+  const generatedAt = toIso(now);
 
   return {
     type: MISSION_CARD_EVENT_TYPE,
@@ -64,13 +54,61 @@ export function buildMissionCardEvent({
       day: dayNumber,
       source: "idd",
       mission,
-      evidenceSpec: buildEvidenceSpec(mission),
-      evidence_spec: buildEvidenceSpec(mission),
-      gateContext: buildGateContext(gateEvaluation, dayNumber),
-      gate_context: buildGateContext(gateEvaluation, dayNumber),
-      generatedAt: toIso(now),
-      generated_at: toIso(now),
+      evidenceSpec,
+      evidence_spec: evidenceSpec,
+      gateContext,
+      gate_context: gateContext,
+      generatedAt,
+      generated_at: generatedAt,
     },
+  };
+}
+
+function buildMissionPayload({ base, substitution, dayNumber }) {
+  if (substitution) {
+    const title = cleanString(substitution.replacedMission ?? substitution.replaced_mission, 300)
+      || cleanString(base.title, 300);
+    const exitCondition = cleanString(substitution.exitCondition ?? substitution.exit_condition, 300);
+    const output = cleanString(substitution.output, 300)
+      || (exitCondition ? `게이트 해제 증거: ${exitCondition}` : cleanString(base.output, 300));
+    const tasks = cleanStringArray(substitution.tasks, 300);
+    return {
+      day: dayNumber,
+      title,
+      shortTitle: cleanString(substitution.shortTitle ?? substitution.short_title, 80)
+        || cleanString(title, 80),
+      summary: cleanString(substitution.summary, 600)
+        || cleanString(`회복 미션: ${substitution.reason}. ${exitCondition ? `종료 조건은 ${exitCondition}.` : "차단된 게이트 증거를 보강합니다."}`, 600),
+      tasks: tasks.length
+        ? tasks
+        : [
+            "차단된 게이트의 미충족 증거를 확인한다.",
+            title,
+            exitCondition ? `종료 조건을 충족하는 증거를 제출한다: ${exitCondition}` : "게이트 해제 증거를 제출한다.",
+          ],
+      output,
+      dayType: "action",
+      phase: cleanString(base.phase, 40),
+      curriculumWeek: Number(base.curriculumWeek ?? base.curriculum_week) || null,
+      substituted: true,
+      substitutionReason: cleanString(substitution.reason, 120),
+      exitCondition,
+    };
+  }
+
+  return {
+    day: dayNumber,
+    title: cleanString(base.title, 300),
+    shortTitle: cleanString(base.shortTitle, 80),
+    summary: cleanString(base.summary, 600),
+    tasks: cleanStringArray(base.tasks, 300),
+    output: cleanString(base.output, 300),
+    dayType: cleanString(base.dayType ?? base.day_type, 40),
+    phase: cleanString(base.phase, 40),
+    curriculumWeek: Number(base.curriculumWeek ?? base.curriculum_week) || null,
+    substituted: false,
+    substitutionReason: "",
+    exitCondition: "",
   };
 }
 
@@ -117,11 +155,21 @@ function buildGateContext(gateEvaluation, day) {
 
 function latestSubstitutionForDay(substitutions, day) {
   const list = Array.isArray(substitutions) ? substitutions : [];
-  for (let index = list.length - 1; index >= 0; index -= 1) {
+  let latest = null;
+  let latestTime = Number.NEGATIVE_INFINITY;
+  let latestIndex = -1;
+  for (let index = 0; index < list.length; index += 1) {
     const entry = list[index];
-    if (entry && Number(entry.day) === day) return entry;
+    if (!entry || Number(entry.day) !== day) continue;
+    const recordedAt = Date.parse(String(entry.recordedAt ?? entry.recorded_at ?? ""));
+    const time = Number.isFinite(recordedAt) ? recordedAt : Number.NEGATIVE_INFINITY;
+    if (time > latestTime || (time === latestTime && index > latestIndex)) {
+      latest = entry;
+      latestTime = time;
+      latestIndex = index;
+    }
   }
-  return null;
+  return latest;
 }
 
 function normalizeDay(value) {
@@ -133,6 +181,12 @@ function normalizeDay(value) {
 
 function cleanString(value = "", maxLength = 300) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function cleanStringArray(value = [], maxLength = 300) {
+  return (Array.isArray(value) ? value : [])
+    .map((entry) => cleanString(entry, maxLength))
+    .filter(Boolean);
 }
 
 function toIso(value) {

@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -101,13 +101,17 @@ test("commitment-confirmed token issuance uses the commitment dueDay and unlocks
 
 test("token issuance beyond the program-wide cap is refused as escalation_required", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-oh-cap-"));
-  const gates = ["G2", "G4", "G5"];
+  const gates = [
+    ["G2", 10],
+    ["G4", 16],
+    ["G5", 23],
+  ];
   assert.equal(gates.length, MAX_INTERVENTION_TOKENS);
-  for (const gateId of gates) {
+  for (const [gateId, dueDay] of gates) {
     const result = await issueGateInterventionToken({
       workspaceRoot: root,
       gateId,
-      dueDay: 10,
+      dueDay,
       now: T0,
     });
     assert.equal(result.issued, true, `${gateId} should issue`);
@@ -136,4 +140,17 @@ test("missing commitment dueDay defaults to the next day", async () => {
   });
   assert.equal(issuance.issued, true);
   assert.equal(issuance.token.dueDay, 16);
+});
+
+test("missing commitment dueDay is clamped at the max program day", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-oh-default-due-max-"));
+  const issuance = await issueInterventionTokenForCommitment({
+    workspaceRoot: root,
+    gateId: "G7",
+    commitment: null,
+    day: 400,
+    now: T0,
+  });
+  assert.equal(issuance.issued, true);
+  assert.equal(issuance.token.dueDay, 400);
 });

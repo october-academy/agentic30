@@ -134,9 +134,11 @@ test("false-positive label persists to the gate ledger and imposes a 48h cooldow
     now: T0,
   });
   assert.equal(labeled.userLabel, ADAPTIVE_RULE_FALSE_POSITIVE_LABEL);
+  assert.equal(labeled.labeledAt, T0.toISOString());
 
   const ledger = await loadGateLedger({ workspaceRoot: root });
   assert.equal(ledger.adaptiveEvents.at(-1).userLabel, ADAPTIVE_RULE_FALSE_POSITIVE_LABEL);
+  assert.equal(ledger.adaptiveEvents.at(-1).labeledAt, T0.toISOString());
 
   // 47h later: still cooled down.
   const cooled = evaluateAdaptiveRules({
@@ -155,6 +157,32 @@ test("false-positive label persists to the gate ledger and imposes a 48h cooldow
   assert.deepEqual(resumed.firedRuleIds, ["AR-01"]);
 });
 
+test("recordFiredAdaptiveRules dedupes same-rule same-day firings at write time", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-adaptive-rules-dedupe-"));
+  const fired = evaluateAdaptiveRules({
+    signals: { paymentIntentCount: 2, paymentRecordCount: 0, paymentFailureCount: 0 },
+    now: T0,
+  }).fired;
+
+  const first = await recordFiredAdaptiveRules({ workspaceRoot: root, fired, now: T0 });
+  const duplicate = await recordFiredAdaptiveRules({
+    workspaceRoot: root,
+    fired,
+    now: new Date("2026-06-12T20:00:00.000Z"),
+  });
+  const nextDay = await recordFiredAdaptiveRules({
+    workspaceRoot: root,
+    fired,
+    now: new Date("2026-06-13T09:00:00.000Z"),
+  });
+
+  assert.equal(first.length, 1);
+  assert.equal(duplicate.length, 0);
+  assert.equal(nextDay.length, 1);
+  const ledger = await loadGateLedger({ workspaceRoot: root });
+  assert.equal(ledger.adaptiveEvents.length, 2);
+});
+
 test("AR-17 enforcement blocks new commitments until the firing is disputed", async () => {
   const { isNewCommitmentBlockedByAr17 } = await import("../sidecar/adaptive-rules.mjs");
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-ar17-enforce-"));
@@ -165,13 +193,16 @@ test("AR-17 enforcement blocks new commitments until the firing is disputed", as
   await recordFiredAdaptiveRules({ workspaceRoot: root, fired, now: T0 });
 
   assert.equal(await isNewCommitmentBlockedByAr17({ workspaceRoot: root, now: T0 }), true);
-  // 다음 날에는 당일 발화가 아니므로 차단하지 않는다(그날 다시 발화하면 차단).
+  // 날짜가 바뀌어도 사용자 오탐 라벨 전까지 차단은 유지된다.
+  assert.equal(
+    await isNewCommitmentBlockedByAr17({ workspaceRoot: root, now: new Date("2026-06-13T09:00:00.000Z") }),
+    true,
+  );
+
+  // 오탐 라벨이 차단을 해제한다 (§12 오탐대응 ②).
+  await labelAdaptiveRuleEvent({ workspaceRoot: root, ruleId: "AR-17", now: T0 });
   assert.equal(
     await isNewCommitmentBlockedByAr17({ workspaceRoot: root, now: new Date("2026-06-13T09:00:00.000Z") }),
     false,
   );
-
-  // 오탐 라벨이 당일 차단을 해제한다 (§12 오탐대응 ②).
-  await labelAdaptiveRuleEvent({ workspaceRoot: root, ruleId: "AR-17", now: T0 });
-  assert.equal(await isNewCommitmentBlockedByAr17({ workspaceRoot: root, now: T0 }), false);
 });

@@ -233,6 +233,36 @@ test("event-only smoke never receives a product score", () => {
   assert.notEqual(result.verdict, DOGFOOD_VERDICTS.JUDGE_PASS);
 });
 
+test("event-only gate blocked scenario skips visible text fragments", () => {
+  const result = summarizeSmokeRun({
+    scenario: {
+      id: "gate-blocked-day-entry",
+      title: "Gate blocked",
+      goal: "Block Day 8 entry",
+      prompt: "Day 8 진입",
+      expected_visible_outcome: {
+        must_include: ["G2"],
+        must_not_include: [],
+        requires_one_next_action: false,
+        requires_proof_target: false,
+        requires_visible_output: false,
+      },
+    },
+    observed: {
+      assistantMessages: [],
+      gateBlocked: { gateId: "G2" },
+      gateMessage: "G2 gate blocked",
+      gateSubstitutions: [{ day: 8, failedGate: "G2" }],
+      latency_ms: { final_response: 10 },
+    },
+    events: [{ type: "day_progress_state" }],
+    latency: { final_response: 10 },
+  });
+
+  assert.equal(result.verdict, DOGFOOD_VERDICTS.SMOKE_PASS);
+  assert.equal(result.smoke.checks.must_include_1, undefined);
+});
+
 test("generic assistant plus expected event is smoke-only and cannot pass live judge gate", () => {
   const smoke = summarizeSmokeRun({
     scenario: {
@@ -678,11 +708,12 @@ test("dogfood simulation default mode reports smoke pass, not product judge pass
         "bip-mission-partial-setup",
         "structured-decision-card",
         "mission-completion",
+        "gate-blocked-day-entry",
       ],
     });
 
     assert.equal(result.passed, true);
-    assert.equal(result.results.length, 4);
+    assert.equal(result.results.length, 5);
     assert.ok(result.results.every((entry) => entry.verdict === DOGFOOD_VERDICTS.SMOKE_PASS));
     assert.ok(result.results.every((entry) => entry.overall === null));
     assert.ok(result.results.every((entry) => entry.judge_status === "skipped"));

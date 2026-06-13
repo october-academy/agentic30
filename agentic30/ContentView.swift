@@ -1903,6 +1903,7 @@ struct ContentView: View {
     @State private var selectedOfficeHoursGoalType: Day1GoalType?
     @State private var pendingOfficeHoursStartMode: OfficeHoursMode?
     @State private var pendingOfficeHoursStartDay: Int?
+    @State private var pendingOfficeHoursStartTrigger: String?
     /// Live day scoping. `nil` = today; explicit values scope the active Office
     /// Hours session. Read-only retro uses `selectedPastReviewDay` separately.
     @State private var selectedTimelineDay: Int?
@@ -2546,7 +2547,11 @@ struct ContentView: View {
                     officeHoursEvidenceOSBanner()
                     officeHoursSourceGateBanner(activeDay: activeDay)
                     officeHoursGateBlockedBanner()
-                    officeHoursInterventionBanner()
+                    officeHoursInterventionBanner(
+                        session: conversationSession,
+                        day1Content: day1Content,
+                        activeDay: activeDay
+                    )
                     officeHoursMissionCardBanner()
                     officeHoursMainColumn(
                         session: conversationSession,
@@ -3338,11 +3343,23 @@ struct ContentView: View {
                             deferralStreak: viewModel.officeHoursMemory?.consecutiveDeferrals ?? 0,
                             onCommit: { action in
                                 // user-origin: the founder's chosen/typed next customer action (one line).
-                                _ = viewModel.markDayStep(day: day, stepId: stepId, status: .done, commitmentText: action)
+                                _ = viewModel.markDayStep(
+                                    day: day,
+                                    stepId: stepId,
+                                    status: .done,
+                                    commitmentText: action,
+                                    sessionID: session?.id
+                                )
                             },
                             onConfess: { reason in
                                 // A confess-close records a deferral ("미룸"); it opens no new commitment.
-                                _ = viewModel.markDayStep(day: day, stepId: stepId, status: .done, confession: reason)
+                                _ = viewModel.markDayStep(
+                                    day: day,
+                                    stepId: stepId,
+                                    status: .done,
+                                    confession: reason,
+                                    sessionID: session?.id
+                                )
                             }
                         )
                         .transition(.officeHoursPromptReveal)
@@ -3474,7 +3491,8 @@ struct ContentView: View {
                         .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                ForEach((gate.requiredEvidence ?? []).prefix(3), id: \.id) { evidence in
+                let requiredEvidence = Array((gate.requiredEvidence ?? []).prefix(3).enumerated())
+                ForEach(requiredEvidence, id: \.offset) { _, evidence in
                     HStack(alignment: .top, spacing: 6) {
                         Text("·")
                             .font(.system(size: 11, design: .monospaced))
@@ -3504,7 +3522,11 @@ struct ContentView: View {
     // §13.1 OH intervention 카드: 차단형(immediate)은 강조, 예약형(scheduled)은
     // 배너 톤. 고정 질문 첫 항목으로 세션의 초점을 미리 보여준다.
     @ViewBuilder
-    private func officeHoursInterventionBanner() -> some View {
+    private func officeHoursInterventionBanner(
+        session: ChatSession?,
+        day1Content: OpenDesignDayContent,
+        activeDay: Int
+    ) -> some View {
         if let intervention = viewModel.ohInterventionRequired {
             let isImmediate = intervention.severity == "immediate"
             let tint = isImmediate ? OpenDesignOfficeHoursColor.rose : OpenDesignOfficeHoursColor.amber
@@ -3529,6 +3551,31 @@ struct ContentView: View {
                         .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                Button {
+                    startOfficeHours(
+                        mode: selectedOfficeHoursMode,
+                        session: session,
+                        day1Content: day1Content,
+                        day: intervention.day ?? activeDay,
+                        trigger: intervention.triggerId
+                    )
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(isImmediate ? "Intervention 시작" : "Office Hours에서 다루기")
+                            .font(.system(size: 11.5, weight: .semibold))
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .foregroundStyle(OpenDesignOfficeHoursColor.bgDeep)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(tint)
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("opendesign.officeHours.intervention.start")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
@@ -5068,6 +5115,7 @@ struct ContentView: View {
         DispatchQueue.main.async {
             pendingOfficeHoursStartMode = .startup
             pendingOfficeHoursStartDay = 1
+            pendingOfficeHoursStartTrigger = nil
             _ = viewModel.ensureOfficeHoursSession(forDay: 1)
             continuePendingOfficeHoursStart(
                 session: viewModel.selectedSession ?? session,
@@ -8701,13 +8749,15 @@ struct ContentView: View {
         session: ChatSession?,
         day1Content: OpenDesignDayContent,
         day: Int,
-        forceRestart: Bool = false
+        forceRestart: Bool = false,
+        trigger: String? = nil
     ) {
         selectedOfficeHoursMode = mode
         guard viewModel.day1GoalSelection != nil else { return }
         guard let session else {
             pendingOfficeHoursStartMode = mode
             pendingOfficeHoursStartDay = day
+            pendingOfficeHoursStartTrigger = trigger?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
             viewModel.ensureOfficeHoursSession(forDay: day)
             return
         }
@@ -8719,6 +8769,7 @@ struct ContentView: View {
         // cleanly (clears error, status -> running).
         guard forceRestart || officeHoursSessionCanReceiveStart(session) else { return }
         pendingOfficeHoursStartMode = nil
+        pendingOfficeHoursStartTrigger = nil
         officeHoursSubmittedPromptSnapshotsBySession[session.id] = []
         officeHoursActiveQuestionLoadersBySession.removeValue(forKey: session.id)
         officeHoursRevisionInFlightSessionIDs.remove(session.id)
@@ -8734,7 +8785,8 @@ struct ContentView: View {
             context: context,
             source: officeHoursStartSource(day: day, forceRestart: forceRestart),
             day: day,
-            selectedSources: day >= 2 ? officeHoursSelectedSourceIDs() : []
+            selectedSources: day >= 2 ? officeHoursSelectedSourceIDs() : [],
+            trigger: trigger
         ) {
             pendingOfficeHoursStartDay = nil
             officeHoursStartedSessionIDs.insert(session.id)
@@ -8752,11 +8804,13 @@ struct ContentView: View {
     ) {
         guard let mode = pendingOfficeHoursStartMode else { return }
         let pendingDay = pendingOfficeHoursStartDay ?? day
+        let pendingTrigger = pendingOfficeHoursStartTrigger
         guard pendingDay == day else { return }
         if let session,
            session.pendingUserInput != nil {
             pendingOfficeHoursStartMode = nil
             pendingOfficeHoursStartDay = nil
+            pendingOfficeHoursStartTrigger = nil
             officeHoursStartedSessionIDs.insert(session.id)
             return
         }
@@ -8765,12 +8819,13 @@ struct ContentView: View {
             return
         }
         guard officeHoursSessionCanReceiveStart(session) else { return }
-        startOfficeHours(mode: mode, session: session, day1Content: day1Content, day: pendingDay)
+        startOfficeHours(mode: mode, session: session, day1Content: day1Content, day: pendingDay, trigger: pendingTrigger)
     }
 
     private func resetOfficeHoursSession(day: Int) {
         pendingOfficeHoursStartMode = nil
         pendingOfficeHoursStartDay = nil
+        pendingOfficeHoursStartTrigger = nil
         officeHoursStartedSessionIDs.removeAll()
         officeHoursQuestionLoadingStartedAtBySession.removeAll()
         officeHoursSubmittedPromptSnapshotsBySession.removeAll()
@@ -8808,6 +8863,7 @@ struct ContentView: View {
             resetOfficeHoursSession(day: day)
             pendingOfficeHoursStartMode = mode
             pendingOfficeHoursStartDay = day
+            pendingOfficeHoursStartTrigger = nil
             return
         }
         startOfficeHours(

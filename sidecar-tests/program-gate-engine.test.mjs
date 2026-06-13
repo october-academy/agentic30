@@ -279,6 +279,37 @@ test("intervention token passes a blocked gate once, expires at dueDay, and cann
   assert.equal(recovered.evaluation.gates.G2.resolutionPath, "evidence");
 });
 
+test("intervention token does not pass a gate before its enforcement day", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-gate-token-active-day-"));
+  const issued = await issueGateInterventionToken({
+    workspaceRoot: root,
+    gateId: GATE_IDS.G4,
+    dueDay: 16,
+    now: T0,
+  });
+  assert.equal(issued.issued, true);
+
+  const beforeEnforce = await evaluateAndRecordProgramGates({
+    workspaceRoot: root,
+    proofLedger: { events: foundationClosedEvents() },
+    currentDay: 14,
+    firstValue: { observed: false, rowCount: 0 },
+    sources: { posthogAvailable: true },
+    now: T0,
+  });
+  assert.equal(beforeEnforce.evaluation.gates.G4.state, GATE_STATES.open);
+  assert.equal(beforeEnforce.evaluation.gates.G4.resolutionPath, "");
+
+  const invalid = await issueGateInterventionToken({
+    workspaceRoot: await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-gate-token-too-early-")),
+    gateId: GATE_IDS.G5,
+    dueDay: 10,
+    now: T0,
+  });
+  assert.equal(invalid.issued, false);
+  assert.equal(invalid.reason, "token_before_gate_active");
+});
+
 test("gate ledger persists schema v1 with capped evaluation history and idempotent re-runs", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-gate-ledger-"));
   const first = await evaluateAndRecordProgramGates({
