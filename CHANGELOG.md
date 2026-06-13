@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.20] - 2026-06-13
+
 ### 추가
 - **프로젝트 문서 경로 공통화**: sidecar 전반에서 GOAL/ICP/VALUES/SPEC/DESIGN_SYSTEM/ADR/DOCS/SHEET 경로를 한 곳에서 관리하도록 `project-doc-paths` 모듈을 추가했습니다.
 - **Codex Office Hours 카드 입력**: Codex MCP 구조화 입력 카드가 제출 전에는 pending 상태로 머물고, 사용자가 답을 제출한 뒤에만 다음 질문을 이어가도록 했습니다.
