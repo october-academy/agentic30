@@ -81,7 +81,7 @@ npm run hooks:install
 
 ## Assistant Commands
 
-- `/office-hours-docs [context]` - run an Office Hours-style interview, then create or update `docs/ICP.md`, `docs/GOAL.md`, `docs/VALUES.md`, and `docs/SPEC.md`.
+- `/office-hours-docs [context]` - run an Office Hours-style interview, then create or update `.agentic30/docs/ICP.md`, `.agentic30/docs/GOAL.md`, `.agentic30/docs/VALUES.md`, and `.agentic30/docs/SPEC.md`.
 - `/bip-draft [topic]` - draft Build In Public content from configured project docs.
 - `/analyze-ads <url>` - analyze Meta Ads and PostHog data for a landing page.
 

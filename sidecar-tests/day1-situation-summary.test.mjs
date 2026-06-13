@@ -24,7 +24,7 @@ const baseHypothesis = {
   goal: "이번 주 파일럿 3팀에게 SLA 누락 1건을 줄인다",
   stage: "prototype",
   confidence: "high",
-  evidence: ["README.md", "docs/ICP.md"],
+  evidence: ["README.md", ".agentic30/docs/ICP.md"],
 };
 
 test("generateDay1SituationSummary emits v3 evidence-ranked shape", () => {
@@ -173,13 +173,13 @@ test("analytics-only source evidence does not become customer path or primary ac
           },
           {
             role: "goal",
-            path: "docs/GOAL.md",
+            path: ".agentic30/docs/GOAL.md",
             quote: "목표는 30일 안에 사용자 100명과 첫 매출 가능성을 검증하는 것이다. 파일럿을 확인한다.",
             score: 90,
           },
           {
             role: "icp",
-            path: "docs/ICP.md",
+            path: ".agentic30/docs/ICP.md",
             quote: "Primary persona는 전업 1인 개발자이며 고객 인터뷰로 반복 pain point를 확인한다.",
             score: 90,
           },
@@ -332,11 +332,12 @@ test("buildDay1SituationSummary merges verified agent situation signals", async 
   try {
     await fs.writeFile(path.join(root, "README.md"), "# EscalationLens\nCS 리드가 위험 티켓을 먼저 보게 한다.\n");
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "Target user: B2B CS 리드\nProblem: Slack 에스컬레이션이 SLA 전에 누락된다.\n");
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "Target user: B2B CS 리드\nProblem: Slack 에스컬레이션이 SLA 전에 누락된다.\n");
     await fs.writeFile(path.join(root, "marketing.md"), "Channel: partner webinar\nMetric: 파일럿 3팀\n");
     const summary = await buildDay1SituationSummary({
       workspaceRoot: root,
-      scanResult: { docs: "README.md", icp: "docs/ICP.md" },
+      scanResult: { docs: "README.md", icp: ".agentic30/docs/ICP.md" },
       onboardingHypothesis: baseHypothesis,
       agentSituationSignals: [{
         channels: [{ label: "partner webinar", evidencePath: "marketing.md", shortQuote: "Channel: partner webinar" }],
@@ -411,8 +412,8 @@ function day1QualityFixtures() {
         evidenceBuckets: {
           workspaceEvidence: {
             evidence: [
-              { role: "goal", path: "docs/GOAL.md", quote: "목표는 30일 안에 사용자 100명과 첫 매출 가능성을 검증하는 것이다. 파일럿을 확인한다.", score: 90 },
-              { role: "icp", path: "docs/ICP.md", quote: "Primary persona는 전업 1인 개발자이며 고객 인터뷰로 반복 pain point를 확인한다.", score: 90 },
+              { role: "goal", path: ".agentic30/docs/GOAL.md", quote: "목표는 30일 안에 사용자 100명과 첫 매출 가능성을 검증하는 것이다. 파일럿을 확인한다.", score: 90 },
+              { role: "icp", path: ".agentic30/docs/ICP.md", quote: "Primary persona는 전업 1인 개발자이며 고객 인터뷰로 반복 pain point를 확인한다.", score: 90 },
             ],
             signals: {
               productName: "agentic30 Mac",
@@ -545,7 +546,7 @@ function day1QualityFixtures() {
           goal: "첫 결제 1건 또는 구매 의향 3건",
           stage: "pre_revenue",
           confidence: "high",
-          evidence: ["docs/GOAL.md"],
+          evidence: [".agentic30/docs/GOAL.md"],
         },
         evidenceBuckets: {
           customerEvidence: {

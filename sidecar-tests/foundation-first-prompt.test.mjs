@@ -118,7 +118,7 @@ test("buildFirstPromptForDay returns the canonical envelope for Day 0/2-7", () =
       assert.equal(typeof built.value_contract?.passGate, "string");
       assert.equal(typeof built.value_contract?.failGate, "string");
       assert.ok(Array.isArray(built.value_contract?.canonicalDocs));
-      assert.ok(built.value_contract.canonicalDocs.every((entry) => /^docs\/(ICP|VALUES|GOAL|SPEC)\.md$/.test(entry.path)));
+      assert.ok(built.value_contract.canonicalDocs.every((entry) => /^\.agentic30\/docs\/(ICP|VALUES|GOAL|SPEC)\.md$/.test(entry.path)));
       assert.match(built.value_contract?.resourceObservationPrompt || "", /자료|예시|템플릿/);
       assert.match(built.value_contract?.antiDisplacementGate?.rule || "", /hotfix|dogfood/);
     }

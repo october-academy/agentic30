@@ -67,6 +67,7 @@ import {
   startActionVerification,
 } from "../sidecar/action-day-verification-state.mjs";
 import { FOUNDATION_DAYS } from "../sidecar/foundation-chat.mjs";
+import { projectDocPath } from "../sidecar/project-doc-paths.mjs";
 
 test("IDD base curriculum covers exactly 30 days and keeps the Q2 phase shape", () => {
   assert.equal(IDD_BASE_CURRICULUM.length, 30);
@@ -770,7 +771,7 @@ test("adaptive Foundation days mirror Foundation chat day semantics", () => {
   ));
   assert.deepEqual(
     [...docPaths].sort(),
-    ["docs/GOAL.md", "docs/ICP.md", "docs/SPEC.md", "docs/VALUES.md"].sort(),
+    [projectDocPath("goal"), projectDocPath("icp"), projectDocPath("spec"), projectDocPath("values")].sort(),
   );
   assert.match(foundationDays[0].title, /목표와 고객 핵심 가설/);
   assert.match(FOUNDATION_DAYS[1].core_question, /ICP, Pain Point, Outcome/);
@@ -813,7 +814,7 @@ test("adaptive curriculum is grounded in product spec north star and selected da
     now: new Date("2026-05-07T00:00:00.000Z"),
   });
 
-  assert.equal(plan.source, "docs/SPEC.md");
+  assert.equal(plan.source, projectDocPath("spec"));
   assert.match(plan.strategy.northStar, /IDD Engine/);
   assert.match(plan.strategy.p0, /folder watch/);
   assert.equal(plan.days.length, 30);
@@ -2414,7 +2415,7 @@ test("Day context assembly keeps current project metadata separate from weekly s
         context: {
           activeSurface: "Curriculum navigator",
           currentObjective: "Build Day 22 launch demo verification",
-          canonicalDocs: ["docs/ICP.md", "docs/SPEC.md"],
+          canonicalDocs: [".agentic30/docs/ICP.md", ".agentic30/docs/SPEC.md"],
         },
       },
       weeklySummaryStack: [
@@ -2448,7 +2449,7 @@ test("Day context assembly keeps current project metadata separate from weekly s
   assert.equal(plan.providerContextPayload.project_context.metadata.platform, "macOS menubar app");
   assert.deepEqual(
     plan.selectedDay.providerContextPayload.project_context.context.canonicalDocs,
-    ["docs/ICP.md", "docs/SPEC.md"],
+    [".agentic30/docs/ICP.md", ".agentic30/docs/SPEC.md"],
   );
 
   const projectBlock = plan.providerContextPayload.context_blocks.find((block) => block.id === "project_context");

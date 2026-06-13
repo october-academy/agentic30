@@ -1,3 +1,5 @@
+import { projectDocPath } from "../project-doc-paths.mjs";
+
 export const ID = "design-consultation";
 export const NAME = "Design Consultation";
 export const PHASES = ["planning", "build"];
@@ -27,9 +29,9 @@ export function buildPrompt({ doc = null, observations = "", lastAnswer = "" } =
     "",
     "AskUserQuestion 작성 규칙:",
     "- options는 \"있다 / 없다 / 일부 있다\" 같은 추상 답 금지. 어디에·어떻게 정의돼 있는지를 구체로 묻는다.",
-    "- description은 결정이 매핑될 파일/섹션을 1줄로 적는다(예: docs/DESIGN_SYSTEM.md > Tokens).",
+    `- description은 결정이 매핑될 파일/섹션을 1줄로 적는다(예: ${projectDocPath("designSystem")} > Tokens).`,
     "- 추천안은 기존 시스템을 깨뜨리지 않으면서 가장 큰 갭을 메우는 쪽 (recommended).",
-    "- 답변은 곧 docs/DESIGN_SYSTEM.md 또는 design ADR의 섹션으로 매핑된다.",
+    `- 답변은 곧 ${projectDocPath("designSystem")} 또는 design ADR의 섹션으로 매핑된다.`,
     "",
     obs ? `## 관찰한 프로젝트 사실\n${obs}` : "## 관찰한 프로젝트 사실\n(여백) — 현재 design tokens 위치, 컴포넌트 라이브러리, 광고/소셜 에셋 패턴을 짧게 점검한다.",
     "",

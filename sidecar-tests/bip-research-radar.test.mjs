@@ -19,7 +19,8 @@ async function withTmpWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-bip-research-"));
   try {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nFull-time solo builders using Claude Code on macOS.");
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nFull-time solo builders using Claude Code on macOS.");
     return await fn(root);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -242,7 +243,7 @@ test("BIP research ranks candidates by adaptive profile relevance", async () => 
         targetUser: "한국 팀 리더",
         problem: "온보딩 체크리스트 자동화가 흩어져 있다",
         purpose: "팀 리더 인터뷰 후보를 찾는다",
-        evidence: ["docs/ICP.md"],
+        evidence: [".agentic30/docs/ICP.md"],
         confidence: "high",
       },
       now: new Date("2026-05-21T00:00:00.000Z"),

@@ -8251,7 +8251,7 @@ final class AgenticViewModel: ObservableObject {
             requestId: "ui-test-icp-request",
             sessionId: requestedSessionID,
             toolName: "agentic30_request_user_input",
-            title: "고객 후보 1/4",
+            title: "Ideal Customer Profile 1/4",
             createdAt: createdAt,
             questions: [
                 StructuredPromptQuestion(
@@ -8975,7 +8975,7 @@ final class AgenticViewModel: ObservableObject {
                 StructuredPromptQuestion(
                     header: "이번 주 목표",
                     question: "이번 주에 가장 먼저 검증하거나 달성하려는 목표는 무엇인가요?",
-                    helperText: "먼저 검증할 목표를 정합니다. 저장: docs/GOAL.md",
+                    helperText: "먼저 검증할 목표를 정합니다. 저장: .agentic30/docs/GOAL.md",
                     options: [
                         StructuredPromptOption(
                             label: "첫 고객 반응 확인",
@@ -9022,10 +9022,10 @@ final class AgenticViewModel: ObservableObject {
     private func installUITestingDay1BulkDocPreviews() {
         let order = ["goal", "icp", "values", "spec"]
         let seededPreviews = [
-            IddDocPreview(type: "goal", title: "GOAL", path: "docs/GOAL.md", status: "written", content: "UI test GOAL handoff response"),
-            IddDocPreview(type: "icp", title: "고객 후보", path: "docs/ICP.md", status: "written", content: "UI test customer candidate handoff response"),
-            IddDocPreview(type: "values", title: "VALUES", path: "docs/VALUES.md", status: "written", content: "UI test VALUES handoff response"),
-            IddDocPreview(type: "spec", title: "SPEC", path: "docs/SPEC.md", status: "written", content: "UI test SPEC handoff response"),
+            IddDocPreview(type: "goal", title: "GOAL", path: ".agentic30/docs/GOAL.md", status: "written", content: "UI test GOAL handoff response"),
+            IddDocPreview(type: "icp", title: "Ideal Customer Profile", path: ".agentic30/docs/ICP.md", status: "written", content: "UI test customer candidate handoff response"),
+            IddDocPreview(type: "values", title: "VALUES", path: ".agentic30/docs/VALUES.md", status: "written", content: "UI test VALUES handoff response"),
+            IddDocPreview(type: "spec", title: "SPEC", path: ".agentic30/docs/SPEC.md", status: "written", content: "UI test SPEC handoff response"),
         ]
         var mergedPreviews = iddDocPreviews.filter { !order.contains($0.type) }
         mergedPreviews.append(contentsOf: seededPreviews)
@@ -9147,15 +9147,15 @@ final class AgenticViewModel: ObservableObject {
         let docMeta: (title: String, path: String)
         switch docType {
         case "goal":
-            docMeta = ("GOAL", "docs/GOAL.md")
+            docMeta = ("GOAL", ".agentic30/docs/GOAL.md")
         case "icp":
-            docMeta = ("고객 후보", "docs/ICP.md")
+            docMeta = ("Ideal Customer Profile", ".agentic30/docs/ICP.md")
         case "values":
-            docMeta = ("VALUES", "docs/VALUES.md")
+            docMeta = ("VALUES", ".agentic30/docs/VALUES.md")
         case "spec":
-            docMeta = ("SPEC", "docs/SPEC.md")
+            docMeta = ("SPEC", ".agentic30/docs/SPEC.md")
         default:
-            docMeta = (docType.uppercased(), "docs/\(docType.uppercased()).md")
+            docMeta = (docType.uppercased(), ".agentic30/docs/\(docType.uppercased()).md")
         }
 
         let writtenPreview = IddDocPreview(
@@ -9370,10 +9370,10 @@ final class AgenticViewModel: ObservableObject {
         iddUnresolvedAssumptions = []
         iddDocOrder = ["icp", "goal", "values", "spec"]
         iddDocPreviews = [
-            IddDocPreview(type: "icp", title: "고객 후보", path: "docs/ICP.md", status: "approved", content: "Seed customer candidate"),
-            IddDocPreview(type: "goal", title: "GOAL", path: "docs/GOAL.md", status: "approved", content: "Seed GOAL"),
-            IddDocPreview(type: "values", title: "VALUES", path: "docs/VALUES.md", status: "approved", content: "Seed VALUES"),
-            IddDocPreview(type: "spec", title: "SPEC", path: "docs/SPEC.md", status: "approved", content: "Seed SPEC"),
+            IddDocPreview(type: "icp", title: "Ideal Customer Profile", path: ".agentic30/docs/ICP.md", status: "approved", content: "Seed customer candidate"),
+            IddDocPreview(type: "goal", title: "GOAL", path: ".agentic30/docs/GOAL.md", status: "approved", content: "Seed GOAL"),
+            IddDocPreview(type: "values", title: "VALUES", path: ".agentic30/docs/VALUES.md", status: "approved", content: "Seed VALUES"),
+            IddDocPreview(type: "spec", title: "SPEC", path: ".agentic30/docs/SPEC.md", status: "approved", content: "Seed SPEC"),
         ]
         iddProviderRecovery = nil
         iddSetupError = nil
@@ -9512,7 +9512,7 @@ final class AgenticViewModel: ObservableObject {
         guard !session.messages.contains(where: { $0.content.contains("DAY1_ICP_TURN_5") }) else { return }
 
         let turns = [
-            "DAY1_ICP_TURN_1: Day 1 시작. docs/ICP.md 기준으로 내가 맞는 고객 후보인지 먼저 진단해줘.",
+            "DAY1_ICP_TURN_1: Day 1 시작. .agentic30/docs/ICP.md 기준으로 내가 맞는 고객 후보인지 먼저 진단해줘.",
             "DAY1_ICP_TURN_2: 나는 퇴사한 전업 1인 개발자이고 수익은 0원, macOS에서 Codex를 쓴다. Day 1 현재 상태를 판정해줘.",
             "DAY1_ICP_TURN_3: 이미 소개 페이지와 작은 프로토타입은 있다. Day 1 백지 상태의 고객 탐색이 아니라 빠른 경로로 가야 하는지 확인해줘.",
             "DAY1_ICP_TURN_4: SPEC.md v0 현재 기준에는 어떤 현재 상태와 다음 검증 기준을 남겨야 해?",
@@ -10921,12 +10921,12 @@ final class AgenticViewModel: ObservableObject {
         let usesAlignmentPlan = arguments.contains("--ui-testing-seed-day1-alignment-plan")
         let usesSituationSummary = arguments.contains("--ui-testing-seed-day1-situation-summary")
         return WorkspaceScanResult(
-            icp: "docs/ICP.md",
-            spec: "docs/SPEC.md",
-            values: "docs/VALUES.md",
+            icp: ".agentic30/docs/ICP.md",
+            spec: ".agentic30/docs/SPEC.md",
+            values: ".agentic30/docs/VALUES.md",
             designSystem: nil,
             adr: nil,
-            goal: "docs/GOAL.md",
+            goal: ".agentic30/docs/GOAL.md",
             docs: "README.md",
             sheet: nil,
             onboardingHypothesis: WorkspaceOnboardingHypothesis(
@@ -10939,7 +10939,7 @@ final class AgenticViewModel: ObservableObject {
                 values: nil,
                 likelyUsers: ["1인 빌더", "macOS AI 도구 사용자"],
                 stage: "first_users",
-                evidence: ["README.md", "docs/ICP.md"],
+                evidence: ["README.md", ".agentic30/docs/ICP.md"],
                 confidence: "high",
                 suggestedFirstQuestion: nil
             ),
@@ -10961,7 +10961,7 @@ final class AgenticViewModel: ObservableObject {
                 oneLine: "Agentic30: Day 1 고객 검증을 돕는 macOS 앱입니다.",
                 customer: "1인 빌더",
                 problem: "첫 고객 기준이 흔들림",
-                evidenceRefs: ["README.md (README)", "docs/ICP.md (고객 후보)"]
+                evidenceRefs: ["README.md (README)", ".agentic30/docs/ICP.md (고객 후보)"]
             ),
             diagnosis: Day1SituationSummary.Diagnosis(
                 stage: "초기 사용자 검증",
@@ -10969,7 +10969,7 @@ final class AgenticViewModel: ObservableObject {
                 whyNow: "첫 가치 이벤트와 유입 기준을 정해야 합니다.",
                 missingSignal: "측정 기준",
                 confidence: 0.82,
-                evidenceRefs: ["README.md", "docs/ICP.md"]
+                evidenceRefs: ["README.md", ".agentic30/docs/ICP.md"]
             ),
             realityGap: Day1SituationSummary.RealityGap(
                 docClaim: "README는 초기 가설 중심입니다.",
@@ -10984,12 +10984,12 @@ final class AgenticViewModel: ObservableObject {
                 metrics: ["인터뷰 5명", "첫 유료 신호"]
             ),
             path: [
-                Day1SituationSummary.PathNode(label: "고객 인터뷰", kind: "customer_action", status: "found", why: "docs/ICP.md에 고객 인터뷰 검증 흐름이 있습니다.", evidenceRefs: ["docs/ICP.md"]),
-                Day1SituationSummary.PathNode(label: "첫 유료 신호", kind: "conversion", status: "found", why: "docs/GOAL.md에 첫 유료 신호 목표가 있습니다.", evidenceRefs: ["docs/GOAL.md"])
+                Day1SituationSummary.PathNode(label: "고객 인터뷰", kind: "customer_action", status: "found", why: ".agentic30/docs/ICP.md에 고객 인터뷰 검증 흐름이 있습니다.", evidenceRefs: [".agentic30/docs/ICP.md"]),
+                Day1SituationSummary.PathNode(label: "첫 유료 신호", kind: "conversion", status: "found", why: ".agentic30/docs/GOAL.md에 첫 유료 신호 목표가 있습니다.", evidenceRefs: [".agentic30/docs/GOAL.md"])
             ],
             actions: [
-                Day1SituationSummary.Action(id: "customer-interview", label: "고객 인터뷰", rationale: "첫 고객 기준을 실제 대화로 확인합니다.", kind: "customer_action", promptSeed: "이번 주 고객 인터뷰로 무엇을 확인할까요?", evidenceRefs: ["docs/ICP.md"], evidenceLimited: false),
-                Day1SituationSummary.Action(id: "paid-signal", label: "유료 신호", rationale: "돈이나 시간을 쓰는 반응을 오늘 남깁니다.", kind: "conversion", promptSeed: "첫 유료 신호를 어떤 행동으로 확인할까요?", evidenceRefs: ["docs/GOAL.md"], evidenceLimited: false)
+                Day1SituationSummary.Action(id: "customer-interview", label: "고객 인터뷰", rationale: "첫 고객 기준을 실제 대화로 확인합니다.", kind: "customer_action", promptSeed: "이번 주 고객 인터뷰로 무엇을 확인할까요?", evidenceRefs: [".agentic30/docs/ICP.md"], evidenceLimited: false),
+                Day1SituationSummary.Action(id: "paid-signal", label: "유료 신호", rationale: "돈이나 시간을 쓰는 반응을 오늘 남깁니다.", kind: "conversion", promptSeed: "첫 유료 신호를 어떤 행동으로 확인할까요?", evidenceRefs: [".agentic30/docs/GOAL.md"], evidenceLimited: false)
             ],
             qualityGate: Day1SituationSummary.QualityGate(
                 score: 8.2,
@@ -11014,7 +11014,7 @@ final class AgenticViewModel: ObservableObject {
             currentAlternatives: ["수동 문서 정리", "임시 스크립트"],
             evidenceRefs: [
                 Day1IcpEvidenceRef(path: "README.md", reason: "앱 목적", quote: "Native macOS menu bar assistant"),
-                Day1IcpEvidenceRef(path: "docs/ICP.md", reason: "고객 가설", quote: "AI 코딩 도구를 쓰는 개발자"),
+                Day1IcpEvidenceRef(path: ".agentic30/docs/ICP.md", reason: "고객 가설", quote: "AI 코딩 도구를 쓰는 개발자"),
             ],
             missingAssumptions: ["지불 의향", "첫 사용자 획득 채널"],
             confidence: "high"
@@ -11025,10 +11025,10 @@ final class AgenticViewModel: ObservableObject {
             prompt: "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객은 누구인가요?",
             helperText: "직함보다 지금 같은 문제를 겪고 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
             statement: documentPointer,
-            evidence: ["docs/ICP.md"],
+            evidence: [".agentic30/docs/ICP.md"],
             missingAssumptions: [],
             options: [
-                Day1IcpQuestionOption(id: "dev-tool-user", label: "AI 코딩 도구를 쓰는 개발자", description: "이번 주 직접 대화 가능한 사용자입니다. · 근거: docs/ICP.md", preview: "고객", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "dev-tool-user", label: "AI 코딩 도구를 쓰는 개발자", description: "이번 주 직접 대화 가능한 사용자입니다. · 근거: .agentic30/docs/ICP.md", preview: "고객", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/ICP.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "solo-builder", label: "1인 빌더", description: "구매자와 사용자가 같은 후보입니다. · 근거: README.md", preview: "고객", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "curious-only", label: "관심만 있음", description: "최근 행동이 없어 다음 시장 신호로 약합니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ]
@@ -11039,11 +11039,11 @@ final class AgenticViewModel: ObservableObject {
             prompt: "이 고객이 지금 겪는 가장 압축된 문제는 무엇인가요?",
             helperText: "시간, 돈, 리스크, 반복 행동으로 이미 비용이 나는 문제를 고릅니다.",
             statement: "무엇을 팔아야 할지 모른다",
-            evidence: ["docs/SPEC.md"],
+            evidence: [".agentic30/docs/SPEC.md"],
             missingAssumptions: [],
             options: [
-                Day1IcpQuestionOption(id: "what-to-sell", label: "무엇을 팔아야 할지 모름", description: "검증 없이 빌드가 반복됩니다. · 근거: docs/SPEC.md", preview: "문제", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "first-user", label: "첫 사용자를 어디서 데려올지 모름", description: "다음 시장 신호 확인으로 이어집니다. · 근거: docs/GOAL.md", preview: "문제", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "what-to-sell", label: "무엇을 팔아야 할지 모름", description: "검증 없이 빌드가 반복됩니다. · 근거: .agentic30/docs/SPEC.md", preview: "문제", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "first-user", label: "첫 사용자를 어디서 데려올지 모름", description: "다음 시장 신호 확인으로 이어집니다. · 근거: .agentic30/docs/GOAL.md", preview: "문제", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/GOAL.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "nice-to-have", label: "있으면 좋음", description: "오늘 비용이 확인되지 않습니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ]
         )
@@ -11053,11 +11053,11 @@ final class AgenticViewModel: ObservableObject {
             prompt: "그 고객에게서 어떤 행동 신호를 확인해야 하나요?",
             helperText: "제품 기능이 아니라 지불 의향, 현재 대안, 최근 사건처럼 관찰 가능한 행동을 씁니다.",
             statement: "첫 대화에서 지불 의향과 현재 대안을 확인한다",
-            evidence: ["docs/GOAL.md"],
+            evidence: [".agentic30/docs/GOAL.md"],
             missingAssumptions: [],
             options: [
-                Day1IcpQuestionOption(id: "paid-alternative", label: "첫 대화에서 지불 의향과 대안을 확인한다", description: "다음 시장 신호 확인에서 바로 검증할 수 있습니다. · 근거: docs/GOAL.md", preview: "확인할 행동", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "market-signal", label: "시장 신호로 첫 사용자 획득 행동을 확인한다", description: "채널과 행동이 함께 남습니다. · 근거: docs/SPEC.md", preview: "확인할 행동", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "paid-alternative", label: "첫 대화에서 지불 의향과 대안을 확인한다", description: "다음 시장 신호 확인에서 바로 검증할 수 있습니다. · 근거: .agentic30/docs/GOAL.md", preview: "확인할 행동", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/GOAL.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "market-signal", label: "시장 신호로 첫 사용자 획득 행동을 확인한다", description: "채널과 행동이 함께 남습니다. · 근거: .agentic30/docs/SPEC.md", preview: "확인할 행동", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/SPEC.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "ship-feature", label: "기능을 더 만든다", description: "고객 검증 없이 빌드하는 선택입니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ]
         )
@@ -11112,23 +11112,23 @@ final class AgenticViewModel: ObservableObject {
     private static func makeUITestingDay1IcpPlan() -> Day1IcpPlan {
         let optionSets: [[Day1IcpQuestionOption]] = [
             [
-                Day1IcpQuestionOption(id: "solo-builder", label: "전업 1인 빌더", description: "이번 주 실제 고객 인터뷰를 잡아야 합니다. · 근거: docs/ICP.md", preview: "고객 후보", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "solo-builder", label: "전업 1인 빌더", description: "이번 주 실제 고객 인터뷰를 잡아야 합니다. · 근거: .agentic30/docs/ICP.md", preview: "고객 후보", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/ICP.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "tool-switcher", label: "AI 도구 전환 사용자", description: "Codex와 Claude 전환에서 인증/실행 마찰을 겪습니다. · 근거: README.md", preview: "Have", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "curious-only", label: "관심만 있음", description: "최근 7일 안에 직접 시도한 사건이 없습니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ],
             [
-                Day1IcpQuestionOption(id: "stuck-loop", label: "빌드 루프에 막힘", description: "검증 없이 새 기능을 반복해서 만들고 있습니다. · 근거: docs/GOAL.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "stuck-loop", label: "빌드 루프에 막힘", description: "검증 없이 새 기능을 반복해서 만들고 있습니다. · 근거: .agentic30/docs/GOAL.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/GOAL.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "auth-friction", label: "AI 연결 인증 실패", description: "로컬 실행 보조 앱과 AI 연결 인증 사이에서 진행이 멈춥니다. · 근거: README.md", preview: "문제", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "nice-to-have", label: "있으면 좋음", description: "돈이나 시간을 이미 쓰는 대안이 없습니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ],
             [
-                Day1IcpQuestionOption(id: "manual-notes", label: "수동 노트/스크립트", description: "현재는 문서와 임시 스크립트로 Day 진행을 관리합니다. · 근거: docs/SPEC.md", preview: "Have", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "manual-notes", label: "수동 노트/스크립트", description: "현재는 문서와 임시 스크립트로 Day 진행을 관리합니다. · 근거: .agentic30/docs/SPEC.md", preview: "Have", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/SPEC.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "codex-menu-bar", label: "macOS 메뉴바 앱", description: "반복 실행과 재시작 복원이 필요한 작업 흐름입니다. · 근거: README.md", preview: "Have", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "blank-slate", label: "아직 프로젝트 없음", description: "선택한 workspace에 실제 검증 대상이 없습니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ],
             [
-                Day1IcpQuestionOption(id: "schedule-call", label: "24시간 안에 인터뷰 요청", description: "오늘 바로 연락 가능한 후보가 있습니다. · 근거: docs/ICP.md", preview: "결과", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "capture-proof", label: "첫 반응 캡처", description: "대화 결과를 SPEC/고객 후보 문서에 바로 남길 수 있습니다. · 근거: docs/SPEC.md", preview: "결과", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "schedule-call", label: "24시간 안에 인터뷰 요청", description: "오늘 바로 연락 가능한 후보가 있습니다. · 근거: .agentic30/docs/ICP.md", preview: "결과", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/ICP.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "capture-proof", label: "첫 반응 캡처", description: "대화 결과를 SPEC/고객 후보 문서에 바로 남길 수 있습니다. · 근거: .agentic30/docs/SPEC.md", preview: "결과", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/SPEC.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "wait-for-launch", label: "출시 후에 보기", description: "오늘 검증할 행동이 없어 Day 1 게이트를 닫을 수 없습니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ],
         ]
@@ -11165,7 +11165,7 @@ final class AgenticViewModel: ObservableObject {
                 currentAlternatives: ["수동 문서 정리", "임시 스크립트"],
                 evidenceRefs: [
                     Day1IcpEvidenceRef(path: "README.md", reason: "앱 목적", quote: "Native macOS menu bar assistant"),
-                    Day1IcpEvidenceRef(path: "docs/ICP.md", reason: "고객 가설", quote: "1인 빌더"),
+                    Day1IcpEvidenceRef(path: ".agentic30/docs/ICP.md", reason: "고객 가설", quote: "1인 빌더"),
                 ],
                 missingAssumptions: ["유료 의향", "반복 빈도"],
                 confidence: "high"
@@ -11178,7 +11178,7 @@ final class AgenticViewModel: ObservableObject {
                 needs: ["재시작 후에도 Day 1 계획이 유지되어야 함"],
                 haves: ["macOS workspace", "AI coding assistant 사용 경험"],
                 dontNeeds: ["관심만 있음", "출시 후 검증하겠다는 후보"],
-                evidence: ["README.md", "docs/ICP.md"],
+                evidence: ["README.md", ".agentic30/docs/ICP.md"],
                 referenceCustomersToFind: ["전업 1인 빌더 1명"]
             ),
             antiIcp: Day1AntiIcp(

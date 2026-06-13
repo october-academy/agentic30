@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { extractWorkspaceEvidence } from "../sidecar/workspace-signal-extractor.mjs";
+import { projectDocPath } from "../sidecar/project-doc-paths.mjs";
 
 async function withTempWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-workspace-signals-"));
@@ -21,13 +22,14 @@ async function writeFile(root, relativePath, content) {
   await fs.writeFile(absolute, content);
 }
 
-test("canonical docs/ICP.md outranks noisy root icp.md", async () => {
+test("canonical project docs ignore legacy and noisy root ICP docs", async () => {
   await withTempWorkspace(async (root) => {
     await writeFile(root, "icp.md", "# ICP\n\nTODO: write this later.\n");
+    await writeFile(root, "docs/ICP.md", "# ICP\n\nTarget user: legacy ecommerce operator.");
     await writeFile(root, "README.md", "# SupportLens\n\nCustomer support escalation assistant.");
     await writeFile(
       root,
-      "docs/ICP.md",
+      projectDocPath("icp"),
       [
         "# Ideal Customer Profile",
         "",
@@ -37,31 +39,35 @@ test("canonical docs/ICP.md outranks noisy root icp.md", async () => {
     );
 
     const extracted = await extractWorkspaceEvidence(root, {
-      scanPaths: { icp: ["icp.md", "docs/ICP.md"] },
+      scanPaths: { icp: ["icp.md", "docs/ICP.md", projectDocPath("icp")] },
       includeSource: false,
     });
 
-    assert.equal(extracted.docs.icp, "docs/ICP.md");
+    assert.equal(extracted.docs.icp, projectDocPath("icp"));
     assert.match(extracted.signals.targetUser, /customer success lead/i);
-    assert.ok(extracted.candidates.icp[0].score > extracted.candidates.icp.find((item) => item.path === "icp.md").score);
+    assert.equal(extracted.candidates.icp.some((item) => item.path === "icp.md"), false);
+    assert.equal(extracted.candidates.icp.some((item) => item.path === "docs/ICP.md"), false);
+    assert.ok(extracted.rejectedCandidates.some((item) => item.path === "icp.md"));
+    assert.ok(extracted.rejectedCandidates.some((item) => item.path === "docs/ICP.md"));
   });
 });
 
 test("provider-returned bad paths are rejected before docs are exposed", async () => {
   await withTempWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
-    await writeFile(root, "docs/ICP.md", "# ICP\n\nTarget user: ecommerce operator.");
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await writeFile(root, ".agentic30/docs/ICP.md", "# ICP\n\nTarget user: ecommerce operator.");
     await writeFile(root, "data.json", JSON.stringify({ targetUser: "not a document role" }));
     await writeFile(root, "image.bin", "\u0000\u0001\u0002");
 
     const extracted = await extractWorkspaceEvidence(root, {
       scanPaths: {
-        icp: ["docs", "/tmp/outside.md", "missing.md", "data.json", "image.bin", "docs/ICP.md"],
+        icp: ["docs", "/tmp/outside.md", "missing.md", "data.json", "image.bin", ".agentic30/docs/ICP.md"],
       },
       includeSource: false,
     });
 
-    assert.equal(extracted.docs.icp, "docs/ICP.md");
+    assert.equal(extracted.docs.icp, ".agentic30/docs/ICP.md");
     assert.ok(extracted.rejectedCandidates.some((item) => item.path === "docs"));
     assert.ok(extracted.rejectedCandidates.some((item) => item.path === "/tmp/outside.md"));
     assert.ok(extracted.rejectedCandidates.some((item) => item.path === "missing.md"));
@@ -93,16 +99,16 @@ test("bundled sidecar Node runtime README is ignored for docs and product name",
     );
     await writeFile(
       root,
-      "docs/ICP.md",
+      ".agentic30/docs/ICP.md",
       "# ICP\n\nTarget user: 전업 1인 개발자 using AI coding agents.",
     );
 
     const extracted = await extractWorkspaceEvidence(root, {
-      scanPaths: { docs: runtimeReadme, icp: "docs/ICP.md" },
+      scanPaths: { docs: runtimeReadme, icp: ".agentic30/docs/ICP.md" },
       includeSource: true,
     });
 
-    assert.equal(extracted.docs.docs, "README.md");
+    assert.equal(extracted.docs.docs, null);
     assert.equal(extracted.signals.productName, "agentic30 Mac");
     assert.ok(extracted.rejectedCandidates.some((item) => item.path === runtimeReadme));
     assert.ok(!extracted.evidence.some((item) => item.path.includes("sidecar-build")));
@@ -121,7 +127,7 @@ test("late document sections still produce Goal ICP Pain and Outcome signals", a
         "Intro",
         "",
         "## References",
-        "- [SPEC.md](./docs/SPEC.md)",
+        "- [SPEC.md](./.agentic30/docs/SPEC.md)",
         "",
         "## Target User",
         "Target user: B2B SaaS founder preparing first sales calls.",
@@ -139,7 +145,7 @@ test("late document sections still produce Goal ICP Pain and Outcome signals", a
 
     const extracted = await extractWorkspaceEvidence(root, { includeSource: false });
 
-    assert.equal(extracted.docs.docs, "README.md");
+    assert.equal(extracted.docs.docs, null);
     assert.match(extracted.signals.productName, /RevenuePilot/);
     assert.match(extracted.signals.targetUser, /B2B SaaS founder/i);
     assert.match(extracted.signals.problem, /sales message/i);
@@ -153,7 +159,7 @@ test("persona Job summary does not become outcome signal", async () => {
   await withTempWorkspace(async (root) => {
     await writeFile(
       root,
-      "docs/ICP.md",
+      ".agentic30/docs/ICP.md",
       [
         "# ICP",
         "",
@@ -182,7 +188,7 @@ test("SPEC quote prefers problem section over MVP scope input artifacts", async 
   await withTempWorkspace(async (root) => {
     await writeFile(
       root,
-      "docs/SPEC.md",
+      ".agentic30/docs/SPEC.md",
       [
         "# Product Spec",
         "",
@@ -204,10 +210,10 @@ test("SPEC quote prefers problem section over MVP scope input artifacts", async 
     );
 
     const extracted = await extractWorkspaceEvidence(root, {
-      scanPaths: { spec: "docs/SPEC.md" },
+      scanPaths: { spec: ".agentic30/docs/SPEC.md" },
       includeSource: false,
     });
-    const specEvidence = extracted.evidence.find((item) => item.path === "docs/SPEC.md");
+    const specEvidence = extracted.evidence.find((item) => item.path === ".agentic30/docs/SPEC.md");
 
     assert.ok(specEvidence);
     assert.match(specEvidence.quote, /buyer pain|urgent enough to pay/i);

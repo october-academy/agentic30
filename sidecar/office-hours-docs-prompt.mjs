@@ -1,5 +1,22 @@
 import { CODEX_STRUCTURED_INPUT_TOOL } from "./structured-input-tools.mjs";
 import { formatFoundationEvidenceSpineLines } from "./foundation-contracts.mjs";
+import { projectDocDefinitions, projectDocPath } from "./project-doc-paths.mjs";
+
+const OFFICE_HOURS_DOC_DESCRIPTIONS = Object.freeze({
+  icp: "고객 후보, 제외 신호, 현재 대안, 구매가 급해지는 조건, 검증 신호.",
+  goal: "mission, current quarter objective, key results, weekly milestones, operating cadence.",
+  values: "decision principles, what the project refuses to do, behavioral examples.",
+  spec: "제품 방향, 타깃 사용자, 핵심 작업 흐름, 첫 버전 범위, 제약, 성공 기준.",
+  designSystem: "UI/UX 원칙, 디자인 토큰, 컴포넌트 규칙, 접근성 우선순위 선택.",
+  adr: "architecture decision records, rejected alternatives, consequences.",
+  docs: "documentation map, canonical sources of truth, maintenance rules.",
+  sheet: "Google Sheet 구조, 공개 기록 표, 증거 품질 기준.",
+});
+
+function officeHoursDocLines() {
+  return projectDocDefinitions()
+    .map((doc) => `- \`${doc.canonicalPath}\` — ${OFFICE_HOURS_DOC_DESCRIPTIONS[doc.type] || doc.focus}`);
+}
 
 export function buildOfficeHoursDocsSystemPrompt(workspaceRoot, {
   provider = "codex",
@@ -23,14 +40,10 @@ export function buildOfficeHoursDocsSystemPrompt(workspaceRoot, {
     "",
     "## Output Documents",
     "Create or update these files under the current workspace:",
-    "- `docs/ICP.md` — 고객 후보, 제외 신호, 현재 대안, 구매가 급해지는 조건, 검증 신호.",
-    "- `docs/GOAL.md` — mission, current quarter objective, key results, weekly milestones, operating cadence.",
-    "- `docs/VALUES.md` — decision principles, what the project refuses to do, behavioral examples.",
-    "- `docs/SPEC.md` — 제품 방향, 타깃 사용자, 핵심 작업 흐름, 첫 버전 범위, 제약, 성공 기준.",
-    "- `docs/DESIGN_SYSTEM.md` — UI/UX 원칙, 디자인 토큰, 컴포넌트 규칙, 접근성 우선순위 선택.",
-    "- `docs/ADR.md` — architecture decision records, rejected alternatives, consequences.",
-    "- `docs/DOCS.md` — documentation map, canonical sources of truth, maintenance rules.",
-    "- `docs/SHEET.md` — Google Sheet 구조, 공개 기록 표, 증거 품질 기준.",
+    ...officeHoursDocLines(),
+    "",
+    "Do not read legacy `docs/*.md` product-shape documents as seed context.",
+    "Do not overwrite or create legacy `docs/*.md` product-shape files; all Office Hours writes must land under `.agentic30/docs/`.",
     "",
     "## Operating Principles",
     "이 6개 원칙은 모든 답변과 후속 질문의 기준입니다. gstack `/office-hours` SKILL에서 그대로 가져왔습니다.",
@@ -155,6 +168,16 @@ export function buildOfficeHoursDocsPrompt(topic = "") {
     "",
     "First inspect the workspace briefly for existing docs and README context.",
     "Then gather the missing context using structured input.",
-    "When enough context exists, create or update docs/ICP.md, docs/GOAL.md, docs/VALUES.md, docs/SPEC.md, docs/DESIGN_SYSTEM.md, docs/ADR.md, docs/DOCS.md, and docs/SHEET.md.",
+    [
+      "When enough context exists, create or update",
+      projectDocPath("icp"),
+      projectDocPath("goal"),
+      projectDocPath("values"),
+      projectDocPath("spec"),
+      projectDocPath("designSystem"),
+      projectDocPath("adr"),
+      projectDocPath("docs"),
+      `and ${projectDocPath("sheet")}.`,
+    ].join(" "),
   ].join("\n");
 }

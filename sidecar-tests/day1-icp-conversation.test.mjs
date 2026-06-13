@@ -370,10 +370,11 @@ test("configured doc path questions answer immediately from BIP manifest", async
     const completed = await waitForEvent(events, (event) => {
       if (event.type !== "session_updated" || event.session?.id !== sessionId || event.session.status !== "idle") return false;
       const answer = latestAssistantMessage(event.session);
-      return /docs\/ICP\.md/.test(answer.content || "");
+      return /`ICP\.md`는 현재 BIP 설정 기준으로/.test(answer.content || "")
+        && /\.agentic30\/docs\/ICP\.md/.test(answer.content || "");
     });
     const answer = latestAssistantMessage(completed.session);
-    assert.match(answer.content, /docs\/ICP\.md/);
+    assert.match(answer.content, /\.agentic30\/docs\/ICP\.md/);
     assert.ok(answer.performance?.marks?.some((mark) =>
       mark.phase === "route.classified"
       && mark.details?.executionMode === "instant_chat"
@@ -676,20 +677,20 @@ test("BIP setup auto-start starts IDD before mission choices unlock", async () =
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
 
-    assert.equal(iddReady.session.pendingUserInput.title, "고객 후보 1/4");
+    assert.equal(iddReady.session.pendingUserInput.title, "Ideal Customer Profile 1/4");
     assert.equal(iddReady.session.pendingUserInput.generation?.mode, "host_structured");
     assert.equal(iddReady.session.pendingUserInput.generation?.docType, "icp");
     assert.match(iddReady.session.pendingUserInput.questions[0].question, /가장 먼저 인터뷰할 .*유형/);
     const iddCreated = events.find((event) =>
       event.type === "session_created"
-      && event.session?.title === "초기 설정: 고객 후보"
+      && event.session?.title === "초기 설정: Ideal Customer Profile"
     );
     assert.equal(iddCreated?.session.status, "awaiting_input");
     assert.equal(iddCreated?.session.pendingUserInput?.toolName, "agentic30_request_user_input");
     assert.equal(events.some((event) => event.type === "bip_coach_generation_completed"), false);
     assert.equal(events.some((event) =>
       event.type === "session_created"
-      && event.session?.title === "초기 설정: 고객 후보"
+      && event.session?.title === "초기 설정: Ideal Customer Profile"
     ), true);
     await closeWebSocket(ws);
     ws = null;
@@ -748,7 +749,7 @@ test("IDD start uses sidecar agent synthesized structured question when availabl
 
     const iddReady = await waitForEvent(events, (event) =>
       event.type === "session_updated"
-      && event.session?.title === "초기 설정: 고객 후보"
+      && event.session?.title === "초기 설정: Ideal Customer Profile"
       && event.session?.status === "awaiting_input"
       && event.session?.pendingUserInput?.generation?.mode === "sidecar_agent_synthesized"
     );
@@ -779,6 +780,7 @@ test("Day 1 document handoff writes one canonical doc immediately without auto-s
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-handoff-app-"));
   await writeDay1Fixture(root, appSupportPath);
   await fs.mkdir(path.join(root, "docs"), { recursive: true });
+  await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
   await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표는 보존한다.\n");
 
   const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
@@ -854,10 +856,12 @@ test("Day 1 document handoff writes one canonical doc immediately without auto-s
       events.some((event) => event.type === "session_created" && event.session?.title === "Day 1 Handoff: ICP"),
       false,
     );
-    const written = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
-    assert.match(written, /기존 목표는 보존한다/);
+    const written = await fs.readFile(path.join(root, ".agentic30", "docs", "GOAL.md"), "utf8");
+    const legacy = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    assert.doesNotMatch(written, /기존 목표는 보존한다/);
     assert.match(written, /agentic30:day1-handoff:start/);
     assert.doesNotMatch(written, /Day 1 Handoff|Document Decision|Rubric Signals/);
+    assert.doesNotMatch(legacy, /agentic30:day1-handoff:start/);
 
     await closeWebSocket(ws);
     ws = null;
@@ -876,6 +880,7 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-handoff-app-"));
   await writeDay1Fixture(root, appSupportPath);
   await fs.mkdir(path.join(root, "docs"), { recursive: true });
+  await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
   await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표는 보존한다.\n");
 
   const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
@@ -935,13 +940,15 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
       ),
       false,
     );
-    for (const rel of ["docs/GOAL.md", "docs/ICP.md", "docs/VALUES.md", "docs/SPEC.md"]) {
+    for (const rel of [".agentic30/docs/GOAL.md", ".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/SPEC.md"]) {
       const content = await fs.readFile(path.join(root, rel), "utf8");
       assert.match(content, /agentic30:day1-handoff:start/);
       assert.doesNotMatch(content, /Day 1 Handoff|Document Decision|Rubric Signals/);
     }
-    const goal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
-    assert.match(goal, /기존 목표는 보존한다/);
+    const goal = await fs.readFile(path.join(root, ".agentic30", "docs", "GOAL.md"), "utf8");
+    const legacyGoal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    assert.doesNotMatch(goal, /기존 목표는 보존한다/);
+    assert.doesNotMatch(legacyGoal, /agentic30:day1-handoff:start/);
 
     await closeWebSocket(ws);
     ws = null;
@@ -1116,7 +1123,7 @@ test("recoverable IDD setup error retry creates host question without provider r
 
     const iddReady = await waitForEvent(events, (event) =>
       event.type === "session_updated"
-      && event.session?.title === "초기 설정: 고객 후보"
+      && event.session?.title === "초기 설정: Ideal Customer Profile"
       && event.session?.status === "awaiting_input"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
@@ -1203,7 +1210,7 @@ test("IDD auto-start resumes persisted interviewing state without showing setup 
 
     const created = await waitForEvent(events, (event) =>
       event.type === "session_created"
-      && event.session?.title === "초기 설정: 고객 후보"
+      && event.session?.title === "초기 설정: Ideal Customer Profile"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
     assertContainsShape(created, fixture.events.find((event) => event.type === "session_created"), "autostart session event");
@@ -1349,7 +1356,7 @@ test("IDD auto-start recovers legacy stale setup error caused by interrupted int
 
     const created = await waitForEvent(events, (event) =>
       event.type === "session_created"
-      && event.session?.title === "초기 설정: 고객 후보"
+      && event.session?.title === "초기 설정: Ideal Customer Profile"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
     assert.equal(created.session.pendingUserInput.generation?.docType, "icp");
@@ -1488,21 +1495,21 @@ test("concurrent IDD start requests create only one initial setup session", asyn
 
     const created = await waitForEvent(events, (event) =>
       event.type === "session_created"
-      && event.session?.title === "초기 설정: 고객 후보"
+      && event.session?.title === "초기 설정: Ideal Customer Profile"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
     await assertNoEventUntil(
       events,
       (event) =>
         event.type === "session_created"
-        && event.session?.title === "초기 설정: 고객 후보"
+        && event.session?.title === "초기 설정: Ideal Customer Profile"
         && event.session?.id !== created.session.id,
       400,
       "duplicate initial setup session",
     );
 
     const createdIds = new Set(events
-      .filter((event) => event.type === "session_created" && event.session?.title === "초기 설정: 고객 후보")
+      .filter((event) => event.type === "session_created" && event.session?.title === "초기 설정: Ideal Customer Profile")
       .map((event) => event.session.id));
     assert.equal(createdIds.size, 1);
     await closeWebSocket(ws);
@@ -1521,15 +1528,16 @@ test("Post-Foundation Day 1 ICP coaching records a five-turn local conversation"
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-post-foundation-day1-icp-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-post-foundation-day1-icp-app-"));
   await fs.mkdir(path.join(root, "docs"), { recursive: true });
+  await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
   await fs.writeFile(
-    path.join(root, "docs", "ICP.md"),
+    path.join(root, ".agentic30", "docs", "ICP.md"),
     [
       "# Ideal Customer Profile (ICP)",
       "전업 1인 개발자, 수익 0원, macOS 사용자, 고객 인터뷰 의향 보유.",
     ].join("\n\n"),
   );
   await fs.writeFile(
-    path.join(root, "docs", "SPEC.md"),
+    path.join(root, ".agentic30", "docs", "SPEC.md"),
     [
       "# SPEC",
       "Day 1은 builder-state 진단 후 SPEC.md v0 proof baseline과 다음 proof target을 정한다.",
@@ -1540,8 +1548,8 @@ test("Post-Foundation Day 1 ICP coaching records a five-turn local conversation"
     JSON.stringify({
       workspace: {
         root,
-        icp: "docs/ICP.md",
-        spec: "docs/SPEC.md",
+        icp: ".agentic30/docs/ICP.md",
+        spec: ".agentic30/docs/SPEC.md",
         designSystem: "",
         adr: "",
         goal: "",
@@ -1585,7 +1593,7 @@ test("Post-Foundation Day 1 ICP coaching records a five-turn local conversation"
     assert.notEqual(created.session.status, "awaiting_input");
 
     const turns = [
-      "DAY1_ICP_TURN_1: Day 1 시작. docs/ICP.md 기준으로 내가 맞는 유저인지 먼저 진단해줘.",
+      "DAY1_ICP_TURN_1: Day 1 시작. .agentic30/docs/ICP.md 기준으로 내가 맞는 유저인지 먼저 진단해줘.",
       "DAY1_ICP_TURN_2: 나는 퇴사한 전업 1인 개발자이고 수익은 0원, macOS에서 Codex를 쓴다. Day 1 builder-state를 판정해줘.",
       "DAY1_ICP_TURN_3: 이미 랜딩 페이지와 작은 프로토타입은 있다. Day 1 blank-slate discovery가 아니라 fast path로 가야 하는지 확인해줘.",
       "DAY1_ICP_TURN_4: SPEC.md v0 proof baseline에는 어떤 현재 상태와 다음 proof target을 남겨야 해?",
@@ -1713,15 +1721,16 @@ test("Day 1 ICP user completes a five-turn live Codex SDK conversation", {
 
 async function writeDay1Fixture(root, appSupportPath) {
   await fs.mkdir(path.join(root, "docs"), { recursive: true });
+  await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
   await fs.writeFile(
-    path.join(root, "docs", "ICP.md"),
+    path.join(root, ".agentic30", "docs", "ICP.md"),
     [
       "# Ideal Customer Profile (ICP)",
       "전업 1인 개발자, 수익 0원, macOS 사용자, 고객 인터뷰 의향 보유.",
     ].join("\n\n"),
   );
   await fs.writeFile(
-    path.join(root, "docs", "SPEC.md"),
+    path.join(root, ".agentic30", "docs", "SPEC.md"),
     [
       "# SPEC",
       "Day 1은 builder-state 진단 후 SPEC.md v0 proof baseline과 다음 proof target을 정한다.",
@@ -1732,8 +1741,8 @@ async function writeDay1Fixture(root, appSupportPath) {
     JSON.stringify({
       workspace: {
         root,
-        icp: "docs/ICP.md",
-        spec: "docs/SPEC.md",
+        icp: ".agentic30/docs/ICP.md",
+        spec: ".agentic30/docs/SPEC.md",
         designSystem: "",
         adr: "",
         goal: "",
@@ -1756,7 +1765,7 @@ async function writeIddSetupState(root, state) {
 
 function liveDay1Turns() {
   return [
-    "LIVE_DAY1_ICP_STEP_1: Day 1 시작. docs/ICP.md 기준으로 내가 맞는 유저인지 진단해줘. 응답에는 반드시 LIVE_DAY1_ICP_STEP_1_OK 를 포함해.",
+    "LIVE_DAY1_ICP_STEP_1: Day 1 시작. .agentic30/docs/ICP.md 기준으로 내가 맞는 유저인지 진단해줘. 응답에는 반드시 LIVE_DAY1_ICP_STEP_1_OK 를 포함해.",
     "LIVE_DAY1_ICP_STEP_2: 나는 퇴사한 전업 1인 개발자이고 수익은 0원, macOS에서 Codex를 쓴다. Day 1 builder-state를 판정해줘. 응답에는 반드시 LIVE_DAY1_ICP_STEP_2_OK 를 포함해.",
     "LIVE_DAY1_ICP_STEP_3: 이미 랜딩 페이지와 작은 프로토타입은 있다. blank-slate discovery 대신 fast path로 가야 하는지 확인해줘. 응답에는 반드시 LIVE_DAY1_ICP_STEP_3_OK 를 포함해.",
     "LIVE_DAY1_ICP_STEP_4: SPEC.md v0 proof baseline에는 어떤 현재 상태와 다음 proof target을 남겨야 해? 응답에는 반드시 LIVE_DAY1_ICP_STEP_4_OK 를 포함해.",

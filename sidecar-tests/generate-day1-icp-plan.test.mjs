@@ -150,30 +150,30 @@ function makeFrontierAlignmentPlan(deterministicPlan, suffix = "A") {
       icp: {
         ...deterministicPlan.components.icp,
         options: [
-          frontierOption(`icp_${suffix}_1`, `B2B SaaS support lead ${suffix}`, "이번 주 Slack escalation 문제를 직접 설명할 고객입니다. · 근거: docs/ICP.md", "고객", "근거: docs/ICP.md"),
-          frontierOption(`icp_${suffix}_2`, `고객 성공팀 리드 ${suffix}`, "SLA 리스크를 팀 지표로 관리하는 고객입니다. · 근거: docs/SPEC.md", "고객", "근거: docs/SPEC.md"),
+          frontierOption(`icp_${suffix}_1`, `B2B SaaS support lead ${suffix}`, "이번 주 Slack escalation 문제를 직접 설명할 고객입니다. · 근거: .agentic30/docs/ICP.md", "고객", "근거: .agentic30/docs/ICP.md"),
+          frontierOption(`icp_${suffix}_2`, `고객 성공팀 리드 ${suffix}`, "SLA 리스크를 팀 지표로 관리하는 고객입니다. · 근거: .agentic30/docs/SPEC.md", "고객", "근거: .agentic30/docs/SPEC.md"),
           frontierOption(`icp_${suffix}_3`, `온콜 운영 담당자 ${suffix}`, "반복 알림 누락 비용을 바로 말할 수 있는 사용자입니다. · 근거: README.md", "고객", "근거: README.md"),
-          frontierOption(`icp_${suffix}_4`, `초기 B2B SaaS 운영자 ${suffix}`, "작은 팀에서 support workflow를 직접 고치는 고객입니다. · 근거: docs/GOAL.md", "고객", "근거: docs/GOAL.md"),
+          frontierOption(`icp_${suffix}_4`, `초기 B2B SaaS 운영자 ${suffix}`, "작은 팀에서 support workflow를 직접 고치는 고객입니다. · 근거: .agentic30/docs/GOAL.md", "고객", "근거: .agentic30/docs/GOAL.md"),
           frontierOption(`icp_${suffix}_5`, `관심만 있는 구경 고객 ${suffix}`, "최근 사건과 예산 신호가 없어 제외 후보입니다.", "Weak", "근거 부족", { antiSignal: true, evidenceLimited: true }),
         ],
       },
       painPoint: {
         ...deterministicPlan.components.painPoint,
         options: [
-          frontierOption(`pain_${suffix}_1`, `Slack escalation 누락으로 SLA 리스크가 커짐 ${suffix}`, "반복 누락이 고객 계정 리스크로 이어집니다. · 근거: docs/SPEC.md", "문제", "근거: docs/SPEC.md"),
+          frontierOption(`pain_${suffix}_1`, `Slack escalation 누락으로 SLA 리스크가 커짐 ${suffix}`, "반복 누락이 고객 계정 리스크로 이어집니다. · 근거: .agentic30/docs/SPEC.md", "문제", "근거: .agentic30/docs/SPEC.md"),
           frontierOption(`pain_${suffix}_2`, `담당자가 수동 확인에 시간을 씀 ${suffix}`, "현재 대안의 시간 비용을 바로 확인할 수 있습니다. · 근거: README.md", "문제", "근거: README.md"),
-          frontierOption(`pain_${suffix}_3`, `계정 위험 신호를 늦게 발견함 ${suffix}`, "조기 판단 실패가 비용 신호로 연결됩니다. · 근거: docs/GOAL.md", "문제", "근거: docs/GOAL.md"),
-          frontierOption(`pain_${suffix}_4`, `지원 요청 우선순위가 매번 흔들림 ${suffix}`, "반복 운영 마찰을 최근 사건으로 물을 수 있습니다. · 근거: docs/ICP.md", "문제", "근거: docs/ICP.md"),
+          frontierOption(`pain_${suffix}_3`, `계정 위험 신호를 늦게 발견함 ${suffix}`, "조기 판단 실패가 비용 신호로 연결됩니다. · 근거: .agentic30/docs/GOAL.md", "문제", "근거: .agentic30/docs/GOAL.md"),
+          frontierOption(`pain_${suffix}_4`, `지원 요청 우선순위가 매번 흔들림 ${suffix}`, "반복 운영 마찰을 최근 사건으로 물을 수 있습니다. · 근거: .agentic30/docs/ICP.md", "문제", "근거: .agentic30/docs/ICP.md"),
           frontierOption(`pain_${suffix}_5`, `불편하지만 현재 대안 비용이 없음 ${suffix}`, "돈이나 시간을 이미 쓰는 대안이 없어 제외 후보입니다.", "Weak", "근거 부족", { antiSignal: true, evidenceLimited: true }),
         ],
       },
       outcome: {
         ...deterministicPlan.components.outcome,
         options: [
-          frontierOption(`outcome_${suffix}_1`, `최근 누락 사건과 현재 대안을 고객 대화에서 확인한다 ${suffix}`, "실제 사건과 대안을 같이 확인하는 행동 신호입니다. · 근거: docs/SPEC.md", "확인할 행동", "근거: docs/SPEC.md"),
-          frontierOption(`outcome_${suffix}_2`, `SLA 리스크 판단을 위해 지불 의향을 묻는다 ${suffix}`, "돈을 낼 문제인지 확인하는 시장 신호입니다. · 근거: docs/GOAL.md", "확인할 행동", "근거: docs/GOAL.md"),
+          frontierOption(`outcome_${suffix}_1`, `최근 누락 사건과 현재 대안을 고객 대화에서 확인한다 ${suffix}`, "실제 사건과 대안을 같이 확인하는 행동 신호입니다. · 근거: .agentic30/docs/SPEC.md", "확인할 행동", "근거: .agentic30/docs/SPEC.md"),
+          frontierOption(`outcome_${suffix}_2`, `SLA 리스크 판단을 위해 지불 의향을 묻는다 ${suffix}`, "돈을 낼 문제인지 확인하는 시장 신호입니다. · 근거: .agentic30/docs/GOAL.md", "확인할 행동", "근거: .agentic30/docs/GOAL.md"),
           frontierOption(`outcome_${suffix}_3`, `수동 확인 workflow를 보여달라고 요청한다 ${suffix}`, "현재 대안과 반복 행동을 관찰합니다. · 근거: README.md", "확인할 행동", "근거: README.md"),
-          frontierOption(`outcome_${suffix}_4`, `계정 위험 알림 도입 결정을 누가 하는지 확인한다 ${suffix}`, "구매자와 사용자를 분리해 다음 검증으로 넘깁니다. · 근거: docs/ICP.md", "확인할 행동", "근거: docs/ICP.md"),
+          frontierOption(`outcome_${suffix}_4`, `계정 위험 알림 도입 결정을 누가 하는지 확인한다 ${suffix}`, "구매자와 사용자를 분리해 다음 검증으로 넘깁니다. · 근거: .agentic30/docs/ICP.md", "확인할 행동", "근거: .agentic30/docs/ICP.md"),
           frontierOption(`outcome_${suffix}_5`, `지불 의향 신호가 없으면 보류한다 ${suffix}`, "시장 신호가 약한 경우의 제외 기준입니다.", "Weak", "근거 부족", { evidenceLimited: true }),
         ],
       },
@@ -185,13 +185,13 @@ test("Agentic30 fixture produces evidence-based developer ICP questions", async 
   const root = await tempWorkspace();
   try {
     await writeFile(root, "README.md", "# agentic30 Mac\n\nNative macOS assistant for founders using AI coding agents.");
-    await writeFile(root, "docs/ICP.md", "# ICP\n\n전업 1인 개발자, macOS 사용자, Codex와 Claude Code를 매일 쓰며 첫 고객 검증에서 막힌 사람.");
-    await writeFile(root, "docs/SPEC.md", "# SPEC\n\nProblem: 만들 수 있지만 무엇을 만들어야 팔리는지 모른다.");
+    await writeFile(root, ".agentic30/docs/ICP.md", "# ICP\n\n전업 1인 개발자, macOS 사용자, Codex와 Claude Code를 매일 쓰며 첫 고객 검증에서 막힌 사람.");
+    await writeFile(root, ".agentic30/docs/SPEC.md", "# SPEC\n\nProblem: 만들 수 있지만 무엇을 만들어야 팔리는지 모른다.");
     await writeFile(root, "package.json", JSON.stringify({ name: "agentic30-public", dependencies: { ws: "^8.0.0" } }));
 
     const plan = await generateDay1IcpPlan({
       workspaceRoot: root,
-      scanResult: { icp: "docs/ICP.md", spec: "docs/SPEC.md", docs: "README.md" },
+      scanResult: { icp: ".agentic30/docs/ICP.md", spec: ".agentic30/docs/SPEC.md", docs: "README.md" },
       onboardingHypothesis: {
         productName: "agentic30 Mac",
         projectKind: "mac_app",
@@ -209,9 +209,9 @@ test("Agentic30 fixture produces evidence-based developer ICP questions", async 
     assert.equal(plan.signals.productName, "agentic30 Mac");
     assert.ok(plan.questions.length >= 3 && plan.questions.length <= 5);
     assert.match(plan.mission, /agentic30 Mac/);
-    assert.ok(plan.signals.evidenceRefs.some((ref) => ref.path === "docs/ICP.md"));
+    assert.ok(plan.signals.evidenceRefs.some((ref) => ref.path === ".agentic30/docs/ICP.md"));
     assert.ok(JSON.stringify(plan.questions).includes("개발자"));
-    assert.ok(plan.icpDraft.evidence.some((line) => line.includes("docs/ICP.md")));
+    assert.ok(plan.icpDraft.evidence.some((line) => line.includes(".agentic30/docs/ICP.md")));
     for (const question of plan.questions) {
       assertEvidenceMarkedOptions(question.options, { allowLimited: true });
     }
@@ -224,13 +224,13 @@ test("Agentic30 fixture produces goal-based Day 1 alignment statement and qualit
   const root = await tempWorkspace();
   try {
     await writeFile(root, "README.md", "# agentic30 Mac\n\nNative macOS assistant for founders using AI coding agents.");
-    await writeFile(root, "docs/ICP.md", "# ICP\n\n전업 1인 개발자, macOS 사용자, Codex와 Claude Code를 매일 쓰며 첫 고객 검증에서 막힌 사람.");
-    await writeFile(root, "docs/GOAL.md", "# GOAL\n\n30일 안에 첫 유료 고객 후보와 검증된 시장 신호를 만든다.");
-    await writeFile(root, "docs/SPEC.md", "# SPEC\n\nProblem: 만들 수 있지만 무엇을 만들어야 팔리는지 모른다.");
+    await writeFile(root, ".agentic30/docs/ICP.md", "# ICP\n\n전업 1인 개발자, macOS 사용자, Codex와 Claude Code를 매일 쓰며 첫 고객 검증에서 막힌 사람.");
+    await writeFile(root, ".agentic30/docs/GOAL.md", "# GOAL\n\n30일 안에 첫 유료 고객 후보와 검증된 시장 신호를 만든다.");
+    await writeFile(root, ".agentic30/docs/SPEC.md", "# SPEC\n\nProblem: 만들 수 있지만 무엇을 만들어야 팔리는지 모른다.");
 
     const plan = await generateDay1AlignmentPlan({
       workspaceRoot: root,
-      scanResult: { icp: "docs/ICP.md", goal: "docs/GOAL.md", spec: "docs/SPEC.md", docs: "README.md" },
+      scanResult: { icp: ".agentic30/docs/ICP.md", goal: ".agentic30/docs/GOAL.md", spec: ".agentic30/docs/SPEC.md", docs: "README.md" },
       onboardingHypothesis: {
         productName: "agentic30 Mac",
         projectKind: "mac_app",
@@ -436,7 +436,7 @@ test("Agentic30 public docs produce customer-outcome choices instead of business
     await writeFile(root, "README.md", "# agentic30 Mac\n\nProduct context for adaptive curriculum.");
     await writeFile(
       root,
-      "docs/ICP.md",
+      ".agentic30/docs/ICP.md",
       [
         "# Ideal Customer Profile",
         "",
@@ -454,18 +454,18 @@ test("Agentic30 public docs produce customer-outcome choices instead of business
     );
     await writeFile(
       root,
-      "docs/GOAL.md",
+      ".agentic30/docs/GOAL.md",
       "# Agentic30 목표\n\nAgentic30은 전업 1인 개발자를 위한 30일 부트캠프다. 사용자 100명과 첫 매출 달성을 목표로 한다.\n",
     );
     await writeFile(
       root,
-      "docs/SPEC.md",
+      ".agentic30/docs/SPEC.md",
       "# Agentic30 Product Spec\n\n핵심 문제는 “만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다”는 것이다.\n",
     );
 
     const plan = await generateDay1AlignmentPlan({
       workspaceRoot: root,
-      scanResult: { icp: "docs/ICP.md", goal: "docs/GOAL.md", spec: "docs/SPEC.md", docs: "README.md" },
+      scanResult: { icp: ".agentic30/docs/ICP.md", goal: ".agentic30/docs/GOAL.md", spec: ".agentic30/docs/SPEC.md", docs: "README.md" },
       onboardingHypothesis: {
         productName: "agentic30 Mac",
         projectKind: "mac_app",
@@ -521,7 +521,7 @@ test("Day 1 deterministic pain options ignore SPEC input artifacts", async () =>
     await writeFile(root, "README.md", "# agentic30 Mac\n\nProduct context for adaptive curriculum.");
     await writeFile(
       root,
-      "docs/ICP.md",
+      ".agentic30/docs/ICP.md",
       [
         "# Ideal Customer Profile",
         "",
@@ -530,12 +530,12 @@ test("Day 1 deterministic pain options ignore SPEC input artifacts", async () =>
     );
     await writeFile(
       root,
-      "docs/GOAL.md",
+      ".agentic30/docs/GOAL.md",
       "# Agentic30 목표\n\nAgentic30은 전업 1인 개발자를 위한 30일 부트캠프다. 사용자 100명과 첫 매출 달성을 목표로 한다.\n",
     );
     await writeFile(
       root,
-      "docs/SPEC.md",
+      ".agentic30/docs/SPEC.md",
       [
         "# Agentic30 Product Spec",
         "",
@@ -558,7 +558,7 @@ test("Day 1 deterministic pain options ignore SPEC input artifacts", async () =>
 
     const plan = await generateDay1AlignmentPlan({
       workspaceRoot: root,
-      scanResult: { icp: "docs/ICP.md", goal: "docs/GOAL.md", spec: "docs/SPEC.md", docs: "README.md" },
+      scanResult: { icp: ".agentic30/docs/ICP.md", goal: ".agentic30/docs/GOAL.md", spec: ".agentic30/docs/SPEC.md", docs: "README.md" },
       onboardingHypothesis: {
         productName: "agentic30 Mac",
         projectKind: "mac_app",
@@ -816,7 +816,7 @@ test("Agentic30 public docs render goal and pain instead of scan placeholders", 
     await writeFile(root, "README.md", "# agentic30 Mac\n\nProduct context for adaptive curriculum.");
     await writeFile(
       root,
-      "docs/GOAL.md",
+      ".agentic30/docs/GOAL.md",
       [
         "# Agentic30 목표 / 핵심 결과",
         "",
@@ -827,7 +827,7 @@ test("Agentic30 public docs render goal and pain instead of scan placeholders", 
     );
     await writeFile(
       root,
-      "docs/ICP.md",
+      ".agentic30/docs/ICP.md",
       [
         "# Ideal Customer Profile",
         "",
@@ -839,12 +839,12 @@ test("Agentic30 public docs render goal and pain instead of scan placeholders", 
     );
     await writeFile(
       root,
-      "docs/SPEC.md",
+      ".agentic30/docs/SPEC.md",
       "# Agentic30 Product Spec\n\n핵심 문제는 “만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다”는 것이다.\n",
     );
     await writeFile(
       root,
-      "docs/VALUES.md",
+      ".agentic30/docs/VALUES.md",
       "# Values — Agentic30이 지키는 기준\n\nAgentic30의 가치는 좋은 말이 아니라 제품과 코칭이 매일 지킬 판단 기준이다.\n",
     );
     await writeFile(
@@ -858,10 +858,10 @@ test("Agentic30 public docs render goal and pain instead of scan placeholders", 
       ].join("\n"),
     );
     const scanResult = {
-      icp: "docs/ICP.md",
-      goal: "docs/GOAL.md",
-      spec: "docs/SPEC.md",
-      values: "docs/VALUES.md",
+      icp: ".agentic30/docs/ICP.md",
+      goal: ".agentic30/docs/GOAL.md",
+      spec: ".agentic30/docs/SPEC.md",
+      values: ".agentic30/docs/VALUES.md",
       docs: "README.md",
     };
     const onboardingHypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root, {
@@ -938,7 +938,7 @@ test("Day 1 alignment composer accepts zod-validated concise SDK signal digest",
           { key: "icp", label: "ICP", value: "B2B SaaS support lead", tone: "body" },
           { key: "pain", label: "Pain", value: "Slack escalation 누락", tone: "mark" },
           { key: "outcome", label: "Outcome", value: "계정 리스크를 더 빨리 판단한다", tone: "strong" },
-          { key: "evidence", label: "근거", value: "docs/GOAL.md, docs/ICP.md", tone: "code" },
+          { key: "evidence", label: "근거", value: ".agentic30/docs/GOAL.md, .agentic30/docs/ICP.md", tone: "code" },
         ],
         summary: "SupportLens는 support lead의 Slack escalation 누락을 Day 2에서 검증한다.",
       },
@@ -1017,18 +1017,18 @@ test("Day 1 alignment frontier synthesis dedupes similar outcomes and fills from
     });
     const noisyPrimary = makeFrontierAlignmentPlan(deterministicPlan, "Noisy");
     noisyPrimary.components.outcome.options = [
-      frontierOption("outcome_noisy_1", "지불 의향을 첫 고객 대화에서 확인한다", "돈을 낼 문제인지 확인합니다. · 근거: docs/GOAL.md", "확인할 행동", "근거: docs/GOAL.md"),
-      frontierOption("outcome_noisy_2", "가격 지불 의사를 이번 주 대화에서 묻는다", "같은 결제 신호를 다른 말로 반복합니다. · 근거: docs/GOAL.md", "확인할 행동", "근거: docs/GOAL.md"),
-      frontierOption("outcome_noisy_3", "최근 Slack 누락 사건을 고객 대화에서 기록한다", "최근 사건 기반 검증입니다. · 근거: docs/SPEC.md", "확인할 행동", "근거: docs/SPEC.md"),
-      frontierOption("outcome_noisy_4", "계정 위험 알림 도입 결정을 누가 하는지 확인한다", "도입 결정권 검증입니다. · 근거: docs/ICP.md", "확인할 행동", "근거: docs/ICP.md"),
+      frontierOption("outcome_noisy_1", "지불 의향을 첫 고객 대화에서 확인한다", "돈을 낼 문제인지 확인합니다. · 근거: .agentic30/docs/GOAL.md", "확인할 행동", "근거: .agentic30/docs/GOAL.md"),
+      frontierOption("outcome_noisy_2", "가격 지불 의사를 이번 주 대화에서 묻는다", "같은 결제 신호를 다른 말로 반복합니다. · 근거: .agentic30/docs/GOAL.md", "확인할 행동", "근거: .agentic30/docs/GOAL.md"),
+      frontierOption("outcome_noisy_3", "최근 Slack 누락 사건을 고객 대화에서 기록한다", "최근 사건 기반 검증입니다. · 근거: .agentic30/docs/SPEC.md", "확인할 행동", "근거: .agentic30/docs/SPEC.md"),
+      frontierOption("outcome_noisy_4", "계정 위험 알림 도입 결정을 누가 하는지 확인한다", "도입 결정권 검증입니다. · 근거: .agentic30/docs/ICP.md", "확인할 행동", "근거: .agentic30/docs/ICP.md"),
       frontierOption("outcome_noisy_5", "수동 확인 workflow를 보여달라고 요청한다", "현재 대안 관찰입니다. · 근거: README.md", "확인할 행동", "근거: README.md"),
     ];
     const backup = makeFrontierAlignmentPlan(deterministicPlan, "Backup");
     backup.components.outcome.options = [
-      frontierOption("outcome_backup_1", "첫 사용자 획득 채널이나 소개 가능성을 확인한다", "획득 경로 신호를 확인합니다. · 근거: docs/GOAL.md", "확인할 행동", "근거: docs/GOAL.md"),
-      frontierOption("outcome_backup_2", "최근 누락 사건과 현재 대안을 고객 대화에서 확인한다", "실제 사건과 대안을 같이 확인합니다. · 근거: docs/SPEC.md", "확인할 행동", "근거: docs/SPEC.md"),
-      frontierOption("outcome_backup_3", "SLA 리스크 판단을 위해 지불 의향을 묻는다", "지불 신호입니다. · 근거: docs/GOAL.md", "확인할 행동", "근거: docs/GOAL.md"),
-      frontierOption("outcome_backup_4", "계정 위험 알림 도입 결정을 누가 하는지 확인한다", "결정권 신호입니다. · 근거: docs/ICP.md", "확인할 행동", "근거: docs/ICP.md"),
+      frontierOption("outcome_backup_1", "첫 사용자 획득 채널이나 소개 가능성을 확인한다", "획득 경로 신호를 확인합니다. · 근거: .agentic30/docs/GOAL.md", "확인할 행동", "근거: .agentic30/docs/GOAL.md"),
+      frontierOption("outcome_backup_2", "최근 누락 사건과 현재 대안을 고객 대화에서 확인한다", "실제 사건과 대안을 같이 확인합니다. · 근거: .agentic30/docs/SPEC.md", "확인할 행동", "근거: .agentic30/docs/SPEC.md"),
+      frontierOption("outcome_backup_3", "SLA 리스크 판단을 위해 지불 의향을 묻는다", "지불 신호입니다. · 근거: .agentic30/docs/GOAL.md", "확인할 행동", "근거: .agentic30/docs/GOAL.md"),
+      frontierOption("outcome_backup_4", "계정 위험 알림 도입 결정을 누가 하는지 확인한다", "결정권 신호입니다. · 근거: .agentic30/docs/ICP.md", "확인할 행동", "근거: .agentic30/docs/ICP.md"),
       frontierOption("outcome_backup_5", "수동 확인 workflow를 보여달라고 요청한다", "현재 대안 신호입니다. · 근거: README.md", "확인할 행동", "근거: README.md"),
     ];
 
@@ -1113,16 +1113,16 @@ test("Day 1 alignment frontier synthesis filters product-input and outcome conta
     contaminated.components.painPoint.options[0] = frontierOption(
       "bad_pain",
       "problem memo 또는 인터뷰 transcript 입력",
-      "제품 입력 기능은 고객 통증 선택지가 아닙니다. · 근거: docs/SPEC.md",
+      "제품 입력 기능은 고객 통증 선택지가 아닙니다. · 근거: .agentic30/docs/SPEC.md",
       "문제",
-      "근거: docs/SPEC.md",
+      "근거: .agentic30/docs/SPEC.md",
     );
     contaminated.components.outcome.options[0] = frontierOption(
       "bad_outcome",
       "Job summary: AI 코딩 도구로 빠르게 만들 수 있다",
-      "제품 기능 설명은 고객 행동 신호가 아닙니다. · 근거: docs/SPEC.md",
+      "제품 기능 설명은 고객 행동 신호가 아닙니다. · 근거: .agentic30/docs/SPEC.md",
       "확인할 행동",
-      "근거: docs/SPEC.md",
+      "근거: .agentic30/docs/SPEC.md",
     );
     const cleanBackup = makeFrontierAlignmentPlan(deterministicPlan, "Backup");
 
@@ -1181,12 +1181,12 @@ test("non-Agentic30 SaaS fixture avoids Agentic30-specific axes and names", asyn
   const root = await tempWorkspace();
   try {
     await writeFile(root, "README.md", "# SupportLens\n\nB2B SaaS that helps support leads triage customer escalations from Slack and email.");
-    await writeFile(root, "docs/SPEC.md", "# SPEC\n\nProblem: support leads miss urgent account-risk escalations.");
+    await writeFile(root, ".agentic30/docs/SPEC.md", "# SPEC\n\nProblem: support leads miss urgent account-risk escalations.");
     await writeFile(root, "package.json", JSON.stringify({ name: "supportlens", dependencies: { next: "^15.0.0", react: "^19.0.0" } }));
 
     const plan = await generateDay1IcpPlan({
       workspaceRoot: root,
-      scanResult: { spec: "docs/SPEC.md", docs: "README.md" },
+      scanResult: { spec: ".agentic30/docs/SPEC.md", docs: "README.md" },
       onboardingHypothesis: {
         productName: "SupportLens",
         projectKind: "web_app",
@@ -1218,9 +1218,9 @@ test("all Day 1 question dimensions build evidence-marked choices", () => {
     currentAlternatives: ["Slack/메일 thread를 사람이 직접 확인"],
     evidenceRefs: [
       { path: "README.md", reason: "README", quote: "# SupportLens" },
-      { path: "docs/ICP.md", reason: "icp document", quote: "B2B SaaS support lead" },
-      { path: "docs/SPEC.md", reason: "spec document", quote: "Problem: urgent account-risk escalations are missed in Slack and email" },
-      { path: "docs/GOAL.md", reason: "goal document", quote: "유료 support lead 후보 1명을 검증한다" },
+      { path: ".agentic30/docs/ICP.md", reason: "icp document", quote: "B2B SaaS support lead" },
+      { path: ".agentic30/docs/SPEC.md", reason: "spec document", quote: "Problem: urgent account-risk escalations are missed in Slack and email" },
+      { path: ".agentic30/docs/GOAL.md", reason: "goal document", quote: "유료 support lead 후보 1명을 검증한다" },
     ],
     missingAssumptions: [],
     confidence: "high",
@@ -1400,10 +1400,10 @@ test("Day 1 alignment composer falls back to deterministic alignment plan", asyn
               {
                 id: "bad_goal_copy",
                 label: "30일 안에 사용자 100명과 첫 매출 달성",
-                description: "사업 목표를 그대로 복사함 · 근거: docs/GOAL.md",
+                description: "사업 목표를 그대로 복사함 · 근거: .agentic30/docs/GOAL.md",
                 preview: "Outcome",
                 antiSignal: false,
-                evidenceLabel: "근거: docs/GOAL.md",
+                evidenceLabel: "근거: .agentic30/docs/GOAL.md",
                 evidenceLimited: false,
               },
               {
@@ -1412,7 +1412,7 @@ test("Day 1 alignment composer falls back to deterministic alignment plan", asyn
                 description: "고객 결과가 아니라 제품 기능입니다.",
                 preview: "Outcome",
                 antiSignal: false,
-                evidenceLabel: "근거: docs/SPEC.md",
+                evidenceLabel: "근거: .agentic30/docs/SPEC.md",
                 evidenceLimited: false,
               },
             ],
@@ -1432,13 +1432,13 @@ test("Day 1 alignment signal digest prefers canonical docs over duplicate README
   try {
     await writeFile(root, "README.md", "# SupportLens\n\nRoot readme.");
     await writeFile(root, "readme.md", "# Duplicate SupportLens\n\nLowercase duplicate.");
-    await writeFile(root, "docs/GOAL.md", "# GOAL\n\n검증된 첫 매출 후보를 만든다.");
-    await writeFile(root, "docs/ICP.md", "# ICP\n\nB2B SaaS support lead.");
-    await writeFile(root, "docs/SPEC.md", "# SPEC\n\nProblem: Slack escalation 누락.");
+    await writeFile(root, ".agentic30/docs/GOAL.md", "# GOAL\n\n검증된 첫 매출 후보를 만든다.");
+    await writeFile(root, ".agentic30/docs/ICP.md", "# ICP\n\nB2B SaaS support lead.");
+    await writeFile(root, ".agentic30/docs/SPEC.md", "# SPEC\n\nProblem: Slack escalation 누락.");
 
     const plan = await generateDay1AlignmentPlan({
       workspaceRoot: root,
-      scanResult: { goal: "docs/GOAL.md", icp: "docs/ICP.md", spec: "docs/SPEC.md", docs: "README.md" },
+      scanResult: { goal: ".agentic30/docs/GOAL.md", icp: ".agentic30/docs/ICP.md", spec: ".agentic30/docs/SPEC.md", docs: "README.md" },
       onboardingHypothesis: {
         productName: "SupportLens",
         targetUser: "B2B SaaS support lead",
@@ -1450,7 +1450,7 @@ test("Day 1 alignment signal digest prefers canonical docs over duplicate README
 
     assertConciseSignalDigest(plan.signalDigest);
     const evidence = plan.signalDigest.rows.find((row) => row.key === "evidence");
-    assert.equal(evidence.value, "docs/GOAL.md, docs/ICP.md, docs/SPEC.md");
+    assert.equal(evidence.value, ".agentic30/docs/GOAL.md, .agentic30/docs/ICP.md, .agentic30/docs/SPEC.md");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -1460,13 +1460,13 @@ test("Day 1 alignment signal digest rejects markdown document links outside evid
   const root = await tempWorkspace();
   try {
     await writeFile(root, "README.md", "# agentic30 Mac\n\nNative macOS assistant.");
-    await writeFile(root, "docs/GOAL.md", "# GOAL\n\n첫 유료 고객 후보를 검증한다.");
-    await writeFile(root, "docs/ICP.md", "# ICP\n\n전업 1인 개발자.");
-    await writeFile(root, "docs/SPEC.md", "# SPEC\n\nProblem: 무엇을 만들어야 팔리는지 모른다.");
+    await writeFile(root, ".agentic30/docs/GOAL.md", "# GOAL\n\n첫 유료 고객 후보를 검증한다.");
+    await writeFile(root, ".agentic30/docs/ICP.md", "# ICP\n\n전업 1인 개발자.");
+    await writeFile(root, ".agentic30/docs/SPEC.md", "# SPEC\n\nProblem: 무엇을 만들어야 팔리는지 모른다.");
 
     const plan = await generateDay1AlignmentPlan({
       workspaceRoot: root,
-      scanResult: { goal: "docs/GOAL.md", icp: "docs/ICP.md", spec: "docs/SPEC.md", docs: "README.md" },
+      scanResult: { goal: ".agentic30/docs/GOAL.md", icp: ".agentic30/docs/ICP.md", spec: ".agentic30/docs/SPEC.md", docs: "README.md" },
       onboardingHypothesis: {
         productName: "agentic30 Mac",
         targetUser: "[전업 1인 개발자](./VALUES.md) — 제품 가치",
@@ -1502,7 +1502,7 @@ test("Day 1 alignment normalizer sanitizes markdown document links in statement 
       likelyUsers: ["AI 코딩 도구를 쓰는 개발자"],
       problem: "무엇을 팔아야 할지 모른다",
       currentAlternatives: ["수동 인터뷰"],
-      evidenceRefs: [{ path: "docs/ICP.md", reason: "ICP", quote: "개발자" }],
+      evidenceRefs: [{ path: ".agentic30/docs/ICP.md", reason: "ICP", quote: "개발자" }],
       missingAssumptions: [],
       confidence: "high",
     },
@@ -1512,7 +1512,7 @@ test("Day 1 alignment normalizer sanitizes markdown document links in statement 
         title: "ICP",
         prompt: "먼저 검증할 고객은?",
         statement: documentPointer,
-        evidence: ["docs/ICP.md"],
+        evidence: [".agentic30/docs/ICP.md"],
         missingAssumptions: [],
         options: [
           { id: "o1", label: "AI 코딩 도구를 쓰는 개발자", description: "근거 있음", preview: "ICP" },
@@ -1524,7 +1524,7 @@ test("Day 1 alignment normalizer sanitizes markdown document links in statement 
         title: "Pain Point",
         prompt: "압축된 통증은?",
         statement: "무엇을 팔아야 할지 모른다",
-        evidence: ["docs/SPEC.md"],
+        evidence: [".agentic30/docs/SPEC.md"],
         missingAssumptions: [],
         options: [
           { id: "o1", label: "무엇을 팔아야 할지 모름", description: "반복됨", preview: "Pain" },
@@ -1536,7 +1536,7 @@ test("Day 1 alignment normalizer sanitizes markdown document links in statement 
         title: "Outcome",
         prompt: "고객 결과는?",
         statement: "첫 대화에서 지불 의향과 현재 대안을 확인한다",
-        evidence: ["docs/GOAL.md"],
+        evidence: [".agentic30/docs/GOAL.md"],
         missingAssumptions: [],
         options: [
           { id: "o1", label: "첫 대화에서 지불 의향과 대안을 확인한다", description: "결과", preview: "Outcome" },

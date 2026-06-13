@@ -849,10 +849,10 @@ enum Agentic30LocalDataResetter {
     private static let day1HandoffMarkerStart = "<!-- agentic30:day1-handoff:start -->"
     private static let day1HandoffMarkerEnd = "<!-- agentic30:day1-handoff:end -->"
     private static let managedDay1HandoffRelativePaths = [
-        "docs/GOAL.md",
-        "docs/ICP.md",
-        "docs/VALUES.md",
-        "docs/SPEC.md",
+        ".agentic30/docs/GOAL.md",
+        ".agentic30/docs/ICP.md",
+        ".agentic30/docs/VALUES.md",
+        ".agentic30/docs/SPEC.md",
     ]
 
     static func reset(

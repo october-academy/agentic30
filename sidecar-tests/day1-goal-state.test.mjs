@@ -11,7 +11,7 @@ test("Day 1 goal normalization strips duplicated problem text from customer and 
     problem: "만들 줄은 알지만 무엇을 팔아야 하는지 모른다",
     validationAction: "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.",
     proofSink: "local",
-    evidenceRefs: ["docs/ICP.md", "docs/SPEC.md"],
+    evidenceRefs: [".agentic30/docs/ICP.md", ".agentic30/docs/SPEC.md"],
     sourcePlanFingerprint: "fixture",
     selectedAt: "2026-06-07T00:00:00.000Z",
   });

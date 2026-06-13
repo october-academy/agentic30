@@ -31,7 +31,7 @@ struct KeychainSettingsMigrationTests {
           "metaAccessToken": "meta-token",
           "metaAdAccountId": "act_123",
           "bipWorkspaceRoot": "/tmp/app",
-          "bipIcpPath": "docs/ICP.md"
+          "bipIcpPath": ".agentic30/docs/ICP.md"
         }
         """
 
@@ -50,7 +50,7 @@ struct KeychainSettingsMigrationTests {
         #expect(settings.metaAccessToken == "meta-token")
         #expect(settings.metaAdAccountId == "act_123")
         #expect(settings.bipWorkspaceRoot == "/tmp/app")
-        #expect(settings.bipIcpPath == "docs/ICP.md")
+        #expect(settings.bipIcpPath == ".agentic30/docs/ICP.md")
         #expect(settings.bipSpecPath == "")
         #expect(settings.preferredClaudeModel == AgentModelCatalog.defaultClaudeModelID)
         #expect(settings.preferredCodexModel == AgentModelCatalog.defaultCodexModelID)
@@ -162,7 +162,7 @@ struct KeychainSettingsMigrationTests {
     @Test func migrationRegistryAlwaysNormalizesToCurrentSchema() {
         var oldSettings = KeychainHelper.Settings()
         oldSettings.schemaVersion = 0
-        oldSettings.bipSpecPath = "docs/SPEC.md"
+        oldSettings.bipSpecPath = ".agentic30/docs/SPEC.md"
         oldSettings.preferredClaudeModel = "unknown-claude"
         oldSettings.preferredCodexModel = "unknown-codex"
         oldSettings.preferredGeminiModel = "unknown-gemini"
@@ -173,7 +173,7 @@ struct KeychainSettingsMigrationTests {
         let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 0)
 
         #expect(migrated.schemaVersion == KeychainHelper.Settings.currentSchemaVersion)
-        #expect(migrated.bipSpecPath == "docs/SPEC.md")
+        #expect(migrated.bipSpecPath == ".agentic30/docs/SPEC.md")
         #expect(migrated.preferredClaudeModel == AgentModelCatalog.defaultClaudeModelID)
         #expect(migrated.preferredCodexModel == AgentModelCatalog.defaultCodexModelID)
         #expect(migrated.preferredGeminiModel == AgentModelCatalog.defaultGeminiModelID)
@@ -413,9 +413,12 @@ struct KeychainSettingsMigrationTests {
         let tempRoot = fileManager.temporaryDirectory
             .appendingPathComponent("agentic30-managed-content-reset-\(UUID().uuidString)", isDirectory: true)
         let workspace = tempRoot.appendingPathComponent("workspace", isDirectory: true)
-        let docs = workspace.appendingPathComponent("docs", isDirectory: true)
+        let agenticDocsRoot = workspace.appendingPathComponent(".agentic30", isDirectory: true)
+        let docs = agenticDocsRoot.appendingPathComponent("docs", isDirectory: true)
+        let legacyDocs = workspace.appendingPathComponent("docs", isDirectory: true)
         let goal = docs.appendingPathComponent("GOAL.md")
         let icp = docs.appendingPathComponent("ICP.md")
+        let legacyGoal = legacyDocs.appendingPathComponent("GOAL.md")
         let readme = workspace.appendingPathComponent("README.md")
         let suiteName = "agentic30.managed-content-reset.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -428,6 +431,7 @@ struct KeychainSettingsMigrationTests {
         }
 
         try fileManager.createDirectory(at: docs, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: legacyDocs, withIntermediateDirectories: true)
         try [
             "# GOAL",
             "",
@@ -442,6 +446,14 @@ struct KeychainSettingsMigrationTests {
         ].joined(separator: "\n").write(to: goal, atomically: true, encoding: .utf8)
         try "# ICP\n\nNo generated block here.\n".write(to: icp, atomically: true, encoding: .utf8)
         try [
+            "# Legacy GOAL",
+            "",
+            "<!-- agentic30:day1-handoff:start -->",
+            "legacy docs are seed-only and should be preserved",
+            "<!-- agentic30:day1-handoff:end -->",
+            "",
+        ].joined(separator: "\n").write(to: legacyGoal, atomically: true, encoding: .utf8)
+        try [
             "# README",
             "",
             "<!-- agentic30:day1-handoff:start -->",
@@ -449,9 +461,11 @@ struct KeychainSettingsMigrationTests {
             "<!-- agentic30:day1-handoff:end -->",
             "",
         ].joined(separator: "\n").write(to: readme, atomically: true, encoding: .utf8)
-        defaults.set(workspace.path, forKey: "agentic30.workspaceRoot")
+        var options = Agentic30LocalDataResetOptions()
+        options.includeKnownWorkspaces = false
 
         let report = Agentic30LocalDataResetter.reset(
+            options: options,
             defaults: defaults,
             fileManager: fileManager,
             appSupportURLs: [],
@@ -461,11 +475,13 @@ struct KeychainSettingsMigrationTests {
             savedStateURLs: [],
             qmdDataURLs: [],
             appBundleURL: nil,
+            additionalWorkspaceURLs: [workspace],
             resetKeychainStorage: {}
         )
 
         let cleanedGoal = try String(contentsOf: goal, encoding: .utf8)
         let preservedIcp = try String(contentsOf: icp, encoding: .utf8)
+        let preservedLegacyGoal = try String(contentsOf: legacyGoal, encoding: .utf8)
         let preservedReadme = try String(contentsOf: readme, encoding: .utf8)
 
         #expect(report.failures.isEmpty)
@@ -475,6 +491,7 @@ struct KeychainSettingsMigrationTests {
         #expect(!cleanedGoal.contains("agentic30:day1-handoff"))
         #expect(!cleanedGoal.contains("generated interview content must reset"))
         #expect(preservedIcp == "# ICP\n\nNo generated block here.\n")
+        #expect(preservedLegacyGoal.contains("legacy docs are seed-only and should be preserved"))
         #expect(preservedReadme.contains("not a canonical managed doc"))
     }
 

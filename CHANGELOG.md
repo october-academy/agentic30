@@ -3,11 +3,14 @@
 ## [Unreleased]
 
 ### 추가
+- **프로젝트 문서 경로 공통화**: sidecar 전반에서 GOAL/ICP/VALUES/SPEC/DESIGN_SYSTEM/ADR/DOCS/SHEET 경로를 한 곳에서 관리하도록 `project-doc-paths` 모듈을 추가했습니다.
 - **Codex Office Hours 카드 입력**: Codex MCP 구조화 입력 카드가 제출 전에는 pending 상태로 머물고, 사용자가 답을 제출한 뒤에만 다음 질문을 이어가도록 했습니다.
 - **완료된 Office Hours 인터뷰 복원**: 완료된 Day-scoped 인터뷰를 다시 열면 provider를 새로 시작하지 않고 저장된 Q/A 스냅샷과 제출 상태를 즉시 복원합니다.
 - **인터뷰 카드 Q01 시각 스펙**: Day 1 인터뷰 첫 질문 카드의 HTML/PNG 레퍼런스를 `docs/specs/`에 추가했습니다.
 
 ### 변경
+- **Agentic30 프로젝트 문서 위치**: Office Hours/IDD/BIP 문서의 canonical 저장 위치를 `docs/*.md`에서 `.agentic30/docs/*.md`로 옮기고, legacy `docs/*.md`는 product-shape 문서 seed로 읽거나 덮어쓰지 않도록 정리했습니다.
+- **ICP 라벨**: 문서 preview와 structured input에서 `고객 후보` 제목을 `Ideal Customer Profile`로 표기해 ICP 문서 의미를 명확히 했습니다.
 - **Office Hours Day 1 handoff**: GOAL/ICP/VALUES/SPEC 저장과 Day 1 완료를 분리하고, 문서 저장 뒤 다음 약속 카드가 이어지며 약속을 닫은 뒤에만 Day 2로 넘어가도록 정리했습니다.
 - **Settings 연동 화면**: Vercel, Cloudflare, PostHog을 compact MCP OAuth row로 정리하고 수동 토큰/URL 필드와 Exa 예비 키를 숨겼습니다.
 - **Office Hours 증거/개입 배너**: 예약 intervention은 열린 증거 부채 배너 안에 접고, 즉시 intervention은 full-width 배너로 유지하도록 했습니다.
@@ -15,6 +18,8 @@
 - **Sidecar 테스트 스위트 정리**: 실제 `gws` CLI 상태에 의존하던 Google auth hang 회귀 테스트를 기본 sidecar suite에서 제거해 릴리스 검증을 hermetic하게 유지했습니다.
 
 ### 수정
+- **Office Hours 자유 입력 제출**: structured free-text 필드가 macOS에서 안정적으로 포커스를 받고 Return 키로 현재 질문을 제출하도록 고쳤습니다.
+- **Office Hours 질문 스크롤 여백**: Day 1 활성 질문 카드 아래에 큰 빈 공간이 남지 않도록 pending prompt tail 높이를 viewport와 상태에 맞춰 조정했습니다.
 - **Office Hours 재개/수정 안정성**: resume preamble 중복을 제거하고 stable question identity로 keep-last dedupe하며, 완료된 인터뷰도 이전 답변 수정이 가능하게 했습니다.
 - **Office Hours 중복 시작 방지**: 이미 실행 중이거나 구조화 입력 대기 중인 Office Hours start 요청은 오류 대신 현재 세션 상태를 재방송하도록 했습니다.
 - **개입 시작 상태 정리**: intervention trigger로 Office Hours를 시작하면 Mac 상태의 pending intervention을 즉시 지웁니다.

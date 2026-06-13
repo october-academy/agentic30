@@ -62,7 +62,7 @@ test("buildDailyMissionCard creates a provider-free mission-first surface", () =
       customer: "pre-revenue solo macOS developers",
       problem: "generic agents do not force customer proof",
       validationAction: "Send a DM asking whether they will pay $29 or commit one hour this week.",
-      evidenceRefs: ["docs/ICP.md", "docs/VALUES.md"],
+      evidenceRefs: [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md"],
     },
     proofLedger: {
       events: [
@@ -90,7 +90,7 @@ test("buildDailyMissionCard creates a provider-free mission-first surface", () =
   assert.ok(card.failureMiniAction);
   assert.deepEqual(card.agentBridge.providers, ["claude", "codex", "cursor"]);
   assert.equal(card.agentBridge.primarySurface, false);
-  assert.equal(card.sourceEvidenceRefs.includes("docs/ICP.md"), true);
+  assert.equal(card.sourceEvidenceRefs.includes(".agentic30/docs/ICP.md"), true);
   assert.equal(card.sourceEvidenceRefs.includes("interview-1"), true);
 });
 

@@ -15,11 +15,11 @@
     {
       "type": "session_created",
       "session": {
-        "title": "초기 설정: 고객 후보",
+        "title": "초기 설정: Ideal Customer Profile",
         "status": "awaiting_input",
         "pendingUserInput": {
           "toolName": "agentic30_request_user_input",
-          "title": "고객 후보 1/4",
+          "title": "Ideal Customer Profile 1/4",
           "generation": {
             "mode": "host_structured",
             "docType": "icp"
@@ -60,7 +60,7 @@
       "type": "session_updated",
       "session": {
         "id": "idd-session-1",
-        "title": "초기 설정: 고객 후보",
+        "title": "초기 설정: Ideal Customer Profile",
         "provider": "codex",
         "model": "",
         "status": "awaiting_input",
@@ -72,10 +72,10 @@
           "requestId": "request-icp-1",
           "sessionId": "idd-session-1",
           "toolName": "agentic30_request_user_input",
-          "title": "고객 후보 1/4",
+          "title": "Ideal Customer Profile 1/4",
           "createdAt": "2026-04-27T01:00:01.000Z",
           "intro": {
-            "title": "고객 후보",
+            "title": "Ideal Customer Profile",
             "body": "가장 먼저 집중할 고객 유형입니다. 처음부터 완벽하게 쓰기보다, 이번 주 실제로 연락하고 인터뷰할 수 있는 좁은 고객 후보 하나를 고르면 됩니다.",
             "bullets": [
               "상황: 직함보다 지금 어떤 문제 상황에 있는지",
@@ -128,7 +128,7 @@
           "pendingIddContinuation": {
             "requestId": "request-icp-1",
             "docType": "icp",
-            "prompt": "IDD 문서 인터뷰를 시작합니다: 고객 후보"
+            "prompt": "IDD 문서 인터뷰를 시작합니다: Ideal Customer Profile"
           }
         }
       }

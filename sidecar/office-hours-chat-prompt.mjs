@@ -1,5 +1,6 @@
 import { buildOfficeHoursUiCopyContractPrompt } from "./office-hours-copy-rules.mjs";
 import { officeHoursStructuredInputChannel } from "./office-hours-structured-input.mjs";
+import { projectDocPath } from "./project-doc-paths.mjs";
 
 export function clampOfficeHoursContext(context = "") {
   return String(context || "").trim().slice(0, 16_000);
@@ -127,7 +128,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
           "The get_users active-user-definition card MUST use signalId `get_users_active_user_definition`, signalLabel `활성 사용자 기준`, header `활성 사용자 기준`, allowFreeText: true, requiresFreeText: false, and exactly three options.",
           "The card question MUST be: `이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?`",
           "The three option labels MUST be exactly: `첫 가치 완료`, `반복 사용 완료`, `수동 파일럿 성공`. Mark `첫 가치 완료` as recommended unless the context clearly says another activation behavior is already chosen.",
-          "Ground the get_users activation behavior in docs/ICP.md for this product: a full-time solo macOS developer should count only when project/work/interview/BIP records lead to a concrete validation action and next task, not when they merely express interest.",
+          `Ground the get_users activation behavior in ${projectDocPath("icp")} for this product: a full-time solo macOS developer should count only when project/work/interview/BIP records lead to a concrete validation action and next task, not when they merely express interest.`,
           "The active-user-definition card MUST say the failure condition in Korean: 가입, 대기 신청, 페이지 조회, 좋아요, 팔로워, or `관심 있어요` do not count as active users unless the chosen 핵심 행동 is completed.",
         ] : []),
         "Ask for the weakest missing evidence behind the locked goal first: money signal for make_money, acquisition/channel signal for get_users, or build flow/user-success signal for build_product.",
@@ -151,7 +152,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
         "For get_users, push toward a measurable acquisition action and activated users, not vanity traffic. Default success is 100 unique people/accounts completing the chosen activation action.",
         ...(isGetUsersGoalFlow ? [
           "For Day 2+ get_users, reuse the `Active user definition` / `get_users_active_user_definition` answer from memory when present. If no such answer exists, the first structured input card MUST ask the same active-user-definition question before acquisition execution.",
-          "For this product's docs/ICP.md customer definition, apply that definition to record-backed execution: the activated user should complete a validation behavior and receive or commit to the next task, not just join a list or view content.",
+          `For this product's ${projectDocPath("icp")} customer definition, apply that definition to record-backed execution: the activated user should complete a validation behavior and receive or commit to the next task, not just join a list or view content.`,
         ] : []),
         "For build_product, push toward a working version that a target user can complete end-to-end. A deploy or commit alone is not enough unless it enables the validation action.",
         "If DAY2_PLUS_LIVE_DIGEST says BUILD_WITHOUT_CUSTOMER_EVIDENCE: true, the first question must challenge the customer/user evidence gap before asking for more building.",

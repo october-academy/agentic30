@@ -761,7 +761,7 @@ struct OpenDesignDayContent {
         mission: Mission(
             markedTitle: "한 명",
             titleSuffix: "만 골라요.",
-            body: "다짜고짜 \"고객이 누구냐\"고 묻는 건 어려우니, 선택지 질문 4문항 → 한 명으로 좁히기 순서로 진행할게요. 다 끝나면 docs/ICP.md에 쓸 문서 초안을 먼저 보여줘요.",
+            body: "다짜고짜 \"고객이 누구냐\"고 묻는 건 어려우니, 선택지 질문 4문항 → 한 명으로 좁히기 순서로 진행할게요. 다 끝나면 .agentic30/docs/ICP.md에 쓸 문서 초안을 먼저 보여줘요.",
             rules: [
                 "이번 주 실제 대화로 이어질 수 있어야 해요.",
                 "칭찬형 답이 아니라 진짜 시간을 쓰는 사람이어야 해요.",
@@ -1093,7 +1093,7 @@ struct OpenDesignDayContent {
                 rules: [
                     isAlignment ? "목표·고객·문제·행동을 분리합니다." : "need / have / don't need를 분리합니다.",
                     isAlignment ? "다음 검증 기준이 문장 안에 있어야 합니다." : "현재 대안, 반복 행동, 비용 신호를 우선합니다.",
-                    isAlignment ? "마지막에 품질 점수를 확인합니다." : "마지막에 docs/ICP.md와 제외 신호를 확인합니다.",
+                    isAlignment ? "마지막에 품질 점수를 확인합니다." : "마지막에 .agentic30/docs/ICP.md와 제외 신호를 확인합니다.",
                 ],
                 footnote: isAlignment
                     ? "질문 \(steps.count)개 · 약 3분"
@@ -2581,7 +2581,7 @@ struct OpenDesignDayDraft: Equatable {
         if isAntiSignal {
             return "현재 후보는 제외 신호에 걸립니다. Day 3 인터뷰 대상에 넣기 전 실제 행동 증거를 한 번 더 확인한다."
         }
-        return "Day 3 실제 행동 인터뷰 첫 후보로 올리고 인터뷰 원문과 업무 일지를 docs/ICP.md의 증거 섹션에 연결한다."
+        return "Day 3 실제 행동 인터뷰 첫 후보로 올리고 인터뷰 원문과 업무 일지를 .agentic30/docs/ICP.md의 증거 섹션에 연결한다."
     }
 
     var markdown: String {
@@ -2594,7 +2594,7 @@ struct OpenDesignDayDraft: Equatable {
         return """
         # 고객 후보
 
-        > 기록 위치: docs/ICP.md
+        > 기록 위치: .agentic30/docs/ICP.md
         > 출처: Day 1 질문 흐름
 
         ## 이번 주 고객 후보
@@ -2662,7 +2662,7 @@ struct OpenDesignDayDraft: Equatable {
 
         > 출처: Day 1 목표 정렬 흐름
         > 기준: 워크스페이스 확인 + 사용자 선택
-        > 기록 위치: docs/GOAL.md, docs/ICP.md, docs/SPEC.md
+        > 기록 위치: .agentic30/docs/GOAL.md, .agentic30/docs/ICP.md, .agentic30/docs/SPEC.md
 
         ## 확정
         - 목표: \(snapshot.goal)
@@ -2814,7 +2814,7 @@ struct OpenDesignDayDraft: Equatable {
         return """
         # 고객 후보
 
-        > 기록 위치: docs/ICP.md
+        > 기록 위치: .agentic30/docs/ICP.md
         > 출처: Day 1 맞춤 확인 계획
 
         ## 설명
@@ -8378,10 +8378,10 @@ private struct OpenDesignDayDocumentStep: Identifiable {
 
     static func ordered(previews: [IddDocPreview]) -> [OpenDesignDayDocumentStep] {
         let order = [
-            ("goal", "GOAL", "docs/GOAL.md"),
-            ("icp", "고객 후보", "docs/ICP.md"),
-            ("values", "VALUES", "docs/VALUES.md"),
-            ("spec", "SPEC", "docs/SPEC.md"),
+            ("goal", "GOAL", ".agentic30/docs/GOAL.md"),
+            ("icp", "Ideal Customer Profile", ".agentic30/docs/ICP.md"),
+            ("values", "VALUES", ".agentic30/docs/VALUES.md"),
+            ("spec", "SPEC", ".agentic30/docs/SPEC.md"),
         ]
         var previousWritten = true
         return order.map { item in
@@ -9831,7 +9831,7 @@ private func openDesignGuideAttributedText(_ body: String) -> AttributedString {
     }
 
     for needle in [
-        "docs/ICP.md",
+        ".agentic30/docs/ICP.md",
     ] {
         apply(
             needle,

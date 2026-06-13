@@ -7,6 +7,7 @@ import { query, listSessions } from "@anthropic-ai/claude-agent-sdk";
 import { GoogleGenAI } from "@google/genai";
 import { buildAuthEnv } from "./auth-context.mjs";
 import { buildQmdGuidance, buildQmdMcpConfig } from "./qmd-support.mjs";
+import { projectDocPath } from "./project-doc-paths.mjs";
 import {
   createUserInputRequest,
   deleteUserInputArtifacts,
@@ -2209,10 +2210,10 @@ function buildStubResponse(prompt) {
       INLINE_DECISION_SENTINEL_END,
     ].join("\n");
   }
-  if (/ICP\.md 문서 어디에 있어\?/i.test(value) && value.includes("ICP doc: docs/ICP.md")) {
-    return "`ICP.md`는 현재 BIP 설정 기준으로 `docs/ICP.md`에 있습니다.";
+  if (/ICP\.md 문서 어디에 있어\?/i.test(value) && value.includes(`ICP doc: ${projectDocPath("icp")}`)) {
+    return `\`ICP.md\`는 현재 BIP 설정 기준으로 \`${projectDocPath("icp")}\`에 있습니다.`;
   }
-  if ((value.includes("### ICP: docs/ICP.md") || value.includes("DAY1_ICP_TURN")) && /Day\s*1|Day 1|1일차/i.test(value)) {
+  if ((value.includes(`### ICP: ${projectDocPath("icp")}`) || value.includes("DAY1_ICP_TURN")) && /Day\s*1|Day 1|1일차/i.test(value)) {
     return [
       "ICP.md 확인: 전업 1인 개발자, 수익 0원, macOS, 고객 인터뷰 의향이 있으면 ICP 조건부 합격입니다.",
       "Day 1 응답: builder-state 진단을 먼저 하고, 기존 자산이 있으면 blank-slate discovery 대신 fast path로 SPEC.md v0 proof baseline과 다음 proof target을 정합니다.",
@@ -3299,12 +3300,12 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
     lines.push("");
     lines.push("## BIP (Build In Public) Context");
     lines.push(`Project workspace: ${bipConfig.workspace.root}`);
-    if (bipConfig.workspace.icp) lines.push(`ICP doc: ${bipConfig.workspace.icp}`);
-    if (bipConfig.workspace.spec) lines.push(`SPEC doc: ${bipConfig.workspace.spec}`);
-    if (bipConfig.workspace.values) lines.push(`VALUES doc: ${bipConfig.workspace.values}`);
-    if (bipConfig.workspace.designSystem) lines.push(`Design System docs: ${bipConfig.workspace.designSystem}`);
-    if (bipConfig.workspace.adr) lines.push(`ADR docs: ${bipConfig.workspace.adr}`);
-    if (bipConfig.workspace.goal) lines.push(`Goal doc: ${bipConfig.workspace.goal}`);
+    lines.push(`ICP doc: ${projectDocPath("icp")}`);
+    lines.push(`SPEC doc: ${projectDocPath("spec")}`);
+    lines.push(`VALUES doc: ${projectDocPath("values")}`);
+    lines.push(`Design System docs: ${projectDocPath("designSystem")}`);
+    lines.push(`ADR docs: ${projectDocPath("adr")}`);
+    lines.push(`Goal doc: ${projectDocPath("goal")}`);
     lines.push("Use QMD retrieval or BIP MCP tools to refresh or inspect project documents when needed.");
   }
 
@@ -3422,6 +3423,6 @@ function buildOctoberAdvisorGuidance() {
     "- For career/interview coaching, ask for concrete past cases, pressure-test tradeoffs, and practice the back-and-forth rather than only listing theory.",
     "- For product/startup coaching, force the user back to ICP, real customer conversations, landing/proof surfaces, acquisition, and paid signal.",
     "- When the user wants to define a project, create strategy docs, or says they are unsure what to build, run an Office Hours-style interview before drafting. Do not invent a persona, market, values, or goals from thin air.",
-    "- For document creation, prefer the `/office-hours-docs` flow: interview first, then write `docs/ICP.md`, `docs/GOAL.md`, `docs/VALUES.md`, and `docs/SPEC.md`.",
+    `- For document creation, prefer the \`/office-hours-docs\` flow: interview first, then write \`${projectDocPath("icp")}\`, \`${projectDocPath("goal")}\`, \`${projectDocPath("values")}\`, and \`${projectDocPath("spec")}\`.`,
   ].join("\n");
 }

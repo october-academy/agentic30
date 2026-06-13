@@ -315,10 +315,10 @@ test("collectReviewDayMetricsDashboard invokes curriculum and workspace collecto
   const fsImpl = {
     async stat(path) {
       statCalls.push(path);
-      if (path.endsWith("/workspace") || path.endsWith("/workspace/docs/ICP.md")) {
+      if (path.endsWith("/workspace") || path.endsWith("/workspace/.agentic30/docs/ICP.md")) {
         return {
           isDirectory: () => path.endsWith("/workspace"),
-          isFile: () => path.endsWith("/workspace/docs/ICP.md"),
+          isFile: () => path.endsWith("/workspace/.agentic30/docs/ICP.md"),
         };
       }
       throw new Error("missing");
@@ -359,7 +359,7 @@ test("collectReviewDayMetricsDashboard invokes curriculum and workspace collecto
   assert.equal(dashboard.generated_at, "2026-05-14T10:00:00.000Z");
   assert.deepEqual(dashboard.day_range, { start: 1, end: 7 });
   assert.equal(dashboard.tone, "deceleration_coaching");
-  assert.ok(statCalls.some((entry) => entry.endsWith("/workspace/docs/ICP.md")));
+  assert.ok(statCalls.some((entry) => entry.endsWith("/workspace/.agentic30/docs/ICP.md")));
 
   const byCategory = new Map(dashboard.source_statuses.map((source) => [source.type, source]));
   assert.equal(byCategory.get("summary").available, true);

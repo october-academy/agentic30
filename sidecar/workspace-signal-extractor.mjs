@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { PROJECT_DOCS_DIR, projectDocPath } from "./project-doc-paths.mjs";
 
 const MAX_DISCOVERY_ENTRIES = 8000;
 const MAX_DISCOVERY_DEPTH = 6;
@@ -21,56 +22,56 @@ const ROLES = Object.freeze([
 const ROLE_CONFIG = Object.freeze({
   icp: {
     names: ["icp.md", "ideal-customer-profile.md", "ideal_customer_profile.md", "persona.md", "personas.md", "customer.md", "customers.md"],
-    path: /(?:^|\/)(?:docs\/)?(?:icp|ideal[-_]customer[-_]profile|persona|personas|customer|customers)\.(?:md|mdx|txt|rst|adoc)$/i,
+    path: /^\.agentic30\/docs\/ICP\.md$/i,
     heading: /\b(?:icp|ideal customer|persona|target user|target customer|customer profile|타깃|타겟|고객|사용자|페르소나|대상)\b/i,
     body: /\b(?:target user|target customer|ideal customer|persona|audience|customer segment|타깃\s*사용자|타겟\s*사용자|고객\s*세그먼트|대상\s*고객|사용자)\b/i,
     field: "targetUser",
   },
   spec: {
     names: ["spec.md", "product_spec.md", "product-spec.md", "prd.md", "requirements.md"],
-    path: /(?:^|\/)(?:docs\/)?(?:spec|product[-_]spec|prd|requirements)\.(?:md|mdx|txt|rst|adoc)$/i,
+    path: /^\.agentic30\/docs\/SPEC\.md$/i,
     heading: /\b(?:spec|prd|requirements|problem|pain|scope|제품|명세|문제|통증|요구사항)\b/i,
     body: /\b(?:problem|pain|friction|scope|requirement|핵심\s*문제|문제는|통증|요구사항|범위)\b/i,
     field: "problem",
   },
   values: {
     names: ["values.md", "principles.md", "product_values.md", "product-values.md"],
-    path: /(?:^|\/)(?:docs\/)?(?:values|principles|product[-_]values)\.(?:md|mdx|txt|rst|adoc)$/i,
+    path: /^\.agentic30\/docs\/VALUES\.md$/i,
     heading: /\b(?:values|principles|tradeoff|value|가치|원칙|판단\s*기준|거절)\b/i,
     body: /\b(?:values|principles|tradeoff|decision rule|가치|원칙|판단\s*기준|우선|거절)\b/i,
     field: "values",
   },
   designSystem: {
     names: ["design.md", "design_system.md", "design-system.md", "design_systems.md", "design-systems.md"],
-    path: /(?:^|\/)(?:docs\/)?(?:design|design[-_]system|design[-_]systems)\.(?:md|mdx|txt|rst|adoc)$/i,
+    path: /^\.agentic30\/docs\/DESIGN_SYSTEM\.md$/i,
     heading: /\b(?:design|ui|ux|brand|visual|디자인|브랜드)\b/i,
     body: /\b(?:design system|component|palette|typography|디자인\s*시스템|컴포넌트|색상|타이포)\b/i,
     field: "",
   },
   adr: {
     names: ["adr.md", "architecture.md", "decisions.md"],
-    path: /(?:^|\/)(?:docs\/)?(?:adr|architecture|decisions)\.(?:md|mdx|txt|rst|adoc)$/i,
+    path: /^\.agentic30\/docs\/ADR\.md$/i,
     heading: /\b(?:adr|architecture|decision|아키텍처|결정)\b/i,
     body: /\b(?:architecture decision|technical decision|adr|아키텍처|기술\s*결정)\b/i,
     field: "",
   },
   goal: {
     names: ["goal.md", "goals.md", "okr.md", "north-star.md", "north_star.md"],
-    path: /(?:^|\/)(?:docs\/)?(?:goal|goals|okr|north[-_]star)\.(?:md|mdx|txt|rst|adoc)$/i,
+    path: /^\.agentic30\/docs\/GOAL\.md$/i,
     heading: /\b(?:goal|goals|okr|north\s*star|mission|objective|목표|미션|핵심\s*결과|성공\s*기준)\b/i,
     body: /\b(?:goal|north\s*star|proof target|objective|목표|목표로\s*한다|달성|검증\s*목표|성공\s*기준)\b/i,
     field: "goal",
   },
   docs: {
     names: ["docs.md", "readme.md", "index.md", "README.md"],
-    path: /(?:^|\/)(?:docs|readme|index)\.(?:md|mdx|txt|rst|adoc)$/i,
+    path: /^\.agentic30\/docs\/DOCS\.md$/i,
     heading: /\b(?:readme|docs|documentation|overview|소개|문서|개요)\b/i,
     body: /\b(?:overview|documentation|product|purpose|mission|소개|제품|목적|미션)\b/i,
     field: "purpose",
   },
   sheet: {
     names: ["sheet.md", "sheets.md", "bip_sheet.md", "bip-sheet.md"],
-    path: /(?:^|\/)(?:sheet|sheets|bip[-_]sheet)\.(?:md|mdx|txt|rst|adoc|json|yaml|yml)$/i,
+    path: /^\.agentic30\/docs\/SHEET\.md$/i,
     heading: /\b(?:sheet|spreadsheet|tracker|스프레드시트|시트|트래커)\b/i,
     body: /\b(?:sheet|spreadsheet|tracker|google sheets|스프레드시트|시트|트래커)\b/i,
     field: "",
@@ -171,6 +172,7 @@ export async function extractWorkspaceEvidence(workspaceRoot, {
 
   const readme = await loadWorkspaceText({ root, relativePath: "README.md", fsImpl, fileCache, maxChars: MAX_DOC_CHARS })
     || await loadWorkspaceText({ root, relativePath: "readme.md", fsImpl, fileCache, maxChars: MAX_DOC_CHARS });
+  const readmeContent = readme?.content || "";
   if (readme) {
     addEvidence({
       role: "docs",
@@ -201,6 +203,7 @@ export async function extractWorkspaceEvidence(workspaceRoot, {
     selectedCandidates,
     evidence: boundedEvidence,
     packageEvidence: packageJson,
+    readmeContent,
   });
 
   return {
@@ -298,7 +301,7 @@ async function scoreRoleCandidate({ root, role, relativePath, source, fileCache,
   if (source === "scan_path") score += 18;
   if (config.path.test(lowerPath)) score += 42;
   if (config.names.map((name) => name.toLowerCase()).includes(basename)) score += 34;
-  if (lowerPath.startsWith("docs/")) score += 12;
+  if (lowerPath.startsWith(`${PROJECT_DOCS_DIR}/`)) score += 18;
   if (/^readme\.(?:md|mdx|txt|rst)$/i.test(basename) && role === "docs") score += 50;
   if (config.heading.test(headingText)) score += 24;
   if (config.body.test(bodyText)) score += 18;
@@ -327,7 +330,7 @@ function compareCandidates(a, b) {
 
 function canonicalPathRank(relativePath) {
   const pathText = cleanPath(relativePath).toLowerCase();
-  if (pathText.startsWith("docs/")) return 0;
+  if (pathText.startsWith(`${PROJECT_DOCS_DIR}/`)) return 0;
   if (/^readme\./.test(pathText)) return 1;
   return 2;
 }
@@ -388,9 +391,10 @@ async function collectSourceEvidence({ root, fsImpl, fileCache, sourceFiles }) {
   return scored.slice(0, 4);
 }
 
-function extractSignals({ docs, candidates, selectedCandidates, evidence, packageEvidence }) {
+function extractSignals({ docs, candidates, selectedCandidates, evidence, packageEvidence, readmeContent = "" }) {
   const contentFor = (role) => candidates[role]?.[0]?.content || "";
   const allContent = [
+    readmeContent,
     contentFor("docs"),
     contentFor("icp"),
     contentFor("spec"),
@@ -398,7 +402,7 @@ function extractSignals({ docs, candidates, selectedCandidates, evidence, packag
     contentFor("values"),
     ...evidence.map((item) => item.quote),
   ].filter(Boolean).join("\n\n");
-  const readmeHeading = markdownHeadingTitle(contentFor("docs"));
+  const readmeHeading = markdownHeadingTitle(readmeContent) || markdownHeadingTitle(contentFor("docs"));
   const packageName = packageNameFromEvidence(packageEvidence);
   const productName = normalizeProductName(readmeHeading) || normalizeProductName(packageName);
   const targetUser = firstSemanticMatch([contentFor("icp"), allContent], [
@@ -489,6 +493,8 @@ function isAllowedRolePath(relativePath, role) {
   const normalized = cleanPath(relativePath);
   if (!normalized || normalized.includes("\0") || path.isAbsolute(normalized)) return false;
   if (hasDeniedSegment(normalized)) return false;
+  const canonical = projectDocPath(role);
+  if (!canonical || normalized.toLowerCase() !== canonical.toLowerCase()) return false;
   const ext = path.extname(normalized).toLowerCase();
   if (role === "sheet") return SHEET_EXTENSIONS.has(ext);
   return DOC_EXTENSIONS.has(ext);
@@ -749,15 +755,15 @@ function normalizeProductName(value) {
 
 function evidenceDisplayRank(item = {}) {
   const normalized = cleanPath(item.path).toLowerCase();
-  if (normalized === "docs/goal.md") return 0;
-  if (normalized === "docs/icp.md") return 1;
-  if (normalized === "docs/spec.md") return 2;
-  if (normalized === "docs/values.md") return 3;
-  if (normalized.startsWith("docs/")) return 4;
+  if (normalized === projectDocPath("goal").toLowerCase()) return 0;
+  if (normalized === projectDocPath("icp").toLowerCase()) return 1;
+  if (normalized === projectDocPath("spec").toLowerCase()) return 2;
+  if (normalized === projectDocPath("values").toLowerCase()) return 3;
+  if (normalized.startsWith(`${PROJECT_DOCS_DIR}/`)) return 4;
   if (/^readme\./i.test(normalized)) return 5;
   if (normalized === "package.json") return 6;
-  if (item.role === "source") return 8;
-  return 7;
+  if (item.role === "source") return 13;
+  return 12;
 }
 
 function cleanPath(value) {

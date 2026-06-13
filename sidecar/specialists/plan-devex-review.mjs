@@ -1,3 +1,5 @@
+import { projectDocPath } from "../project-doc-paths.mjs";
+
 export const ID = "plan-devex-review";
 export const NAME = "Plan DevEx Review";
 export const PHASES = ["build"];
@@ -29,7 +31,7 @@ export function buildPrompt({ doc = null, observations = "", lastAnswer = "" } =
     "- options에는 측정값(분, 단계 수, 에러 케이스)을 명시한다. 일반론 금지.",
     "- 각 description은 어떤 페르소나/시나리오에서 어떤 마찰이 사라지거나 남는지 한 줄로 적는다.",
     "- 추천안은 magic moment를 가장 가깝게 만드는 쪽으로 (recommended).",
-    "- 답변은 ADR/SPEC의 결정 또는 docs/DOCS.md 섹션으로 매핑된다.",
+    `- 답변은 ADR/SPEC의 결정 또는 ${projectDocPath("docs")} 섹션으로 매핑된다.`,
     "",
     obs ? `## 관찰한 프로젝트 사실\n${obs}` : "## 관찰한 프로젝트 사실\n(여백) — README의 시작 안내, CLI/에러 패턴, 첫 화면, 최근 onboarding 변경을 짧게 본다.",
     "",

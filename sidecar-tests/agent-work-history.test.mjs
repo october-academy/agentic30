@@ -96,9 +96,9 @@ test("claudeRecordToEvents extracts prompt/command/edit and redacts", () => {
   const snap = claudeRecordToEvents({
     type: "file-history-snapshot",
     timestamp: "2026-05-28T01:02:00.000Z",
-    snapshot: { trackedFileBackups: { "sidecar/index.mjs": {}, "docs/GOAL.md": {} } },
+    snapshot: { trackedFileBackups: { "sidecar/index.mjs": {}, ".agentic30/docs/GOAL.md": {} } },
   });
-  assert.deepEqual(snap.map((e) => e.path).sort(), ["docs/GOAL.md", "sidecar/index.mjs"]);
+  assert.deepEqual(snap.map((e) => e.path).sort(), [".agentic30/docs/GOAL.md", "sidecar/index.mjs"]);
 });
 
 test("codexRecordToEvents threads session state across records", () => {

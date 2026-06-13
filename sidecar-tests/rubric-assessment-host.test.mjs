@@ -268,7 +268,7 @@ test("recordFlatRubricAssessment passes evidence_refs through to all axes", asyn
     axes: { definition: 5, command: 5, clout: 5, responsibility: 5, adaptability: 5 },
     evidence: {
       definition: [{ type: "session_message", ref: "m1" }],
-      command: [{ type: "doc_path", ref: "docs/GOAL.md" }],
+      command: [{ type: "doc_path", ref: ".agentic30/docs/GOAL.md" }],
       clout: [{ type: "external_link", ref: "https://example.com" }],
       responsibility: [{ type: "session_message", ref: "m2" }],
       adaptability: [{ type: "session_message", ref: "m3" }],

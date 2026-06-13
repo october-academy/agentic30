@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { getFoundationValueContract } from "./foundation-contracts.mjs";
 import { evaluateCurriculumProgressionGate } from "./curriculum-progression-gate.mjs";
+import { projectDocPath } from "./project-doc-paths.mjs";
 
 const DAY_COUNT = 30;
 const WEEK_LENGTH_DAYS = 7;
@@ -180,11 +181,11 @@ export const AGENTIC30_THREE_LAYERS = Object.freeze({
 });
 
 export const IDD_BASE_CURRICULUM = Object.freeze([
-  day(1, "foundation", "목표와 고객 핵심 가설을 만든다", "Alignment", "프로젝트 목표를 ICP, Pain Point, Outcome 세 문장으로 압축하고 Day 2 시장 신호 검증 기준으로 둔다.", ["프로젝트 목표 한 문장 고정하기", "ICP / Pain Point / Outcome 세 컴포넌트 작성하기", "품질 게이트 7.0/10 이상인지 확인하고 다음 검증 기준 기록"], "day-1-alignment-statement.md, docs/GOAL.md, docs/ICP.md, docs/SPEC.md v0"),
+  day(1, "foundation", "목표와 고객 핵심 가설을 만든다", "Alignment", "프로젝트 목표를 ICP, Pain Point, Outcome 세 문장으로 압축하고 Day 2 시장 신호 검증 기준으로 둔다.", ["프로젝트 목표 한 문장 고정하기", "ICP / Pain Point / Outcome 세 컴포넌트 작성하기", "품질 게이트 7.0/10 이상인지 확인하고 다음 검증 기준 기록"], `day-1-alignment-statement.md, ${projectDocPath("goal")}, ${projectDocPath("icp")}, ${projectDocPath("spec")} v0`),
   day(2, "foundation", "돈이 흐르는 기준 시장을 고른다", "Market", "어제 통증과 가까운 iOS/Android/Web/Mac 앱·도구 시장에서 이미 지불 행동이 있는지 확인한다.", ["카테고리 1-2개 고르기", "작은 팀/개인이 만든 유료 앱·광고 앱 5개 찾기", "가격·리뷰·ASO·광고/콘텐츠 흔적을 day-2-evidence-log.md에 기록"], "day-2-evidence-log.md"),
   day(3, "foundation", "Mom Test 인터뷰 질문을 만든다", "Mom Test", "약한 가설을 검증/반증할 5문장 인터뷰 질문을 만들고 미래 의향 질문을 제거한다.", ["과거 행동 질문 3개 이상 쓰기", "미래 의향/칭찬 유도 질문 제거", "다음 인터뷰 대상 1명과 질문 5개 확정"], "day-3-interview-script.md"),
-  day(4, "foundation", "10배 wedge로 약한 섹션을 다시 쓴다", "10x Wedge", "경쟁 앱을 베끼지 않고 더 좁은 페르소나나 더 빠른 결과로 SPEC.md의 약한 섹션을 다시 쓴다.", ["원조/대체재의 핵심 흐름 1개 고르기", "가격·속도·UX·페르소나 중 10배 wedge 1개 선택", "SPEC.md 같은 파일에서 약한 섹션 다시 쓰기"], "day-4-rewrite-decision.md"),
-  day(5, "foundation", "수요 시그널을 숫자로 평가한다", "Demand Signal", "경쟁앱/광고/노출/스토어/랜딩/DM 데이터를 진짜 수요 신호와 허수로 분리한다.", ["impressions/clicks/signups/replies/CPI/store conversion 중 있는 숫자 정리", "waitlist/CTR이 아닌 돈 낼 후보 1명 고르기", "SPEC.md v2에 demand signal 판단 기록"], "SPEC.md v2, day-5-demand-signal.md"),
+  day(4, "foundation", "10배 wedge로 약한 섹션을 다시 쓴다", "10x Wedge", `경쟁 앱을 베끼지 않고 더 좁은 페르소나나 더 빠른 결과로 ${projectDocPath("spec")}의 약한 섹션을 다시 쓴다.`, ["원조/대체재의 핵심 흐름 1개 고르기", "가격·속도·UX·페르소나 중 10배 wedge 1개 선택", `${projectDocPath("spec")} 같은 파일에서 약한 섹션 다시 쓰기`], "day-4-rewrite-decision.md"),
+  day(5, "foundation", "수요 시그널을 숫자로 평가한다", "Demand Signal", "경쟁앱/광고/노출/스토어/랜딩/DM 데이터를 진짜 수요 신호와 허수로 분리한다.", ["impressions/clicks/signups/replies/CPI/store conversion 중 있는 숫자 정리", "waitlist/CTR이 아닌 돈 낼 후보 1명 고르기", `${projectDocPath("spec")} v2에 demand signal 판단 기록`], `${projectDocPath("spec")} v2, day-5-demand-signal.md`),
   day(6, "foundation", "돈/시간 ask를 실행한다", "Ask", "칭찬이 아니라 특정 1명에게 가격, 받을 약속, 응답 기한이 있는 ask를 보낸다.", ["ask 대상 1명 선택", "가격·받을 약속·응답 기한이 있는 문장 작성", "yes/no/no-reply를 원문으로 기록"], "monetization-ask-result.md"),
   day(7, "foundation", "Foundation Go/No-Go를 결정한다", "Go/No-Go", "7일 기록으로 계속/재시작/피벗 중 하나를 고른다.", ["인터뷰/일지/BIP 수량 세기", "가장 강한 증거와 반증 쓰기", "다음 7일 결론 선택"], "go-no-go.md, foundation-summary"),
   day(8, "build", "MVP를 핵심 기능 1개로 자른다", "Core Action", "기능 목록이 아니라 사용자가 30초 안에 첫 가치를 보는 핵심 행동 1개를 완성 대상으로 고정한다.", ["핵심 행동 1개와 성공 화면 정의", "로그인/동기화/자동화/설정 확장은 deferred 표시", "첫 happy path 테스트 작성"], "core action spec + deferred list"),
@@ -244,7 +245,7 @@ export function buildAdaptiveCurriculum({
   return {
     schemaVersion: IDD_CURRICULUM_SCHEMA_VERSION,
     generatedAt: toIso(now),
-    source: "docs/SPEC.md",
+    source: projectDocPath("spec"),
     strategy: {
       northStar: "IDD Engine dogfood loop",
       p0: "folder watch + qmd index + 09:00 card + response memory + Day 7 Go/No-Go",

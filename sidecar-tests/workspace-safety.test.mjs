@@ -53,7 +53,7 @@ test("isSecretPath catches secrets at any depth", () => {
   assert.equal(isSecretPath(".ssh/id_ed25519"), true);
   assert.equal(isSecretPath("home/.aws/credentials"), true);
   assert.equal(isSecretPath("src/app.ts"), false);
-  assert.equal(isSecretPath("docs/GOAL.md"), false);
+  assert.equal(isSecretPath(".agentic30/docs/GOAL.md"), false);
   assert.equal(isSecretPath(""), false);
 });
 

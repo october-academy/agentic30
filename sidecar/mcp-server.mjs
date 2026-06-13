@@ -22,6 +22,7 @@ import {
 import { fetchAuthenticatedAppContext } from "./auth-context.mjs";
 import { persistGwsReadToMemory } from "./gws-memory.mjs";
 import { requiredDocByType } from "./idd-doc-gate.mjs";
+import { projectDocCandidatePaths } from "./project-doc-paths.mjs";
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
@@ -277,7 +278,7 @@ server.tool(
       path.join(appSupportPath, "bip-config.json"),
     );
     const roleDoc = requiredDocByType(role);
-    const relativeDocPath = bipConfig?.workspace?.[role] || roleDoc?.canonicalPath;
+    const candidatePaths = projectDocCandidatePaths(role);
     if (!bipConfig?.workspace?.root && !workspaceRoot) {
       return {
         content: [
@@ -290,17 +291,37 @@ server.tool(
     }
 
     const bipRoot = path.resolve(bipConfig?.workspace?.root || workspaceRoot);
-    const docPath = path.resolve(bipRoot, relativeDocPath || ".");
-    assertInside(bipRoot, docPath, "Path must stay inside the BIP workspace root.");
+    let relativeDocPath = candidatePaths[0] || roleDoc?.canonicalPath || "";
 
     try {
       const bipRootRealpath = await fs.realpath(bipRoot);
-      const safeDocPath = await resolveInsideRealpath(
-        bipRootRealpath,
-        docPath,
-        "Path must stay inside the BIP workspace root.",
-      );
-      const stat = await fs.stat(safeDocPath);
+      let safeDocPath = null;
+      let stat = null;
+      let lastError = null;
+      for (const candidate of candidatePaths) {
+        try {
+          const docPath = path.resolve(bipRoot, candidate || ".");
+          assertInside(bipRoot, docPath, "Path must stay inside the BIP workspace root.");
+          const candidateSafePath = await resolveInsideRealpath(
+            bipRootRealpath,
+            docPath,
+            "Path must stay inside the BIP workspace root.",
+          );
+          const candidateStat = await fs.stat(candidateSafePath);
+          safeDocPath = candidateSafePath;
+          stat = candidateStat;
+          relativeDocPath = candidate;
+          break;
+        } catch (error) {
+          if (/Path must stay inside|Path traversal blocked/i.test(String(error?.message || ""))) {
+            throw error;
+          }
+          lastError = error;
+        }
+      }
+      if (!safeDocPath || !stat) {
+        throw lastError || new Error(`Canonical project doc not found at ${relativeDocPath}. Legacy docs/* paths are not used.`);
+      }
 
       if (stat.isDirectory()) {
         if (filename) {
@@ -332,11 +353,14 @@ server.tool(
         content: [{ type: "text", text: content.slice(0, maxChars) }],
       };
     } catch (err) {
+      const missingMessage = /ENOENT|no such file or directory/i.test(String(err?.message || ""))
+        ? `Canonical project doc missing at "${relativeDocPath}". Legacy docs/* paths are not used.`
+        : `Failed to read ${role} at "${relativeDocPath}": ${err.message}`;
       return {
         content: [
           {
             type: "text",
-            text: `Failed to read ${role} at "${relativeDocPath}": ${err.message}`,
+            text: missingMessage,
           },
         ],
       };

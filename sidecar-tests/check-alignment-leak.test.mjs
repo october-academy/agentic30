@@ -14,6 +14,7 @@ const FIXTURE_DIR = path.join(__dirname, "fixtures/leak");
 async function setupFakeRepo() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-leak-test-"));
   await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
   return root;
 }
 

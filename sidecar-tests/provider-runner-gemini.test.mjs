@@ -175,14 +175,14 @@ test("extractGeminiChunkText prefers direct string text, falls back to candidate
 
 test("extractGeminiFunctionCalls normalizes top-level and embedded function calls", () => {
   const fromTopLevel = extractGeminiFunctionCalls({
-    functionCalls: [{ id: "call-1", name: "lookup_doc", args: { path: "docs/ICP.md" } }],
+    functionCalls: [{ id: "call-1", name: "lookup_doc", args: { path: ".agentic30/docs/ICP.md" } }],
   });
   assert.deepEqual(fromTopLevel, [
     {
       phase: "use",
       toolName: "lookup_doc",
       toolCallKey: "call-1",
-      payload: { path: "docs/ICP.md" },
+      payload: { path: ".agentic30/docs/ICP.md" },
     },
   ]);
 

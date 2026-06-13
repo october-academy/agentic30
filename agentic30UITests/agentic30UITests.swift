@@ -1430,6 +1430,73 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testOfficeHoursFreeTextReturnSubmitsStructuredPrompt() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-office-hours-free-text-return-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-office-hours-free-text-return-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-office-hours-structured-prompt",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 5))
+        confirmDay1GoalRequired(in: app)
+
+        let freeTextAnswer = "온보딩을 끝내고 첫 검증 행동을 기록한다"
+        let freeTextField = elementWithIdentifier(in: app, "assistant.structuredFreeText.office_hours_demand_evidence")
+        XCTAssertTrue(scrollElementToVisible(
+            freeTextField,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        clickCenter(of: freeTextField)
+        freeTextField.typeText(freeTextAnswer)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
+
+        app.typeKey(.return, modifierFlags: [])
+
+        let submittedLoader = elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader")
+        XCTAssertTrue(submittedLoader.waitForExistence(timeout: 2))
+        let submittedPrompt = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.ui-test-office-hours-request")
+        XCTAssertTrue(submittedPrompt.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForElementLabel(
+            in: app,
+            identifier: "opendesign.officeHours.submittedFreeText.office_hours_demand_evidence",
+            containing: freeTextAnswer,
+            timeout: 3
+        ))
+        XCTAssertTrue(waitForElementLabel(
+            in: app,
+            identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.돈을 냈거나 제안함",
+            containing: "완료된 미선택",
+            timeout: 3
+        ))
+    }
+
+    @MainActor
     func testOpenDesignDayHandoffFlowSmoke() throws {
         let runID = UUID().uuidString
         let workspacePath = "/tmp/agentic30-ui-opendesign-day-handoff-\(runID)"
@@ -1487,6 +1554,24 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Incomplete", timeout: 3))
         movePointerAwayFromContent()
         attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Q1 Active")
+        let officeHoursMainScroll = scrollViewElement(in: app, identifier: "opendesign.officeHours.main.scroll")
+        XCTAssertTrue(scrollElementToVisible(
+            structuredContinue,
+            in: app,
+            timeout: 4,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        let q1SubmitBottomGap = officeHoursMainScroll.frame.maxY - structuredContinue.frame.maxY
+        XCTAssertGreaterThanOrEqual(
+            q1SubmitBottomGap,
+            -4,
+            "Office Hours Q1 submit button should remain inside the scroll viewport"
+        )
+        XCTAssertLessThanOrEqual(
+            q1SubmitBottomGap,
+            96,
+            "Office Hours Q1 active prompt should not leave a large empty scroll tail below the submit button"
+        )
         let structuredChoice = app.buttons["assistant.structuredChoice.office_hours_demand_evidence.돈을 냈거나 제안함"]
         XCTAssertTrue(scrollElementToVisible(
             structuredChoice,
@@ -2766,7 +2851,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForOpenDesignMainHittable(saveButton, in: app, timeout: 5), file: file, line: line)
         tapRequired(saveButton, in: app, named: "Office Hours Day 1 goal save", file: file, line: line)
 
-        let deadline = Date().addingTimeInterval(8)
+        let deadline = Date().addingTimeInterval(15)
         while !(structuredPrompt.exists || structuredContinue.exists), Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }

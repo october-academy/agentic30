@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
+import { projectDocDefinitions } from "./project-doc-paths.mjs";
+
 const LOCAL_DOC_MAX_CHARS = 12_000;
 const DEFAULT_CONTEXT_MAX_CHARS = 28_000;
 const cache = new Map();
@@ -18,15 +20,8 @@ export async function getCachedBipContext({
   }
 
   const root = path.resolve(configuredRoot);
-  const workspace = config?.workspace || {};
-  const configuredDocs = [
-    ["ICP", workspace.icp],
-    ["SPEC", workspace.spec],
-    ["VALUES", workspace.values],
-    ["Goal", workspace.goal],
-    ["ADR", workspace.adr],
-    ["Design System", workspace.designSystem],
-  ];
+  const configuredDocs = projectDocDefinitions(["icp", "spec", "values", "goal", "adr", "designSystem"])
+    .map((doc) => [doc.title, doc.canonicalPath]);
 
   const sections = [
     "## Cached Agentic30 Context",

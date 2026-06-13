@@ -9,6 +9,7 @@ import {
 } from "./read-only-workspace-tool-policy.mjs";
 import { normalizeProductName } from "./onboarding-hypothesis.mjs";
 import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
+import { PROJECT_DOCS_DIR, projectDocCandidatePaths, projectDocPath } from "./project-doc-paths.mjs";
 
 export const DAY1_ICP_PLAN_SCHEMA_VERSION = 1;
 export const DAY1_ALIGNMENT_PLAN_SCHEMA_VERSION = 1;
@@ -971,7 +972,7 @@ async function collectDay1IcpEvidence({ workspaceRoot, scanResult, fsImpl }) {
     root,
     fsImpl,
     existing: refs,
-    directories: ["docs"],
+    directories: [PROJECT_DOCS_DIR, "docs"],
     maxRefs: 3,
   });
   refs.push(...generalDocRefs.slice(0, Math.max(0, MAX_EVIDENCE_REFS - refs.length)));
@@ -1014,10 +1015,9 @@ function canonicalEvidenceCandidates(scanResult = {}) {
     .filter(([, relative]) => typeof relative === "string" && relative.trim())
     .map(([role, relative]) => [relative, `${role} canonical_doc`]);
   return [
-    ["docs/GOAL.md", "goal canonical_doc"],
-    ["docs/ICP.md", "icp canonical_doc"],
-    ["docs/SPEC.md", "spec canonical_doc"],
-    ["docs/VALUES.md", "values canonical_doc"],
+    ...["goal", "icp", "spec", "values"].flatMap((role) =>
+      projectDocCandidatePaths(role).map((candidate) => [candidate, `${role} canonical_doc`]),
+    ),
     ...fromScan,
   ];
 }
@@ -1878,7 +1878,7 @@ function buildMission(signals) {
   const product = signals.productName || "이 프로젝트";
   const target = signals.currentIcpGuess || "잠재 고객";
   const problem = signals.problem || USER_FACING_GENERIC_PROBLEM;
-  return `${product}의 고객 후보를 PostHog식으로 좁힙니다. ${target}라는 가설을 필요 / 현재 행동 / 제외 신호 기준으로 검증 가능하게 만들고, "${problem}"을 실제로 겪는 사람을 먼저 찾을 질문과 docs/ICP.md 초안을 만듭니다.`;
+  return `${product}의 고객 후보를 PostHog식으로 좁힙니다. ${target}라는 가설을 필요 / 현재 행동 / 제외 신호 기준으로 검증 가능하게 만들고, "${problem}"을 실제로 겪는 사람을 먼저 찾을 질문과 ${projectDocPath("icp")} 초안을 만듭니다.`;
 }
 
 function buildProjectGoal({ signals, onboardingHypothesis, evidence }) {
@@ -2276,14 +2276,19 @@ function preferredEvidenceRefs(evidenceRefs = []) {
 
 function evidenceDisplayRank(refPath) {
   const normalized = cleanText(refPath).toLowerCase();
-  if (normalized === "docs/goal.md") return 0;
-  if (normalized === "docs/icp.md") return 1;
-  if (normalized === "docs/spec.md") return 2;
-  if (normalized === "docs/values.md") return 3;
-  if (normalized.startsWith("docs/")) return 4;
-  if (/^readme\.md$/i.test(normalized)) return 5;
-  if (normalized === "package.json") return 6;
-  return 7;
+  if (normalized === projectDocPath("goal").toLowerCase()) return 0;
+  if (normalized === projectDocPath("icp").toLowerCase()) return 1;
+  if (normalized === projectDocPath("spec").toLowerCase()) return 2;
+  if (normalized === projectDocPath("values").toLowerCase()) return 3;
+  if (normalized.startsWith(`${PROJECT_DOCS_DIR}/`)) return 4;
+  if (normalized === "docs/goal.md") return 5;
+  if (normalized === "docs/icp.md") return 6;
+  if (normalized === "docs/spec.md") return 7;
+  if (normalized === "docs/values.md") return 8;
+  if (normalized.startsWith("docs/")) return 9;
+  if (/^readme\.md$/i.test(normalized)) return 10;
+  if (normalized === "package.json") return 11;
+  return 12;
 }
 
 function scanEvidenceBankForSignals(signals = {}) {

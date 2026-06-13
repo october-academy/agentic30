@@ -14,6 +14,7 @@ async function withTempWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-onboarding-hypothesis-"));
   try {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
     return await fn(root);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -43,10 +44,10 @@ test("deriveWorkspaceOnboardingHypothesisLocally infers project context from REA
         dependencies: { ws: "1.0.0" },
       }),
     );
-    await fs.writeFile(path.join(root, "docs", "SPEC.md"), "# SPEC\nDeveloper workflow prototype\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "SPEC.md"), "# SPEC\nDeveloper workflow prototype\n");
 
     const hypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root, {
-      docPaths: { spec: "docs/SPEC.md" },
+      docPaths: { spec: ".agentic30/docs/SPEC.md" },
     });
 
     assert.equal(hypothesis.confidence, "high");
@@ -65,7 +66,7 @@ test("deriveWorkspaceOnboardingHypothesisLocally ignores markdown reference bull
   await withTempWorkspace(async (root) => {
     await fs.writeFile(path.join(root, "README.md"), "# agentic30 Mac\n");
     await fs.writeFile(
-      path.join(root, "docs", "ICP.md"),
+      path.join(root, ".agentic30", "docs", "ICP.md"),
       [
         "# Ideal Customer Profile",
         "",
@@ -80,7 +81,7 @@ test("deriveWorkspaceOnboardingHypothesisLocally ignores markdown reference bull
       ].join("\n"),
     );
     await fs.writeFile(
-      path.join(root, "docs", "SPEC.md"),
+      path.join(root, ".agentic30", "docs", "SPEC.md"),
       [
         "# Agentic30 Product Spec",
         "",
@@ -88,12 +89,12 @@ test("deriveWorkspaceOnboardingHypothesisLocally ignores markdown reference bull
       ].join("\n"),
     );
     await fs.writeFile(
-      path.join(root, "docs", "GOAL.md"),
+      path.join(root, ".agentic30", "docs", "GOAL.md"),
       "# Agentic30 목표\n\nAgentic30은 전업 1인 개발자를 위한 30일 부트캠프다. 사용자 100명과 첫 매출 달성을 목표로 한다.\n",
     );
 
     const hypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root, {
-      docPaths: { icp: "docs/ICP.md", spec: "docs/SPEC.md", goal: "docs/GOAL.md" },
+      docPaths: { icp: ".agentic30/docs/ICP.md", spec: ".agentic30/docs/SPEC.md", goal: ".agentic30/docs/GOAL.md" },
     });
 
     assert.match(hypothesis.targetUser, /전업 1인 개발자/);
@@ -108,7 +109,7 @@ test("deriveWorkspaceOnboardingHypothesisLocally prefers canonical docs over sch
     await fs.mkdir(path.join(root, "src"), { recursive: true });
     await fs.writeFile(path.join(root, "README.md"), "# agentic30 Mac\n");
     await fs.writeFile(
-      path.join(root, "docs", "GOAL.md"),
+      path.join(root, ".agentic30", "docs", "GOAL.md"),
       [
         "# Agentic30 목표 / 핵심 결과",
         "",
@@ -118,7 +119,7 @@ test("deriveWorkspaceOnboardingHypothesisLocally prefers canonical docs over sch
       ].join("\n"),
     );
     await fs.writeFile(
-      path.join(root, "docs", "ICP.md"),
+      path.join(root, ".agentic30", "docs", "ICP.md"),
       [
         "# Ideal Customer Profile",
         "",
@@ -129,11 +130,11 @@ test("deriveWorkspaceOnboardingHypothesisLocally prefers canonical docs over sch
       ].join("\n"),
     );
     await fs.writeFile(
-      path.join(root, "docs", "SPEC.md"),
+      path.join(root, ".agentic30", "docs", "SPEC.md"),
       "# Agentic30 Product Spec\n\n핵심 문제는 “만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다”는 것이다.\n",
     );
     await fs.writeFile(
-      path.join(root, "docs", "VALUES.md"),
+      path.join(root, ".agentic30", "docs", "VALUES.md"),
       [
         "# Values — Agentic30이 지키는 기준",
         "",
@@ -154,10 +155,10 @@ test("deriveWorkspaceOnboardingHypothesisLocally prefers canonical docs over sch
 
     const hypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root, {
       docPaths: {
-        icp: "docs/ICP.md",
-        spec: "docs/SPEC.md",
-        goal: "docs/GOAL.md",
-        values: "docs/VALUES.md",
+        icp: ".agentic30/docs/ICP.md",
+        spec: ".agentic30/docs/SPEC.md",
+        goal: ".agentic30/docs/GOAL.md",
+        values: ".agentic30/docs/VALUES.md",
       },
     });
 
@@ -206,7 +207,7 @@ test("deriveWorkspaceOnboardingHypothesisLocally ignores reference links when ex
       ].join("\n"),
     );
     await fs.writeFile(
-      path.join(root, "docs", "ICP.md"),
+      path.join(root, ".agentic30", "docs", "ICP.md"),
       [
         "# Ideal Customer Profile (ICP)",
         "",
@@ -222,7 +223,7 @@ test("deriveWorkspaceOnboardingHypothesisLocally ignores reference links when ex
     );
 
     const hypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root, {
-      docPaths: { icp: "docs/ICP.md" },
+      docPaths: { icp: ".agentic30/docs/ICP.md" },
     });
 
     assert.match(hypothesis.targetUser, /전업 1인 개발자/);

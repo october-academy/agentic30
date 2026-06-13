@@ -120,7 +120,7 @@ function gitLogFixture() {
     "3\t0\tsidecar/work-history.mjs",
     "",
     `${RS}bbb222${US}Other Dev${US}other@example.com${US}2026-06-03T09:00:00+09:00${US}docs update`,
-    "1\t1\tdocs/SPEC.md",
+    "1\t1\t.agentic30/docs/SPEC.md",
     "",
     `${RS}ccc333${US}dependabot[bot]${US}bot@github.com${US}2026-06-04T01:00:00+09:00${US}chore(deps): bump`,
     "-\t-\tpackage-lock.json",
@@ -186,7 +186,7 @@ test("linkSessionsToCommits links via file overlap and upgrades with token match
 test("linkSessionsToCommits never links to other authors' or bot commits", () => {
   const t = Date.parse("2026-06-03T09:30:00+09:00");
   const sessions = sessionsFromAgentEvents([
-    { provider: "claude", sessionId: "docs", ts: t, kind: "file_edit", path: "docs/SPEC.md" },
+    { provider: "claude", sessionId: "docs", ts: t, kind: "file_edit", path: ".agentic30/docs/SPEC.md" },
   ]);
   const linked = linkSessionsToCommits(sessions, fixtureCommits());
   assert.equal(linked[0].linked, false);
@@ -657,9 +657,10 @@ test("collectWorkspaceEvidenceSignals counts local evidence source files best-ef
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "work-history-evidence-"));
   try {
     await fs.mkdir(path.join(dir, "docs"), { recursive: true });
+    await fs.mkdir(path.join(dir, ".agentic30", "docs"), { recursive: true });
     await fs.mkdir(path.join(dir, "interviews"), { recursive: true });
     await fs.mkdir(path.join(dir, "bip"), { recursive: true });
-    await fs.writeFile(path.join(dir, "docs", "SPEC.md"), "# spec");
+    await fs.writeFile(path.join(dir, ".agentic30", "docs", "SPEC.md"), "# spec");
     await fs.writeFile(path.join(dir, "interviews", "call.md"), "transcript");
     await fs.writeFile(path.join(dir, "bip", "post.json"), "{}");
 

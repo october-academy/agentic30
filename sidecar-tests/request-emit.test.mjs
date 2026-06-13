@@ -19,8 +19,9 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
   let ws;
   try {
     await fs.mkdir(path.join(harness.workspacePath, "docs"), { recursive: true });
-    await fs.writeFile(path.join(harness.workspacePath, "docs", "ICP.md"), "# ICP\n");
-    await fs.writeFile(path.join(harness.workspacePath, "docs", "SPEC.md"), "# SPEC\n");
+    await fs.mkdir(path.join(harness.workspacePath, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(harness.workspacePath, ".agentic30", "docs", "ICP.md"), "# ICP\n");
+    await fs.writeFile(path.join(harness.workspacePath, ".agentic30", "docs", "SPEC.md"), "# SPEC\n");
 
     ws = await connectAndCollect(harness);
 
@@ -855,7 +856,7 @@ test("day1_goal_save/get persists goal state and hydrates scan/project context",
       customer: "B2B support leads",
       problem: "Slack escalations are missed during handoff.",
       validationAction: "Ask three support leads for a paid pilot.",
-      evidenceRefs: ["README.md", "docs/ICP.md"],
+      evidenceRefs: ["README.md", ".agentic30/docs/ICP.md"],
       proofSink: "bip_optional",
       sourcePlanFingerprint: "scan-fingerprint-1",
       selectedAt: "2026-06-06T00:00:00.000Z",

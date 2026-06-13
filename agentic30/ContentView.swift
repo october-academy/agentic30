@@ -4840,105 +4840,119 @@ struct ContentView: View {
         layout: OfficeHoursScreenLayout
     ) -> some View {
         let modePicked = officeHoursModePicked(session: session, activeDay: activeDay)
-        return ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if modePicked {
-                        officeHoursQuestionStage(session: session, day1Content: day1Content, activeDay: activeDay)
-                        if shouldRenderOfficeHoursCommitmentBar(session: session, activeDay: activeDay) {
-                            officeHoursCommitmentBar(session: session, activeDay: activeDay)
+        return GeometryReader { scrollGeometry in
+            let viewportHeight = scrollGeometry.size.height
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if modePicked {
+                            officeHoursQuestionStage(
+                                session: session,
+                                day1Content: day1Content,
+                                activeDay: activeDay,
+                                viewportHeight: viewportHeight
+                            )
+                            if shouldRenderOfficeHoursCommitmentBar(session: session, activeDay: activeDay) {
+                                officeHoursCommitmentBar(session: session, activeDay: activeDay)
+                            }
+                        } else if viewModel.day1GoalSelection == nil {
+                            officeHoursTutorHead()
+                            officeHoursGoalSelectionBlock(session: session, day1Content: day1Content)
+                        } else {
+                            officeHoursTutorHead()
+                            officeHoursIntroContextStack(
+                                idPrefix: "office-hours",
+                                activeDay: activeDay,
+                                introDelayNanoseconds: reduceMotion ? 0 : 680_000_000,
+                                contextDelayNanoseconds: reduceMotion ? 0 : 1_020_000_000
+                            )
                         }
-                    } else if viewModel.day1GoalSelection == nil {
-                        officeHoursTutorHead()
-                        officeHoursGoalSelectionBlock(session: session, day1Content: day1Content)
-                    } else {
-                        officeHoursTutorHead()
-                        officeHoursIntroContextStack(
-                            idPrefix: "office-hours",
-                            activeDay: activeDay,
-                            introDelayNanoseconds: reduceMotion ? 0 : 680_000_000,
-                            contextDelayNanoseconds: reduceMotion ? 0 : 1_020_000_000
-                        )
-                    }
 
-                    Color.clear
-                        .frame(height: 1)
-                        .id(Self.officeHoursTranscriptBottomID)
+                        Color.clear
+                            .frame(height: 1)
+                            .id(Self.officeHoursTranscriptBottomID)
+                    }
+                    .frame(maxWidth: 820, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .padding(.horizontal, layout.mainPadding)
+                    .padding(.top, 22)
+                    .padding(.bottom, officeHoursMainScrollBottomPadding(session: session, modePicked: modePicked))
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: session?.pendingUserInput?.requestId)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: session?.messages.count ?? 0)
+                    .background(OfficeHoursScrollCaptureAnchor(anchor: $officeHoursMainScrollCaptureAnchor))
                 }
-                .frame(maxWidth: 820, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .top)
-                .padding(.horizontal, layout.mainPadding)
-                .padding(.top, 22)
-                .padding(.bottom, 32)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: session?.pendingUserInput?.requestId)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: session?.messages.count ?? 0)
-                .background(OfficeHoursScrollCaptureAnchor(anchor: $officeHoursMainScrollCaptureAnchor))
-            }
-            .background(OpenDesignOfficeHoursColor.bg)
-            .accessibilityIdentifier("opendesign.officeHours.main.scroll")
-            .task(id: "auto-start-day-\(activeDay)-\(session?.id ?? "none")-\(modePicked)-\(viewModel.day1GoalSelection?.goalType.rawValue ?? "no-goal")") {
-                guard !modePicked, let session else { return }
-                guard viewModel.day1GoalSelection != nil else { return }
-                let delay: UInt64 = reduceMotion ? 0 : 1_680_000_000
-                if delay > 0 {
-                    do {
-                        try await Task.sleep(nanoseconds: delay)
-                    } catch {
-                        return
+                .scrollBounceBehavior(.basedOnSize, axes: .vertical)
+                .background(OpenDesignOfficeHoursColor.bg)
+                .accessibilityIdentifier("opendesign.officeHours.main.scroll")
+                .task(id: "auto-start-day-\(activeDay)-\(session?.id ?? "none")-\(modePicked)-\(viewModel.day1GoalSelection?.goalType.rawValue ?? "no-goal")") {
+                    guard !modePicked, let session else { return }
+                    guard viewModel.day1GoalSelection != nil else { return }
+                    let delay: UInt64 = reduceMotion ? 0 : 1_680_000_000
+                    if delay > 0 {
+                        do {
+                            try await Task.sleep(nanoseconds: delay)
+                        } catch {
+                            return
+                        }
+                    }
+                    guard !Task.isCancelled else { return }
+                    startOfficeHoursIfNeeded(session: session, day1Content: day1Content, day: activeDay)
+                }
+                .onAppear {
+                    if modePicked {
+                        scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
                     }
                 }
-                guard !Task.isCancelled else { return }
-                startOfficeHoursIfNeeded(session: session, day1Content: day1Content, day: activeDay)
-            }
-            .onAppear {
-                if modePicked {
+                .onChange(of: modePicked) { _, isPicked in
+                    guard isPicked else { return }
                     scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
                 }
-            }
-            .onChange(of: modePicked) { _, isPicked in
-                guard isPicked else { return }
-                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
-            }
-            .onChange(of: session?.pendingUserInput?.requestId) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
-            }
-            .onChange(of: session?.messages.count ?? 0) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
-            }
-            .onChange(of: session?.status) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
-            }
-            .onChange(of: viewModel.iddDocPreviews) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
-            }
-            .onChange(of: viewModel.day1DocHandoffPendingDocType) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
-            }
-            .onChange(of: viewModel.dayProgress) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
-            }
-            .onChange(of: officeHoursReadyPromptRevealIDs) { previous, current in
-                // The minimum-loading gate revealed a question (loader → prompt swap,
-                // content height changes). An explicit trigger here replaces the old
-                // blind 3.4–5.9s scroll retries that papered over this moment.
-                guard !current.subtracting(previous).isEmpty else { return }
-                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
-            }
-            .onChange(of: session.map {
-                OfficeHoursAutoStartPolicy.SessionProviderSnapshot(sessionID: $0.id, provider: $0.provider)
-            }) { previous, current in
-                // The user switched the active engine on this office-hours session (e.g.
-                // after the prior provider hit its usage limit). The sidecar idled the
-                // session and cleared the error, which also removed the "다시 시도" button,
-                // leaving the Day question unable to regenerate. Re-arm auto-start so it
-                // regenerates on the new engine without starting a new chat. canAutoStart
-                // still gates on idle + no pending input, so an in-flight question stays.
-                guard OfficeHoursAutoStartPolicy.shouldRestartAfterProviderChange(from: previous, to: current),
-                      let session else { return }
-                officeHoursStartedSessionIDs.remove(session.id)
-                startOfficeHoursIfNeeded(session: session, day1Content: day1Content, day: activeDay)
+                .onChange(of: session?.pendingUserInput?.requestId) { _, _ in
+                    scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
+                }
+                .onChange(of: session?.messages.count ?? 0) { _, _ in
+                    scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
+                }
+                .onChange(of: session?.status) { _, _ in
+                    scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
+                }
+                .onChange(of: viewModel.iddDocPreviews) { _, _ in
+                    scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
+                }
+                .onChange(of: viewModel.day1DocHandoffPendingDocType) { _, _ in
+                    scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
+                }
+                .onChange(of: viewModel.dayProgress) { _, _ in
+                    scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
+                }
+                .onChange(of: officeHoursReadyPromptRevealIDs) { previous, current in
+                    // The minimum-loading gate revealed a question (loader → prompt swap,
+                    // content height changes). An explicit trigger here replaces the old
+                    // blind 3.4–5.9s scroll retries that papered over this moment.
+                    guard !current.subtracting(previous).isEmpty else { return }
+                    scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
+                }
+                .onChange(of: session.map {
+                    OfficeHoursAutoStartPolicy.SessionProviderSnapshot(sessionID: $0.id, provider: $0.provider)
+                }) { previous, current in
+                    // The user switched the active engine on this office-hours session (e.g.
+                    // after the prior provider hit its usage limit). The sidecar idled the
+                    // session and cleared the error, which also removed the "다시 시도" button,
+                    // leaving the Day question unable to regenerate. Re-arm auto-start so it
+                    // regenerates on the new engine without starting a new chat. canAutoStart
+                    // still gates on idle + no pending input, so an in-flight question stays.
+                    guard OfficeHoursAutoStartPolicy.shouldRestartAfterProviderChange(from: previous, to: current),
+                          let session else { return }
+                    officeHoursStartedSessionIDs.remove(session.id)
+                    startOfficeHoursIfNeeded(session: session, day1Content: day1Content, day: activeDay)
+                }
             }
         }
+    }
+
+    private func officeHoursMainScrollBottomPadding(session: ChatSession?, modePicked: Bool) -> CGFloat {
+        guard modePicked, session?.pendingUserInput != nil else { return 32 }
+        return 16
     }
 
     private func shouldShowOfficeHoursCommitmentBar(activeDay: Int) -> Bool {
@@ -5106,7 +5120,7 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(openDesignAttributedText(
-                    [.body("선택한 목표를 기준으로 Day 1 질문을 만들고 확정하면 "), .code("docs/GOAL.md"), .body("에 기록합니다.")],
+                    [.body("선택한 목표를 기준으로 Day 1 질문을 만들고 확정하면 "), .code(".agentic30/docs/GOAL.md"), .body("에 기록합니다.")],
                     bodySize: 12.5,
                     bodyWeight: .medium,
                     bodyColor: OpenDesignOfficeHoursColor.fgSecondary,
@@ -5736,7 +5750,8 @@ struct ContentView: View {
     private func officeHoursQuestionStage(
         session: ChatSession?,
         day1Content: OpenDesignDayContent,
-        activeDay: Int
+        activeDay: Int,
+        viewportHeight: CGFloat
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             officeHoursTutorHead()
@@ -5839,10 +5854,16 @@ struct ContentView: View {
                     }
                 }
 
-                if session.pendingUserInput != nil,
+                if let pendingPrompt = session.pendingUserInput,
                    pendingPresentation.shouldRender {
+                    let currentPromptWasSubmitted = snapshots.contains(where: { $0.requestId == pendingPrompt.requestId })
                     Color.clear
-                        .frame(height: 170)
+                        .frame(height: officeHoursPendingPromptTailHeight(
+                            viewportHeight: viewportHeight,
+                            submittedPromptCount: snapshots.count,
+                            currentPromptWasSubmitted: currentPromptWasSubmitted,
+                            hasActiveLoading: activeLoading != nil
+                        ))
                         .accessibilityHidden(true)
                 }
             } else {
@@ -5852,6 +5873,22 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: session?.pendingUserInput?.requestId)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: session?.messages.count ?? 0)
+    }
+
+    private func officeHoursPendingPromptTailHeight(
+        viewportHeight: CGFloat,
+        submittedPromptCount: Int,
+        currentPromptWasSubmitted: Bool,
+        hasActiveLoading: Bool
+    ) -> CGFloat {
+        let isFirstActiveQuestion = submittedPromptCount == 0 && !currentPromptWasSubmitted && !hasActiveLoading
+        let lowerBound: CGFloat = isFirstActiveQuestion ? 24 : 48
+        let upperBound: CGFloat = isFirstActiveQuestion ? 32 : 72
+        let fallback: CGFloat = isFirstActiveQuestion ? 28 : 56
+        let ratio: CGFloat = isFirstActiveQuestion ? 0.04 : 0.08
+
+        guard viewportHeight > 0 else { return fallback }
+        return min(max(viewportHeight * ratio, lowerBound), upperBound)
     }
 
     private func officeHoursRunningStatusBlock(session: ChatSession) -> some View {
@@ -6342,10 +6379,10 @@ struct ContentView: View {
 
     private var officeHoursDocumentSpecs: [(type: String, title: String, path: String)] {
         [
-            ("goal", "GOAL", "docs/GOAL.md"),
-            ("icp", "고객 후보", "docs/ICP.md"),
-            ("values", "VALUES", "docs/VALUES.md"),
-            ("spec", "SPEC", "docs/SPEC.md"),
+            ("goal", "GOAL", ".agentic30/docs/GOAL.md"),
+            ("icp", "Ideal Customer Profile", ".agentic30/docs/ICP.md"),
+            ("values", "VALUES", ".agentic30/docs/VALUES.md"),
+            ("spec", "SPEC", ".agentic30/docs/SPEC.md"),
         ]
     }
 
@@ -8004,27 +8041,23 @@ struct ContentView: View {
                         .accessibilityIdentifier("assistant.structuredFreeText.\(question.id)")
                     }
                 } else {
-                    ZStack(alignment: .leading) {
-                        if viewModel.structuredPromptDraft(for: question, in: prompt).freeText
-                            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text(placeholder)
-                                .font(.system(size: 13, weight: .regular, design: .monospaced))
-                                .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
-                        }
-                        TextField(
-                            "",
-                            text: Binding(
-                                get: { viewModel.structuredPromptDraft(for: question, in: prompt).freeText },
-                                set: { viewModel.updateStructuredPromptFreeText($0, for: question, in: prompt) }
-                            )
+                    TextField(
+                        placeholder,
+                        text: Binding(
+                            get: { viewModel.structuredPromptDraft(for: question, in: prompt).freeText },
+                            set: { viewModel.updateStructuredPromptFreeText($0, for: question, in: prompt) }
                         )
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13, weight: .regular, design: .monospaced))
-                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                        .disabled(isDisabled)
-                        .focused($focusedOfficeHoursStructuredFreeTextID, equals: focusID)
-                        .accessibilityIdentifier("assistant.structuredFreeText.\(question.id)")
+                    )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, weight: .regular, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    .disabled(isDisabled)
+                    .focused($focusedOfficeHoursStructuredFreeTextID, equals: focusID)
+                    .onSubmit {
+                        submitPrompt(prompt)
                     }
+                    .accessibilityIdentifier("assistant.structuredFreeText.\(question.id)")
+                    .accessibilityLabel(placeholder)
                 }
             }
             .padding(.horizontal, 12)
@@ -10840,19 +10873,19 @@ struct ContentView: View {
     private func bipReadinessDefaultDetail(for id: BipReadinessRowId) -> String {
         switch id {
         case .localIcp:
-            return "오늘 미션의 첫 고객 후보를 더 정확히 고릅니다. 저장 위치: docs/ICP.md"
+            return "오늘 미션의 Ideal Customer Profile을 더 정확히 고릅니다. 저장 위치: .agentic30/docs/ICP.md"
         case .localSpec:
-            return "오늘 산출물이 어떤 문제를 검증하는지 고정합니다. 저장 위치: docs/SPEC.md"
+            return "오늘 산출물이 어떤 문제를 검증하는지 고정합니다. 저장 위치: .agentic30/docs/SPEC.md"
         case .localDesignSystem:
-            return "Mac 작업 화면의 신뢰감과 접근성 기준을 남깁니다. 저장 위치: docs/DESIGN_SYSTEM.md"
+            return "Mac 작업 화면의 신뢰감과 접근성 기준을 남깁니다. 저장 위치: .agentic30/docs/DESIGN_SYSTEM.md"
         case .localAdr:
-            return "중요한 보류/선택 이유를 남겨 같은 논쟁을 줄입니다. 저장 위치: docs/ADR.md"
+            return "중요한 보류/선택 이유를 남겨 같은 논쟁을 줄입니다. 저장 위치: .agentic30/docs/ADR.md"
         case .localGoal:
-            return "오늘 미션이 어떤 주간 목표에 기여하는지 연결합니다. 저장 위치: docs/GOAL.md"
+            return "오늘 미션이 어떤 주간 목표에 기여하는지 연결합니다. 저장 위치: .agentic30/docs/GOAL.md"
         case .localDocs:
-            return "Agentic30이 어떤 문서를 근거로 읽을지 알려줍니다. 저장 위치: docs/DOCS.md"
+            return "Agentic30이 어떤 문서를 근거로 읽을지 알려줍니다. 저장 위치: .agentic30/docs/DOCS.md"
         case .localSheet:
-            return "Threads 반응과 배운 점을 다음 추천에 재사용할 표 기준입니다. 저장 위치: docs/SHEET.md"
+            return "Threads 반응과 배운 점을 다음 추천에 재사용할 표 기준입니다. 저장 위치: .agentic30/docs/SHEET.md"
         case .googleSignIn:
             return "앱 계정 상태예요. Google 문서 연결은 별도 인증으로 확인해요."
         case .workspace:
@@ -12405,6 +12438,9 @@ struct ContentView: View {
                     .fill(Color.black.opacity(0.16))
             )
             .disabled(isDisabled)
+            .onSubmit {
+                submitPrompt(prompt)
+            }
             .accessibilityIdentifier("assistant.structuredFreeText.\(question.id)")
             .accessibilityLabel(question.freeTextPlaceholder?.nonEmpty ?? "Type your answer")
         )
@@ -12853,7 +12889,7 @@ struct AgenticCurriculumDay: Identifiable, Hashable {
     var id: Int { day }
 
     static let days: [AgenticCurriculumDay] = [
-        .init(day: 1, phase: .foundation, title: "목표와 고객 핵심 가설을 만든다", shortTitle: "가설", summary: "프로젝트 목표를 고객, 문제, 확인할 행동과 한 문장으로 맞추고 Day 2 시장 신호 검증 기준으로 둡니다.", tasks: ["프로젝트 목표 한 문장 고정하기", "고객 / 문제 / 확인할 행동 세 요소 작성하기", "품질 게이트 7.0/10 이상인지 확인하고 다음 검증 기준 기록"], output: "day-1-alignment-statement.md, docs/GOAL.md, docs/ICP.md, docs/SPEC.md v0"),
+        .init(day: 1, phase: .foundation, title: "목표와 고객 핵심 가설을 만든다", shortTitle: "가설", summary: "프로젝트 목표를 고객, 문제, 확인할 행동과 한 문장으로 맞추고 Day 2 시장 신호 검증 기준으로 둡니다.", tasks: ["프로젝트 목표 한 문장 고정하기", "고객 / 문제 / 확인할 행동 세 요소 작성하기", "품질 게이트 7.0/10 이상인지 확인하고 다음 검증 기준 기록"], output: "day-1-alignment-statement.md, .agentic30/docs/GOAL.md, .agentic30/docs/ICP.md, .agentic30/docs/SPEC.md v0"),
         .init(day: 2, phase: .foundation, title: "돈이 흐르는 기준 시장을 고른다", shortTitle: "Market", summary: "어제 통증과 가까운 iOS/Android/Web/Mac 앱·도구 시장에서 이미 지불 행동이 있는지 확인합니다.", tasks: ["카테고리 1-2개 고르기", "작은 팀/개인이 만든 유료 앱·광고 앱 5개 찾기", "가격·리뷰·ASO·광고/콘텐츠 흔적을 day-2-evidence-log.md에 기록"], output: "day-2-evidence-log.md"),
         .init(day: 3, phase: .foundation, title: "실제 행동 인터뷰 질문을 만든다", shortTitle: "실제 행동 질문", summary: "약한 가설을 검증/반증할 5문장 인터뷰 질문을 만들고 미래 의향 질문을 제거합니다.", tasks: ["과거 행동 질문 3개 이상 쓰기", "미래 의향/칭찬 유도 질문 제거", "다음 인터뷰 대상 1명과 질문 5개 확정"], output: "day-3-interview-script.md"),
         .init(day: 4, phase: .foundation, title: "10배 첫 진입점으로 약한 섹션을 다시 쓴다", shortTitle: "10x 진입점", summary: "경쟁 앱을 베끼지 않고 더 좁은 고객 유형이나 더 빠른 결과로 SPEC.md의 약한 섹션을 다시 씁니다.", tasks: ["원조/대체재의 핵심 흐름 1개 고르기", "가격·속도·UX·고객 유형 중 10배 첫 진입점 1개 선택", "SPEC.md 같은 파일에서 약한 섹션 다시 쓰기"], output: "day-4-rewrite-decision.md"),

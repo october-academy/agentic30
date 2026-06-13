@@ -53,8 +53,8 @@ test("office-hours docs prompt treats canonical docs as the Foundation evidence 
 
   assert.match(prompt, /Foundation Evidence Spine/);
   assert.match(prompt, /progressive rewrite of the four canonical product docs/);
-  assert.match(prompt, /Day 1 evidence updates `docs\/GOAL\.md`, `docs\/ICP\.md`, and `docs\/SPEC\.md`/);
-  assert.match(prompt, /Day 7 evidence updates `docs\/ICP\.md`, `docs\/VALUES\.md`, `docs\/GOAL\.md`, and `docs\/SPEC\.md`/);
+  assert.match(prompt, /Day 1 evidence updates `\.agentic30\/docs\/GOAL\.md`, `\.agentic30\/docs\/ICP\.md`, and `\.agentic30\/docs\/SPEC\.md`/);
+  assert.match(prompt, /Day 7 evidence updates `\.agentic30\/docs\/ICP\.md`, `\.agentic30\/docs\/VALUES\.md`, `\.agentic30\/docs\/GOAL\.md`, and `\.agentic30\/docs\/SPEC\.md`/);
   assert.match(prompt, /Supporting `day-N-\*\.md` files are allowed, but they are scratch evidence/);
 });
 
@@ -62,6 +62,6 @@ test("office-hours docs user prompt includes optional starting context without d
   const prompt = buildOfficeHoursDocsPrompt("AI assistant for solo founders");
 
   assert.match(prompt, /AI assistant for solo founders/);
-  assert.match(prompt, /create or update docs\/ICP\.md/);
+  assert.match(prompt, /create or update \.agentic30\/docs\/ICP\.md/);
   assert.doesNotMatch(prompt, /\binterview\b/i);
 });

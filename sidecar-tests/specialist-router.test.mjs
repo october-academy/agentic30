@@ -356,7 +356,7 @@ test("buildSpecialistPrompt produces non-empty Korean prompt text for every spec
 
 test("buildIddDocumentPrompt without specialistInjection keeps legacy gstack benchmark lines", () => {
   const prompt = buildIddDocumentPrompt(
-    { type: "icp", title: "ICP", canonicalPath: "docs/ICP.md", focus: "ideal customer profile" },
+    { type: "icp", title: "ICP", canonicalPath: ".agentic30/docs/ICP.md", focus: "ideal customer profile" },
     { provider: "claude", workspaceRoot: "/tmp" },
   );
   assert.match(prompt, /gstack office-hours 벤치마크/);
@@ -369,7 +369,7 @@ test("buildIddDocumentPrompt with specialistInjection swaps in the routed specia
     doc: { type: "icp", title: "ICP" },
   });
   const prompt = buildIddDocumentPrompt(
-    { type: "icp", title: "ICP", canonicalPath: "docs/ICP.md", focus: "ideal customer profile" },
+    { type: "icp", title: "ICP", canonicalPath: ".agentic30/docs/ICP.md", focus: "ideal customer profile" },
     {
       provider: "claude",
       workspaceRoot: "/tmp",

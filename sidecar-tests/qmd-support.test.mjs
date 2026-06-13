@@ -186,9 +186,9 @@ test("buildQmdMemorySourceSummary includes configured project docs and external 
   const bipConfig = JSON.stringify({
     workspace: {
       root: "/project",
-      icp: "docs/ICP.md",
-      spec: "docs/SPEC.md",
-      goal: "docs/GOAL.md",
+      icp: ".agentic30/docs/ICP.md",
+      spec: ".agentic30/docs/SPEC.md",
+      goal: ".agentic30/docs/GOAL.md",
     },
     externalDocs: {
       googleDocs: ["https://docs.google.com/document/d/doc-id/edit"],
@@ -199,8 +199,8 @@ test("buildQmdMemorySourceSummary includes configured project docs and external 
   const fsImpl = fakeFs(
     new Set(),
     new Map([
-      ["/workspace/docs/ICP.md", "# ICP"],
-      ["/workspace/docs/VALUES.md", "# VALUES"],
+      ["/workspace/.agentic30/docs/ICP.md", "# ICP"],
+      ["/workspace/.agentic30/docs/VALUES.md", "# VALUES"],
       ["/app-support/bip-config.json", bipConfig],
     ]),
   );
@@ -209,8 +209,8 @@ test("buildQmdMemorySourceSummary includes configured project docs and external 
     fsImpl,
   });
 
-  assert.match(summary, /ICP: docs\/ICP\.md/);
-  assert.match(summary, /VALUES: docs\/VALUES\.md/);
+  assert.match(summary, /ICP: \.agentic30\/docs\/ICP\.md/);
+  assert.match(summary, /VALUES: \.agentic30\/docs\/VALUES\.md/);
   assert.match(summary, /Project workspace: \/project/);
   assert.match(summary, /Google Doc: https:\/\/docs\.google\.com\/document/);
   assert.match(summary, /Google Sheet: https:\/\/docs\.google\.com\/spreadsheets/);

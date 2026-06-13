@@ -35,11 +35,13 @@ import {
   writeAllDay1HandoffDocuments,
   writeDay1HandoffDocument,
 } from "../sidecar/idd-doc-gate.mjs";
+import { projectDocPath } from "../sidecar/project-doc-paths.mjs";
 
 async function withTempWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-gate-"));
   try {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
     return await fn(root);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -52,7 +54,7 @@ function countTopLevelHeadings(content) {
 
 test("BIP setup gate requires all local docs and Google links", async () => {
   await withTempWorkspace(async (root) => {
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\n");
 
     const gate = getBipSetupGateStatus({
       workspaceRoot: root,
@@ -66,17 +68,17 @@ test("BIP setup gate requires all local docs and Google links", async () => {
   });
 });
 
-test("BIP setup gate passes with accepted aliases and external links", async () => {
+test("BIP setup gate passes with canonical local docs and external links", async () => {
   await withTempWorkspace(async (root) => {
     const files = [
-      "docs/ICP.md",
-      "docs/SPEC.md",
-      "docs/VALUES.md",
-      "docs/DESIGN.md",
-      "docs/ADR.md",
-      "docs/GOAL.md",
-      "docs/DOCS.md",
-      "docs/SHEET.md",
+      ".agentic30/docs/ICP.md",
+      ".agentic30/docs/SPEC.md",
+      ".agentic30/docs/VALUES.md",
+      ".agentic30/docs/DESIGN_SYSTEM.md",
+      ".agentic30/docs/ADR.md",
+      ".agentic30/docs/GOAL.md",
+      ".agentic30/docs/DOCS.md",
+      ".agentic30/docs/SHEET.md",
     ];
     for (const file of files) {
       await fs.writeFile(path.join(root, file), `# ${file}\n`);
@@ -129,7 +131,7 @@ test("IDD follow-up targets the highest missing signal for the current document"
   const input = buildIddFollowupStructuredInputForDoc(doc, state);
 
   assert.equal(input.toolName, "agentic30_request_user_input");
-  assert.equal(input.title, "고객 후보 · 직접 만날 사람");
+  assert.equal(input.title, "Ideal Customer Profile · 직접 만날 사람");
   assert.equal(input.generation?.docType, "icp");
   assert.equal(input.generation?.signalId, "reachable_person");
   assert.equal(input.generation?.signalLabel, "직접 만날 사람");
@@ -473,7 +475,7 @@ test("Day 1 handoff merge preserves existing document content and replaces only 
 test("Day 1 handoff merge avoids duplicate top-level headings", () => {
   const block = [
     DAY1_HANDOFF_MARKER_START,
-    "<!-- generated_by: office-hours; target: docs/GOAL.md; status: written -->",
+    `<!-- generated_by: office-hours; target: ${projectDocPath("goal")}; status: written -->`,
     "",
     "# GOAL",
     "",
@@ -516,9 +518,13 @@ test("Day 1 handoff writes canonical docs immediately and completes after all fo
     });
     assert.equal(state.docWriteStatuses.goal.status, "written");
     assert.equal(state.status, "interviewing");
-    assert.match(await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8"), /기존 목표/);
-    assert.match(await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8"), /agentic30:day1-handoff:start/);
-    assert.doesNotMatch(await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8"), /Day 1 Handoff|Document Decision|Rubric Signals/);
+    const legacyGoal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    assert.match(legacyGoal, /기존 목표/);
+    assert.doesNotMatch(legacyGoal, /agentic30:day1-handoff:start/);
+
+    const canonicalGoal = await fs.readFile(path.join(root, projectDocPath("goal")), "utf8");
+    assert.match(canonicalGoal, /agentic30:day1-handoff:start/);
+    assert.doesNotMatch(canonicalGoal, /Day 1 Handoff|Document Decision|Rubric Signals/);
 
     state = recordIddStructuredResponse(state, {
       doc: byType.get("icp"),
@@ -557,7 +563,7 @@ test("Day 1 handoff writes canonical docs immediately and completes after all fo
 
     assert.equal(state.status, "approved");
     assert.equal(state.approvedDocPaths.length, 4);
-    for (const rel of ["docs/GOAL.md", "docs/ICP.md", "docs/VALUES.md", "docs/SPEC.md"]) {
+    for (const rel of [projectDocPath("goal"), projectDocPath("icp"), projectDocPath("values"), projectDocPath("spec")]) {
       const content = await fs.readFile(path.join(root, rel), "utf8");
       assert.match(content, /agentic30:day1-handoff:start/);
       assert.match(content, /agentic30:day1-handoff:end/);
@@ -601,18 +607,20 @@ test("Day 1 bulk handoff writes all canonical docs from final hypothesis", async
     );
     assert.ok(progress.includes("goal:written"));
     assert.ok(progress.includes("spec:written"));
-    for (const rel of ["docs/GOAL.md", "docs/ICP.md", "docs/VALUES.md", "docs/SPEC.md"]) {
+    for (const rel of [projectDocPath("goal"), projectDocPath("icp"), projectDocPath("values"), projectDocPath("spec")]) {
       const content = await fs.readFile(path.join(root, rel), "utf8");
       assert.match(content, /agentic30:day1-handoff:start/);
       assert.match(content, /agentic30:day1-handoff:end/);
       assert.equal(countTopLevelHeadings(content), 1, rel);
     }
-    const goal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
-    assert.match(goal, /기존 목표/);
+    const legacyGoal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    assert.match(legacyGoal, /기존 목표/);
+    assert.doesNotMatch(legacyGoal, /agentic30:day1-handoff:start/);
+    const goal = await fs.readFile(path.join(root, projectDocPath("goal")), "utf8");
     assert.match(goal, /첫 고객 반응 검증/);
     assert.doesNotMatch(goal, /Day 1 Handoff|Document Decision|Rubric Signals/);
     assert.doesNotMatch(goal, /이번 주 확인할 행동|검증할 문제|첫 고객 후보/);
-    const spec = await fs.readFile(path.join(root, "docs", "SPEC.md"), "utf8");
+    const spec = await fs.readFile(path.join(root, projectDocPath("spec")), "utf8");
     assert.match(spec, /첫 인터뷰 카드/);
     assert.doesNotMatch(spec, /GOAL\/ICP\/VALUES\/SPEC 문서|Foundation|새 AI 실행/);
   });
@@ -643,7 +651,7 @@ test("Day 1 bulk handoff renders user-facing docs from Office Hours facts withou
       ),
     );
 
-    const icp = await fs.readFile(path.join(root, "docs", "ICP.md"), "utf8");
+    const icp = await fs.readFile(path.join(root, projectDocPath("icp")), "utf8");
     assert.match(icp, /20대 여성/);
     assert.match(icp, /불안·우울 관리/);
     assert.match(icp, /메모·기록 앱/);
@@ -651,20 +659,20 @@ test("Day 1 bulk handoff renders user-facing docs from Office Hours facts withou
     assert.doesNotMatch(icp, /첫 고객 후보|검증할 문제|이번 주 확인할 행동/);
     assert.doesNotMatch(icp, /기존 동료|DM으로 닿을 수 있는 후보 3명|주 3시간/);
 
-    const spec = await fs.readFile(path.join(root, "docs", "SPEC.md"), "utf8");
+    const spec = await fs.readFile(path.join(root, projectDocPath("spec")), "utf8");
     assert.match(spec, /전용 링크\(UTM\/코드\)/);
     assert.match(spec, /가입 전환을 추적/);
     assert.doesNotMatch(spec, /추적를|보여주기으로/);
     assert.doesNotMatch(spec, /GOAL\/ICP\/VALUES\/SPEC 문서|Day 1|Foundation|새 AI 실행/);
-    for (const rel of ["docs/GOAL.md", "docs/ICP.md", "docs/VALUES.md", "docs/SPEC.md"]) {
+    for (const rel of [projectDocPath("goal"), projectDocPath("icp"), projectDocPath("values"), projectDocPath("spec")]) {
       assert.equal(countTopLevelHeadings(await fs.readFile(path.join(root, rel), "utf8")), 1, rel);
     }
 
-    const values = await fs.readFile(path.join(root, "docs", "VALUES.md"), "utf8");
+    const values = await fs.readFile(path.join(root, projectDocPath("values")), "utf8");
     assert.match(values, /사용자 행동 증거/);
     assert.doesNotMatch(values, /예쁜 대시보드|다중 Day 확장|플랫폼 확장/);
 
-    const goal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    const goal = await fs.readFile(path.join(root, projectDocPath("goal")), "utf8");
     assert.match(goal, /30일 안에 핵심 활성 행동을 끝낸 사용자 100명/);
     assert.match(goal, /가입 전환 기준값은 아직 확인 필요/);
   });
@@ -685,25 +693,25 @@ test("Day 1 handoff quality gate marks incomplete facts with assumptions instead
     assert.equal(state.docWriteStatuses.icp.status, "written_with_assumptions");
     assert.ok(state.docWriteStatuses.icp.unresolvedAssumptions.some((item) => /고객 후보|현재 대안/.test(item)));
 
-    const icp = await fs.readFile(path.join(root, "docs", "ICP.md"), "utf8");
+    const icp = await fs.readFile(path.join(root, projectDocPath("icp")), "utf8");
     assert.match(icp, /확인 필요/);
     assert.doesNotMatch(icp, /DM으로 닿을 수 있는 후보 3명|주 3시간/);
 
-    const spec = await fs.readFile(path.join(root, "docs", "SPEC.md"), "utf8");
+    const spec = await fs.readFile(path.join(root, projectDocPath("spec")), "utf8");
     assert.doesNotMatch(spec, /GOAL\/ICP\/VALUES\/SPEC 문서|Day 1|Foundation|새 AI 실행/);
   });
 });
 
-test("BIP setup gate honors configured doc paths only when files exist", async () => {
+test("BIP setup gate ignores configured legacy doc paths and requires canonical docs", async () => {
   await withTempWorkspace(async (root) => {
     await fs.writeFile(path.join(root, "docs", "ICP-CUSTOM.md"), "# ICP\n");
-    await fs.writeFile(path.join(root, "docs", "SPEC.md"), "# SPEC\n");
-    await fs.writeFile(path.join(root, "docs", "VALUES.md"), "# VALUES\n");
-    await fs.writeFile(path.join(root, "docs", "DESIGN.md"), "# DESIGN\n");
-    await fs.writeFile(path.join(root, "docs", "ADR.md"), "# ADR\n");
-    await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n");
-    await fs.writeFile(path.join(root, "docs", "DOCS.md"), "# DOCS\n");
-    await fs.writeFile(path.join(root, "docs", "SHEET.md"), "# SHEET\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "SPEC.md"), "# SPEC\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "VALUES.md"), "# VALUES\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "DESIGN_SYSTEM.md"), "# DESIGN\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ADR.md"), "# ADR\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "GOAL.md"), "# GOAL\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "DOCS.md"), "# DOCS\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "SHEET.md"), "# SHEET\n");
 
     const readyGate = getBipSetupGateStatus({
       workspaceRoot: root,
@@ -715,10 +723,26 @@ test("BIP setup gate honors configured doc paths only when files exist", async (
       },
     });
 
-    assert.equal(readyGate.ready, true);
-    assert.equal(readyGate.localDocs.find((doc) => doc.type === "icp").foundPath, "docs/ICP-CUSTOM.md");
+    assert.equal(readyGate.ready, false);
+    assert.equal(readyGate.missingLocalDocs[0].type, "icp");
+    assert.equal(readyGate.missingLocalDocs[0].configuredPath, "docs/ICP-CUSTOM.md");
+    assert.equal(readyGate.localDocs.find((doc) => doc.type === "icp").foundPath, null);
 
-    const staleGate = getBipSetupGateStatus({
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\n");
+    const canonicalGate = getBipSetupGateStatus({
+      workspaceRoot: root,
+      bipCoachState: { config: { docId: "doc-1", sheetId: "sheet-1" } },
+      bipConfig: {
+        workspace: {
+          icp: "docs/ICP-CUSTOM.md",
+        },
+      },
+    });
+
+    assert.equal(canonicalGate.ready, true);
+    assert.equal(canonicalGate.localDocs.find((doc) => doc.type === "icp").foundPath, ".agentic30/docs/ICP.md");
+
+    const staleConfigGate = getBipSetupGateStatus({
       workspaceRoot: root,
       bipCoachState: { config: { docId: "doc-1", sheetId: "sheet-1" } },
       bipConfig: {
@@ -728,9 +752,9 @@ test("BIP setup gate honors configured doc paths only when files exist", async (
       },
     });
 
-    assert.equal(staleGate.ready, false);
-    assert.equal(staleGate.missingLocalDocs[0].type, "icp");
-    assert.equal(staleGate.missingLocalDocs[0].configuredPath, "docs/MISSING-ICP.md");
+    assert.equal(staleConfigGate.ready, true);
+    assert.equal(staleConfigGate.localDocs.find((doc) => doc.type === "icp").configuredPath, "docs/MISSING-ICP.md");
+    assert.equal(staleConfigGate.localDocs.find((doc) => doc.type === "icp").foundPath, ".agentic30/docs/ICP.md");
   });
 });
 
@@ -763,7 +787,7 @@ test("IDD prompt routes choice-based interview questions through plan-style stru
   assert.match(prompt, /agentic30-public의 SwiftUI macOS 앱과 Node 실행 보조 앱 구조/);
   assert.match(prompt, /맞춤 인터뷰 규칙/);
   assert.match(prompt, /list_workspace_files, read_workspace_file, search_workspace 중 2개 이상/);
-  assert.match(prompt, /README, docs, package\/config, 주요 소스, 최근 git 변경/);
+  assert.match(prompt, /README, `\.agentic30\/docs\/\*`, package\/config, 주요 소스, 최근 git 변경/);
   assert.match(prompt, /실제 기능명, 화면, 사용자 흐름/);
   assert.match(prompt, /사용자의 직전 답변을 다음 질문의 입력/);
   assert.match(prompt, /어떤 프로젝트에도 그대로 붙일 수 있는 범용 질문/);
@@ -996,8 +1020,8 @@ test("Codex ICP IDD initial input is host-side agentic30_request_user_input with
   });
 
   assert.equal(input.toolName, "agentic30_request_user_input");
-  assert.equal(input.title, "고객 후보 1/4");
-  assert.match(input.intro?.title || "", /고객 후보 \(Ideal Customer Profile\)/);
+  assert.equal(input.title, "Ideal Customer Profile 1/4");
+  assert.equal(input.intro?.title || "", "Ideal Customer Profile");
   assert.match(input.intro?.body || "", /이번 주 실제로 연락하고 인터뷰/);
   assert.ok(input.intro?.bullets?.some((bullet) => bullet.includes("현재 대안")));
   assert.deepEqual(
@@ -1033,9 +1057,9 @@ test("Codex non-ICP IDD initial input is host-side to avoid provider tool fallba
   assert.equal(input.questions[0].allowFreeText, true);
   assert.equal(input.questions[0].textMode, "short");
   assert.equal(input.questions[0].header, "한 가지 선택");
-  assert.match(input.questions[0].helperText, /docs\/SHEET\.md/);
+  assert.match(input.questions[0].helperText, new RegExp(projectDocPath("sheet").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(input.questions[0].helperText, /공개 글의 기록 열/);
-  assert.match(input.questions[0].helperText, /저장: docs\/SHEET\.md/);
+  assert.match(input.questions[0].helperText, new RegExp(`저장: ${projectDocPath("sheet").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   assert.match(input.questions[0].question, /공개 기록 기준에서 이번 주 먼저 고정할 기준/);
   assert.doesNotMatch(`${input.title}\n${input.questions[0].helperText}\n${input.questions[0].question}`, /IDD|BIP/);
   assert.deepEqual(
@@ -1342,7 +1366,7 @@ test("ICP follow-up stamps isLastSignalForDoc and dimensionTransitioned for the 
   const inputLast = buildIddFollowupStructuredInputForDoc(doc, stepped);
   assert.equal(inputLast.generation?.signalId, "pressure_cost");
   assert.equal(inputLast.generation?.signalLabel, "고통과 시급성");
-  assert.equal(inputLast.title, "고객 후보 · 고통과 시급성");
+  assert.equal(inputLast.title, "Ideal Customer Profile · 고통과 시급성");
   assert.equal(inputLast.generation?.isLastSignalForDoc, true);
   assert.equal(inputLast.generation?.dimensionTransitioned, true);
   assert.equal(inputLast.generation?.previousSignalLabel, "기존의 방식");

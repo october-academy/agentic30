@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { projectDocCandidatePaths, projectDocPath } from "./project-doc-paths.mjs";
 
 export const REVIEW_DAY_WORKSPACE_SIGNAL_SCHEMA_VERSION = 1;
 
@@ -158,14 +159,15 @@ async function collectLocalDocSignals({ workspaceRoot, docPaths = {}, fsImpl }) 
   const roles = [...EXPECTED_DOC_TYPES, ...OPTIONAL_DOC_TYPES];
   const entries = [];
   for (const role of roles) {
-    const candidates = candidateDocPaths(role, rawDocPaths[role]);
+    const candidates = candidateDocPaths(role);
     const foundPath = await firstExistingWorkspacePath({ workspaceRoot, candidates, fsImpl });
     entries.push({
       type: role,
       path: foundPath,
       found: Boolean(foundPath),
       required: EXPECTED_DOC_TYPES.includes(role),
-      source: rawDocPaths[role] ? "configured_path" : "common_path",
+      configuredPath: stringOrDefault(rawDocPaths[role], ""),
+      source: "canonical_path",
     });
   }
   return entries;
@@ -175,10 +177,11 @@ function buildMissingDocSignals(docPaths = {}) {
   const rawDocPaths = objectOrEmpty(docPaths);
   return [...EXPECTED_DOC_TYPES, ...OPTIONAL_DOC_TYPES].map((role) => ({
     type: role,
-    path: stringOrDefault(rawDocPaths[role], ""),
+    path: projectDocPath(role),
     found: false,
     required: EXPECTED_DOC_TYPES.includes(role),
-    source: rawDocPaths[role] ? "configured_path" : "common_path",
+    configuredPath: stringOrDefault(rawDocPaths[role], ""),
+    source: "canonical_path",
   }));
 }
 
@@ -198,19 +201,8 @@ async function firstExistingWorkspacePath({ workspaceRoot, candidates, fsImpl })
   return "";
 }
 
-function candidateDocPaths(role, configuredPath) {
-  const configured = normalizeRelativePath(configuredPath);
-  const common = {
-    icp: ["docs/ICP.md", "ICP.md"],
-    values: ["docs/VALUES.md", "VALUES.md", "docs/PRINCIPLES.md", "PRINCIPLES.md"],
-    goal: ["docs/GOAL.md", "GOAL.md"],
-    spec: ["docs/SPEC.md", "SPEC.md"],
-    docs: ["docs/README.md", "docs/DOCS.md", "DOCS.md", "README.md"],
-    sheet: ["docs/SHEET.md", "SHEET.md", "docs/SHEETS.md", "SHEETS.md"],
-    designSystem: ["docs/DESIGN_SYSTEM.md", "DESIGN_SYSTEM.md", "docs/DESIGN.md", "DESIGN.md"],
-    adr: ["docs/ADR.md", "ADR.md", "docs/architecture/ADR.md"],
-  }[role] ?? [];
-  return configured ? [configured, ...common] : common;
+function candidateDocPaths(role) {
+  return projectDocCandidatePaths(role);
 }
 
 function normalizeSourceStatuses({ sources, localDocs, workspaceRoot, errors }) {

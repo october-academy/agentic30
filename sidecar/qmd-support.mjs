@@ -2,21 +2,14 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { projectDocDefinitions, projectDocPath } from "./project-doc-paths.mjs";
 
 const qmdServerName = "qmd";
 const qmdPackageBinSegments = ["node_modules", "@tobilu", "qmd", "bin", "qmd"];
 const QMD_STATE_CACHE_TTL_MS = 5 * 60 * 1000;
 export const defaultQmdIndexName = "agentic30";
-const canonicalMemoryDocs = [
-  ["ICP", "docs/ICP.md"],
-  ["VALUES", "docs/VALUES.md"],
-  ["GOAL", "docs/GOAL.md"],
-  ["SPEC", "docs/SPEC.md"],
-  ["DESIGN_SYSTEM", "docs/DESIGN_SYSTEM.md"],
-  ["ADR", "docs/ADR.md"],
-  ["DOCS", "docs/DOCS.md"],
-  ["SHEET", "docs/SHEET.md"],
-];
+const canonicalMemoryDocs = projectDocDefinitions()
+  .map((doc) => [doc.filename.replace(/\.md$/i, ""), doc.canonicalPath]);
 const qmdStateCache = new Map();
 
 export function resolveQmdBinary(env = process.env, fsImpl = fsSync, options = {}) {
@@ -190,20 +183,16 @@ export function buildQmdMemorySourceSummary(
     lines.push("Local canonical docs:");
     lines.push(...localDocs);
   } else {
-    lines.push("Local canonical docs: look for `docs/ICP.md`, `docs/VALUES.md`, `docs/GOAL.md`, and `docs/SPEC.md` if they exist.");
+    lines.push(`Local canonical docs: look for \`${projectDocPath("icp")}\`, \`${projectDocPath("values")}\`, \`${projectDocPath("goal")}\`, and \`${projectDocPath("spec")}\` if they exist.`);
   }
 
   const bipConfig = readBipConfig(appSupportPath, fsImpl);
   if (bipConfig?.workspace?.root) {
-    const workspace = bipConfig.workspace;
     lines.push("Configured project context from BIP settings:");
-    lines.push(`- Project workspace: ${workspace.root}`);
-    if (workspace.icp) lines.push(`- ICP: ${workspace.icp}`);
-    if (workspace.spec) lines.push(`- SPEC: ${workspace.spec}`);
-    if (workspace.values) lines.push(`- VALUES: ${workspace.values}`);
-    if (workspace.goal) lines.push(`- GOAL: ${workspace.goal}`);
-    if (workspace.designSystem) lines.push(`- Design system: ${workspace.designSystem}`);
-    if (workspace.adr) lines.push(`- ADR: ${workspace.adr}`);
+    lines.push(`- Project workspace: ${bipConfig.workspace.root}`);
+    for (const doc of projectDocDefinitions(["icp", "spec", "values", "goal", "designSystem", "adr"])) {
+      lines.push(`- ${doc.title}: ${doc.canonicalPath}`);
+    }
   }
 
   const externalDocs = bipConfig?.externalDocs ?? {};

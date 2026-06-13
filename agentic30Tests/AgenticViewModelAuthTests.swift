@@ -611,7 +611,7 @@ final class AgenticViewModelAuthTests {
         )
 
         #expect(restored.workspaceRoot == workspace.path)
-        #expect(restored.scanResult?.icp == "docs/ICP.md")
+        #expect(restored.scanResult?.icp == ".agentic30/docs/ICP.md")
         #expect(restored.scanResult?.day1IcpPlan?.questions.count == 3)
     }
 
@@ -1243,7 +1243,7 @@ final class AgenticViewModelAuthTests {
                 "Starting workspace scan...",
                 "Starting workspace scan...",
                 "Found 3 local candidate(s). Asking agents to verify context...",
-                "Claude Sonnet 4.6 (claude-sonnet-4-6): using Read: docs/ICP.md docs/SPEC.md docs/GOAL.md",
+                "Claude Sonnet 4.6 (claude-sonnet-4-6): using Read: .agentic30/docs/ICP.md .agentic30/docs/SPEC.md .agentic30/docs/GOAL.md",
                 "GPT 5.1 Codex Mini (gpt-5.1-codex-mini): this is a long provider summary that should not leak raw debug text into onboarding"
             ],
             scanDidComplete: true,
@@ -2153,7 +2153,7 @@ final class AgenticViewModelAuthTests {
             customer: "전업 1인 개발자 (수익 0원, macOS) 중 \"만들 줄은 알지만 무엇을 팔아야 하는지 모른다\"…",
             problem: "만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다",
             validationAction: "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.",
-            evidenceRefs: ["docs/ICP.md", "docs/SPEC.md"],
+            evidenceRefs: [".agentic30/docs/ICP.md", ".agentic30/docs/SPEC.md"],
             proofSink: .local,
             sourcePlanFingerprint: "fixture",
             selectedAt: "2026-06-07T00:00:00.000Z"
@@ -2565,10 +2565,10 @@ final class AgenticViewModelAuthTests {
         {
           "type": "workspace_scan_result",
           "scanRoot": "\(workspaceRoot)",
-          "icp": "docs/ICP.md",
-          "spec": "docs/SPEC.md",
-          "values": "docs/VALUES.md",
-          "goal": "docs/GOAL.md",
+          "icp": ".agentic30/docs/ICP.md",
+          "spec": ".agentic30/docs/SPEC.md",
+          "values": ".agentic30/docs/VALUES.md",
+          "goal": ".agentic30/docs/GOAL.md",
           "docs": "README.md",
           "onboardingHypothesis": {
             "productName": "SupportLens",
@@ -2592,9 +2592,9 @@ final class AgenticViewModelAuthTests {
         {
           "type": "workspace_scan_result",
           "scanRoot": "\(workspaceRoot)",
-          "icp": "docs/ICP.md",
-          "spec": "docs/SPEC.md",
-          "goal": "docs/GOAL.md",
+          "icp": ".agentic30/docs/ICP.md",
+          "spec": ".agentic30/docs/SPEC.md",
+          "goal": ".agentic30/docs/GOAL.md",
           "day1AlignmentPlan": {
             "schemaVersion": 1,
             "source": "deterministic",
@@ -2610,8 +2610,8 @@ final class AgenticViewModelAuthTests {
               "problem": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다",
               "currentAlternatives": ["수동 노트"],
               "evidenceRefs": [
-                { "path": "docs/ICP.md", "reason": "icp", "quote": "전업 1인 개발자 (수익 0원, macOS)" },
-                { "path": "docs/SPEC.md", "reason": "spec", "quote": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다" }
+                { "path": ".agentic30/docs/ICP.md", "reason": "icp", "quote": "전업 1인 개발자 (수익 0원, macOS)" },
+                { "path": ".agentic30/docs/SPEC.md", "reason": "spec", "quote": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다" }
               ],
               "missingAssumptions": [],
               "confidence": "high"
@@ -2623,7 +2623,7 @@ final class AgenticViewModelAuthTests {
                 "prompt": "고객 후보는 누구인가요?",
                 "helperText": "고객 조건을 고릅니다.",
                 "statement": "전업 1인 개발자 (수익 0원, macOS) 중 \\"만들 줄은 알지만 무엇을 팔아야 하는지 모른다\\" 상황을 지금 해결하려는 고객.",
-                "evidence": ["docs/ICP.md"],
+                "evidence": [".agentic30/docs/ICP.md"],
                 "missingAssumptions": [],
                 "options": [
                   { "id": "solo", "label": "전업 1인 개발자 (수익 0원, macOS)", "description": "첫 고객 후보입니다.", "preview": "고객", "antiSignal": false }
@@ -2635,7 +2635,7 @@ final class AgenticViewModelAuthTests {
                 "prompt": "문제는 무엇인가요?",
                 "helperText": "핵심 문제를 고릅니다.",
                 "statement": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다",
-                "evidence": ["docs/SPEC.md"],
+                "evidence": [".agentic30/docs/SPEC.md"],
                 "missingAssumptions": [],
                 "options": [
                   { "id": "pain", "label": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다", "description": "핵심 문제입니다.", "preview": "문제", "antiSignal": false }
@@ -2647,7 +2647,7 @@ final class AgenticViewModelAuthTests {
                 "prompt": "확인할 행동은 무엇인가요?",
                 "helperText": "관찰 가능한 행동을 고릅니다.",
                 "statement": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.",
-                "evidence": ["docs/GOAL.md"],
+                "evidence": [".agentic30/docs/GOAL.md"],
                 "missingAssumptions": [],
                 "options": [
                   { "id": "outcome", "label": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.", "description": "행동 신호입니다.", "preview": "확인", "antiSignal": false }
@@ -2694,7 +2694,7 @@ final class AgenticViewModelAuthTests {
                 { "key": "icp", "label": "고객", "value": "전업 1인 개발자 (수익 0원, macOS)", "tone": "body" },
                 { "key": "pain", "label": "문제", "value": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다", "tone": "mark" },
                 { "key": "outcome", "label": "확인할 행동", "value": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.", "tone": "strong" },
-                { "key": "evidence", "label": "근거", "value": "docs/ICP.md, docs/SPEC.md", "tone": "code" }
+                { "key": "evidence", "label": "근거", "value": ".agentic30/docs/ICP.md, .agentic30/docs/SPEC.md", "tone": "code" }
               ],
               "summary": "Day 1 고객 신호"
             }

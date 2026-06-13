@@ -144,7 +144,7 @@ test("dogfood judge parser rejects malformed or incomplete judge output", () => 
 test("live scenario prompt realism check rejects harness control markers", () => {
   assert.equal(validateLiveScenarioPrompt({
     id: "natural-day1",
-    prompt: "Day 1 시작이야. docs/ICP.md 기준으로 오늘 행동 1개와 proof target을 정해줘.",
+    prompt: "Day 1 시작이야. .agentic30/docs/ICP.md 기준으로 오늘 행동 1개와 proof target을 정해줘.",
   }), true);
   assert.throws(() => validateLiveScenarioPrompt({
     id: "marker-day1",
@@ -749,7 +749,7 @@ function liveResult({
         assistant_messages: ["진단: ICP 조건을 확인했습니다.\n다음 액션: 고객 1명에게 질문합니다.\n증거 목표: Threads URL 1개"],
         recommended_action: "고객 1명에게 질문합니다.",
         proof_target: "Threads URL 1개",
-        doc_paths_answered: ["docs/ICP.md"],
+        doc_paths_answered: [".agentic30/docs/ICP.md"],
       },
       workspaceScan: { icp: true, values: true, goal: true, spec: true },
       ...observed,

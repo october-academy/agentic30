@@ -104,7 +104,7 @@ Inline decisions (single-shot AskUserQuestion-style flows) are sentinel-brackete
 
 ### Product source-of-truth docs
 
-`docs/ICP.md`, `docs/GOAL.md`, `docs/VALUES.md`, `docs/SPEC.md` are the canonical product-shape documents. They are managed by the `/office-hours-docs` assistant command (prompt builder at `sidecar/office-hours-docs-prompt.mjs`) and consumed at runtime by sidecar prompts and the foundation-summary review loop. Schema-breaking edits (heading restructure, section removal) must be paired with prompt updates and `npm run test:sidecar` passes.
+`.agentic30/docs/ICP.md`, `.agentic30/docs/GOAL.md`, `.agentic30/docs/VALUES.md`, `.agentic30/docs/SPEC.md` are the canonical product-shape documents. They are managed by the `/office-hours-docs` assistant command (prompt builder at `sidecar/office-hours-docs-prompt.mjs`) and consumed at runtime by sidecar prompts and the foundation-summary review loop. Schema-breaking edits (heading restructure, section removal) must be paired with prompt updates and `npm run test:sidecar` passes.
 
 ### UI testing posture
 

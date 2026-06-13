@@ -218,7 +218,7 @@ test("telemetry sanitizes auth email, raw keys, and absolute paths", async () =>
     telemetry.captureEvent("test_event", {
       payment_key: "payment-fixture-1234567890",
       scan_root: "/Users/october/prj/secret-repo",
-      doc_path: "docs/ICP.md",
+      doc_path: ".agentic30/docs/ICP.md",
     });
 
     assert.equal(captured.event, "test_event");
@@ -231,7 +231,7 @@ test("telemetry sanitizes auth email, raw keys, and absolute paths", async () =>
     assert.equal(captured.properties.is_internal_traffic, false);
     assert.equal(captured.properties.scan_basename, "secret-repo");
     assert.equal(captured.properties.payment_key_suffix, "567890");
-    assert.equal(captured.properties.doc_path, "docs/ICP.md");
+    assert.equal(captured.properties.doc_path, ".agentic30/docs/ICP.md");
     assert.equal("auth_email" in captured.properties, false);
     assert.equal("payment_key" in captured.properties, false);
     assert.equal("scan_root" in captured.properties, false);

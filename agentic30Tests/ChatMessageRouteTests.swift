@@ -406,7 +406,7 @@ struct StructuredPromptSubmissionStateTests {
         let viewModel = AgenticViewModel(activateAppForAuth: {})
         let session = ChatSession(
             id: "running-session",
-            title: "초기 설정: 고객 후보",
+            title: "초기 설정: Ideal Customer Profile",
             provider: .codex,
             model: AgentModelCatalog.defaultCodexModelID,
             status: .running,

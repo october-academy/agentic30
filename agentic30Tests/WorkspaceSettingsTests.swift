@@ -462,7 +462,7 @@ final class WorkspaceSettingsTests: XCTestCase {
         store.save(makeWorkspaceScanResult(), now: Date(timeIntervalSince1970: 1_777_000_000))
 
         let loaded = store.load()
-        XCTAssertEqual(loaded?.icp, "docs/ICP.md")
+        XCTAssertEqual(loaded?.icp, ".agentic30/docs/ICP.md")
         XCTAssertEqual(loaded?.day1IcpPlan?.schemaVersion, 1)
         XCTAssertEqual(loaded?.day1IcpPlan?.questions.count, 3)
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL.path))
@@ -537,12 +537,12 @@ final class WorkspaceSettingsTests: XCTestCase {
 
     private func makeWorkspaceScanResult() -> AgenticViewModel.WorkspaceScanResult {
         AgenticViewModel.WorkspaceScanResult(
-            icp: "docs/ICP.md",
-            spec: "docs/SPEC.md",
-            values: "docs/VALUES.md",
+            icp: ".agentic30/docs/ICP.md",
+            spec: ".agentic30/docs/SPEC.md",
+            values: ".agentic30/docs/VALUES.md",
             designSystem: nil,
             adr: nil,
-            goal: "docs/GOAL.md",
+            goal: ".agentic30/docs/GOAL.md",
             docs: "README.md",
             sheet: nil,
             onboardingHypothesis: WorkspaceOnboardingHypothesis(

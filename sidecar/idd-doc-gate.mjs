@@ -4,6 +4,11 @@ import path from "node:path";
 import { isBipCoachConfigured } from "./bip-coach-state.mjs";
 import { normalizeWorkspaceOnboardingHypothesis } from "./onboarding-hypothesis.mjs";
 import { CODEX_STRUCTURED_INPUT_TOOL } from "./structured-input-tools.mjs";
+import {
+  FOUNDATION_PROJECT_DOC_TYPES,
+  projectDocDefinitions,
+  projectDocPath,
+} from "./project-doc-paths.mjs";
 
 export const IDD_SETUP_SCHEMA_VERSION = 2;
 
@@ -12,36 +17,7 @@ export const DAY1_HANDOFF_DOC_TYPES = ["goal", "icp", "values", "spec"];
 export const DAY1_HANDOFF_MARKER_START = "<!-- agentic30:day1-handoff:start -->";
 export const DAY1_HANDOFF_MARKER_END = "<!-- agentic30:day1-handoff:end -->";
 
-export const IDD_FOUNDATION_DOCS = [
-  {
-    type: "icp",
-    title: "고객 후보",
-    canonicalPath: "docs/ICP.md",
-    aliases: ["docs/ICP.md"],
-    focus: "ideal customer profile, anti-ICP, current alternatives, buying trigger, validation signals",
-  },
-  {
-    type: "goal",
-    title: "GOAL",
-    canonicalPath: "docs/GOAL.md",
-    aliases: ["docs/GOAL.md", "docs/OKR.md"],
-    focus: "mission, measurable objectives, key results, weekly milestones, operating cadence",
-  },
-  {
-    type: "values",
-    title: "VALUES",
-    canonicalPath: "docs/VALUES.md",
-    aliases: ["docs/VALUES.md", "docs/PRINCIPLES.md", "docs/PRODUCT_VALUES.md"],
-    focus: "decision principles, tradeoff rules, what the project refuses to do, behavioral examples",
-  },
-  {
-    type: "spec",
-    title: "SPEC",
-    canonicalPath: "docs/SPEC.md",
-    aliases: ["docs/SPEC.md"],
-    focus: "problem definition, core value, MVP scope, user journey, constraints, success metrics, UX, risks, tradeoffs",
-  },
-];
+export const IDD_FOUNDATION_DOCS = projectDocDefinitions(FOUNDATION_PROJECT_DOC_TYPES);
 
 export const IDD_FOUNDATION_DOC_TYPES = IDD_FOUNDATION_DOCS.map((doc) => doc.type);
 
@@ -82,64 +58,16 @@ const IDD_DIMENSIONS = [
   { id: "risk", label: "리스크" },
 ];
 
-export const BIP_REQUIRED_LOCAL_DOCS = [
-  {
-    type: "icp",
-    title: "고객 후보",
-    canonicalPath: "docs/ICP.md",
-    aliases: ["docs/ICP.md"],
-    focus: "ideal customer profile, anti-ICP, current alternatives, buying trigger, validation signals",
-  },
-  {
-    type: "spec",
-    title: "SPEC",
-    canonicalPath: "docs/SPEC.md",
-    aliases: ["docs/SPEC.md"],
-    focus: "problem definition, core value, MVP scope, user journey, constraints, success metrics",
-  },
-  {
-    type: "values",
-    title: "VALUES",
-    canonicalPath: "docs/VALUES.md",
-    aliases: ["docs/VALUES.md", "docs/PRINCIPLES.md", "docs/PRODUCT_VALUES.md"],
-    focus: "decision principles, tradeoff rules, what the project refuses to do, behavioral examples",
-  },
-  {
-    type: "designSystem",
-    title: "Design System",
-    canonicalPath: "docs/DESIGN_SYSTEM.md",
-    aliases: ["docs/DESIGN_SYSTEM.md", "docs/DESIGN.md", "docs/design-system.md", "docs/design-system/index.md"],
-    focus: "visual principles, tokens, components, interaction patterns, accessibility, UI tradeoffs",
-  },
-  {
-    type: "adr",
-    title: "ADR",
-    canonicalPath: "docs/ADR.md",
-    aliases: ["docs/ADR.md", "docs/adr/README.md", "docs/architecture-decisions.md"],
-    focus: "decision record format, current architecture choices, rejected alternatives, consequences",
-  },
-  {
-    type: "goal",
-    title: "GOAL",
-    canonicalPath: "docs/GOAL.md",
-    aliases: ["docs/GOAL.md", "docs/OKR.md"],
-    focus: "mission, measurable objectives, key results, weekly milestones, operating cadence",
-  },
-  {
-    type: "docs",
-    title: "Docs",
-    canonicalPath: "docs/DOCS.md",
-    aliases: ["docs/DOCS.md", "docs/README.md", "docs/INDEX.md"],
-    focus: "documentation map, canonical sources of truth, onboarding path, maintenance rules",
-  },
-  {
-    type: "sheet",
-    title: "Sheet",
-    canonicalPath: "docs/SHEET.md",
-    aliases: ["docs/SHEET.md", "docs/SHEETS.md", "docs/BIP_SHEET.md"],
-    focus: "Google Sheet schema, BIP posting log columns, evidence recording workflow, quality checks",
-  },
-];
+export const BIP_REQUIRED_LOCAL_DOCS = projectDocDefinitions([
+  "icp",
+  "spec",
+  "values",
+  "designSystem",
+  "adr",
+  "goal",
+  "docs",
+  "sheet",
+]);
 
 export function iddArtifactsDir(workspaceRoot) {
   return path.join(path.resolve(workspaceRoot || "."), ".agentic30", "idd");
@@ -295,11 +223,10 @@ export function isIddSetupApproved(state) {
 }
 
 export const ICP_CONTEXT_INTRO = {
-  // Lead with the JARGON 바꿔쓰기 term for beginners, but keep the full term in
-  // parentheses: this is the teaching panel whose linked resources are English
+  // This is the teaching panel whose linked resources are English
   // "Ideal Customer Profile" articles, and isMissingIcpContextIntro() uses the
   // full term as the signature of a properly-decorated card.
-  title: "고객 후보 (Ideal Customer Profile)",
+  title: "Ideal Customer Profile",
   body: "가장 먼저 집중할 고객 유형입니다. 처음부터 완벽하게 쓰기보다, 이번 주 실제로 연락하고 인터뷰할 수 있는 좁은 고객 후보 하나를 고르면 됩니다.",
   bullets: [
     "상황: 직함보다 지금 어떤 문제 상황에 있는지",
@@ -343,7 +270,7 @@ export function decorateIcpStructuredInput(input) {
 
 export const ICP_IDD_INITIAL_INPUT = {
   toolName: CODEX_STRUCTURED_INPUT_TOOL,
-  title: "고객 후보 1/4",
+  title: "Ideal Customer Profile 1/4",
   intro: ICP_CONTEXT_INTRO,
   resources: ICP_RECOMMENDED_RESOURCES,
   questions: [
@@ -516,7 +443,7 @@ export function buildAdaptiveIcpInitialInput({
   const personalizedOptions = buildAdaptiveOptions({ hypothesis, primaryUser, onboardingContext });
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: "고객 후보 1/4",
+    title: "Ideal Customer Profile 1/4",
     questions: [
       {
         header: "첫 고객",
@@ -534,7 +461,7 @@ export function buildAdaptiveIcpInitialInput({
 }
 
 export function buildGenericIddInitialInput(doc) {
-  const canonicalPath = String(doc?.canonicalPath || "docs/README.md").trim();
+  const canonicalPath = String(doc?.canonicalPath || projectDocPath("docs") || "README.md").trim();
   const title = genericIddUserFacingTitle(doc);
   const focus = genericIddUserFacingFocus(doc);
   const purpose = genericIddPurposeFor(doc, canonicalPath, focus);
@@ -560,7 +487,7 @@ export function buildGenericIddInitialInput(doc) {
 }
 
 function buildGoalIddInitialInput(doc) {
-  const canonicalPath = String(doc?.canonicalPath || "docs/GOAL.md").trim();
+  const canonicalPath = String(doc?.canonicalPath || projectDocPath("goal")).trim();
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
     title: "목표 정하기",
@@ -597,7 +524,7 @@ function buildGoalIddInitialInput(doc) {
 }
 
 function buildValuesIddInitialInput(doc) {
-  const canonicalPath = String(doc?.canonicalPath || "docs/VALUES.md").trim();
+  const canonicalPath = String(doc?.canonicalPath || projectDocPath("values")).trim();
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
     title: "원칙 정하기",
@@ -634,7 +561,7 @@ function buildValuesIddInitialInput(doc) {
 }
 
 function buildSpecIddInitialInput(doc) {
-  const canonicalPath = String(doc?.canonicalPath || "docs/SPEC.md").trim();
+  const canonicalPath = String(doc?.canonicalPath || projectDocPath("spec")).trim();
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
     title: "첫 버전 정하기",
@@ -1298,7 +1225,7 @@ export function buildIddContinuationPrompt({
     "",
     "이 답변을 인터뷰 입력으로 사용하세요. 방금 답한 질문이나 같은 선택지 라벨을 반복하지 마세요.",
     "다음 질문은 반드시 현재 프로젝트의 실제 맥락에 맞춰 맞춤 인터뷰로 새로 생성하세요.",
-    "- 먼저 README, docs, package/config, 주요 소스, 최근 git 변경에서 관찰한 사실을 조합해 제품/사용자/제약 가설을 세우세요.",
+    "- 먼저 README, `.agentic30/docs/*`, package/config, 주요 소스, 최근 git 변경에서 관찰한 사실을 조합해 제품/사용자/제약 가설을 세우세요.",
     "- 질문은 제품 이름, 대상 유저, 해결 문제, 제품 목적을 확인한 뒤 그 진단의 가장 약한 부분을 검증하는 한 가지로 좁히고 question/options/freeTextPlaceholder에 관찰한 프로젝트 맥락을 반영하세요.",
     "- 어떤 프로젝트에도 붙일 수 있는 범용 질문이나 템플릿 질문을 반복하지 마세요.",
     "- 좋은 질문은 gstack review flow처럼 decision brief여야 합니다. 사용자가 무엇을 결정해야 하는지, 잘못 고르면 무엇이 깨지는지, 추천 선택지는 무엇인지 한 번에 보이게 만드세요.",
@@ -1317,7 +1244,7 @@ export function buildIddContinuationPrompt({
 
 export function findRequiredLocalDocs(workspaceRoot, { fsImpl = fsSync } = {}) {
   return BIP_REQUIRED_LOCAL_DOCS.map((doc) => {
-    const foundPath = doc.aliases.find((relativePath) => docPathExists(workspaceRoot, relativePath, fsImpl)) || null;
+    const foundPath = docPathExists(workspaceRoot, doc.canonicalPath, fsImpl) ? doc.canonicalPath : null;
 
     return {
       ...doc,
@@ -1330,12 +1257,7 @@ export function findRequiredLocalDocs(workspaceRoot, { fsImpl = fsSync } = {}) {
 export function findRequiredLocalDocsWithConfig(workspaceRoot, { bipConfig = null, fsImpl = fsSync } = {}) {
   return BIP_REQUIRED_LOCAL_DOCS.map((doc) => {
     const configuredPath = normalizeConfiguredDocPath(bipConfig?.workspace?.[doc.type], workspaceRoot);
-    const configuredFound = configuredPath
-      ? docPathExists(workspaceRoot, configuredPath, fsImpl)
-      : false;
-    const foundPath = configuredPath
-      ? (configuredFound ? configuredPath : null)
-      : doc.aliases.find((relativePath) => docPathExists(workspaceRoot, relativePath, fsImpl)) || null;
+    const foundPath = docPathExists(workspaceRoot, doc.canonicalPath, fsImpl) ? doc.canonicalPath : null;
 
     return {
       ...doc,
@@ -2584,7 +2506,7 @@ export function buildIddDocumentPrompt(doc, {
     "- 도구 질문은 question/options/allowFreeText/freeTextPlaceholder/textMode를 채워 1개 질문 단위로 만드세요. 후보 options는 2-4개로 제한하고 allowFreeText=true를 둡니다. 선택지와 한 줄 근거를 동시에 요구하지 말고 선택지 또는 기타 자유 입력 중 하나로 답하게 하세요. 후보군 없이 자유입력만 묻지 마세요.",
     "- 금지 예: \"1. 반복 사용 2. 도입 준비 3. 먼저 요청함\" 같은 번호 목록을 assistant 메시지로 출력하는 것.",
     "- 예전 고정 질문 금지: title=\"고객 후보 1/4\", question=\"이번 주 바로 인터뷰할 첫 고객은 누구인가요?\", option=\"가장 절박한 하위 고객 후보\"를 그대로 쓰면 실패입니다.",
-    "- 첫 질문은 반드시 관찰한 repo 사실을 포함하세요. 예: agentic30-public의 SwiftUI macOS 앱과 Node 실행 보조 앱 구조, Codex/Claude AI 연결 전환, 30일 커리큘럼, docs/ICP.md 같은 실제 맥락 중 하나 이상.",
+    `- 첫 질문은 반드시 관찰한 repo 사실을 포함하세요. 예: agentic30-public의 SwiftUI macOS 앱과 Node 실행 보조 앱 구조, Codex/Claude AI 연결 전환, 30일 커리큘럼, ${projectDocPath("icp")} 같은 실제 맥락 중 하나 이상.`,
     "- 이 세션에서는 이 문서 하나만 다룹니다. 다른 문서 인터뷰를 섞지 마세요.",
     "- 질문은 한 번에 하나의 고레버리지 질문으로 하세요.",
     "- 첫 질문도 host가 미리 만든 고정 질문이 아닙니다. 반드시 실행 보조 앱의 워크스페이스 도구로 프로젝트 폴더를 살펴본 뒤 프로젝트 상태에 맞춰 새로 생성하세요.",

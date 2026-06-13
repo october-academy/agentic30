@@ -237,7 +237,7 @@ final class PostHogTelemetryTests: XCTestCase {
         let sanitized = PostHogTelemetrySanitizer.sanitize([
             "payment_key": "payment-fixture-1234567890",
             "workspace_root": "/Users/october/prj/agentic30",
-            "doc_path": "docs/ICP.md",
+            "doc_path": ".agentic30/docs/ICP.md",
             "auth_email": "founder@example.com",
             "prompt_text": "ship my private prompt",
             "tool_output": "private tool output",
@@ -249,7 +249,7 @@ final class PostHogTelemetryTests: XCTestCase {
 
         XCTAssertEqual(sanitized["payment_key_suffix"] as? String, "567890")
         XCTAssertEqual(sanitized["workspace_basename"] as? String, "agentic30")
-        XCTAssertEqual(sanitized["doc_path"] as? String, "docs/ICP.md")
+        XCTAssertEqual(sanitized["doc_path"] as? String, ".agentic30/docs/ICP.md")
         XCTAssertEqual(sanitized["auth_email_domain"] as? String, "example.com")
         XCTAssertEqual(sanitized["prompt_text"] as? String, "[redacted]")
         XCTAssertEqual(sanitized["tool_output"] as? String, "[redacted]")

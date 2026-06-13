@@ -17,6 +17,7 @@ async function withTempWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-review-workspace-signals-"));
   try {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
     return await fn(root);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -25,10 +26,10 @@ async function withTempWorkspace(fn) {
 
 test("collectReviewDayWorkspaceSignals normalizes readable workspace docs and external source state", async () => {
   await withTempWorkspace(async (root) => {
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\n전업 1인 개발자\n");
-    await fs.writeFile(path.join(root, "docs", "VALUES.md"), "# VALUES\nWarm concise coaching\n");
-    await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\nDay 30 graduation\n");
-    await fs.writeFile(path.join(root, "docs", "SPEC.md"), "# SPEC\nReview dashboard metrics\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\n전업 1인 개발자\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "VALUES.md"), "# VALUES\nWarm concise coaching\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "GOAL.md"), "# GOAL\nDay 30 graduation\n");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "SPEC.md"), "# SPEC\nReview dashboard metrics\n");
     await fs.writeFile(path.join(root, "README.md"), "# Agentic30\n");
 
     const signals = await collectReviewDayWorkspaceSignals({
@@ -56,10 +57,10 @@ test("collectReviewDayWorkspaceSignals normalizes readable workspace docs and ex
         .filter((doc) => doc.required)
         .map((doc) => [doc.type, doc.path, doc.found]),
       [
-        ["icp", "docs/ICP.md", true],
-        ["values", "docs/VALUES.md", true],
-        ["goal", "docs/GOAL.md", true],
-        ["spec", "docs/SPEC.md", true],
+        ["icp", ".agentic30/docs/ICP.md", true],
+        ["values", ".agentic30/docs/VALUES.md", true],
+        ["goal", ".agentic30/docs/GOAL.md", true],
+        ["spec", ".agentic30/docs/SPEC.md", true],
       ],
     );
     assert.deepEqual(
@@ -127,10 +128,10 @@ test("generateReviewDaySummary adds normalized workspace metrics to review dashb
       sources: {
         localWorkspace: { available: true },
         localDocs: [
-          { type: "icp", path: "docs/ICP.md", found: true, required: true },
-          { type: "values", path: "docs/VALUES.md", found: true, required: true },
+          { type: "icp", path: ".agentic30/docs/ICP.md", found: true, required: true },
+          { type: "values", path: ".agentic30/docs/VALUES.md", found: true, required: true },
           { type: "goal", path: "", found: false, required: true },
-          { type: "spec", path: "docs/SPEC.md", found: true, required: true },
+          { type: "spec", path: ".agentic30/docs/SPEC.md", found: true, required: true },
         ],
         mcp: { available: true },
         cli: { available: false },

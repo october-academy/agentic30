@@ -27,7 +27,7 @@ function validEntry(overrides = {}) {
     source_ref: "wiki/2026-Q2",
     private_excerpt_hash: VALID_HASH,
     public_principle: "사용자 시간·돈 낭비 0 우선",
-    public_location: "docs/SPEC.md#성공-기준",
+    public_location: ".agentic30/docs/SPEC.md#성공-기준",
     redaction_class: "strategy",
     reviewer: "zetta",
     ...overrides,

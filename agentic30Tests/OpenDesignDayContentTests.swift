@@ -1185,7 +1185,7 @@ struct OpenDesignDayContentTests {
             evidence: base.components.painPoint.evidence,
             missingAssumptions: base.components.painPoint.missingAssumptions,
             options: [
-                Day1IcpQuestionOption(id: "pain-long", label: longPainLabel, description: "반복 비용이 큽니다. · 근거: docs/SPEC.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "pain-long", label: longPainLabel, description: "반복 비용이 큽니다. · 근거: .agentic30/docs/SPEC.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/SPEC.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "pain-weak", label: "불편만 있음", description: "행동 없음", preview: "Weak", antiSignal: true),
             ]
         )
@@ -1317,9 +1317,9 @@ struct OpenDesignDayContentTests {
         #expect(draft.markdown.contains("- 문제: SLA 리스크 발견 지연"))
         #expect(draft.markdown.contains("- 확인할 행동: 현재 대안 확인"))
         #expect(draft.markdown.contains(expectedStatement))
-        #expect(draft.markdown.contains("근거: docs/ICP.md"))
-        #expect(draft.markdown.contains("근거: docs/SPEC.md"))
-        #expect(draft.markdown.contains("근거: docs/GOAL.md"))
+        #expect(draft.markdown.contains("근거: .agentic30/docs/ICP.md"))
+        #expect(draft.markdown.contains("근거: .agentic30/docs/SPEC.md"))
+        #expect(draft.markdown.contains("근거: .agentic30/docs/GOAL.md"))
         #expect(draft.markdown.contains("scan 후보: B2B SaaS support lead"))
         #expect(!draft.markdown.contains("## Day 1 selections"))
     }
@@ -1345,7 +1345,7 @@ struct OpenDesignDayContentTests {
             from: makeAlignmentPlan(
                 icpPrompt: "이 목표를 위해 Day 2에서 먼저 검증할 고객은 누구인가요?",
                 outcomePrompt: "Day 2 시장 신호가 확인해야 할 고객 결과는 무엇인가요?",
-                outcomeOptionDescription: "Day 2에서 바로 검증할 수 있습니다. · 근거: docs/GOAL.md"
+                outcomeOptionDescription: "Day 2에서 바로 검증할 수 있습니다. · 근거: .agentic30/docs/GOAL.md"
             ),
             fallback: nil
         )
@@ -1464,7 +1464,7 @@ struct OpenDesignDayContentTests {
                 Day1SignalDigestRow(key: "icp", label: "ICP", value: "[VALUES.md](./VALUES.md) — 제품 가치", tone: "body"),
                 Day1SignalDigestRow(key: "pain", label: "Pain", value: "Slack escalation 누락", tone: "mark"),
                 Day1SignalDigestRow(key: "outcome", label: "Outcome", value: "계정 리스크를 더 빨리 판단", tone: "strong"),
-                Day1SignalDigestRow(key: "evidence", label: "근거", value: "docs/GOAL.md, docs/ICP.md", tone: "code"),
+                Day1SignalDigestRow(key: "evidence", label: "근거", value: ".agentic30/docs/GOAL.md, .agentic30/docs/ICP.md", tone: "code"),
             ],
             summary: "SupportLens는 Slack escalation 누락을 검증한다."
         )
@@ -1473,7 +1473,7 @@ struct OpenDesignDayContentTests {
         let evidenceRow = try #require(plan.signalDigest?.rows.first { $0.key == "evidence" })
 
         #expect(openDesignDisplaySignalDigestValue(for: icpRow, alignmentPlan: plan) == "support lead")
-        #expect(openDesignDisplaySignalDigestValue(for: evidenceRow, alignmentPlan: plan) == "docs/GOAL.md, docs/ICP.md")
+        #expect(openDesignDisplaySignalDigestValue(for: evidenceRow, alignmentPlan: plan) == ".agentic30/docs/GOAL.md, .agentic30/docs/ICP.md")
         #expect(openDesignAlignmentDisplayLabel(for: "icp", fallback: icpRow.label) == "고객")
         #expect(openDesignAlignmentDisplayLabel(for: "pain", fallback: "Pain") == "문제")
         #expect(openDesignAlignmentDisplayLabel(for: "outcome", fallback: "Outcome") == "확인할 행동")
@@ -1489,7 +1489,7 @@ struct OpenDesignDayContentTests {
                 Day1SignalDigestRow(key: "icp", label: "고객", value: "개인 사용자 및 소규모 팀", tone: "body"),
                 Day1SignalDigestRow(key: "pain", label: "문제", value: longPain, tone: "mark"),
                 Day1SignalDigestRow(key: "outcome", label: "확인할 행동", value: "첫 고객 대화에서 지불 의향과 현재 대안을 묻는다", tone: "strong"),
-                Day1SignalDigestRow(key: "evidence", label: "근거", value: "docs/GOAL.md, docs/ICP.md", tone: "code"),
+                Day1SignalDigestRow(key: "evidence", label: "근거", value: ".agentic30/docs/GOAL.md, .agentic30/docs/ICP.md", tone: "code"),
             ],
             summary: "PhotoVault는 개인 사진 보관 대안을 검증한다."
         )
@@ -2153,7 +2153,7 @@ struct OpenDesignDayContentTests {
         let draft = content.draft(for: state)
 
         #expect(draft.markdown.contains("- 필수 입력: 프로젝트 path, 업무 일지, 인터뷰 원문, 공개 기록"))
-        #expect(draft.recommendation == "Day 3 실제 행동 인터뷰 첫 후보로 올리고 인터뷰 원문과 업무 일지를 docs/ICP.md의 증거 섹션에 연결한다.")
+        #expect(draft.recommendation == "Day 3 실제 행동 인터뷰 첫 후보로 올리고 인터뷰 원문과 업무 일지를 .agentic30/docs/ICP.md의 증거 섹션에 연결한다.")
         #expect(!draft.isAntiSignal)
     }
 
@@ -2425,7 +2425,7 @@ struct OpenDesignDayContentTests {
             highlightPhrases: ["비용을 치르는 문제", "문제"],
             helperText: "비용 신호",
             statement: "urgent Slack escalation을 놓침",
-            evidence: ["docs/SPEC.md"],
+            evidence: [".agentic30/docs/SPEC.md"],
             missingAssumptions: [],
             options: [
                 Day1IcpQuestionOption(id: "o1", label: "Slack 누락", description: "반복됨", highlightPhrases: ["Slack 누락"], preview: "Pain", antiSignal: false),
@@ -2439,7 +2439,7 @@ struct OpenDesignDayContentTests {
             highlightPhrases: ["행동 신호", "확인할 행동", "검증 행동"],
             helperText: "Day 2 기준",
             statement: "계정 리스크 escalation을 더 빨리 판단한다",
-            evidence: ["docs/GOAL.md"],
+            evidence: [".agentic30/docs/GOAL.md"],
             missingAssumptions: [],
             options: [
                 Day1IcpQuestionOption(id: "o1", label: "빠른 판단", description: outcomeOptionDescription, highlightPhrases: ["빠른 판단"], preview: "Outcome", antiSignal: false),
@@ -2504,9 +2504,9 @@ struct OpenDesignDayContentTests {
             missingAssumptions: base.components.icp.missingAssumptions,
             options: [
                 Day1IcpQuestionOption(id: "icp1", label: "support lead", description: "현재 고객 · 근거: README.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "icp2", label: "customer success lead", description: "SLA 리스크를 직접 관리합니다. · 근거: docs/ICP.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "icp3", label: "온콜 운영 담당자", description: "반복 알림 누락 비용을 압니다. · 근거: docs/SPEC.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "icp4", label: "B2B SaaS 운영자", description: "작은 팀에서 지원 흐름을 직접 고칩니다. · 근거: docs/GOAL.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "icp2", label: "customer success lead", description: "SLA 리스크를 직접 관리합니다. · 근거: .agentic30/docs/ICP.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/ICP.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "icp3", label: "온콜 운영 담당자", description: "반복 알림 누락 비용을 압니다. · 근거: .agentic30/docs/SPEC.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "icp4", label: "B2B SaaS 운영자", description: "작은 팀에서 지원 흐름을 직접 고칩니다. · 근거: .agentic30/docs/GOAL.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: .agentic30/docs/GOAL.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "icp5", label: "구매권한 없는 조언자", description: "최근 사건과 예산 신호가 없어 제외 후보입니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ]
         )

@@ -360,7 +360,7 @@ test("Day 30 score=4 with evidence_refs is accepted (existing rule)", () => {
         score: 4,
         anchor_level: 3,
         anchor_text: "mid-high",
-        evidence_refs: [{ type: "doc_path", ref: "docs/GOAL.md" }],
+        evidence_refs: [{ type: "doc_path", ref: ".agentic30/docs/GOAL.md" }],
       },
       clout: {
         score: 4,

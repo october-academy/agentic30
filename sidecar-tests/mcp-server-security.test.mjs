@@ -43,17 +43,18 @@ test("MCP read_project_doc rejects configured document symlink escapes", async (
   const harness = await startMcpHarness();
   try {
     await fs.mkdir(path.join(harness.workspaceRoot, "docs"), { recursive: true });
+    await fs.mkdir(path.join(harness.workspaceRoot, ".agentic30", "docs"), { recursive: true });
     await fs.writeFile(path.join(harness.tempRoot, "outside-icp.md"), "# outside");
     await fs.symlink(
       path.join(harness.tempRoot, "outside-icp.md"),
-      path.join(harness.workspaceRoot, "docs", "ICP.md"),
+      path.join(harness.workspaceRoot, ".agentic30", "docs", "ICP.md"),
     );
     await fs.writeFile(
       path.join(harness.appSupportPath, "bip-config.json"),
       JSON.stringify({
         workspace: {
           root: harness.workspaceRoot,
-          icp: "docs/ICP.md",
+          icp: ".agentic30/docs/ICP.md",
         },
       }),
     );

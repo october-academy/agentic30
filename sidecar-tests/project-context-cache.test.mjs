@@ -18,6 +18,7 @@ async function withTempWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-project-context-"));
   try {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
     await fs.mkdir(path.join(root, "src"), { recursive: true });
     return await fn(root);
   } finally {
@@ -120,19 +121,19 @@ test("project context cache refresh replaces stale invalid goal with fresh scan 
     );
     await fs.writeFile(path.join(root, "README.md"), "# agentic30 Mac\n");
     await fs.writeFile(
-      path.join(root, "docs", "GOAL.md"),
+      path.join(root, ".agentic30", "docs", "GOAL.md"),
       "# Agentic30 목표 / 핵심 결과\n\n## 프로젝트 미션\n\nAgentic30은 전업 1인 개발자를 위한 30일 부트캠프다. 사용자 100명과 첫 매출 달성을 목표로 한다.\n",
     );
     await fs.writeFile(
-      path.join(root, "docs", "ICP.md"),
+      path.join(root, ".agentic30", "docs", "ICP.md"),
       "# ICP\n\n## Our ICP: 전업 1인 개발자 (수익 0원, macOS)\n",
     );
     await fs.writeFile(
-      path.join(root, "docs", "SPEC.md"),
+      path.join(root, ".agentic30", "docs", "SPEC.md"),
       "# SPEC\n\n핵심 문제는 “만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다”는 것이다.\n",
     );
     await fs.writeFile(
-      path.join(root, "docs", "VALUES.md"),
+      path.join(root, ".agentic30", "docs", "VALUES.md"),
       "# Values\n\nAgentic30의 가치는 좋은 말이 아니라 제품과 코칭이 매일 지킬 판단 기준이다.\n",
     );
     await fs.writeFile(
@@ -144,10 +145,10 @@ test("project context cache refresh replaces stale invalid goal with fresh scan 
       workspaceRoot: root,
       reason: "workspace_scan",
       scanResult: {
-        icp: "docs/ICP.md",
-        spec: "docs/SPEC.md",
-        goal: "docs/GOAL.md",
-        values: "docs/VALUES.md",
+        icp: ".agentic30/docs/ICP.md",
+        spec: ".agentic30/docs/SPEC.md",
+        goal: ".agentic30/docs/GOAL.md",
+        values: ".agentic30/docs/VALUES.md",
         docs: "README.md",
       },
       now: new Date("2026-05-20T00:00:00.000Z"),
@@ -199,7 +200,7 @@ test("day completion refresh updates completed day and answer-log evidence", asy
         targetUser: "전업 1인 개발자",
         problem: "고객 문제를 좁히지 못한다",
         purpose: "판매 가능한 실험을 고른다",
-        evidence: ["docs/ICP.md"],
+        evidence: [".agentic30/docs/ICP.md"],
         confidence: "medium",
       },
       now: new Date("2026-05-21T01:00:00.000Z"),

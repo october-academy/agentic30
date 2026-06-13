@@ -1177,8 +1177,8 @@ struct SidecarEventDecodingTests {
         #expect(event.type == "session_updated")
         #expect(event.session?.status == .awaitingInput)
         #expect(event.session?.pendingUserInput?.toolName == "agentic30_request_user_input")
-        #expect(event.session?.pendingUserInput?.title == "고객 후보 1/4")
-        #expect(event.session?.pendingUserInput?.intro?.title == "고객 후보")
+        #expect(event.session?.pendingUserInput?.title == "Ideal Customer Profile 1/4")
+        #expect(event.session?.pendingUserInput?.intro?.title == "Ideal Customer Profile")
         #expect(event.session?.pendingUserInput?.intro?.body?.contains("실제로 연락하고 인터뷰") == true)
         #expect(event.session?.pendingUserInput?.intro?.bullets?.contains("현재 대안: 지금 어떤 수작업이나 도구로 버티는지") == true)
         #expect(event.session?.pendingUserInput?.resources?.first?.source == "PostHog")
@@ -1234,12 +1234,12 @@ struct SidecarEventDecodingTests {
         {
           "type": "workspace_scan_result",
           "scanRoot": "/Users/october/prj/myapp",
-          "icp": "docs/ICP.md",
-          "spec": "docs/SPEC.md",
-          "values": "docs/VALUES.md",
+          "icp": ".agentic30/docs/ICP.md",
+          "spec": ".agentic30/docs/SPEC.md",
+          "values": ".agentic30/docs/VALUES.md",
           "designSystem": null,
           "adr": "docs/adr",
-          "goal": "docs/GOAL.md",
+          "goal": ".agentic30/docs/GOAL.md",
           "day1GoalSelection": {
             "schemaVersion": 1,
             "schema": "agentic30.day1_goal.v1",
@@ -1248,7 +1248,7 @@ struct SidecarEventDecodingTests {
             "customer": "B2B SaaS support lead",
             "problem": "Slack escalation을 놓침",
             "validationAction": "유료 파일럿 ask",
-            "evidenceRefs": ["README.md", "docs/ICP.md"],
+            "evidenceRefs": ["README.md", ".agentic30/docs/ICP.md"],
             "proofSink": "bip_optional",
             "sourcePlanFingerprint": "abc123",
             "selectedAt": "2026-06-06T00:00:00.000Z"
@@ -1272,16 +1272,16 @@ struct SidecarEventDecodingTests {
 
         #expect(event.type == "workspace_scan_result")
         #expect(event.scanRoot == "/Users/october/prj/myapp")
-        #expect(event.icp == "docs/ICP.md")
-        #expect(event.spec == "docs/SPEC.md")
-        #expect(event.values == "docs/VALUES.md")
+        #expect(event.icp == ".agentic30/docs/ICP.md")
+        #expect(event.spec == ".agentic30/docs/SPEC.md")
+        #expect(event.values == ".agentic30/docs/VALUES.md")
         #expect(event.designSystem == nil)
         #expect(event.adr == "docs/adr")
-        #expect(event.goal == "docs/GOAL.md")
+        #expect(event.goal == ".agentic30/docs/GOAL.md")
         #expect(event.day1GoalSelection?.goalType == .makeMoney)
         #expect(event.day1GoalSelection?.proofSink == .bipOptional)
         #expect(event.day1GoalSelection?.customer == "B2B SaaS support lead")
-        #expect(event.day1GoalSelection?.evidenceRefs == ["README.md", "docs/ICP.md"])
+        #expect(event.day1GoalSelection?.evidenceRefs == ["README.md", ".agentic30/docs/ICP.md"])
         #expect(event.onboardingHypothesis?.confidence == "high")
         #expect(event.onboardingHypothesis?.productName == "Agentic30")
         #expect(event.onboardingHypothesis?.targetUser?.contains("전업 1인 개발자") == true)
@@ -1856,7 +1856,7 @@ struct SidecarEventDecodingTests {
               "oneLine": "mood.disk: 출판 요청부터 결제까지 앱 안에서 처리하려는 기록/출판 앱",
               "customer": "출판을 원하는 기록 앱 사용자",
               "problem": "출판 요청과 결제를 앱 안에서 처리하고 싶다",
-              "evidenceRefs": ["README.md (README)", "docs/ICP.md (ICP)"]
+              "evidenceRefs": ["README.md (README)", ".agentic30/docs/ICP.md (ICP)"]
             },
             "diagnosis": {
               "stage": "초기 사용자 검증",
@@ -2046,7 +2046,7 @@ struct SidecarEventDecodingTests {
                 { "key": "icp", "label": "고객", "value": "B2B SaaS support lead", "tone": "body" },
                 { "key": "pain", "label": "문제", "value": "urgent Slack escalation을 놓침", "tone": "mark" },
                 { "key": "outcome", "label": "확인할 행동", "value": "계정 리스크 escalation을 더 빨리 판단한다", "tone": "strong" },
-                { "key": "evidence", "label": "근거", "value": "docs/GOAL.md, docs/ICP.md", "tone": "code" }
+                { "key": "evidence", "label": "근거", "value": ".agentic30/docs/GOAL.md, .agentic30/docs/ICP.md", "tone": "code" }
               ],
               "summary": "SupportLens는 support lead의 Slack escalation 누락을 Day 2에서 검증한다."
             },
@@ -2093,7 +2093,7 @@ struct SidecarEventDecodingTests {
                 "prompt": "이 고객이 지금 겪는 가장 압축된 문제는 무엇인가요?",
                 "helperText": "비용 신호",
                 "statement": "urgent Slack escalation을 놓침",
-                "evidence": ["docs/SPEC.md"],
+                "evidence": [".agentic30/docs/SPEC.md"],
                 "missingAssumptions": [],
                 "options": [
                   { "id": "o1", "label": "Slack 누락", "description": "반복됨", "preview": "문제" },
@@ -2106,7 +2106,7 @@ struct SidecarEventDecodingTests {
                 "prompt": "그 고객에게서 어떤 행동 신호를 확인해야 하나요?",
                 "helperText": "지불 의향, 현재 대안, 최근 사건처럼 관찰 가능한 행동",
                 "statement": "계정 리스크 escalation을 더 빨리 판단한다",
-                "evidence": ["docs/GOAL.md"],
+                "evidence": [".agentic30/docs/GOAL.md"],
                 "missingAssumptions": [],
                 "options": [
                   { "id": "o1", "label": "빠른 판단", "description": "행동 신호", "preview": "확인할 행동" },
@@ -2178,9 +2178,9 @@ struct SidecarEventDecodingTests {
           "highlightPhrases": ["support lead"],
           "emphasis": [
             { "phrase": "support lead", "style": "strong" },
-            { "phrase": "docs/ICP.md", "style": "code" }
+            { "phrase": ".agentic30/docs/ICP.md", "style": "code" }
           ],
-          "statement": "support lead 고객을 docs/ICP.md 기준으로 확인",
+          "statement": "support lead 고객을 .agentic30/docs/ICP.md 기준으로 확인",
           "evidence": [],
           "missingAssumptions": [],
           "options": []
@@ -2192,7 +2192,7 @@ struct SidecarEventDecodingTests {
         #expect(component.highlightPhrases == ["support lead"])
         #expect(component.emphasis?.count == 2)
         #expect(component.emphasis?[0] == EmphasisSpan(phrase: "support lead", style: .strong))
-        #expect(component.emphasis?[1] == EmphasisSpan(phrase: "docs/ICP.md", style: .code))
+        #expect(component.emphasis?[1] == EmphasisSpan(phrase: ".agentic30/docs/ICP.md", style: .code))
     }
 
     @MainActor @Test func day1AlignmentComponentDecodesSnakeEmphasisAndUnknownStyleFallback() throws {
@@ -2344,7 +2344,7 @@ struct SidecarEventDecodingTests {
         {
           "type": "doc_creation_result",
           "docType": "icp",
-          "docPath": "docs/ICP.md"
+          "docPath": ".agentic30/docs/ICP.md"
         }
         """
 
@@ -2352,7 +2352,7 @@ struct SidecarEventDecodingTests {
 
         #expect(event.type == "doc_creation_result")
         #expect(event.docType == "icp")
-        #expect(event.docPath == "docs/ICP.md")
+        #expect(event.docPath == ".agentic30/docs/ICP.md")
         #expect(event.error == nil)
     }
 
@@ -2361,7 +2361,7 @@ struct SidecarEventDecodingTests {
         {
           "type": "doc_creation_result",
           "docType": "spec",
-          "error": "Agent finished but the file was not found at docs/SPEC.md"
+          "error": "Agent finished but the file was not found at .agentic30/docs/SPEC.md"
         }
         """
 
@@ -2370,7 +2370,7 @@ struct SidecarEventDecodingTests {
         #expect(event.type == "doc_creation_result")
         #expect(event.docType == "spec")
         #expect(event.docPath == nil)
-        #expect(event.error == "Agent finished but the file was not found at docs/SPEC.md")
+        #expect(event.error == "Agent finished but the file was not found at .agentic30/docs/SPEC.md")
     }
 
     @MainActor @Test func decodesDiagnosticsSnapshot() throws {
@@ -2554,7 +2554,7 @@ struct SidecarEventDecodingTests {
             {
               "type": "icp",
               "title": "ICP",
-              "path": "docs/ICP.md",
+              "path": ".agentic30/docs/ICP.md",
               "status": "drafted",
               "content": "# ICP"
             }
@@ -2582,7 +2582,7 @@ struct SidecarEventDecodingTests {
         #expect(event.iddAmbiguityScore == 18)
         #expect(event.iddUnresolvedAssumptions == ["pricing proof"])
         #expect(event.iddDocOrder == ["icp", "goal", "values", "spec"])
-        #expect(event.iddDocPreviews?.first?.path == "docs/ICP.md")
+        #expect(event.iddDocPreviews?.first?.path == ".agentic30/docs/ICP.md")
         #expect(event.iddProviderRecovery?.provider == .codex)
         #expect(event.iddProviderRecovery?.actionId == "sign_in_codex")
         #expect(event.iddSetupError?.provider == .codex)

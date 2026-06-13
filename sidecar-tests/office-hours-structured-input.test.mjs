@@ -151,7 +151,7 @@ test("prepareOfficeHoursStructuredInputRequest guarantees free-text input on eve
 test("prepareOfficeHoursStructuredInputRequest leaves non-Office-Hours free-text flags alone", () => {
   const prepared = prepareOfficeHoursStructuredInputRequest({
     toolName: "AskUserQuestion",
-    title: "고객 후보 1/4",
+    title: "Ideal Customer Profile 1/4",
     generation: { mode: "sidecar_agent_synthesized", docType: "icp" },
     questions: [
       {

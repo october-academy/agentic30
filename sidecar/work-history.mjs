@@ -1535,11 +1535,12 @@ export async function collectWorkspaceEvidenceSignals({
 } = {}) {
   const root = path.resolve(String(workspaceRoot || "."));
   const textExts = new Set([".md", ".mdx", ".txt", ".json", ".jsonl", ".csv"]);
-  const [workspaceDocsCount, interviewCount, bipCount] = await Promise.all([
-    countFilesInDir({ root, dir: "docs", exts: textExts, fsImpl }),
+  const [agenticDocsCount, interviewCount, bipCount] = await Promise.all([
+    countFilesInDir({ root, dir: ".agentic30/docs", exts: textExts, fsImpl }),
     countFilesInDir({ root, dir: "interviews", exts: textExts, fsImpl }),
     countFilesInDir({ root, dir: "bip", exts: textExts, fsImpl }),
   ]);
+  const workspaceDocsCount = agenticDocsCount;
   let agenticStateCount = 0;
   try {
     const names = await fsImpl.readdir(path.join(root, ".agentic30"));

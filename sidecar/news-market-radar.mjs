@@ -14,6 +14,7 @@ import {
   trustedSourcesForMarketRadarPrompt,
 } from "./market-radar-source-catalog.mjs";
 import { sanitizeWebSearchQuery } from "./read-only-workspace-tool-policy.mjs";
+import { projectDocDefinitions } from "./project-doc-paths.mjs";
 
 export const NEWS_MARKET_RADAR_SCHEMA_VERSION = 1;
 export const NEWS_MARKET_RADAR_CACHE_SCHEMA_VERSION = 1;
@@ -168,14 +169,12 @@ const NEWS_LANE_HYPOTHESES = Object.freeze({
 });
 
 const WORKSPACE_EVIDENCE_CANDIDATES = Object.freeze([
-  { role: "icp", relativePath: "docs/ICP.md", title: "ICP.md" },
-  { role: "icp", relativePath: "ICP.md", title: "ICP.md" },
-  { role: "spec", relativePath: "docs/SPEC.md", title: "SPEC.md" },
-  { role: "spec", relativePath: "SPEC.md", title: "SPEC.md" },
-  { role: "goal", relativePath: "docs/GOAL.md", title: "GOAL.md" },
-  { role: "goal", relativePath: "GOAL.md", title: "GOAL.md" },
-  { role: "values", relativePath: "docs/VALUES.md", title: "VALUES.md" },
-  { role: "values", relativePath: "VALUES.md", title: "VALUES.md" },
+  ...projectDocDefinitions(["icp", "spec", "goal", "values"])
+    .flatMap((doc) => doc.aliases.map((relativePath) => ({
+      role: doc.type,
+      relativePath,
+      title: doc.filename,
+    }))),
   { role: "readme", relativePath: "README.md", title: "README.md" },
   { role: "foundation", relativePath: ".agentic30/foundation-summary.json", title: "foundation-summary" },
   { role: "foundation", relativePath: ".agentic30/foundation-summary.md", title: "foundation-summary" },

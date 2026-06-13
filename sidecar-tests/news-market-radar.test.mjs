@@ -109,19 +109,20 @@ test("market radar answer ranking favors recent core assumptions", () => {
 test("workspace evidence collector reads explicit docs and excludes denied or secret-like paths", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
     await fs.mkdir(path.join(root, ".git"), { recursive: true });
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs with paid tool spend");
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs with paid tool spend");
     await fs.writeFile(path.join(root, ".git", "config"), "secret");
     await fs.writeFile(path.join(root, "docs", "api-key.md"), "should not be read");
     const result = await collectWorkspaceEvidence({
       workspaceRoot: root,
       scanResult: {
-        icp: "docs/ICP.md",
+        icp: ".agentic30/docs/ICP.md",
         spec: ".git/config",
         goal: "docs/api-key.md",
       },
     });
-    assert.equal(result.evidence.some((item) => item.path === "docs/ICP.md"), true);
+    assert.equal(result.evidence.some((item) => item.path === ".agentic30/docs/ICP.md"), true);
     assert.equal(result.evidence.some((item) => item.path === ".git/config"), false);
     assert.equal(result.evidence.some((item) => item.path === "docs/api-key.md"), false);
   });
@@ -748,7 +749,8 @@ test("old Market Radar prompt profile cache is marked stale when Exa is configur
 test("refresh persists provider result and missing Exa route returns stale cached state", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
     const now = new Date("2026-05-20T00:00:00.000Z");
     const snapshot = await refreshNewsMarketRadar({
       workspaceRoot: root,
@@ -795,7 +797,8 @@ test("refresh persists provider result and missing Exa route returns stale cache
 test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
     let observedRoute = null;
     const progressStages = [];
     const snapshot = await refreshNewsMarketRadar({
@@ -850,7 +853,8 @@ test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async 
 test("refresh runs five Market Radar lane jobs concurrently", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
     let active = 0;
     let maxActive = 0;
     const startedLaneIds = [];
@@ -903,7 +907,8 @@ test("refresh runs five Market Radar lane jobs concurrently", async () => {
 test("refresh keeps successful lanes ready when some lane research fails", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
     const failingLaneIds = new Set(["problem", "channel"]);
     const snapshot = await refreshNewsMarketRadar({
       workspaceRoot: root,
@@ -1010,7 +1015,8 @@ test("snapshot normalization generates unique source ids for same-domain URLs", 
 test("refresh falls back to deterministic merge when final synthesis fails", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
     const snapshot = await refreshNewsMarketRadar({
       workspaceRoot: root,
       force: true,
@@ -1054,7 +1060,8 @@ test("refresh falls back to deterministic merge when final synthesis fails", asy
 test("refresh emits real progress stages for the Market Radar UI", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
-    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
     const progressEvents = [];
     await refreshNewsMarketRadar({
       workspaceRoot: root,

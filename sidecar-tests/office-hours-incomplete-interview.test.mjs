@@ -18,7 +18,7 @@ const DAY1_CONTEXT = [
   "Office Hours mode: Startup",
   "Mode goal: 증거, 현재 대안, 가장 작은 유료 진입점을 묻는다.",
   "Expected question count: 6",
-  "Scan artifacts: docs/ICP.md, docs/SPEC.md",
+  "Scan artifacts: .agentic30/docs/ICP.md, .agentic30/docs/SPEC.md",
 ].join("\n");
 
 test("parseExpectedOfficeHoursQuestionCount reads the embedded count line", () => {

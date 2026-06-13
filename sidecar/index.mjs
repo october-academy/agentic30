@@ -125,6 +125,7 @@ import {
   loadProjectContextCache,
   refreshProjectContextCache,
 } from "./project-context-cache.mjs";
+import { projectDocCandidatePaths, projectDocPath } from "./project-doc-paths.mjs";
 import {
   buildDay1GoalProjectContext,
   loadDay1GoalSelection,
@@ -7668,13 +7669,12 @@ async function buildInstantChatResponse(prompt) {
 async function buildConfiguredDocPathAnswer(prompt) {
   const value = String(prompt || "");
   if (!isWorkspacePathLookupPrompt(value)) return "";
-  const workspace = currentBipConfig()?.workspace || {};
   const mappings = [
-    ["ICP.md", workspace.icp],
-    ["SPEC.md", workspace.spec],
-    ["VALUES.md", workspace.values],
-    ["GOAL.md", workspace.goal],
-    ["ADR.md", workspace.adr],
+    ["ICP.md", projectDocPath("icp")],
+    ["SPEC.md", projectDocPath("spec")],
+    ["VALUES.md", projectDocPath("values")],
+    ["GOAL.md", projectDocPath("goal")],
+    ["ADR.md", projectDocPath("adr")],
   ];
   const match = mappings.find(([label, docPath]) =>
     docPath && new RegExp(`\\b${label.replace(".", "\\.")}\\b`, "i").test(value)
@@ -7743,9 +7743,9 @@ function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption =
   const docs = configuredDocsPresence(config);
   const proofRefs = normalizeStringList(stageState.proofs);
   const evidenceRefs = [
-    docs.icp ? "docs/ICP.md" : "",
-    docs.goal ? "docs/GOAL.md" : "",
-    docs.spec ? "docs/SPEC.md" : "",
+    docs.icp ? projectDocPath("icp") : "",
+    docs.goal ? projectDocPath("goal") : "",
+    docs.spec ? projectDocPath("spec") : "",
     proofRefs[0] ? `prior proof: ${proofRefs[0]}` : "",
   ].filter(Boolean);
   const selected = String(selectedOption || "").trim();
@@ -7786,7 +7786,7 @@ function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption =
     stageLine = repoStage === "running"
       ? `Evidence: ${evidenceRefs.length ? evidenceRefs.join(", ") : "workspace 근거"}를 기준으로 다음 고객증거 loop, 기준 숫자, proof target을 오늘 갱신합니다.`
       : (docs.icp
-        ? `Evidence: docs/ICP.md와 관련 문서는 "${goalLabel}" 판단 기준입니다.`
+        ? `Evidence: ${projectDocPath("icp")}와 관련 문서는 "${goalLabel}" 판단 기준입니다.`
         : "Evidence: 아직 전략 문서가 비어 있어도 시작 조건은 고객 대화 1개와 공개 proof 1개입니다.");
     nextAction = `오늘 ${customerLabel} 1명에게 "${problemLabel}"와 관련된 최근 상황을 묻고 답변 원문을 저장하세요.`;
     proofTarget = "응답 1개를 확보한 뒤 그 응답 원문과 다음 판단 기준을 공개 proof URL 또는 오늘 기록에 남깁니다.";
@@ -7823,12 +7823,16 @@ function readWorkspaceStageState(config = {}) {
 }
 
 function configuredDocsPresence(config = {}) {
-  const workspace = config?.workspace || {};
+  const root = path.resolve(String(config?.workspace?.root || workspaceRoot || "."));
+  const exists = (role) => {
+    const canonical = projectDocPath(role);
+    return Boolean(canonical && fsSync.existsSync(path.join(root, canonical)));
+  };
   return {
-    icp: Boolean(workspace.icp),
-    values: Boolean(workspace.values),
-    goal: Boolean(workspace.goal),
-    spec: Boolean(workspace.spec),
+    icp: exists("icp"),
+    values: exists("values"),
+    goal: exists("goal"),
+    spec: exists("spec"),
   };
 }
 
@@ -8023,22 +8027,21 @@ function buildChatBipManifest() {
     return "";
   }
 
-  const workspace = bipConfig.workspace || {};
   const lines = [
     "## Settings BIP Manifest",
     "This deterministic manifest comes from Settings > Build In Public.",
     "For questions asking where a canonical project document is, answer from this manifest before using retrieval.",
-    "Use QMD for broad search and the BIP MCP tools as the canonical fallback for configured project documents.",
+    "Use QMD for broad search and the BIP MCP tools for canonical project documents. Legacy docs/* paths are not used.",
     `Workspace root: ${path.resolve(configuredRoot)}`,
   ];
-  if (workspace.icp) lines.push(`ICP doc: ${workspace.icp}`);
-  if (workspace.spec) lines.push(`SPEC doc: ${workspace.spec}`);
-  if (workspace.values) lines.push(`VALUES doc: ${workspace.values}`);
-  if (workspace.designSystem) lines.push(`Design System docs: ${workspace.designSystem}`);
-  if (workspace.adr) lines.push(`ADR docs: ${workspace.adr}`);
-  if (workspace.goal) lines.push(`Goal doc: ${workspace.goal}`);
-  if (workspace.docs) lines.push(`Docs map: ${workspace.docs}`);
-  if (workspace.sheet) lines.push(`Sheet schema: ${workspace.sheet}`);
+  lines.push(`ICP doc: ${projectDocPath("icp")}`);
+  lines.push(`SPEC doc: ${projectDocPath("spec")}`);
+  lines.push(`VALUES doc: ${projectDocPath("values")}`);
+  lines.push(`Design System docs: ${projectDocPath("designSystem")}`);
+  lines.push(`ADR docs: ${projectDocPath("adr")}`);
+  lines.push(`Goal doc: ${projectDocPath("goal")}`);
+  lines.push(`Docs map: ${projectDocPath("docs")}`);
+  lines.push(`Sheet schema: ${projectDocPath("sheet")}`);
 
   const externalDocs = bipConfig.externalDocs || {};
   const googleDocs = normalizeStringList(externalDocs.googleDocs);
@@ -8050,21 +8053,20 @@ function buildChatBipManifest() {
 }
 
 async function collectChatBipLocalDocs(bipConfig, root) {
-  const workspace = bipConfig?.workspace || {};
-  const configuredDocs = [
-    ["ICP", workspace.icp],
-    ["SPEC", workspace.spec],
-    ["VALUES", workspace.values],
-    ["Design System", workspace.designSystem],
-    ["ADR", workspace.adr],
-    ["Goal", workspace.goal],
-    ["Docs", workspace.docs],
-    ["Sheet", workspace.sheet],
+  const canonicalDocs = [
+    ["ICP", projectDocPath("icp")],
+    ["SPEC", projectDocPath("spec")],
+    ["VALUES", projectDocPath("values")],
+    ["Design System", projectDocPath("designSystem")],
+    ["ADR", projectDocPath("adr")],
+    ["Goal", projectDocPath("goal")],
+    ["Docs", projectDocPath("docs")],
+    ["Sheet", projectDocPath("sheet")],
   ];
   const seen = new Set();
   const docs = [];
-  for (const [role, configuredPath] of configuredDocs) {
-    const value = String(configuredPath || "").trim();
+  for (const [role, canonicalPath] of canonicalDocs) {
+    const value = String(canonicalPath || "").trim();
     if (!value) continue;
     const resolvedPath = resolveChatBipWorkspacePath(root, value);
     if (!resolvedPath) {
@@ -8080,8 +8082,8 @@ async function collectChatBipLocalDocs(bipConfig, root) {
       docs.push({
         role,
         relativePath: path.relative(root, resolvedPath) || ".",
-        content: "No readable Markdown document found at this configured path.",
-    });
+        content: `Missing canonical project doc at ${value}. Legacy docs/* paths are not used.`,
+      });
       continue;
     }
     for (const filePath of matches) {
@@ -9977,13 +9979,8 @@ async function buildIddAgentSynthesisPrompt(doc, fallbackInput, {
 }
 
 async function collectIddSynthesisContextFiles() {
-  const configPaths = currentBipConfig()?.workspace || {};
   const candidates = [
-    "docs/ICP.md",
-    "docs/SPEC.md",
-    "docs/GOAL.md",
-    "docs/VALUES.md",
-    ...Object.values(configPaths || {}).filter(Boolean),
+    ...["icp", "spec", "goal", "values"].flatMap((role) => projectDocCandidatePaths(role)),
   ];
   const seen = new Set();
   const excerpts = [];
@@ -11201,7 +11198,7 @@ async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", s
       ]
     : [
         "로컬 workspace에서 ICP/VALUES/GOAL/SPEC 문서를 아직 찾지 못했습니다.",
-        "다음 액션: `docs/ICP.md` 하나부터 만들고 Day 1 판단 기준을 적으세요.",
+        `다음 액션: \`${projectDocPath("icp")}\` 하나부터 만들고 Day 1 판단 기준을 적으세요.`,
       ];
   await appendVisibleAssistantMessage(sessionId, lines.join("\n"));
 }
@@ -11265,15 +11262,16 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
   });
   const scanPrompt = [
     "Scan the current workspace for these project documents and return only JSON.",
-    "Find the best relative path for each role:",
-    "- icp: ICP.md",
-    "- spec: SPEC.md",
-    "- values: VALUES.md, PRINCIPLES.md, or product values docs",
-    "- designSystem: DESIGN_SYSTEM.md, DESIGN.md, design-system.md, or design docs",
-    "- adr: ADR.md or architecture decision records",
-    "- goal: GOAL.md",
-    "- docs: DOCS.md, README.md, INDEX.md, or documentation map",
-    "- sheet: SHEET.md, SHEETS.md, or BIP_SHEET.md",
+    "Only report the canonical `.agentic30/docs/*` product documents. If a canonical file is missing, return null for that role; do not use legacy `docs/*`, README, or root-level aliases.",
+    "Find these exact relative paths:",
+    `- icp: ${projectDocPath("icp")}`,
+    `- spec: ${projectDocPath("spec")}`,
+    `- values: ${projectDocPath("values")}`,
+    `- designSystem: ${projectDocPath("designSystem")}`,
+    `- adr: ${projectDocPath("adr")}`,
+    `- goal: ${projectDocPath("goal")}`,
+    `- docs: ${projectDocPath("docs")}`,
+    `- sheet: ${projectDocPath("sheet")}`,
     "",
     "Also infer an onboardingHypothesis for the first user-facing question:",
     '- productName: display product/project name exactly as shown by README/docs/package after generic cleanup; for example README "# agentic30 Mac" should return "agentic30 Mac"',
@@ -11299,7 +11297,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     "- missingAssumptions: concise labels for important missing signals, only when the absence is clear from the scanned docs",
     "Every item in channels/analyticsTools/events/customerActions/currentAlternatives/conversionSignals must have: label, evidencePath, shortQuote. The quote must be copied from that file, short, and non-secret.",
     "",
-    "Prefer exact filenames under docs/. If exact files are absent, use the closest matching project document.",
+    "Use only exact filenames under `.agentic30/docs/`. If exact files are absent, return null for that role.",
     "Return paths relative to the workspace root. Use null when not found.",
     '{"icp": null, "spec": null, "values": null, "designSystem": null, "adr": null, "goal": null, "docs": null, "sheet": null, "onboardingHypothesis": {"productName": "", "projectKind": "unknown", "targetUser": "", "problem": "", "purpose": "", "goal": "", "values": "", "likelyUsers": [], "stage": "unknown", "evidence": [], "confidence": "low", "suggestedFirstQuestion": ""}, "situationSignals": {"channels": [], "analyticsTools": [], "events": [], "customerActions": [], "currentAlternatives": [], "conversionSignals": [], "missingAssumptions": []}}',
   ].join("\n");
@@ -11661,7 +11659,8 @@ function emptyWorkspaceScanResult() {
 function normalizeWorkspaceScanDocs(docs = {}) {
   const result = emptyWorkspaceScanResult();
   for (const key of Object.keys(result)) {
-    result[key] = typeof docs?.[key] === "string" && docs[key].trim() ? docs[key].trim() : null;
+    const value = typeof docs?.[key] === "string" && docs[key].trim() ? docs[key].trim() : null;
+    result[key] = isCanonicalProjectDocPath(value, key) ? value : null;
   }
   return result;
 }
@@ -11756,6 +11755,7 @@ function normalizeWorkspaceScanPath(value, scanRoot, role = "") {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed || trimmed.toLowerCase() === "null") return null;
+  if (!isCanonicalProjectDocPath(trimmed, role)) return null;
   if (path.isAbsolute(trimmed) || trimmed.includes("\0")) return null;
   const resolved = path.resolve(scanRoot, trimmed);
   if (!resolved.startsWith(`${path.resolve(scanRoot)}${path.sep}`) && resolved !== path.resolve(scanRoot)) {
@@ -11768,6 +11768,12 @@ function normalizeWorkspaceScanPath(value, scanRoot, role = "") {
     return null;
   }
   return path.relative(scanRoot, resolved).split(path.sep).join(path.posix.sep);
+}
+
+function isCanonicalProjectDocPath(relativePath, role = "") {
+  const canonical = projectDocPath(role);
+  if (!canonical) return false;
+  return String(relativePath || "").trim().replace(/\\/g, "/").toLowerCase() === canonical.toLowerCase();
 }
 
 function isWorkspaceScanTextPath(relativePath, role = "") {
@@ -11797,7 +11803,8 @@ function mergeWorkspaceScanResults(...results) {
     const candidates = results
       .map((result) => result?.[key])
       .filter((value) => typeof value === "string" && value.trim())
-      .map((value) => String(value).trim());
+      .map((value) => String(value).trim())
+      .filter((value) => isCanonicalProjectDocPath(value, key));
     candidates.sort((a, b) => workspaceScanPathScore(b, key) - workspaceScanPathScore(a, key) || a.localeCompare(b));
     merged[key] = candidates[0] || null;
   }
@@ -11807,10 +11814,9 @@ function mergeWorkspaceScanResults(...results) {
 function workspaceScanPathScore(relativePath, role) {
   const normalized = String(relativePath || "").toLowerCase();
   let score = 0;
-  if (normalized.startsWith("docs/")) score += 20;
-  if (normalized === `docs/${role.toLowerCase()}.md`) score += 60;
-  if (path.posix.basename(normalized) === `${role.toLowerCase()}.md`) score += 35;
-  if (role === "docs" && /^readme\.(md|mdx|txt|rst)$/i.test(path.posix.basename(normalized))) score += 60;
+  const canonical = projectDocPath(role).toLowerCase();
+  if (canonical && normalized === canonical) score += 90;
+  if (normalized.startsWith(".agentic30/docs/")) score += 35;
   return score;
 }
 
@@ -12995,7 +13001,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
 
   const templates = {
     icp: {
-      filename: "docs/ICP.md",
+      filename: projectDocPath("icp"),
       guide: [
         "Create an Ideal Customer Profile (ICP) document for this project.",
         "Include: target persona, demographics, pain points, Jobs To Be Done (JTBD),",
@@ -13003,7 +13009,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
       ].join(" "),
     },
     spec: {
-      filename: "docs/SPEC.md",
+      filename: projectDocPath("spec"),
       guide: [
         "Create a Product Specification (SPEC) document for this project.",
         "Include: product vision, core features, user stories, success metrics,",
@@ -13011,7 +13017,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
       ].join(" "),
     },
     values: {
-      filename: "docs/VALUES.md",
+      filename: projectDocPath("values"),
       guide: [
         "Create a VALUES document for this project.",
         "Include: decision principles, tradeoff rules, things this project refuses to do,",
@@ -13019,7 +13025,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
       ].join(" "),
     },
     designSystem: {
-      filename: "docs/DESIGN_SYSTEM.md",
+      filename: projectDocPath("designSystem"),
       guide: [
         "Create a Design System document for this project.",
         "Include: color palette, typography, spacing system, key UI components,",
@@ -13027,7 +13033,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
       ].join(" "),
     },
     adr: {
-      filename: "docs/ADR.md",
+      filename: projectDocPath("adr"),
       guide: [
         "Create an Architecture Decision Records (ADR) document for this project.",
         "Include: ADR template format (Title, Status, Context, Decision, Consequences),",
@@ -13035,7 +13041,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
       ].join(" "),
     },
     goal: {
-      filename: "docs/GOAL.md",
+      filename: projectDocPath("goal"),
       guide: [
         "Create a Goal / OKR document for this project.",
         "Include: quarterly objectives with key results, weekly milestone targets,",
@@ -13043,7 +13049,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
       ].join(" "),
     },
     docs: {
-      filename: "docs/DOCS.md",
+      filename: projectDocPath("docs"),
       guide: [
         "Create a documentation map for this project.",
         "Include: canonical sources of truth, onboarding path, document ownership,",
@@ -13051,7 +13057,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
       ].join(" "),
     },
     sheet: {
-      filename: "docs/SHEET.md",
+      filename: projectDocPath("sheet"),
       guide: [
         "Create a Google Sheet schema document for BIP posting evidence.",
         "Include: columns, required fields, example rows, validation rules,",
@@ -13077,7 +13083,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
       "",
       "Strategy:",
       "1. List root directory and key files (README, package.json, Cargo.toml, etc.)",
-      "2. Read the README and any existing docs to understand the project",
+      "2. Read the README and existing canonical `.agentic30/docs/*` files to understand the project",
       "3. Check the source code structure to understand the architecture",
       "4. Write the document based on REAL project data — not generic templates",
       "",
@@ -13085,6 +13091,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
       "- Write all document content in Korean (한국어)",
       "- Use markdown format",
       "- Base everything on actual project analysis — be specific, reference real files and features",
+      "- Do not read legacy `docs/*.md` product-shape files as seed context.",
       `- Save the file to: ${template.filename}`,
       "- Create the parent directory if needed",
     ].join("\n");
@@ -13450,14 +13457,14 @@ function baseSystemPrompt(provider) {
     lines.push("");
     lines.push("## BIP (Build In Public) Context");
     lines.push(`Project workspace: ${bipConfig.workspace.root}`);
-    if (bipConfig.workspace.icp) lines.push(`ICP doc: ${bipConfig.workspace.icp}`);
-    if (bipConfig.workspace.spec) lines.push(`SPEC doc: ${bipConfig.workspace.spec}`);
-    if (bipConfig.workspace.values) lines.push(`VALUES doc: ${bipConfig.workspace.values}`);
-    if (bipConfig.workspace.designSystem) lines.push(`Design System docs: ${bipConfig.workspace.designSystem}`);
-    if (bipConfig.workspace.adr) lines.push(`ADR docs: ${bipConfig.workspace.adr}`);
-    if (bipConfig.workspace.goal) lines.push(`Goal doc: ${bipConfig.workspace.goal}`);
-    if (bipConfig.workspace.docs) lines.push(`Docs map: ${bipConfig.workspace.docs}`);
-    if (bipConfig.workspace.sheet) lines.push(`Sheet schema: ${bipConfig.workspace.sheet}`);
+    lines.push(`ICP doc: ${projectDocPath("icp")}`);
+    lines.push(`SPEC doc: ${projectDocPath("spec")}`);
+    lines.push(`VALUES doc: ${projectDocPath("values")}`);
+    lines.push(`Design System docs: ${projectDocPath("designSystem")}`);
+    lines.push(`ADR docs: ${projectDocPath("adr")}`);
+    lines.push(`Goal doc: ${projectDocPath("goal")}`);
+    lines.push(`Docs map: ${projectDocPath("docs")}`);
+    lines.push(`Sheet schema: ${projectDocPath("sheet")}`);
 
     const docs = bipConfig.externalDocs || {};
     const allUrls = [...(docs.googleDocs || []), ...(docs.googleSheets || []), ...(docs.notion || [])];
