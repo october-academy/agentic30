@@ -236,8 +236,8 @@ upload_posthog_dsyms() {
     return 0
   fi
   if [ -z "${POSTHOG_CLI_API_KEY:-}" ]; then
-    echo "ERROR: POSTHOG_CLI_API_KEY is required when AGENTIC30_UPLOAD_POSTHOG_DSYMS=1" >&2
-    exit 2
+    echo "WARNING: POSTHOG_CLI_API_KEY unset — skipping PostHog dSYM upload (crash symbolication unavailable for this build). Set the POSTHOG_PERSONAL_API_KEY secret to enable." >&2
+    return 0
   fi
   local dsym_dir="$ARCHIVE_PATH/dSYMs"
   if [ ! -d "$dsym_dir" ]; then
