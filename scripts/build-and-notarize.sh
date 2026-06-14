@@ -78,6 +78,9 @@ SPARKLE_KEY_ACCOUNT="${SPARKLE_KEY_ACCOUNT:-agentic30}"
 SPARKLE_WRANGLER_BIN="${SPARKLE_WRANGLER_BIN:-wrangler}"
 AGENTIC30_DMG_WARN_MIB="${AGENTIC30_DMG_WARN_MIB:-280}"
 AGENTIC30_DMG_MAX_MIB="${AGENTIC30_DMG_MAX_MIB:-500}"
+AGENTIC30_UPLOAD_POSTHOG_DSYMS="${AGENTIC30_UPLOAD_POSTHOG_DSYMS:-0}"
+POSTHOG_CLI_HOST="${POSTHOG_CLI_HOST:-https://us.posthog.com}"
+POSTHOG_CLI_PROJECT_ID="${POSTHOG_CLI_PROJECT_ID:-293397}"
 case "$SPARKLE_PUBLIC_BASE_URL" in
   */) ;;
   *) SPARKLE_PUBLIC_BASE_URL="${SPARKLE_PUBLIC_BASE_URL}/" ;;
@@ -228,6 +231,28 @@ notarize() {
     --timeout 2h
 }
 
+upload_posthog_dsyms() {
+  if [ "$AGENTIC30_UPLOAD_POSTHOG_DSYMS" != "1" ]; then
+    return 0
+  fi
+  if [ -z "${POSTHOG_CLI_API_KEY:-}" ]; then
+    echo "ERROR: POSTHOG_CLI_API_KEY is required when AGENTIC30_UPLOAD_POSTHOG_DSYMS=1" >&2
+    exit 2
+  fi
+  local dsym_dir="$ARCHIVE_PATH/dSYMs"
+  if [ ! -d "$dsym_dir" ]; then
+    echo "ERROR: dSYM directory missing at $dsym_dir" >&2
+    exit 1
+  fi
+  echo "Uploading PostHog dSYMs..."
+  POSTHOG_CLI_HOST="$POSTHOG_CLI_HOST" \
+  POSTHOG_CLI_PROJECT_ID="$POSTHOG_CLI_PROJECT_ID" \
+  POSTHOG_CLI_API_KEY="$POSTHOG_CLI_API_KEY" \
+    npx --yes @posthog/cli@latest dsym upload \
+      --directory "$dsym_dir" \
+      --main-dsym agentic30.app.dSYM
+}
+
 path_size_bytes() {
   if [ -d "$1" ]; then
     du -sk "$1" | awk '{ print $1 * 1024 }'
@@ -373,6 +398,7 @@ if [ -n "${PREVIOUS_BUNDLE_VERSION:-}" ] && [ "$bundle_version" -le "$PREVIOUS_B
   echo "ERROR: CFBundleVersion ($bundle_version) must be greater than PREVIOUS_BUNDLE_VERSION ($PREVIOUS_BUNDLE_VERSION)" >&2
   exit 1
 fi
+upload_posthog_dsyms
 
 echo "[7/10] Notarizing + stapling .app (may take 5-30 min)..."
 ZIP_PATH="build/agentic30-app.zip"

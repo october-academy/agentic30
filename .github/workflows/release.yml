@@ -124,6 +124,10 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_RELEASE_DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
       AGENTIC30_UPLOAD_APPCAST_R2: ${{ github.event.inputs.dry_run == 'true' && '0' || '1' }}
+      AGENTIC30_UPLOAD_POSTHOG_DSYMS: ${{ github.event.inputs.dry_run == 'true' && '0' || '1' }}
+      POSTHOG_CLI_HOST: https://us.posthog.com
+      POSTHOG_CLI_PROJECT_ID: "293397"
+      POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
       AGENTIC30_BUNDLE_ARCH: ${{ matrix.bundle_arch }}
       SPARKLE_APPCAST_FILENAME: ${{ matrix.appcast_filename }}
       MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
