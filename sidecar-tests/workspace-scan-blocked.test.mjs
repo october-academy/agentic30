@@ -207,6 +207,7 @@ test("scan with no available provider broadcasts blocked and never passes on loc
     assert.equal(failed.properties.next_provider, "none");
     assert.equal(failed.properties.available_provider_count, 0);
     assert.equal(failed.properties.error_kind, "provider_auth_required");
+    assert.equal(failed.properties.model, blocked.model);
 
     // Fail closed: no successful workspace_scan_result may follow the block.
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -341,6 +342,7 @@ test("scan blocked on selected claude usage limit recommends the next scan-ready
     assert.equal(failed.properties.next_provider, "gemini");
     assert.equal(failed.properties.available_provider_count, 1);
     assert.equal(failed.properties.error_kind, "provider_usage_limit");
+    assert.equal(failed.properties.model, "claude-sonnet-4-6");
 
     await new Promise((resolve) => setTimeout(resolve, 500));
     const passed = ws.events.some((event) =>
