@@ -583,6 +583,8 @@ test("normalizeCloudflareDrilldownMeasurements uses period totals, not summed ho
   assert.equal(drilldown.kpis.find((kpi) => kpi.label === "순 방문").vsLabel, "직전 335");
   assert.equal(drilldown.chart.bars.length, 12, "24 hourly buckets are compressed for the 12-bar UI");
   assert.ok(drilldown.chart.bars.some((bar) => bar.label === "21" && bar.value === 37));
+  assert.match(drilldown.chart.subtitle, /피크 21-23시 구간 · 37명/, "peak subtitle brackets the true 2h peak range, not just the start hour");
+  assert.equal(Object.hasOwn(drilldown.chart.bars[0], "endLabel"), false, "endLabel stays server-side and never reaches the emitted bar");
   assert.doesNotMatch(drilldown.chart.subtitle, /합계/);
   assert.match(drilldown.chart.footnote, /서로 더하지 않습니다/);
   assert.deepEqual(drilldown.table, [], "path table is hidden unless requestSource=eyeball was actually used");

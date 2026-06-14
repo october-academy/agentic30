@@ -655,6 +655,11 @@ export function normalizeMorningBriefingDrilldown(id, raw) {
     : null;
   return {
     id,
+    // Preserved through normalization + merge + re-normalization so a
+    // deterministic collection failure stays terminal end-to-end (see
+    // buildPosthogCollectionFailureDrilldown). Swift's synthesized Codable
+    // ignores the key today; it leaves room for an explicit client retry state.
+    ...(raw.collectionFailed ? { collectionFailed: true } : {}),
     title: cleanString(raw.title, 80) || id,
     subtitle: cleanString(raw.subtitle, 160) || "",
     syncPills: (Array.isArray(raw.syncPills) ? raw.syncPills : [])
@@ -778,6 +783,9 @@ function buildCloudflareHourlyBars(hourly = [], { timeZone = undefined } = {}) {
       : "";
     bars.push({
       label,
+      // endLabel is read server-side for the peak range subtitle; normalizeBars
+      // does not whitelist it, so it never reaches the emitted bar wire model.
+      endLabel,
       value: peakUnique,
       tone: "amber",
       tip: bucket.length > 1
@@ -913,7 +921,9 @@ export function normalizeCloudflareDrilldownMeasurements(raw = {}, { timeZone = 
       ? {
           kind: "bars",
           title: "시간대별 순 방문, 지난 24시간",
-          subtitle: peak ? `피크 ${peak.label}시 구간 · ${peak.value}명` : null,
+          subtitle: peak
+            ? `피크 ${peak.endLabel ? `${peak.label}-${peak.endLabel}` : peak.label}시 구간 · ${peak.value}명`
+            : null,
           bars,
           legend: [{ label: "시간대별 순 방문", tone: "amber" }],
           footnote: "순 방문 KPI는 기간 전체 고유 방문자입니다. 막대는 시간대별 unique라 서로 더하지 않습니다.",
