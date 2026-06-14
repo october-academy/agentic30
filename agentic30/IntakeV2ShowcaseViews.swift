@@ -2174,103 +2174,92 @@ struct IntakeV2ReadyAnalyzeView: View {
         .accessibilityIdentifier("intakeV2.scanBlockedNotice")
     }
 
+    private var scanBlockedRecovery: WorkspaceScanBlockedRecovery? {
+        scanBlockedNotice.map(WorkspaceScanBlockedRecovery.init(notice:))
+    }
+
     private var scanBlockedTitle: String {
-        guard let notice = scanBlockedNotice else {
-            return "AI 검증을 완료하지 못했어요"
-        }
-        return "\(notice.provider.title) 검증을 완료하지 못했어요"
+        scanBlockedRecovery?.title ?? "AI 검증을 완료하지 못했어요"
     }
 
     private var scanBlockedBody: String {
-        if let primary = primaryScanReadyProvider {
-            return "로컬 신호만으로는 Day 1을 시작하지 않습니다. \(primary.provider.title)로 다시 검증하세요."
-        }
-        if !authRequiredReadiness.isEmpty {
-            let summary = authRequiredReadiness
-                .prefix(4)
-                .map { "\($0.provider.title): \(scanBlockedAuthShortLabel($0))" }
-                .joined(separator: " · ")
-            return "SDK는 찾았지만 scan-ready 인증이 없습니다. \(summary)"
-        }
-        return "연결된 AI가 없어 진행할 수 없습니다. Settings > AI 연결에서 provider를 연결한 뒤 다시 시도하세요."
+        scanBlockedRecovery?.body ?? "로컬 신호만으로는 Day 1을 시작하지 않습니다."
     }
 
     @ViewBuilder
     private var scanBlockedActions: some View {
-        if let primary = primaryScanReadyProvider,
-           let onScanBlockedRescan {
-            VStack(alignment: .trailing, spacing: 6) {
-                Button {
-                    onScanBlockedRescan(primary.provider)
-                } label: {
-                    Text("\(primary.provider.title)로 다시 검증")
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                }
-                .buttonStyle(.borderedProminent)
-                .help("\(primary.provider.title)로 근거 검증을 다시 실행합니다. 기본 provider 설정도 \(primary.provider.title)로 바뀝니다.")
-                .accessibilityIdentifier("intakeV2.scanBlockedRescan")
+        if let recovery = scanBlockedRecovery {
+            switch recovery.primaryAction {
+            case .retry(let provider):
+                if let onScanBlockedRescan {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        Button {
+                            onScanBlockedRescan(provider)
+                        } label: {
+                            Text("다시 시도")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .help("\(provider.title)로 근거 검증을 다시 실행합니다.")
+                        .accessibilityIdentifier("intakeV2.scanBlockedRescan")
 
-                let alternates = scanReadyReadiness.filter { $0.provider != primary.provider }
-                if !alternates.isEmpty {
-                    Menu("다른 AI") {
-                        ForEach(alternates) { readiness in
-                            Button("\(readiness.provider.title)로 다시 검증") {
-                                onScanBlockedRescan(readiness.provider)
+                        scanBlockedAlternatesMenu(recovery.alternateProviders)
+                    }
+                }
+            case .switchProvider(let provider):
+                if let onScanBlockedRescan {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        Button {
+                            onScanBlockedRescan(provider)
+                        } label: {
+                            Text("\(provider.title)로 다시 검증")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .help("\(provider.title)로 근거 검증을 다시 실행합니다. 기본 provider 설정도 \(provider.title)로 바뀝니다.")
+                        .accessibilityIdentifier("intakeV2.scanBlockedRescan")
+
+                        scanBlockedAlternatesMenu(recovery.alternateProviders)
+                    }
+                }
+            case .connect(let readinesses):
+                if let onScanBlockedAuthAction {
+                    Menu("AI 연결하기") {
+                        ForEach(readinesses) { readiness in
+                            Button(scanBlockedAuthActionTitle(readiness)) {
+                                onScanBlockedAuthAction(readiness)
                             }
                         }
                     }
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .accessibilityIdentifier("intakeV2.scanBlockedAlternateRescan")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .menuStyle(.borderlessButton)
+                    .accessibilityIdentifier("intakeV2.scanBlockedAuthAction")
                 }
+            case .openSettings:
+                // Body copy already routes the user to Settings > AI 연결; this
+                // terminal state has no installed SDK to act on inline.
+                EmptyView()
             }
-        } else if !authRequiredReadiness.isEmpty,
-                  let onScanBlockedAuthAction {
-            Menu("AI 연결하기") {
-                ForEach(authRequiredReadiness) { readiness in
-                    Button(scanBlockedAuthActionTitle(readiness)) {
-                        onScanBlockedAuthAction(readiness)
+        }
+    }
+
+    @ViewBuilder
+    private func scanBlockedAlternatesMenu(_ providers: [AgentProvider]) -> some View {
+        if !providers.isEmpty, let onScanBlockedRescan {
+            Menu("다른 AI") {
+                ForEach(providers, id: \.self) { provider in
+                    Button("\(provider.title)로 다시 검증") {
+                        onScanBlockedRescan(provider)
                     }
                 }
             }
-            .font(.system(size: 12, weight: .bold, design: .rounded))
-            .menuStyle(.borderlessButton)
-            .accessibilityIdentifier("intakeV2.scanBlockedAuthAction")
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .accessibilityIdentifier("intakeV2.scanBlockedAlternateRescan")
         }
-    }
-
-    private var scanReadyReadiness: [WorkspaceScanProviderReadiness] {
-        scanBlockedNotice?.providerReadiness.filter(\.scanReady) ?? []
-    }
-
-    private var authRequiredReadiness: [WorkspaceScanProviderReadiness] {
-        guard scanReadyReadiness.isEmpty else { return [] }
-        return scanBlockedNotice?.providerReadiness.filter { $0.sdkInstalled && !$0.authenticated } ?? []
-    }
-
-    private var primaryScanReadyProvider: WorkspaceScanProviderReadiness? {
-        guard let notice = scanBlockedNotice else { return nil }
-        if let nextProvider = notice.nextProvider,
-           let readiness = scanReadyReadiness.first(where: { $0.provider == nextProvider }) {
-            return readiness
-        }
-        return scanReadyReadiness.first
     }
 
     private func scanBlockedAuthActionTitle(_ readiness: WorkspaceScanProviderReadiness) -> String {
-        "\(readiness.provider.title) \(scanBlockedAuthShortLabel(readiness))"
-    }
-
-    private func scanBlockedAuthShortLabel(_ readiness: WorkspaceScanProviderReadiness) -> String {
-        switch readiness.authAction {
-        case "claude_login", "codex_login":
-            return "로그인"
-        case "gemini_adc_login":
-            return "ADC 로그인"
-        case "gemini_api_key", "cursor_api_key":
-            return "API key 입력"
-        default:
-            return "연결"
-        }
+        "\(readiness.provider.title) \(WorkspaceScanBlockedRecovery.authShortLabel(readiness))"
     }
 
     private func scanWaitFooter(_ presentation: Day1ScanWaitPresentation, isNarrow: Bool) -> some View {

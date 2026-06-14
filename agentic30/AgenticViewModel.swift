@@ -608,6 +608,103 @@ struct WorkspaceScanBlockedNotice: Equatable {
     let errorKind: String?
 }
 
+/// Reason-aware recovery plan for a blocked workspace scan. Pure (no SwiftUI) so
+/// the copy + primary action are unit-tested without a view harness.
+///
+/// The distinction the raw notice doesn't make on its own: an *aborted*
+/// (timeout) run failed on a provider that is still authenticated and
+/// scan-ready, so the right recovery is to **retry the same provider** — not to
+/// switch away from it or re-authenticate. Usage-limit blocks name the cap and
+/// steer to a switch; auth-required blocks route to connect; a fully empty
+/// readiness set routes to Settings.
+struct WorkspaceScanBlockedRecovery: Equatable {
+    enum PrimaryAction: Equatable {
+        /// Same provider is still scan-ready — it just needs to run again.
+        case retry(AgentProvider)
+        /// A different scan-ready provider should take over.
+        case switchProvider(AgentProvider)
+        /// SDKs are installed but unauthenticated — offer per-provider connect.
+        case connect([WorkspaceScanProviderReadiness])
+        /// Nothing installed/ready — route to Settings > AI 연결.
+        case openSettings
+    }
+
+    let title: String
+    let body: String
+    let primaryAction: PrimaryAction
+    /// Other scan-ready providers offered under a "다른 AI" menu.
+    let alternateProviders: [AgentProvider]
+
+    init(notice: WorkspaceScanBlockedNotice) {
+        let reason = notice.reason.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let kind = (notice.errorKind ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isAborted = reason == "aborted" || kind == "provider_aborted"
+        let isUsageLimit = reason == "usage_limit" || kind == "provider_usage_limit"
+
+        let scanReady = notice.providerReadiness.filter(\.scanReady)
+        let authRequired = scanReady.isEmpty
+            ? notice.providerReadiness.filter { $0.sdkInstalled && !$0.authenticated }
+            : []
+        let failedTitle = notice.provider.title
+
+        if let primaryReady = WorkspaceScanBlockedRecovery.preferredProvider(scanReady, nextProvider: notice.nextProvider) {
+            let failedStillReady = scanReady.contains { $0.provider == notice.provider }
+            if isAborted && failedStillReady {
+                primaryAction = .retry(notice.provider)
+                alternateProviders = scanReady.map(\.provider).filter { $0 != notice.provider }
+                title = "\(failedTitle) 검증이 중단됐어요"
+                body = "검증이 제한 시간 안에 끝나지 않았어요. 같은 AI로 다시 시도해 주세요."
+            } else if isUsageLimit {
+                primaryAction = .switchProvider(primaryReady)
+                alternateProviders = scanReady.map(\.provider).filter { $0 != primaryReady }
+                title = "\(failedTitle) 사용 한도에 걸렸어요"
+                body = "\(primaryReady.title)로 전환해 다시 검증하거나, 잠시 후 다시 시도하세요."
+            } else {
+                primaryAction = .switchProvider(primaryReady)
+                alternateProviders = scanReady.map(\.provider).filter { $0 != primaryReady }
+                title = "\(failedTitle) 검증을 완료하지 못했어요"
+                body = "로컬 신호만으로는 Day 1을 시작하지 않습니다. \(primaryReady.title)로 다시 검증하세요."
+            }
+        } else if !authRequired.isEmpty {
+            primaryAction = .connect(authRequired)
+            alternateProviders = []
+            title = "AI 연결이 필요해요"
+            let summary = authRequired.prefix(4)
+                .map { "\($0.provider.title): \(WorkspaceScanBlockedRecovery.authShortLabel($0))" }
+                .joined(separator: " · ")
+            body = "SDK는 찾았지만 scan-ready 인증이 없습니다. \(summary)"
+        } else {
+            primaryAction = .openSettings
+            alternateProviders = []
+            title = "연결된 AI가 없어요"
+            body = "Settings > AI 연결에서 provider를 연결한 뒤 다시 시도하세요."
+        }
+    }
+
+    private static func preferredProvider(
+        _ scanReady: [WorkspaceScanProviderReadiness],
+        nextProvider: AgentProvider?
+    ) -> AgentProvider? {
+        if let next = nextProvider, scanReady.contains(where: { $0.provider == next }) {
+            return next
+        }
+        return scanReady.first?.provider
+    }
+
+    static func authShortLabel(_ readiness: WorkspaceScanProviderReadiness) -> String {
+        switch readiness.authAction {
+        case "claude_login", "codex_login":
+            return "로그인"
+        case "gemini_adc_login":
+            return "ADC 로그인"
+        case "gemini_api_key", "cursor_api_key":
+            return "API key 입력"
+        default:
+            return "연결"
+        }
+    }
+}
+
 enum AppUpdateResult: Equatable {
     case neverChecked
     case checking
@@ -7676,6 +7773,12 @@ final class AgenticViewModel: ObservableObject {
                     detail: error
                 )
             } else {
+                // Drive the host telemetry gate's scan-success signal. Without
+                // this the gate's `didScanSucceed` stays false forever, so every
+                // `workspace_setup_completed` envelope the sidecar emits is held
+                // in `pendingCompleted` and never captured — activation reads 0
+                // regardless of whether the user actually finished setup.
+                markWorkspaceSetupScanSucceeded()
                 completeLongRunningCompletionAttempt(
                     .workspaceScan,
                     outcome: .success,

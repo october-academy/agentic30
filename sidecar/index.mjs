@@ -62,6 +62,7 @@ import {
 } from "./morning-briefing-drilldown.mjs";
 import { createMorningBriefingProgressTracker } from "./morning-briefing-progress.mjs";
 import {
+  buildPosthogCollectionFailureDrilldown,
   cloudflareSourceSignalFromDrilldown,
   collectCloudflareDirectDrilldown,
   collectPosthogDirectDrilldown,
@@ -226,7 +227,7 @@ import {
 } from "./provider-runner.mjs";
 import { runWithSoftTimeout } from "./frontier-soft-timeout.mjs";
 import { PROVIDER_FALLBACK_CYCLE, selectNextScanProvider, selectScanProviderTargets } from "./scan-provider-select.mjs";
-import { workspaceScanBlockedLogLevel } from "./workspace-scan-telemetry.mjs";
+import { deriveScanAbortCause, workspaceScanBlockedLogLevel } from "./workspace-scan-telemetry.mjs";
 import {
   extractInlineDecision,
   inferInlineDecisionFromPlainText,
@@ -5999,7 +6000,7 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
       readySources.includes("posthog")
         ? collectPosthogDirectDrilldown({ window: gate.window, appSupportPath }).catch((error) => {
             telemetry.captureException(error, { operation: "morning_briefing_posthog_direct" });
-            return null;
+            return buildPosthogCollectionFailureDrilldown({ reason: error?.message, window: gate.window });
           })
         : Promise.resolve(null),
     ]);
@@ -11643,10 +11644,16 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
   // if the SDK never honors the signal (e.g. blocked on MCP startup or tool
   // I/O). Without the hard deadline a stuck codex/claude run can hang the Day-1
   // scan indefinitely instead of failing over to the blocked/switch-provider UI.
-  const abortTimer = setTimeout(() => abortController.abort(), WORKSPACE_SCAN_AGENT_ABORT_MS);
+  let softTimeoutFired = false;
+  let hardDeadlineFired = false;
+  const abortTimer = setTimeout(() => {
+    softTimeoutFired = true;
+    abortController.abort();
+  }, WORKSPACE_SCAN_AGENT_ABORT_MS);
   let hardDeadlineTimer = null;
   const hardDeadline = new Promise((_, reject) => {
     hardDeadlineTimer = setTimeout(() => {
+      hardDeadlineFired = true;
       try { abortController.abort(); } catch { /* already aborted */ }
       reject(new Error("workspace scan provider exceeded hard deadline"));
     }, WORKSPACE_SCAN_AGENT_HARD_DEADLINE_MS);
@@ -11726,11 +11733,21 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
     );
     return { ok: true, provider, model, result };
   } catch (error) {
+    // Tag *why* the run aborted so abort telemetry can separate a slow run that
+    // tripped our soft timeout from one that ignored it to the hard deadline
+    // (SDK hung), or an SDK/network abort with neither timer. No user-cancel
+    // path exists here — the AbortController is local to this function.
+    const abortCause = deriveScanAbortCause({
+      softTimeoutFired,
+      hardDeadlineFired,
+      isAbortLike: isAbortLikeError(error),
+    });
     const errorKind = reportProviderRunError(error, {
       operation: "runWorkspaceScanAgent",
       provider,
       model,
       scan_root: scanRoot,
+      ...(abortCause ? { abort_cause: abortCause } : {}),
     });
     if (errorKind === PROVIDER_USAGE_LIMIT_ERROR_KIND) {
       broadcastWorkspaceScanProgress(
