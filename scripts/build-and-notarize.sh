@@ -250,7 +250,10 @@ upload_posthog_dsyms() {
   POSTHOG_CLI_API_KEY="$POSTHOG_CLI_API_KEY" \
     npx --yes @posthog/cli@latest dsym upload \
       --directory "$dsym_dir" \
-      --main-dsym agentic30.app.dSYM
+      --main-dsym agentic30.app.dSYM || {
+        echo "WARNING: PostHog dSYM upload failed — continuing release without crash symbolication for this build." >&2
+        return 0
+      }
 }
 
 path_size_bytes() {
