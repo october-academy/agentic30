@@ -2765,17 +2765,42 @@ final class agentic30UITests: XCTestCase {
 
         // Briefing screen with every OD reference section.
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.screen").waitForExistence(timeout: 5))
-        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.summary").waitForExistence(timeout: 5))
-        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.sources").exists)
+        let verdictOrSummary = elementWithIdentifier(in: app, "morningBriefing.verdict")
+        let fallbackSummary = elementWithIdentifier(in: app, "morningBriefing.summary")
+        XCTAssertTrue(
+            verdictOrSummary.waitForExistence(timeout: 5) || fallbackSummary.waitForExistence(timeout: 1)
+        )
+        let briefingLead = verdictOrSummary.exists ? verdictOrSummary : fallbackSummary
+        let sourceEvidence = elementWithIdentifier(in: app, "morningBriefing.sources")
+        let evidenceFunnel = elementWithIdentifier(in: app, "morningBriefing.evidenceFunnel")
+        let timeline = elementWithIdentifier(in: app, "morningBriefing.timeline")
+        let actions = elementWithIdentifier(in: app, "morningBriefing.actions")
+        XCTAssertTrue(sourceEvidence.exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.card.cloudflare").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.card.github").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.card.posthog").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.timeline").exists)
+        let githubSparkline = elementWithIdentifier(in: app, "morningBriefing.sparkline.github")
+        XCTAssertTrue(githubSparkline.exists)
+        hoverCenter(of: githubSparkline)
+        let githubSparklineTooltip = elementWithIdentifier(in: app, "morningBriefing.sparkline.tooltip.github")
+        if githubSparklineTooltip.waitForExistence(timeout: 1) {
+            XCTAssertTrue(element(githubSparklineTooltip, contains: "오늘 09:00"))
+            XCTAssertTrue(element(githubSparklineTooltip, contains: "커밋"))
+            XCTAssertTrue(element(githubSparklineTooltip, contains: "9"))
+            movePointerAwayFromContent()
+            XCTAssertTrue(waitForElementToDisappear(githubSparklineTooltip, timeout: 3))
+        }
+        XCTAssertTrue(evidenceFunnel.exists)
+        XCTAssertTrue(timeline.exists)
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.timeline.badge.0", containing: "어제", timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.timeline.badge.1", containing: "오늘", timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.anomaly").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.actions").exists)
+        XCTAssertTrue(actions.exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.syncbar").exists)
+        XCTAssertLessThan(briefingLead.frame.minY, sourceEvidence.frame.minY)
+        XCTAssertLessThan(sourceEvidence.frame.minY, evidenceFunnel.frame.minY)
+        XCTAssertLessThan(evidenceFunnel.frame.minY, timeline.frame.minY)
+        XCTAssertLessThan(timeline.frame.minY, actions.frame.minY)
 
         // The rail marks the briefing item active while the screen is presented.
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.briefing", containing: "active", timeout: 3))

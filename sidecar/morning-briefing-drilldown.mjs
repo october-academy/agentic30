@@ -829,11 +829,9 @@ export function cloudflareSourceSignalFromMeasurements(raw = {}, existing = {}) 
   );
   const peakLabel = peak ? localHourLabel(peak.datetimeIso) : "";
   const counts = {
-    ...(existing.counts || {}),
     visits: totals.uniqueVisitors,
     uniqueVisitors: totals.uniqueVisitors,
     pageviews: totals.pageviews,
-    pageViews: totals.pageviews,
     requests: totals.requests,
     threats: totals.threats,
   };
@@ -960,7 +958,6 @@ const COUNT_KPI_LABELS = Object.freeze({
     ["uniqueVisitors", "순 방문"],
     ["visitors", "방문"],
     ["pageviews", "페이지뷰"],
-    ["pageViews", "페이지뷰"],
     ["requests", "요청"],
     ["conversions", "전환"],
   ],
@@ -981,6 +978,16 @@ const COUNT_KPI_LABELS = Object.freeze({
   ],
 });
 
+function hasOwn(value, key) {
+  return Boolean(value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function assertCanonicalCloudflareCounts(counts = {}, context = "Cloudflare counts") {
+  if (hasOwn(counts, "pageViews")) {
+    throw new Error(`${context} contains legacy counts.pageViews; use counts.pageviews.`);
+  }
+}
+
 const COUNTS_TITLES = Object.freeze({
   cloudflare: { title: "Cloudflare · 사람 유입 품질", subtitle: "수집된 집계 기준" },
   posthog: { title: "PostHog · 프로덕트 드릴다운", subtitle: "수집된 집계 기준" },
@@ -998,6 +1005,7 @@ export function buildCountsDrilldown(id, sources = []) {
 
   const mergedCounts = {};
   for (const source of relevant) {
+    if (id === "cloudflare") assertCanonicalCloudflareCounts(source.counts, "Cloudflare drilldown counts");
     for (const [key, value] of Object.entries(source.counts || {})) {
       const number = finiteNumber(value);
       if (number !== null && mergedCounts[key] === undefined) mergedCounts[key] = number;
@@ -1681,8 +1689,18 @@ const EXTERNAL_DRILLDOWN_SHAPE = {
 };
 
 const POSTHOG_DRILLDOWN_CORE_ACTION_EVENTS = "('workspace_setup_completed', 'mac_session_created', 'mac_sidecar_session_created', 'mac_sidecar_office_hours_completed')";
-const POSTHOG_DRILLDOWN_PRODUCT_FILTER = "toString(properties.telemetry_source) IN ('mac_app', 'mac_sidecar') AND toString(properties.telemetry_environment) = 'production' AND toString(properties.build_configuration) = 'release' AND lower(coalesce(toString(properties.is_internal_traffic), '')) NOT IN ('true', '1', 'yes') AND lower(coalesce(toString(person.properties.is_internal_tester), '')) NOT IN ('true', '1', 'yes')";
-const POSTHOG_DRILLDOWN_NON_INTERNAL_FILTER = "lower(coalesce(toString(properties.is_internal_traffic), '')) NOT IN ('true', '1', 'yes') AND lower(coalesce(toString(person.properties.is_internal_tester), '')) NOT IN ('true', '1', 'yes')";
+const POSTHOG_DRILLDOWN_INTERNAL_EMAIL_DOMAIN = "october-academy.com";
+const POSTHOG_DRILLDOWN_NON_INTERNAL_FILTER = [
+  "lower(coalesce(toString(properties.capture_internal), '')) NOT IN ('true', '1', 'yes')",
+  "lower(coalesce(toString(properties.is_internal_traffic), '')) NOT IN ('true', '1', 'yes')",
+  "lower(coalesce(toString(person.properties.is_internal_tester), '')) NOT IN ('true', '1', 'yes')",
+  `lower(coalesce(toString(properties.auth_email_domain), '')) != '${POSTHOG_DRILLDOWN_INTERNAL_EMAIL_DOMAIN}'`,
+  `lower(coalesce(toString(person.properties.email_domain), '')) != '${POSTHOG_DRILLDOWN_INTERNAL_EMAIL_DOMAIN}'`,
+  `positionCaseInsensitive(coalesce(toString(person.properties.email), ''), '@${POSTHOG_DRILLDOWN_INTERNAL_EMAIL_DOMAIN}') = 0`,
+  "NOT match(coalesce(toString(properties.$host), ''), '^(localhost|127[.]0[.]0[.]1)($|:)')",
+  "NOT match(coalesce(toString(properties.$ip), ''), '^(127[.]0[.]0[.]1|::1)$')",
+].join(" AND ");
+const POSTHOG_DRILLDOWN_PRODUCT_FILTER = `toString(properties.telemetry_source) IN ('mac_app', 'mac_sidecar') AND toString(properties.telemetry_environment) = 'production' AND toString(properties.build_configuration) = 'release' AND ${POSTHOG_DRILLDOWN_NON_INTERNAL_FILTER}`;
 
 const POSTHOG_DRILLDOWN_HOGQL_TEMPLATES = Object.freeze([
   `totals_top_events: WITH window_events AS (SELECT event, person_id FROM events WHERE timestamp >= toDateTime('{{start}}') AND timestamp < toDateTime('{{until}}') AND ${POSTHOG_DRILLDOWN_PRODUCT_FILTER}), totals AS (SELECT count() AS events, uniqIf(person_id, event IN ${POSTHOG_DRILLDOWN_CORE_ACTION_EVENTS}) AS activeUsers, countIf(event ILIKE '%signup%' OR event ILIKE '%sign_up%' OR event ILIKE '%subscription%' OR event ILIKE '%checkout%' OR event ILIKE '%purchase%' OR event ILIKE '%conversion%') AS conversions, countIf(event ILIKE '%signup%' OR event ILIKE '%sign_up%' OR event ILIKE '%signed up%' OR event ILIKE '%user created%') AS signups FROM window_events), top_events AS (SELECT groupArray(tuple(event, event_count, users)) AS topEvents FROM (SELECT event, count() AS event_count, count(DISTINCT person_id) AS users FROM window_events GROUP BY event ORDER BY event_count DESC LIMIT 12)) SELECT totals.events, totals.activeUsers, totals.conversions, totals.signups, top_events.topEvents FROM totals CROSS JOIN top_events LIMIT 1`,
@@ -1703,7 +1721,8 @@ const EXTERNAL_DRILLDOWN_COLLECTION_PLANS = Object.freeze({
   ],
   posthog: [
     "PostHog drilldown contract: return only drilldowns.posthog.measurements. Do not return PostHog kpis/chart/signals/actions; Agentic30 renders those deterministically.",
-    "PostHog active user rule: activeUsers is distinct people with one of workspace_setup_completed, mac_session_created, mac_sidecar_session_created, or mac_sidecar_office_hours_completed after production app/sidecar and internal-tester filters. $pageview/web/blog/link events never count as active users.",
+    "PostHog product-signal rule: Agentic30 mac_app/mac_sidecar telemetry can be external customer evidence. Do not exclude it merely because it is app/sidecar telemetry, a workspace_basename, Korean geo/IP, or app install/update activity.",
+    "PostHog active user rule: activeUsers is distinct people with one of workspace_setup_completed, mac_session_created, mac_sidecar_session_created, or mac_sidecar_office_hours_completed after production app/sidecar and internal/test/system filters. $pageview/web/blog/link events never count as active users.",
     "Run exactly the 4 fixed execute-sql templates below, substituting {{start}} = Window.startIso without milliseconds, {{until}} = Window.untilIso without milliseconds, {{cohortStart}} = {{until}} minus 16 days, and {{webStart}} = {{until}} minus 14 days.",
     "Map the four result tables into totals, cohorts, funnel, and paths. Convert topEvents tuples into objects { event, count, users }.",
     "Set signupInstrumentation/conversionInstrumentation/activationInstrumentation to observed only when matching events exist in topEvents or the fixed query matched a named event; otherwise use missing and add a short instrumentationGaps item.",
@@ -1758,6 +1777,13 @@ const EXTERNAL_TITLES = {
   posthog: { title: "PostHog · 계측·활성 공백", subtitle: "표본 작음 · 리텐션 단정 보류" },
 };
 
+function payloadHasLegacyCloudflareCounts(payload = {}) {
+  return (Array.isArray(payload?.sources) ? payload.sources : []).some((source) => (
+    String(source?.id || "").trim().toLowerCase() === "cloudflare"
+      && hasOwn(source?.counts, "pageViews")
+  ));
+}
+
 // 소프트 타임아웃 직전까지 스트리밍된 부분 출력 구제. 실측: 집계 자체는 끝났는데
 // 마지막 토큰 직전에 시간 예산이 끊기는 케이스가 상습(170초 성공/타임아웃 반복).
 // JSON이 닫혀 파싱되고 모든 기대 소스가 ready로 자기보고했을 때만 채택한다 —
@@ -1776,10 +1802,11 @@ export function normalizeMorningBriefingExternalDigest(textOrObject = "", expect
     ? textOrObject
     : extractJsonObjectLoose(textOrObject);
   let sources = normalizeExternalOfficeHoursDigest(payload ?? "", expectedSources, { failureDetail });
+  const hasLegacyCloudflareCounts = payloadHasLegacyCloudflareCounts(payload);
   const cloudflareMeasurements = payload?.drilldowns?.cloudflare?.measurements
     ? payload.drilldowns.cloudflare
     : null;
-  const cloudflareSource = cloudflareMeasurements
+  const cloudflareSource = cloudflareMeasurements && !hasLegacyCloudflareCounts
     ? cloudflareSourceSignalFromMeasurements(
         cloudflareMeasurements,
         sources.find((source) => source.id === "cloudflare") || {},

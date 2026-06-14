@@ -701,11 +701,18 @@ nonisolated struct MorningBriefingCard: Codable, Hashable, Identifiable {
     var metric: MorningBriefingMetric?
     var rows: [MorningBriefingCardRow]?
     var spark: [Double]?
+    var sparkPoints: [MorningBriefingCardSparkPoint]? = nil
     var note: String?
     var noteTone: String?
     var highlights: [String]?
 
     var isReady: Bool { state == "ready" }
+}
+
+nonisolated struct MorningBriefingCardSparkPoint: Codable, Hashable {
+    var value: Double?
+    var timeLabel: String?
+    var at: String?
 }
 
 nonisolated struct MorningBriefingMetric: Codable, Hashable {
@@ -1006,6 +1013,57 @@ extension MorningBriefing {
                 MorningBriefingSummaryCrit(source: "PostHog", label: "활성 사용자", value: "▼ 56%", direction: "down"),
             ]
         ),
+        customerEvidenceVerdict: MorningBriefingCustomerEvidenceVerdict(
+            state: "instrumentation_gap",
+            title: "빌드는 충분함. 고객 증거/activation 계측이 부족함.",
+            body: "오늘은 늘어난 방문이 signup, workspace, 검증 행동으로 이어지는지 먼저 확인합니다.",
+            evidence: [
+                "Cloudflare 순 방문 64명",
+                "GitHub 커밋 9건 · PR 업데이트 2건",
+                "PostHog 활성 사용자 11명 · 전환 2건",
+            ],
+            primaryActionId: "task"
+        ),
+        evidenceFunnel: MorningBriefingEvidenceFunnel(
+            steps: [
+                MorningBriefingEvidenceFunnelStep(
+                    id: "traffic",
+                    label: "방문",
+                    source: "Cloudflare",
+                    value: 64,
+                    valueLabel: "64 명",
+                    status: "observed",
+                    detail: "사람 방문 기준"
+                ),
+                MorningBriefingEvidenceFunnelStep(
+                    id: "download_install",
+                    label: "다운로드/설치",
+                    source: "PostHog",
+                    value: nil,
+                    valueLabel: "미계측",
+                    status: "missing",
+                    detail: "다운로드 또는 설치 이벤트 미계측"
+                ),
+                MorningBriefingEvidenceFunnelStep(
+                    id: "workspace_scan",
+                    label: "워크스페이스/스캔",
+                    source: "PostHog",
+                    value: 2,
+                    valueLabel: "2 명",
+                    status: "observed",
+                    detail: "workspace 선택 이후 첫 스캔"
+                ),
+                MorningBriefingEvidenceFunnelStep(
+                    id: "validation_action",
+                    label: "Office Hours/검증 행동",
+                    source: "PostHog",
+                    value: 0,
+                    valueLabel: "0 명",
+                    status: "missing",
+                    detail: "검증 action 적용"
+                ),
+            ]
+        ),
         cards: [
             MorningBriefingCard(
                 id: "cloudflare",
@@ -1015,6 +1073,11 @@ extension MorningBriefing {
                 metric: MorningBriefingMetric(value: 64, unit: "순 방문", deltaLabel: "▲ 56%", direction: "up", versusLabel: "어제 41"),
                 rows: [MorningBriefingCardRow(k: "페이지뷰", v: "188")],
                 spark: [38, 41, 64],
+                sparkPoints: [
+                    MorningBriefingCardSparkPoint(value: 38, timeLabel: "06-08 09:00", at: "2026-06-08T00:00:00.000Z"),
+                    MorningBriefingCardSparkPoint(value: 41, timeLabel: "어제", at: nil),
+                    MorningBriefingCardSparkPoint(value: 64, timeLabel: "오늘 09:00", at: "2026-06-10T00:00:00.000Z"),
+                ],
                 note: "방문 증가",
                 noteTone: "info",
                 highlights: ["방문 증가"]
@@ -1031,6 +1094,11 @@ extension MorningBriefing {
                     MorningBriefingCardRow(k: "릴리즈", v: "1"),
                 ],
                 spark: [4, 6, 9],
+                sparkPoints: [
+                    MorningBriefingCardSparkPoint(value: 4, timeLabel: "06-08 09:00", at: "2026-06-08T00:00:00.000Z"),
+                    MorningBriefingCardSparkPoint(value: 6, timeLabel: "어제", at: nil),
+                    MorningBriefingCardSparkPoint(value: 9, timeLabel: "오늘 09:00", at: "2026-06-10T00:00:00.000Z"),
+                ],
                 note: "PR #43 리뷰 대기",
                 noteTone: "info",
                 highlights: ["PR 업데이트 2건"]
@@ -1046,6 +1114,11 @@ extension MorningBriefing {
                     MorningBriefingCardRow(k: "전환", v: "2"),
                 ],
                 spark: [22, 25, 11],
+                sparkPoints: [
+                    MorningBriefingCardSparkPoint(value: 22, timeLabel: "06-08 09:00", at: "2026-06-08T00:00:00.000Z"),
+                    MorningBriefingCardSparkPoint(value: 25, timeLabel: "어제", at: nil),
+                    MorningBriefingCardSparkPoint(value: 11, timeLabel: "오늘 09:00", at: "2026-06-10T00:00:00.000Z"),
+                ],
                 note: "온보딩 2단계 이탈 원인 미확인",
                 noteTone: "warn",
                 highlights: ["활성 사용자 추이 하락"]
@@ -1412,7 +1485,7 @@ struct StartupTimingState: Codable, Hashable {
     var clientCountAtCreate: Int?
 }
 
-struct StructuredPromptRequest: Identifiable, Codable, Hashable {
+struct StructuredPromptRequest: Identifiable, Codable, nonisolated Hashable {
     let requestId: String
     let sessionId: String
     let toolName: String
@@ -1516,13 +1589,13 @@ struct StructuredPromptRequest: Identifiable, Codable, Hashable {
     }
 }
 
-struct StructuredPromptIntro: Codable, Hashable {
+struct StructuredPromptIntro: Codable, nonisolated Hashable {
     let title: String?
     let body: String?
     let bullets: [String]?
 }
 
-struct StructuredPromptResource: Identifiable, Codable, Hashable {
+struct StructuredPromptResource: Identifiable, Codable, nonisolated Hashable {
     let title: String
     let source: String?
     let url: String
@@ -1531,7 +1604,7 @@ struct StructuredPromptResource: Identifiable, Codable, Hashable {
     var id: String { url }
 }
 
-struct StructuredPromptGeneration: Codable, Hashable {
+struct StructuredPromptGeneration: Codable, nonisolated Hashable {
     let mode: String?
     let docType: String?
     let signalId: String?
@@ -1571,7 +1644,7 @@ struct StructuredPromptGeneration: Codable, Hashable {
 /// Inline emphasis style vocabulary shared verbatim with the sidecar
 /// (`strong`/`mark`/`code`). Unknown/unsupported wire values fall back to
 /// `.mark` so a future style never crashes decoding.
-enum EmphasisStyle: String, Codable, Hashable {
+enum EmphasisStyle: String, Codable, nonisolated Hashable {
     case strong
     case mark
     case code
@@ -1585,7 +1658,7 @@ enum EmphasisStyle: String, Codable, Hashable {
 /// A single dynamic emphasis span: a phrase the LLM wants emphasized plus the
 /// style to render it in. Decodes both camelCase and snake_case keys so either
 /// provider wire shape works.
-nonisolated struct EmphasisSpan: Codable, Hashable {
+struct EmphasisSpan: Codable, nonisolated Hashable {
     let phrase: String
     let style: EmphasisStyle
 
@@ -1620,7 +1693,7 @@ nonisolated struct EmphasisSpan: Codable, Hashable {
     /// returns the first non-empty span array, or nil when the field is absent.
     /// Reused by every Stage 2 model that carries `emphasis` (+ `emphasis_spans`
     /// snake alias) so decoding stays identical across surfaces.
-    static func decodeList<Key: CodingKey>(
+    nonisolated static func decodeList<Key: CodingKey>(
         from container: KeyedDecodingContainer<Key>,
         keys: [Key]
     ) -> [EmphasisSpan]? {
@@ -1634,7 +1707,7 @@ nonisolated struct EmphasisSpan: Codable, Hashable {
     }
 }
 
-struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
+struct StructuredPromptQuestion: Identifiable, Codable, nonisolated Hashable {
     let questionId: String?
     let header: String
     var question: String
@@ -1793,7 +1866,7 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
     }
 }
 
-struct StructuredPromptOption: Codable, Hashable {
+struct StructuredPromptOption: Codable, nonisolated Hashable {
     let label: String
     let description: String
     let preview: String?
@@ -1877,7 +1950,7 @@ struct StructuredPromptOption: Codable, Hashable {
     }
 }
 
-enum StructuredPromptTextMode: String, Codable {
+enum StructuredPromptTextMode: String, Codable, nonisolated Hashable {
     case short
     case long
 }

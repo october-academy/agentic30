@@ -118,9 +118,10 @@ test("buildMorningBriefingCards computes deltas against previous metrics", () =>
     digest: digestFixture(),
     previousMetrics: { cloudflare: 41, github: 6, posthog: 25 },
     history: [
-      { date: "2026-06-08", metrics: { cloudflare: 38 } },
+      { date: "2026-06-08", generatedAt: "2026-06-08T09:30:00", metrics: { cloudflare: 38 } },
       { date: "2026-06-09", metrics: { cloudflare: 41 } },
     ],
+    generatedAt: "2026-06-10T09:00:00",
   });
   assert.deepEqual(cards.map((card) => card.id), ["cloudflare", "github", "posthog"]);
 
@@ -131,6 +132,16 @@ test("buildMorningBriefingCards computes deltas against previous metrics", () =>
   assert.equal(cloudflare.metric.deltaLabel, "▲ 56%");
   assert.equal(cloudflare.metric.versusLabel, "어제 41");
   assert.deepEqual(cloudflare.spark, [38, 41, 64]);
+  assert.deepEqual(
+    cloudflare.sparkPoints.map((point) => point.value),
+    cloudflare.spark,
+  );
+  assert.equal(cloudflare.sparkPoints[0].timeLabel, "06-08 09:30");
+  assert.equal(cloudflare.sparkPoints[1].timeLabel, "어제");
+  assert.equal(cloudflare.sparkPoints[2].timeLabel, "오늘 09:00");
+  assert.ok(cloudflare.sparkPoints[0].at);
+  assert.equal(cloudflare.sparkPoints[1].at, null);
+  assert.ok(cloudflare.sparkPoints[2].at);
 
   const github = cards[1];
   assert.equal(github.metric.value, 9);
@@ -144,6 +155,28 @@ test("buildMorningBriefingCards computes deltas against previous metrics", () =>
   assert.equal(posthog.metric.direction, "down");
   assert.equal(posthog.metric.deltaLabel, "▼ 56%");
   assert.equal(posthog.noteTone, "warn");
+});
+
+test("buildMorningBriefingCards rejects legacy Cloudflare pageViews counts", () => {
+  const digest = digestFixture();
+  const cloudflareSource = digest.sources.find((source) => source.id === "cloudflare");
+  cloudflareSource.counts = { visits: 259, pageviews: 191, pageViews: 999, requests: 500 };
+
+  assert.throws(
+    () => buildMorningBriefingCards({ digest }),
+    /counts\.pageViews.*counts\.pageviews/,
+  );
+
+  delete cloudflareSource.counts.pageViews;
+  const cloudflare = buildMorningBriefingCards({ digest }).find((card) => card.id === "cloudflare");
+  assert.deepEqual(cloudflare.rows, [
+    { k: "페이지뷰", v: "191" },
+    { k: "요청", v: "500" },
+  ]);
+
+  cloudflareSource.counts = { visits: 259, pageviews: 191 };
+  const canonicalOnly = buildMorningBriefingCards({ digest }).find((card) => card.id === "cloudflare");
+  assert.deepEqual(canonicalOnly.rows, [{ k: "페이지뷰", v: "191" }]);
 });
 
 test("buildMorningBriefingCards marks unconnected sources without metrics", () => {
@@ -296,6 +329,8 @@ test("buildMorningBriefing assembles the full payload", () => {
   assert.equal(briefing.customerEvidenceVerdict.state, "healthy");
   assert.equal(briefing.evidenceFunnel.steps.length, 5);
   assert.deepEqual(briefing.metrics, { cloudflare: 64, github: 9, posthog: 11 });
+  assert.deepEqual(briefing.cards[0].sparkPoints.map((point) => point.value), [41, 64]);
+  assert.equal(briefing.cards[0].sparkPoints[1].at, briefing.generatedAt);
   assert.deepEqual(briefing.historyDates, ["2026-06-09"]);
 });
 
@@ -346,6 +381,7 @@ test("persistMorningBriefing keeps one history entry per local date and round-tr
     // re-persist replaces current without demoting it to previous.
     assert.equal(store.previous.day, 11);
     assert.deepEqual(store.history.map((entry) => entry.date), ["2026-06-09", "2026-06-10"]);
+    assert.deepEqual(store.history.map((entry) => entry.generatedAt), [first.generatedAt, second.generatedAt]);
     assert.equal(resolveMorningBriefingPath(dir).endsWith(".agentic30/morning-briefing.json"), true);
 
     const updated = await updatePersistedMorningBriefing({

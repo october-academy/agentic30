@@ -91,13 +91,13 @@ struct MorningBriefingPageView: View {
     private var sections: [SectionEntry] {
         var entries: [SectionEntry] = [
             SectionEntry(id: "summary", title: "오늘의 판정", meta: verdictStateLabel, tone: .accent),
-            SectionEntry(id: "actions", title: "오늘 검증 액션", meta: actionsSectionMeta, tone: .amber),
             SectionEntry(id: "sources", title: "소스 근거", meta: "Cloudflare · GitHub · PostHog", tone: .accent),
         ]
         if hasEvidenceFunnel {
-            entries.insert(SectionEntry(id: "funnel", title: "증거 퍼널", meta: "방문 → activation → 결제", tone: .accent), at: 1)
+            entries.append(SectionEntry(id: "funnel", title: "증거 퍼널", meta: "방문 → activation → 결제", tone: .accent))
         }
         entries.append(SectionEntry(id: "timeline", title: "밤사이 타임라인", meta: timelineSectionMeta, tone: .ring))
+        entries.append(SectionEntry(id: "actions", title: "오늘 검증 액션", meta: actionsSectionMeta, tone: .amber))
         if displayBriefing?.anomaly != nil {
             entries.append(SectionEntry(id: "anomaly", title: "이상 신호 확인", meta: "1건", tone: .rose))
         }
@@ -460,14 +460,6 @@ struct MorningBriefingPageView: View {
                             sectionHeading(id: "summary", title: "오늘의 판정", meta: windowMetaLabel, markerColor: OpenDesignDayColor.accent)
                             verdictCard
 
-                            if hasEvidenceFunnel {
-                                sectionHeading(id: "funnel", title: "증거 퍼널", meta: "방문 → 다운로드/설치 → 검증 행동", markerColor: OpenDesignDayColor.accent)
-                                evidenceFunnelCard
-                            }
-
-                            sectionHeading(id: "actions", title: "오늘 검증 액션 · \(displayBriefing?.actions?.count ?? 0)", meta: "요약을 넘어 바로 쓸 수 있게 — 검토 후 적용", markerColor: OpenDesignDayColor.amber)
-                            actionDrafts
-
                             sectionHeading(id: "sources", title: "소스 근거 · 어제 대비", meta: "판정 아래 원자료", markerColor: OpenDesignDayColor.accent)
                             sourceCardsGrid
 
@@ -475,8 +467,16 @@ struct MorningBriefingPageView: View {
                                 connectGuideCard(guide)
                             }
 
+                            if hasEvidenceFunnel {
+                                sectionHeading(id: "funnel", title: "증거 퍼널", meta: "방문 → 다운로드/설치 → 검증 행동", markerColor: OpenDesignDayColor.accent)
+                                evidenceFunnelCard
+                            }
+
                             sectionHeading(id: "timeline", title: "밤사이 타임라인", meta: "자동 수집 · 사람 개입 0", markerColor: OpenDesignDayColor.amber)
                             timelineList
+
+                            sectionHeading(id: "actions", title: "오늘 검증 액션 · \(displayBriefing?.actions?.count ?? 0)", meta: "요약을 넘어 바로 쓸 수 있게 — 검토 후 적용", markerColor: OpenDesignDayColor.amber)
+                            actionDrafts
 
                             if let anomaly = displayBriefing?.anomaly {
                                 sectionHeading(id: "anomaly", title: "이상 신호 · 확인 1건", meta: "평소엔 요약만, 이상할 때만 물어봄", markerColor: OpenDesignDayColor.rose)
@@ -1261,43 +1261,9 @@ struct MorningBriefingPageView: View {
     }
 
     private func sparkline(_ card: MorningBriefingCard) -> some View {
-        let values = card.spark ?? []
         let color = card.metric?.direction == "down" ? OpenDesignDayColor.rose : (card.id == "cloudflare" ? OpenDesignDayColor.amber : OpenDesignDayColor.accent)
-        return Group {
-            if values.count >= 2, let min = values.min(), let max = values.max() {
-                GeometryReader { geo in
-                    let range = Swift.max(max - min, 1)
-                    let points = values.enumerated().map { index, value in
-                        CGPoint(
-                            x: geo.size.width * CGFloat(index) / CGFloat(values.count - 1),
-                            y: geo.size.height * (1 - CGFloat((value - min) / range) * 0.8 - 0.1)
-                        )
-                    }
-                    ZStack {
-                        Path { path in
-                            guard let first = points.first else { return }
-                            path.move(to: first)
-                            for point in points.dropFirst() {
-                                path.addLine(to: point)
-                            }
-                        }
-                        .stroke(color, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
-
-                        if let last = points.last {
-                            Circle()
-                                .fill(color)
-                                .frame(width: 5, height: 5)
-                                .position(last)
-                        }
-                    }
-                }
-                .frame(height: 30)
-            } else {
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(height: 30)
-            }
-        }
+        return MorningBriefingSourceSparkline(card: card, color: color)
+            .frame(height: 30)
     }
 
     // MARK: - Timeline
@@ -2130,6 +2096,197 @@ struct MorningBriefingPageView: View {
                 toastText = nil
             }
         }
+    }
+}
+
+private struct MorningBriefingSourceSparkline: View {
+    let card: MorningBriefingCard
+    let color: Color
+
+    @State private var hoveredIndex: Int?
+
+    private struct Sample {
+        let value: Double
+        let timeLabel: String
+        let at: String?
+    }
+
+    private var samples: [Sample] {
+        if let sparkPoints = card.sparkPoints, sparkPoints.count >= 2 {
+            let points = sparkPoints.compactMap { point -> Sample? in
+                guard let value = point.value, value.isFinite else { return nil }
+                return Sample(
+                    value: value,
+                    timeLabel: normalized(point.timeLabel) ?? "값",
+                    at: point.at
+                )
+            }
+            if points.count >= 2 { return points }
+        }
+        return (card.spark ?? []).enumerated().compactMap { index, value in
+            guard value.isFinite else { return nil }
+            return Sample(value: value, timeLabel: "값 \(index + 1)", at: nil)
+        }
+    }
+
+    private var unitLabel: String {
+        normalized(card.metric?.unit) ?? "값"
+    }
+
+    var body: some View {
+        let chartSamples = samples
+        return Group {
+            if chartSamples.count >= 2 {
+                GeometryReader { geo in
+                    let coords = chartPoints(samples: chartSamples, size: geo.size)
+                    ZStack {
+                        linePath(points: coords)
+                            .stroke(color, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+
+                        if let last = coords.last {
+                            Circle()
+                                .fill(color)
+                                .frame(width: 5, height: 5)
+                                .position(last)
+                        }
+
+                        if let hoveredIndex, coords.indices.contains(hoveredIndex) {
+                            let coord = coords[hoveredIndex]
+                            Path { path in
+                                path.move(to: CGPoint(x: coord.x, y: 0))
+                                path.addLine(to: CGPoint(x: coord.x, y: geo.size.height))
+                            }
+                            .stroke(color.opacity(0.38), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+
+                            Circle()
+                                .fill(OpenDesignDayColor.bg)
+                                .frame(width: 11, height: 11)
+                                .overlay(Circle().stroke(color, lineWidth: 2))
+                                .shadow(color: color.opacity(0.45), radius: 6, x: 0, y: 0)
+                                .position(coord)
+
+                            tooltip(for: samples[hoveredIndex])
+                                .position(
+                                    x: tooltipX(coord.x, width: geo.size.width),
+                                    y: tooltipY(coord.y)
+                                )
+                                .zIndex(5)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onContinuousHover(coordinateSpace: .local) { phase in
+                        switch phase {
+                        case .active(let location):
+                            hoveredIndex = nearestIndex(to: location.x, width: geo.size.width, count: chartSamples.count)
+                        case .ended:
+                            hoveredIndex = nil
+                        }
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(accessibilityLabel(samples: chartSamples))
+                    .accessibilityIdentifier("morningBriefing.sparkline.\(card.id)")
+                }
+            } else {
+                Rectangle()
+                    .fill(Color.clear)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private func chartPoints(samples: [Sample], size: CGSize) -> [CGPoint] {
+        let values = samples.map(\.value)
+        guard let min = values.min(), let max = values.max() else { return [] }
+        let range = Swift.max(max - min, 1)
+        return values.enumerated().map { index, value in
+            CGPoint(
+                x: size.width * CGFloat(index) / CGFloat(values.count - 1),
+                y: size.height * (1 - CGFloat((value - min) / range) * 0.8 - 0.1)
+            )
+        }
+    }
+
+    private func linePath(points: [CGPoint]) -> Path {
+        Path { path in
+            guard let first = points.first else { return }
+            path.move(to: first)
+            for point in points.dropFirst() {
+                path.addLine(to: point)
+            }
+        }
+    }
+
+    private func tooltip(for sample: Sample) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(sample.timeLabel)
+                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .lineLimit(1)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 5, height: 5)
+                Text("\(unitLabel) \(formatValue(sample.value))")
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .fixedSize()
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(OpenDesignDayColor.bg)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(OpenDesignDayColor.border, lineWidth: 1)
+                )
+        )
+        .shadow(color: Color.black.opacity(0.28), radius: 10, x: 0, y: 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(sample.timeLabel) · \(unitLabel) \(formatValue(sample.value))")
+        .accessibilityIdentifier("morningBriefing.sparkline.tooltip.\(card.id)")
+    }
+
+    private func nearestIndex(to x: CGFloat, width: CGFloat, count: Int) -> Int? {
+        guard count > 1, width > 0 else { return nil }
+        let ratio = min(max(x / width, 0), 1)
+        return min(max(Int(round(ratio * CGFloat(count - 1))), 0), count - 1)
+    }
+
+    private func tooltipX(_ x: CGFloat, width: CGFloat) -> CGFloat {
+        min(max(x, 56), max(56, width - 56))
+    }
+
+    private func tooltipY(_ y: CGFloat) -> CGFloat {
+        min(y - 30, -12)
+    }
+
+    private func accessibilityLabel(samples: [Sample]) -> String {
+        guard let last = samples.last else { return "라인 차트" }
+        return "라인 차트, \(last.timeLabel), \(unitLabel) \(formatValue(last.value))"
+    }
+
+    private func formatValue(_ value: Double) -> String {
+        if value.rounded(.towardZero) == value {
+            return String(Int(value))
+        }
+        var text = String(format: "%.2f", value)
+        while text.contains(".") && text.last == "0" {
+            text.removeLast()
+        }
+        if text.last == "." {
+            text.removeLast()
+        }
+        return text
+    }
+
+    private func normalized(_ text: String?) -> String? {
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 }
 

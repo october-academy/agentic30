@@ -125,6 +125,16 @@ function pickCount(counts = {}, keys = []) {
   return null;
 }
 
+function hasOwn(value, key) {
+  return Boolean(value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function assertCanonicalCloudflareCounts(counts = {}, context = "Cloudflare counts") {
+  if (hasOwn(counts, "pageViews")) {
+    throw new Error(`${context} contains legacy counts.pageViews; use counts.pageviews.`);
+  }
+}
+
 export function extractMorningBriefingMetrics({ sources = [] } = {}) {
   const byId = sourceById(sources);
   const git = byId.get("git");
@@ -132,8 +142,11 @@ export function extractMorningBriefingMetrics({ sources = [] } = {}) {
   const posthog = byId.get("posthog");
   const cloudflare = byId.get("cloudflare");
   const metrics = {};
+  if (cloudflare) {
+    assertCanonicalCloudflareCounts(cloudflare.counts, "Cloudflare source counts");
+  }
   if (cloudflare?.state === "ready") {
-    metrics.cloudflare = pickCount(cloudflare.counts, ["visits", "uniqueVisitors", "visitors", "requests", "pageviews", "pageViews"]) ?? 0;
+    metrics.cloudflare = pickCount(cloudflare.counts, ["visits", "uniqueVisitors", "visitors", "requests", "pageviews"]) ?? 0;
   }
   if (git?.state === "ready" || gh?.state === "ready") {
     metrics.github = pickCount(git?.counts, ["commits"]) ?? pickCount(gh?.counts, ["prs"]) ?? 0;
@@ -177,7 +190,9 @@ function sourceCounts(digest = {}, id = "") {
       ...(byId.get("gh_cli")?.counts || {}),
     };
   }
-  return byId.get(id)?.counts || {};
+  const counts = byId.get(id)?.counts || {};
+  if (id === "cloudflare") assertCanonicalCloudflareCounts(counts, "Cloudflare source counts");
+  return counts;
 }
 
 function sourceReady(digest = {}, id = "") {
@@ -192,6 +207,52 @@ function sparkFrom(history = [], cardId = "", current = null) {
     .filter((value) => value !== null);
   if (finiteNumber(current) !== null) values.push(Number(current));
   return values.slice(-8);
+}
+
+function previousDateKey(dateKey = "") {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return "";
+  const ts = Date.parse(`${dateKey}T00:00:00.000Z`);
+  if (!Number.isFinite(ts)) return "";
+  return new Date(ts - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function sparkPointTimeLabel({ date = "", at = null, currentDate = "", generatedAt = null, current = false } = {}) {
+  const safeAt = toIso(at);
+  const dateKey = date || localDateKey(safeAt);
+  const time = safeAt ? timeLabel(safeAt) : "";
+  if (current) return time ? `오늘 ${time}` : "오늘";
+  if (safeAt && dateKey === previousDateKey(currentDate)) return `어제 ${time}`;
+  if (safeAt && dateKey === currentDate) return time ? `오늘 ${time}` : "오늘";
+  if (safeAt) return `${dateKey.slice(5)} ${time}`.trim();
+  if (dateKey === previousDateKey(localDateKey(generatedAt))) return "어제";
+  return dateKey ? dateKey.slice(5) : "값";
+}
+
+function sparkPointsFrom(history = [], cardId = "", current = null, { generatedAt = null } = {}) {
+  const currentAt = toIso(generatedAt);
+  const currentDate = localDateKey(currentAt);
+  const points = history
+    .map((entry) => {
+      const value = finiteNumber(entry?.metrics?.[cardId]);
+      if (value === null) return null;
+      const at = toIso(entry?.generatedAt);
+      const date = String(entry?.date || localDateKey(at) || "");
+      return {
+        value,
+        timeLabel: sparkPointTimeLabel({ date, at, currentDate, generatedAt: currentAt }),
+        at,
+      };
+    })
+    .filter(Boolean);
+  const currentValue = finiteNumber(current);
+  if (currentValue !== null) {
+    points.push({
+      value: Number(currentValue),
+      timeLabel: sparkPointTimeLabel({ date: currentDate, at: currentAt, currentDate, current: true }),
+      at: currentAt,
+    });
+  }
+  return points.slice(-8);
 }
 
 // ── Customer evidence verdict ────────────────────────────────────────────────
@@ -222,7 +283,7 @@ function stepStatus(value, { missingWhenZero = true } = {}) {
 export function buildMorningBriefingEvidenceFunnel({ digest = {} } = {}) {
   const cloudflareCounts = sourceCounts(digest, "cloudflare");
   const posthogCounts = sourceCounts(digest, "posthog");
-  const traffic = pickCount(cloudflareCounts, ["visits", "uniqueVisitors", "visitors", "pageviews", "pageViews"]);
+  const traffic = pickCount(cloudflareCounts, ["visits", "uniqueVisitors", "visitors", "pageviews"]);
   const downloads = pickCount(cloudflareCounts, ["dmgRequests", "downloads", "downloadRequests", "installerDownloads"]);
   const installs = pickCount(posthogCounts, ["installUsers", "installs", "appInstalls", "appUsers"]);
   const downloadOrInstall = installs ?? downloads;
@@ -359,7 +420,7 @@ export function buildCustomerEvidenceVerdict({ digest = {}, cards = [], evidence
 
 // ── Cards ────────────────────────────────────────────────────────────────────
 
-export function buildMorningBriefingCards({ digest = {}, previousMetrics = {}, history = [] } = {}) {
+export function buildMorningBriefingCards({ digest = {}, previousMetrics = {}, history = [], generatedAt = null } = {}) {
   const byId = sourceById(digest.sources || []);
   const metrics = extractMorningBriefingMetrics({ sources: digest.sources || [] });
   const cards = [];
@@ -375,9 +436,9 @@ export function buildMorningBriefingCards({ digest = {}, previousMetrics = {}, h
     source: cloudflare,
     previousMetrics,
     history,
+    generatedAt,
     rows: countRows(cloudflare?.counts, [
       ["pageviews", "페이지뷰"],
-      ["pageViews", "페이지뷰"],
       ["requests", "요청"],
       ["conversions", "방문 → 가입"],
     ]).slice(0, 2),
@@ -402,6 +463,7 @@ export function buildMorningBriefingCards({ digest = {}, previousMetrics = {}, h
       : git || gh,
     previousMetrics,
     history,
+    generatedAt,
     rows: [
       ...countRows(gh?.counts, [
         ["prs", "PR 업데이트"],
@@ -426,6 +488,7 @@ export function buildMorningBriefingCards({ digest = {}, previousMetrics = {}, h
     source: posthog,
     previousMetrics,
     history,
+    generatedAt,
     rows: countRows(posthog?.counts, [
       ["events", "이벤트"],
       ["conversions", "전환"],
@@ -445,6 +508,7 @@ function buildCard({
   source,
   previousMetrics,
   history,
+  generatedAt,
   rows = [],
 }) {
   const ready = state === "ready";
@@ -472,6 +536,7 @@ function buildCard({
     },
     rows: rows.map((row) => ({ k: cleanString(row.k, 40), v: cleanString(row.v, 80) })),
     spark: ready ? sparkFrom(history, id, metricValue) : [],
+    sparkPoints: ready ? sparkPointsFrom(history, id, metricValue, { generatedAt }) : [],
     note,
     noteTone: failed || (ready && (source?.evidenceGaps?.length || delta?.direction === "down")) ? "warn" : "info",
     highlights: (source?.highlights || []).slice(0, 4),
@@ -745,7 +810,7 @@ export function buildMorningBriefing({
     || history[history.length - 1]?.metrics
     || {};
   const priorHistory = history.filter((entry) => entry?.date !== localDateKey(generatedAt));
-  const cards = buildMorningBriefingCards({ digest, previousMetrics, history: priorHistory });
+  const cards = buildMorningBriefingCards({ digest, previousMetrics, history: priorHistory, generatedAt });
   const anomaly = detectMorningBriefingAnomaly({ digest, cards });
   const evidenceFunnel = buildMorningBriefingEvidenceFunnel({ digest });
   const customerEvidenceVerdict = buildCustomerEvidenceVerdict({ digest, cards, evidenceFunnel });
@@ -948,6 +1013,7 @@ export async function persistMorningBriefing({ workspaceRoot, briefing, fsImpl =
           date,
           metrics: briefing?.metrics || {},
           day: briefing?.day ?? null,
+          generatedAt: briefing?.generatedAt ?? null,
           // First clause of the overnight statement = the morning's headline.
           title: cleanString(String(briefing?.summary?.statement || "").split(/(?<=[.!?요])\s/)[0] || "", 80),
         }]

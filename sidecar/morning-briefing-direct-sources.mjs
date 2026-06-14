@@ -90,9 +90,17 @@ function hogqlList(values = []) {
 
 const POSTHOG_PRODUCT_SOURCE_SQL = hogqlList(POSTHOG_PRODUCT_SOURCES);
 const POSTHOG_CORE_ACTION_EVENT_SQL = hogqlList(POSTHOG_CORE_ACTION_EVENTS);
+const POSTHOG_INTERNAL_EMAIL_DOMAIN = "october-academy.com";
+const POSTHOG_INTERNAL_EMAIL_DOMAIN_SQL = hogqlString(POSTHOG_INTERNAL_EMAIL_DOMAIN);
 const POSTHOG_NON_INTERNAL_FILTER = [
+  "lower(coalesce(toString(properties.capture_internal), '')) NOT IN ('true', '1', 'yes')",
   "lower(coalesce(toString(properties.is_internal_traffic), '')) NOT IN ('true', '1', 'yes')",
   "lower(coalesce(toString(person.properties.is_internal_tester), '')) NOT IN ('true', '1', 'yes')",
+  `lower(coalesce(toString(properties.auth_email_domain), '')) != ${POSTHOG_INTERNAL_EMAIL_DOMAIN_SQL}`,
+  `lower(coalesce(toString(person.properties.email_domain), '')) != ${POSTHOG_INTERNAL_EMAIL_DOMAIN_SQL}`,
+  `positionCaseInsensitive(coalesce(toString(person.properties.email), ''), '@${POSTHOG_INTERNAL_EMAIL_DOMAIN}') = 0`,
+  "NOT match(coalesce(toString(properties.$host), ''), '^(localhost|127[.]0[.]0[.]1)($|:)')",
+  "NOT match(coalesce(toString(properties.$ip), ''), '^(127[.]0[.]0[.]1|::1)$')",
 ].join(" AND ");
 const POSTHOG_PRODUCT_TELEMETRY_FILTER = [
   `toString(properties.telemetry_source) IN ${POSTHOG_PRODUCT_SOURCE_SQL}`,
@@ -519,11 +527,9 @@ export function cloudflareSourceSignalFromDrilldown(drilldown, existing = {}) {
     available: true,
     detail: "Cloudflare GraphQL Analytics direct aggregation succeeded",
     counts: {
-      ...(existing.counts || {}),
       visits: uniqueVisitors,
       uniqueVisitors,
       pageviews,
-      pageViews: pageviews,
       requests,
       threats,
     },

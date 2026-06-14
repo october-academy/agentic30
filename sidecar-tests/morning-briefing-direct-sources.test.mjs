@@ -106,6 +106,14 @@ test("collectPosthogDirectDrilldown builds Day-1 return curve, KPIs, and web sig
   assert.ok(productQueries.every((query) => query.includes("properties.build_configuration")));
   assert.ok(queries.every((query) => query.includes("properties.is_internal_traffic")));
   assert.ok(queries.every((query) => query.includes("person.properties.is_internal_tester")));
+  assert.ok(queries.every((query) => query.includes("properties.capture_internal")));
+  assert.ok(queries.every((query) => query.includes("properties.auth_email_domain")));
+  assert.ok(queries.every((query) => query.includes("person.properties.email_domain")));
+  assert.ok(queries.every((query) => query.includes("person.properties.email")));
+  assert.ok(queries.every((query) => query.includes("october-academy.com")));
+  assert.ok(queries.every((query) => query.includes("properties.$host")));
+  assert.ok(queries.every((query) => query.includes("properties.$ip")));
+  assert.ok(productQueries.every((query) => !query.includes("workspace_basename")));
 
   const totalsQuery = queries.find((query) => query.includes("uniqIf(person_id"));
   assert.ok(totalsQuery.includes("workspace_setup_completed"));
@@ -230,6 +238,7 @@ test("collectCloudflareDirectDrilldown builds KPIs, 2h buckets, and path table f
   assert.equal(source.counts.visits, 13);
   assert.equal(source.counts.uniqueVisitors, 13);
   assert.equal(source.counts.pageviews, 18);
+  assert.equal(Object.hasOwn(source.counts, "pageViews"), false);
   assert.equal(source.selected, true);
 });
 

@@ -361,8 +361,51 @@ test("normalizeMorningBriefingExternalDigest derives Cloudflare source counts fr
   assert.equal(sources[0].counts.visits, 285);
   assert.equal(sources[0].counts.uniqueVisitors, 285);
   assert.equal(sources[0].counts.pageviews, 174);
+  assert.equal(Object.hasOwn(sources[0].counts, "pageViews"), false);
   assert.equal(drilldowns.cloudflare.kpis[0].valueLabel, "285");
   assert.doesNotMatch(drilldowns.cloudflare.chart.subtitle, /합계/);
+});
+
+test("normalizeMorningBriefingExternalDigest fails legacy Cloudflare pageViews counts explicitly", () => {
+  const payload = {
+    sources: [
+      {
+        id: "cloudflare",
+        state: "ready",
+        summary: "legacy alias payload",
+        counts: { visits: 10, pageViews: 20, requests: 30 },
+      },
+    ],
+    drilldowns: {
+      cloudflare: {
+        measurements: {
+          totals: {
+            startIso: "2026-06-12T00:00:00.000Z",
+            untilIso: "2026-06-13T00:00:00.000Z",
+            uniqueVisitors: 10,
+            pageviews: 20,
+            requests: 30,
+            threats: 0,
+          },
+          previousTotals: {
+            startIso: "2026-06-11T00:00:00.000Z",
+            untilIso: "2026-06-12T00:00:00.000Z",
+            uniqueVisitors: 9,
+            pageviews: 18,
+            requests: 27,
+            threats: 0,
+          },
+          hourly: [],
+        },
+      },
+    },
+  };
+
+  const { sources, drilldowns } = normalizeMorningBriefingExternalDigest(payload, ["cloudflare"]);
+  assert.equal(sources[0].state, "failed");
+  assert.match(sources[0].detail, /counts\.pageViews.*counts\.pageviews/);
+  assert.deepEqual(sources[0].counts, {});
+  assert.equal(drilldowns.cloudflare, undefined);
 });
 
 test("normalizeMorningBriefingExternalDigest drops drilldowns for non-ready sources and bad payloads", () => {
@@ -548,6 +591,7 @@ test("normalizeCloudflareDrilldownMeasurements uses period totals, not summed ho
   assert.equal(source.counts.visits, 285);
   assert.equal(source.counts.uniqueVisitors, 285);
   assert.equal(source.counts.pageviews, 174);
+  assert.equal(Object.hasOwn(source.counts, "pageViews"), false);
   assert.equal(source.selected, true);
 });
 
@@ -611,8 +655,15 @@ test("buildMorningBriefingExternalDigestPrompt appends drilldown shape for selec
   assert.match(prompt, /telemetry_source\) IN \('mac_app', 'mac_sidecar'\)/);
   assert.match(prompt, /telemetry_environment\) = 'production'/);
   assert.match(prompt, /build_configuration\) = 'release'/);
+  assert.match(prompt, /app\/sidecar telemetry can be external customer evidence/);
+  assert.match(prompt, /workspace_basename, Korean geo\/IP, or app install\/update activity/);
+  assert.match(prompt, /properties\.capture_internal/);
   assert.match(prompt, /properties\.is_internal_traffic/);
   assert.match(prompt, /person\.properties\.is_internal_tester/);
+  assert.match(prompt, /properties\.auth_email_domain/);
+  assert.match(prompt, /person\.properties\.email_domain/);
+  assert.match(prompt, /person\.properties\.email/);
+  assert.match(prompt, /october-academy\.com/);
   assert.match(prompt, /uniqIf\(person_id, event IN \('workspace_setup_completed', 'mac_session_created', 'mac_sidecar_session_created', 'mac_sidecar_office_hours_completed'\)\)/);
   assert.match(prompt, /\$pageview\/web\/blog\/link events never count as active users/);
   assert.match(prompt, /Do not include raw rows/);
@@ -701,6 +752,20 @@ test("buildCountsDrilldown builds KPIs and signals from collected aggregates onl
   assert.equal(drilldown.signals[0].time, "신호");
   assert.equal(drilldown.signals[2].time, "공백");
   assert.equal(buildCountsDrilldown("posthog", [{ id: "posthog", state: "missing" }]), null);
+});
+
+test("buildCountsDrilldown rejects legacy Cloudflare pageViews counts", () => {
+  assert.throws(
+    () => buildCountsDrilldown("cloudflare", [
+      {
+        id: "cloudflare",
+        label: "Cloudflare",
+        state: "ready",
+        counts: { visits: 10, pageViews: 20 },
+      },
+    ]),
+    /counts\.pageViews.*counts\.pageviews/,
+  );
 });
 
 test("ensureMorningBriefingDrilldowns guarantees a drilldown per ready source, richer payloads win", () => {
