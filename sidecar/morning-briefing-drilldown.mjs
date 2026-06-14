@@ -765,6 +765,18 @@ function compactCloudflareRange(totals) {
   return hours === 24 ? "지난 24시간" : `최근 ${hours}시간`;
 }
 
+// The GitHub drilldown reuses the office-hours digest window, which spans from
+// local midnight *yesterday* to now (24–48h depending on time of day), not a
+// rolling 24h. Derive the label from the real window length instead of
+// hardcoding "지난 24시간" (which only happens to be true at local midnight).
+function windowRangeLabel(window) {
+  const start = Number.isFinite(window?.startMs) ? window.startMs : Date.parse(String(window?.startIso || ""));
+  const until = Number.isFinite(window?.untilMs) ? window.untilMs : Date.parse(String(window?.untilIso || ""));
+  if (!Number.isFinite(start) || !Number.isFinite(until) || until <= start) return "지난 24시간";
+  const hours = Math.max(1, Math.round((until - start) / HOUR_MS));
+  return hours === 24 ? "지난 24시간" : `최근 ${hours}시간`;
+}
+
 function buildCloudflareHourlyBars(hourly = [], { timeZone = undefined } = {}) {
   if (!hourly.length) return [];
   const bucketSize = Math.max(1, Math.ceil(hourly.length / BAR_LIMIT));
@@ -1596,7 +1608,7 @@ export async function collectGithubDrilldown({
     title: "GitHub · 빌드·배포 · 레포 신호",
     subtitle: [repoFacts?.nameWithOwner, repoFacts?.branch].filter(Boolean).join(" · "),
     syncPills: [
-      `지난 24시간 커밋 ${commits} · PR 머지 ${mergedPrs}`,
+      `${windowRangeLabel(window)} 커밋 ${commits} · PR 머지 ${mergedPrs}`,
       deploys.length
         ? mixedDeploys
           ? `배포 ${deploys.length}건 · ${deployBreakdown.join(" · ")}`
@@ -1608,7 +1620,7 @@ export async function collectGithubDrilldown({
     kpisMeta: repoFacts?.branch ? `${repoFacts.branch} 브랜치 기준` : null,
     chart: {
       kind: "bars",
-      title: "커밋, 지난 24시간",
+      title: `커밋, ${windowRangeLabel(window)}`,
       subtitle: deploys.length
         ? `배포 ${shortTime(deploys[0].at)} 포함 · 3시간 버킷`
         : "3시간 버킷",
