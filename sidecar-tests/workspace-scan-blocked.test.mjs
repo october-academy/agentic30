@@ -330,3 +330,49 @@ test("scan blocked on selected claude usage limit recommends the next scan-ready
     await harness.close();
   }
 });
+
+test("scan blocked on selected claude abort recommends the next scan-ready provider", async () => {
+  const harness = await spawnSidecarWithoutStub({
+    seedClaudeLogin: true,
+    seedGeminiLogin: true,
+    extraEnv: {
+      AGENTIC30_TEST_FORCE_PROVIDER_ABORT: "claude",
+    },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.send(JSON.stringify({
+      type: "scan_workspace",
+      root: harness.workspacePath,
+      prompt: "deep scan with selected claude abort contract",
+      preferredProvider: "claude",
+    }));
+
+    const blocked = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_blocked"
+        && event.scanRoot === harness.workspacePath,
+    );
+    assert.equal(blocked.provider, "claude");
+    assert.equal(blocked.model, "claude-sonnet-4-6");
+    assert.equal(blocked.reason, "aborted");
+    assert.equal(blocked.errorKind, "provider_aborted");
+    assert.equal(blocked.stage, "blocked");
+    assert.equal(blocked.stepIndex, 2);
+    assert.equal(blocked.totalSteps, 3);
+    assert.equal(blocked.nextProvider, "gemini");
+    assert.deepEqual(blocked.availableProviders, ["gemini"]);
+    assert.match(blocked.message, /aborted by user/);
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const passed = ws.events.some((event) =>
+      event.type === "workspace_scan_result"
+        && event.scanRoot === harness.workspacePath
+        && !event.error,
+    );
+    assert.equal(passed, false);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});

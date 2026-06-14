@@ -317,6 +317,42 @@ struct SidecarEventDecodingTests {
         #expect(event.sessionId == "session-1")
     }
 
+    @MainActor @Test func decodesProviderAbortedErrorPayload() throws {
+        let payload = """
+        {
+          "type": "error",
+          "sessionId": "session-1",
+          "provider": "claude",
+          "message": "Claude Code process aborted by user",
+          "errorKind": "provider_aborted",
+          "recoverable": true
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "error")
+        #expect(event.errorKind == "provider_aborted")
+        #expect(event.provider == "claude")
+        #expect(event.sessionId == "session-1")
+    }
+
+    @MainActor @Test func decodesSidecarConnectionStateErrorPayload() throws {
+        let payload = """
+        {
+          "type": "error",
+          "message": "Sidecar is not connected.",
+          "errorKind": "sidecar_connection_state"
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "error")
+        #expect(event.message == "Sidecar is not connected.")
+        #expect(event.errorKind == "sidecar_connection_state")
+    }
+
     @MainActor @Test func decodesOfficeHoursSourceGatePayload() throws {
         let payload = """
         {
@@ -529,6 +565,11 @@ struct SidecarEventDecodingTests {
                 "metric": { "value": 11, "unit": "활성 사용자", "deltaLabel": "▼ 56%", "direction": "down", "versusLabel": "어제 25" },
                 "rows": [{ "k": "이벤트", "v": "188" }],
                 "spark": [22, 25, 11],
+                "sparkPoints": [
+                  { "value": 22, "timeLabel": "06-08 09:00", "at": "2026-06-08T00:00:00.000Z" },
+                  { "value": 25, "timeLabel": "어제", "at": null },
+                  { "value": 11, "timeLabel": "오늘 09:00", "at": "2026-06-10T00:00:00.000Z" }
+                ],
                 "note": "온보딩 2단계 이탈 원인 미확인",
                 "noteTone": "warn",
                 "highlights": ["활성 사용자 추이 하락"]
@@ -602,6 +643,9 @@ struct SidecarEventDecodingTests {
         #expect(card.isReady)
         #expect(card.metric?.deltaLabel == "▼ 56%")
         #expect(card.spark == [22, 25, 11])
+        #expect(card.sparkPoints?.map(\.value) == [22, 25, 11])
+        #expect(card.sparkPoints?.first?.timeLabel == "06-08 09:00")
+        #expect(card.sparkPoints?.last?.at == "2026-06-10T00:00:00.000Z")
         #expect(briefing.timeline?.first?.timeLabel == "03:12")
         #expect(briefing.anomaly?.kind == "metric_drop")
         #expect(briefing.anomaly?.label == nil)
@@ -1486,6 +1530,57 @@ struct SidecarEventDecodingTests {
         #expect(review.evidenceDebts.first?.id == "cm-2")
         #expect(review.work?.aiMinutes == 90)
         #expect(review.work?.areas.first?.paths == ["agentic30/ContentView.swift"])
+    }
+
+    @MainActor @Test func decodesDayProgressStateWithOfficeHoursDayClosePolicy() throws {
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 3,
+          "dayClosePolicy": {
+            "schemaVersion": 1,
+            "role": "evidence_closing_operator",
+            "definition": "오늘의 가장 좁은 외부 검증 행동을 정하고 고객 증거 또는 명시적 미해결 부채로 Day를 닫는 시스템.",
+            "closeTypes": ["customer_evidence", "posted_url_target", "blocked", "carry"],
+            "mandatoryBip": {
+              "state": "target_behavior",
+              "currentProofSink": "local",
+              "allowedProofSinks": ["local", "bip_optional"],
+              "autoPosting": false,
+              "userApprovalRequired": true
+            },
+            "bipResearchCandidatePolicy": {
+              "state": "manual_fallback",
+              "readyCacheRequired": true,
+              "cachePath": ".agentic30/bip/research/day-3-cache.json",
+              "candidateCount": 0,
+              "candidateTitles": [],
+              "fallbackAction": "manually_named_reachable_customer"
+            },
+            "evidenceSourcePolicy": {
+              "externalSourcesFailClosed": true,
+              "unavailableSources": ["git", "posthog", "cloudflare"],
+              "marketRadarCardsAvailable": false
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "day_progress_state")
+        #expect(event.dayClosePolicy?.role == "evidence_closing_operator")
+        #expect(event.dayClosePolicy?.closeTypes == ["customer_evidence", "posted_url_target", "blocked", "carry"])
+        #expect(event.dayClosePolicy?.mandatoryBip.state == "target_behavior")
+        #expect(event.dayClosePolicy?.mandatoryBip.currentProofSink == .local)
+        #expect(event.dayClosePolicy?.mandatoryBip.allowedProofSinks == [.local, .bipOptional])
+        #expect(event.dayClosePolicy?.mandatoryBip.autoPosting == false)
+        #expect(event.dayClosePolicy?.bipResearchCandidatePolicy.state == "manual_fallback")
+        #expect(event.dayClosePolicy?.bipResearchCandidatePolicy.cachePath == ".agentic30/bip/research/day-3-cache.json")
+        #expect(event.dayClosePolicy?.bipResearchCandidatePolicy.fallbackAction == "manually_named_reachable_customer")
+        #expect(event.dayClosePolicy?.evidenceSourcePolicy.unavailableSources == ["git", "posthog", "cloudflare"])
+        #expect(event.dayClosePolicy?.evidenceSourcePolicy.marketRadarCardsAvailable == false)
     }
 
     @MainActor @Test func decodesDayProgressStateWithEvidenceOS() throws {

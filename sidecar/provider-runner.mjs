@@ -625,6 +625,16 @@ function getProviderSdkState(provider) {
 }
 
 function forcedProviderTestError(provider) {
+  const forcedAbortProvider = String(process.env.AGENTIC30_TEST_FORCE_PROVIDER_ABORT || "")
+    .trim()
+    .toLowerCase();
+  if (forcedAbortProvider && forcedAbortProvider === String(provider || "").toLowerCase()) {
+    const error = new Error(`${provider === "claude" ? "Claude Code" : provider} process aborted by user`);
+    error.name = "AbortError";
+    error.code = "aborted";
+    return error;
+  }
+
   const forcedProvider = String(process.env.AGENTIC30_TEST_FORCE_PROVIDER_USAGE_LIMIT || "")
     .trim()
     .toLowerCase();

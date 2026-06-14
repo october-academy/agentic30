@@ -524,6 +524,21 @@ test("normalizeExternalOfficeHoursDigest prefers failed source summaries over in
   assert.notEqual(sources[0].detail, "external MCP digest failed");
 });
 
+test("normalizeExternalOfficeHoursDigest fails Cloudflare legacy pageViews counts explicitly", () => {
+  const sources = normalizeExternalOfficeHoursDigest({
+    sources: [{
+      id: "cloudflare",
+      state: "ready",
+      summary: "legacy alias payload",
+      counts: { visits: 10, pageViews: 20, requests: 30 },
+    }],
+  }, ["cloudflare"]);
+
+  assert.equal(sources[0].state, "failed");
+  assert.match(sources[0].detail, /counts\.pageViews.*counts\.pageviews/);
+  assert.deepEqual(sources[0].counts, {});
+});
+
 test("normalizeExternalOfficeHoursDigest extracts embedded JSON and fails the missing expected source", () => {
   const text = [
     "Here is the digest you asked for:",
@@ -587,8 +602,14 @@ test("buildExternalOfficeHoursDigestPrompt uses source-specific count keys", () 
   assert.match(both, /telemetry_source IN \('mac_app','mac_sidecar'\)/);
   assert.match(both, /telemetry_environment = 'production'/);
   assert.match(both, /build_configuration = 'release'/);
+  assert.match(both, /app\/sidecar telemetry can be external customer evidence/);
+  assert.match(both, /workspace_basename, Korean geo\/IP, or app install\/update activity/);
+  assert.match(both, /capture_internal != true/);
   assert.match(both, /is_internal_traffic != true/);
   assert.match(both, /person\.properties\.is_internal_tester != true/);
+  assert.match(both, /auth_email_domain != october-academy\.com/);
+  assert.match(both, /person\.properties\.email_domain != october-academy\.com/);
+  assert.match(both, /person\.properties\.email not containing @october-academy/);
   assert.match(both, /workspace_setup_completed, mac_session_created, mac_sidecar_session_created, or mac_sidecar_office_hours_completed/);
   assert.match(both, /\$pageview, blog, link, and marketing-site events may appear only in drilldown webSignals/);
   assert.match(both, /Cloudflare counts must use visits\/uniqueVisitors\/pageviews\/requests\/threats/);

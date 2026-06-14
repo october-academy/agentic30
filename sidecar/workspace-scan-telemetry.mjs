@@ -1,4 +1,5 @@
 const WORKSPACE_SCAN_RECOVERABLE_BLOCK_REASONS = new Set([
+  "aborted",
   "unavailable",
   "usage_limit",
 ]);

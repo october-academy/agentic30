@@ -223,7 +223,7 @@ final class SidecarBridge: SidecarTransport {
                 level: .warn,
                 properties: properties
             )
-            emit(type: "error", message: "Sidecar is not connected.")
+            emit(type: "error", message: "Sidecar is not connected.", errorKind: "sidecar_connection_state")
             return false
         }
         guard JSONSerialization.isValidJSONObject(payload),
@@ -396,7 +396,7 @@ final class SidecarBridge: SidecarTransport {
         }
     }
 
-    private func emit(type: String, message: String) {
+    private func emit(type: String, message: String, errorKind: String? = nil) {
         let event = SidecarEvent(
             type: type,
             message: message,
@@ -437,6 +437,7 @@ final class SidecarBridge: SidecarTransport {
             sheet: nil,
             onboardingHypothesis: nil,
             error: nil,
+            errorKind: errorKind,
             docType: nil,
             docPath: nil,
             progressText: nil,

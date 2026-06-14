@@ -707,7 +707,8 @@ export function buildExternalOfficeHoursDigestPrompt({
     // 명시하지 않으면 모델이 차단되는 호출을 반복하다 시간을 소진한다.
     "Tool access: MCP tools may be deferred — load them with ToolSearch first, then call them.",
     "PostHog: read with execute-sql using SELECT/WITH HogQL only, or insight/web-analytics getter tools. Mutating calls are denied.",
-    "PostHog strict product filter: every counts object must restrict app/product aggregates to telemetry_source IN ('mac_app','mac_sidecar'), telemetry_environment = 'production', build_configuration = 'release', is_internal_traffic != true, and person.properties.is_internal_tester != true.",
+    "PostHog product-signal rule: Agentic30 app/sidecar telemetry can be external customer evidence. Do not exclude it merely because it is mac_app/mac_sidecar, has a workspace_basename, Korean geo/IP, or app install/update activity.",
+    "PostHog strict product filter: every counts object must restrict app/product aggregates to telemetry_source IN ('mac_app','mac_sidecar'), telemetry_environment = 'production', build_configuration = 'release', capture_internal != true, is_internal_traffic != true, person.properties.is_internal_tester != true, auth_email_domain != october-academy.com, person.properties.email_domain != october-academy.com, and person.properties.email not containing @october-academy.",
     "PostHog activeUsers definition: count distinct people only when the filtered event is one of workspace_setup_completed, mac_session_created, mac_sidecar_session_created, or mac_sidecar_office_hours_completed.",
     "PostHog events definition: count filtered production app/sidecar events, not all PostHog events. conversions and signups may be reported only when matching filtered production/non-internal events exist.",
     "PostHog web rule: $pageview, blog, link, and marketing-site events may appear only in drilldown webSignals/path summaries; they must never contribute to card activeUsers.",
@@ -762,6 +763,16 @@ function normalizeCounts(value = {}) {
   return output;
 }
 
+function hasOwn(value, key) {
+  return Boolean(value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function cloudflareLegacyCountsDetail(counts = {}) {
+  return hasOwn(counts, "pageViews")
+    ? "Cloudflare digest schema invalid: counts.pageViews is legacy; use counts.pageviews."
+    : "";
+}
+
 function externalDigestFailureDetail(source = "", { summary = "", failureDetail = "" } = {}) {
   return cleanString(summary, 300)
     || cleanString(failureDetail, 300)
@@ -783,15 +794,16 @@ export function normalizeExternalOfficeHoursDigest(textOrObject = "", expectedSo
       .map((item) => {
         const id = normalizeOfficeHoursSourceId(item?.id);
         if (!EXTERNAL_SOURCE_IDS.has(id)) return null;
-        const state = cleanString(item?.state, 20).toLowerCase() === "ready" ? "ready" : "failed";
+        const legacyCountsDetail = id === "cloudflare" ? cloudflareLegacyCountsDetail(item?.counts) : "";
+        const state = !legacyCountsDetail && cleanString(item?.state, 20).toLowerCase() === "ready" ? "ready" : "failed";
         const summary = cleanString(item?.summary, 320);
         return sourceStatus({
           id,
           state,
           detail: state === "ready"
             ? "external MCP digest succeeded"
-            : externalDigestFailureDetail(id, { summary, failureDetail: fallbackDetail }),
-          counts: normalizeCounts(item?.counts),
+            : (legacyCountsDetail || externalDigestFailureDetail(id, { summary, failureDetail: fallbackDetail })),
+          counts: state === "ready" ? normalizeCounts(item?.counts) : {},
           highlights: normalizeStringList(item?.highlights, 6, 180),
           summary,
           goalSignals: normalizeStringList(item?.goalSignals, 6, 200),

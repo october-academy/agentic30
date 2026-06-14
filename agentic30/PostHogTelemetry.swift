@@ -377,6 +377,7 @@ enum PostHogTelemetry {
     private static let captureOnceLock = NSLock()
     private static let clientLock = NSLock()
     private static let defaultClient = PostHogSDKTelemetryClient()
+    private static let internalEmailDomain = "october-academy.com"
     private static var activeConfig: PostHogTelemetryConfig?
     private static var activeDisabled: Bool?
     private static var isConfiguring = false
@@ -638,6 +639,9 @@ enum PostHogTelemetry {
         ]
         if let emailDomain = PostHogTelemetrySanitizer.emailDomain(authSession.email) {
             userProperties["email_domain"] = emailDomain
+            if emailDomain == internalEmailDomain {
+                userProperties["is_internal_tester"] = true
+            }
         }
 
         sdkClient.identify(

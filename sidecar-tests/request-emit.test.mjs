@@ -293,11 +293,23 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
     );
     assert.equal(followupProviderStatus.progressText, "프로젝트 맥락에 맞는 다음 질문 준비 중");
 
+    const stopStartIndex = ws.events.length;
     ws.send(JSON.stringify({ type: "stop_session", sessionId: created.session.id }));
-    await waitForEvent(ws.events, (event) =>
+    const idleSession = await waitForEvent(ws.events, (event) =>
       event.type === "session_updated"
         && event.session?.id === created.session.id
         && event.session?.status === "idle",
+    );
+    assert.equal(idleSession.session.error, null);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(
+      ws.events.slice(stopStartIndex).some((event) =>
+        event.type === "error"
+          && event.sessionId === created.session.id
+          && event.errorKind === "provider_aborted",
+      ),
+      false,
+      "local stop_session cancellation must not be surfaced as provider_aborted",
     );
   } finally {
     ws?.close();
@@ -367,6 +379,241 @@ test("office_hours_start reports provider usage limits as recoverable error enve
         && event.session?.status === "error",
     );
     assert.match(erroredSession.session.error, /weekly limit/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_start reports provider aborts as recoverable error envelopes", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_FORCE_PROVIDER_ABORT: "claude",
+    },
+  });
+  let ws;
+  try {
+    await initGitRepo(harness.workspacePath);
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "claude",
+      model: "claude-sonnet-4-6",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: [
+        "DAY1_LOCKED_GOAL",
+        "Office Hours mode: Startup",
+        "Expected question count: 6",
+        "Goal lane: make_money / 첫 매출 달성",
+        "Goal text: provider abort envelope regression",
+        "Customer: B2B founder",
+        "Problem: provider aborts are double-captured",
+        "Validation action: retry with another provider",
+      ].join("\n"),
+      visiblePrompt: "Test Office Hours provider abort",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    }));
+
+    const failedStatus = await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "failed",
+    );
+    assert.match(failedStatus.detail, /aborted by user/);
+
+    const recoverableError = await waitForEvent(ws.events, (event) =>
+      event.type === "error"
+        && event.sessionId === created.session.id
+        && event.errorKind === "provider_aborted",
+    );
+    assert.equal(recoverableError.provider, "claude");
+    assert.equal(recoverableError.recoverable, true);
+    assert.match(recoverableError.message, /aborted by user/);
+
+    const erroredSession = await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "error",
+    );
+    assert.match(erroredSession.session.error, /aborted by user/);
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "aborted",
+      ),
+      false,
+      "provider aborts must not be surfaced as local Office Hours cancellations",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("send_prompt reports provider aborts as recoverable error envelopes", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_FORCE_PROVIDER_ABORT: "claude",
+    },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "claude",
+      model: "claude-sonnet-4-6",
+      suppressBootstrapIntake: true,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    ws.send(JSON.stringify({
+      type: "send_prompt",
+      sessionId: created.session.id,
+      prompt: "Test general prompt provider abort",
+    }));
+
+    const recoverableError = await waitForEvent(ws.events, (event) =>
+      event.type === "error"
+        && event.sessionId === created.session.id
+        && event.errorKind === "provider_aborted",
+    );
+    assert.equal(recoverableError.provider, "claude");
+    assert.equal(recoverableError.recoverable, true);
+    assert.match(recoverableError.message, /aborted by user/);
+
+    const erroredSession = await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "error",
+    );
+    assert.match(erroredSession.session.error, /aborted by user/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_docs reports provider aborts as recoverable error envelopes", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_FORCE_PROVIDER_ABORT: "claude",
+    },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "claude",
+      model: "claude-sonnet-4-6",
+      suppressBootstrapIntake: true,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    ws.send(JSON.stringify({
+      type: "send_prompt",
+      sessionId: created.session.id,
+      prompt: "/office-hours-docs provider abort contract",
+    }));
+
+    const recoverableError = await waitForEvent(ws.events, (event) =>
+      event.type === "error"
+        && event.sessionId === created.session.id
+        && event.errorKind === "provider_aborted",
+    );
+    assert.equal(recoverableError.provider, "claude");
+    assert.equal(recoverableError.recoverable, true);
+    assert.match(recoverableError.message, /aborted by user/);
+
+    const failedStatus = await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "failed",
+    );
+    assert.match(failedStatus.detail, /aborted by user/);
+
+    const erroredSession = await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "error",
+    );
+    assert.match(erroredSession.session.error, /aborted by user/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("foundation_chat reports provider aborts as recoverable error envelopes", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_FORCE_PROVIDER_ABORT: "claude",
+    },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "claude",
+      model: "claude-sonnet-4-6",
+      suppressBootstrapIntake: true,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    ws.send(JSON.stringify({
+      type: "foundation_chat",
+      sessionId: created.session.id,
+      day: 0,
+      prompt: "Test Foundation provider abort",
+    }));
+
+    const recoverableError = await waitForEvent(ws.events, (event) =>
+      event.type === "error"
+        && event.sessionId === created.session.id
+        && event.errorKind === "provider_aborted",
+    );
+    assert.equal(recoverableError.provider, "claude");
+    assert.equal(recoverableError.recoverable, true);
+    assert.match(recoverableError.message, /aborted by user/);
+
+    const erroredSession = await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "error",
+    );
+    assert.match(erroredSession.session.error, /aborted by user/);
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "foundation_chat_event"
+          && event.sessionId === created.session.id
+          && event.phase === "aborted",
+      ),
+      false,
+      "provider aborts must not be surfaced as local Foundation cancellations",
+    );
   } finally {
     ws?.close();
     await harness.close();
@@ -899,6 +1146,38 @@ test("office_hours_start skips Day 2+ source gate in local dev fast-days mode", 
       ),
       false,
     );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("day_progress_get emits Office Hours day close policy without changing proof sink contract", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "day_progress_get",
+      workspaceRoot: harness.workspacePath,
+    }));
+
+    const progress = await waitForEvent(ws.events, (event) =>
+      event.type === "day_progress_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.dayClosePolicy,
+    );
+
+    assert.equal(progress.dayClosePolicy.role, "evidence_closing_operator");
+    assert.deepEqual(progress.dayClosePolicy.closeTypes, ["customer_evidence", "posted_url_target", "blocked", "carry"]);
+    assert.equal(progress.dayClosePolicy.mandatoryBip.state, "target_behavior");
+    assert.equal(progress.dayClosePolicy.mandatoryBip.currentProofSink, "local");
+    assert.deepEqual(progress.dayClosePolicy.mandatoryBip.allowedProofSinks, ["local", "bip_optional"]);
+    assert.equal(progress.dayClosePolicy.mandatoryBip.autoPosting, false);
+    assert.equal(progress.dayClosePolicy.bipResearchCandidatePolicy.state, "manual_fallback");
+    assert.equal(progress.dayClosePolicy.bipResearchCandidatePolicy.cachePath, ".agentic30/bip/research/day-1-cache.json");
+    assert.equal(progress.dayClosePolicy.bipResearchCandidatePolicy.fallbackAction, "manually_named_reachable_customer");
   } finally {
     ws?.close();
     await harness.close();

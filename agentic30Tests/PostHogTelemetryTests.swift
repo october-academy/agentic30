@@ -467,9 +467,39 @@ final class PostHogTelemetryTests: XCTestCase {
         XCTAssertEqual(client.logs.first?.attributes["message"] as? String, "[redacted]")
         XCTAssertEqual(client.identifies.first?.distinctId, "user_123")
         XCTAssertEqual(client.identifies.first?.userProperties["email_domain"] as? String, "example.com")
+        XCTAssertNil(client.identifies.first?.userProperties["is_internal_tester"])
         XCTAssertEqual(client.resetCount, 1)
         XCTAssertGreaterThanOrEqual(client.optOutCount, 1)
         XCTAssertGreaterThanOrEqual(client.optInCount, 1)
+    }
+
+    func testIdentifyMarksOctoberAcademyAccountAsInternalTester() {
+        let client = CapturingPostHogClient()
+        let session = MacAuthSession(
+            accessToken: "access",
+            refreshToken: "refresh",
+            expiresAt: nil,
+            tokenType: "bearer",
+            userId: "internal_user",
+            email: "admin@october-academy.com",
+            onboardingCompletedAt: "2026-05-01T00:00:00Z",
+            termsAcceptedAt: "2026-05-01T00:00:00Z",
+            termsVersion: "2026-04-15",
+            privacyVersion: "2026-04-15"
+        )
+
+        PostHogTelemetry.sdkClient = client
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        defer { PostHogTelemetry.resetTestingHooks() }
+
+        PostHogTelemetry.identify(authSession: session)
+
+        XCTAssertEqual(client.identifies.count, 1)
+        XCTAssertEqual(client.identifies.first?.distinctId, "internal_user")
+        XCTAssertEqual(client.identifies.first?.userProperties["email_domain"] as? String, "october-academy.com")
+        XCTAssertEqual(client.identifies.first?.userProperties["is_internal_tester"] as? Bool, true)
     }
 
     private static func clearCaptureOnceState(defaultsKey: String, pendingKey: String) {
