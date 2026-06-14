@@ -6,6 +6,8 @@ sidecar-build/
 sidecar-evals/.artifacts/
 .omc/
 .omx/
+.omo/
+.codex/
 .DS_Store
 .env
 .env.local
