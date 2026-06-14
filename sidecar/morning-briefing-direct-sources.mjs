@@ -15,6 +15,7 @@ import {
 // digest fills what the APIs cannot know.
 
 const DIRECT_FETCH_TIMEOUT_MS = 15_000;
+const HOUR_MS = 3_600_000;
 
 function finiteNumber(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -350,18 +351,27 @@ export async function collectCloudflareDirectDrilldown({
   if (!resolved?.tokenValid) return null;
   const token = resolved.token;
 
-  const zonesResult = await fetchJson(fetchImpl, `${CLOUDFLARE_API_BASE}/zones?status=active&per_page=5`, {
+  const zonesResult = await fetchJson(fetchImpl, `${CLOUDFLARE_API_BASE}/zones?status=active&per_page=50`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const zone = zonesResult.ok ? zonesResult.payload?.result?.[0] : null;
+  const zones = zonesResult.ok && Array.isArray(zonesResult.payload?.result)
+    ? zonesResult.payload.result
+    : [];
+  const zone = pickCloudflareZone(zones, env);
   if (!zone?.id) return null;
 
-  const untilMs = finiteNumber(window.untilMs) ?? Date.parse(window.untilIso || "") ?? Date.now();
+  const rawUntilMs = finiteNumber(window.untilMs) ?? Date.parse(window.untilIso || "") ?? Date.now();
+  // Floor the window end to the hour. httpRequests1hGroups buckets are hourly
+  // and filtered by their bucket-start datetime, so an unaligned end (e.g.
+  // 04:18Z) pulls in the in-progress 04:00 bucket whole — its requests/uniques
+  // keep climbing on every re-query of the *same* window. Flooring drops the
+  // live partial hour so the totals are reproducible (cost: up to ~1h of lag).
+  const untilMs = Math.floor(rawUntilMs / HOUR_MS) * HOUR_MS;
   const requestedStartMs = finiteNumber(window.startMs) ?? (untilMs - 86_400_000);
   // Cloudflare adaptive analytics are used for the OD "지난 24시간" drilldown and
   // can reject wider path queries. Keep the traffic drilldown on the trailing
   // 24h window even when the broader morning briefing window starts yesterday.
-  const startMs = Math.max(requestedStartMs, untilMs - 86_400_000);
+  const startMs = Math.floor(Math.max(requestedStartMs, untilMs - 86_400_000) / HOUR_MS) * HOUR_MS;
   const spanMs = untilMs - startMs;
   const toIso = (ms) => new Date(ms).toISOString();
 
@@ -479,6 +489,10 @@ function sectionIsEmpty(value) {
 
 export function mergeMorningBriefingDrilldown(primary, secondary) {
   if (!primary) return secondary ?? null;
+  // An explicit collection-failure card is terminal: never backfill it with the
+  // digest's narrative or zero numbers, or we recreate the masked-failure bug
+  // (a failed collection rendered as authoritative "0 events / 0 active").
+  if (primary.collectionFailed) return primary;
   if (!secondary) return primary;
   const merged = { ...primary };
   for (const key of DRILLDOWN_SECTION_KEYS) {

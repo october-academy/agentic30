@@ -168,14 +168,14 @@ function cloudflareTotals({ uniqueVisitors, pageviews, requests, threats = 0 }) 
   };
 }
 
-function stubCloudflareFetch({ failPaths = false } = {}) {
+function stubCloudflareFetch({ failPaths = false, zones = [{ id: "zone-1", name: "agentic30.dev" }] } = {}) {
   const calls = [];
   return {
     calls,
     fetch: async (url, options = {}) => {
       calls.push({ url, options });
       if (url.includes("/zones?")) {
-        return jsonResponse({ result: [{ id: "zone-1", name: "agentic30.dev" }] });
+        return jsonResponse({ result: zones });
       }
       const body = JSON.parse(options.body || "{}");
       if (String(body.query || "").includes("httpRequestsAdaptiveGroups")) {
@@ -259,6 +259,79 @@ test("collectCloudflareDirectDrilldown clamps wide briefing windows to trailing 
   assert.ok(graphqlCalls.every((body) => body.variables.start >= "2026-06-08T00:00:00.000Z"));
   assert.ok(graphqlCalls.some((body) => body.variables.start === "2026-06-09T00:00:00.000Z"));
   assert.ok(!graphqlCalls.some((body) => body.variables.start === "2026-06-08T00:00:00.000Z" && body.variables.end === "2026-06-10T00:00:00.000Z"));
+});
+
+test("collectCloudflareDirectDrilldown selects the product-domain zone, not the first active one", async () => {
+  const { fetch, calls } = stubCloudflareFetch({
+    zones: [
+      { id: "zone-other", name: "october-academy.com" },
+      { id: "zone-app", name: "agentic30.app" },
+    ],
+  });
+  await collectCloudflareDirectDrilldown({
+    window: WINDOW,
+    settings: { token: "cf_token", tokenValid: true },
+    env: { AGENTIC30_WEB_BASE_URL: "https://agentic30.app" },
+    fetchImpl: fetch,
+  });
+  const analyticsBody = calls
+    .filter((call) => call.url.endsWith("/graphql"))
+    .map((call) => JSON.parse(call.options.body || "{}"))
+    .find((body) => String(body.query).includes("httpRequests1hGroups"));
+  // zone-other is result[0], but the agentic30.app web host must win the pick
+  assert.equal(analyticsBody.variables.zone, "zone-app");
+});
+
+test("collectCloudflareDirectDrilldown honors an explicit CLOUDFLARE_ZONE_ID override", async () => {
+  const { fetch, calls } = stubCloudflareFetch({
+    zones: [
+      { id: "zone-a", name: "agentic30.app" },
+      { id: "zone-b", name: "staging.agentic30.app" },
+    ],
+  });
+  await collectCloudflareDirectDrilldown({
+    window: WINDOW,
+    settings: { token: "cf_token", tokenValid: true },
+    env: { CLOUDFLARE_ZONE_ID: "zone-b" },
+    fetchImpl: fetch,
+  });
+  const body = calls
+    .filter((call) => call.url.endsWith("/graphql"))
+    .map((call) => JSON.parse(call.options.body || "{}"))[0];
+  assert.equal(body.variables.zone, "zone-b");
+});
+
+test("collectCloudflareDirectDrilldown falls back to the first active zone when nothing matches", async () => {
+  const { fetch, calls } = stubCloudflareFetch({
+    zones: [{ id: "zone-first", name: "someones-fork.example" }],
+  });
+  await collectCloudflareDirectDrilldown({
+    window: WINDOW,
+    settings: { token: "cf_token", tokenValid: true },
+    env: { AGENTIC30_WEB_BASE_URL: "https://agentic30.app" }, // host has no matching zone here
+    fetchImpl: fetch,
+  });
+  const body = calls
+    .filter((call) => call.url.endsWith("/graphql"))
+    .map((call) => JSON.parse(call.options.body || "{}"))[0];
+  assert.equal(body.variables.zone, "zone-first");
+});
+
+test("collectCloudflareDirectDrilldown floors the window to the hour so re-queries are reproducible", async () => {
+  const { fetch, calls } = stubCloudflareFetch();
+  await collectCloudflareDirectDrilldown({
+    window: { untilMs: Date.parse("2026-06-10T04:22:33.000Z") },
+    settings: { token: "cf_token", tokenValid: true },
+    fetchImpl: fetch,
+  });
+  const analyticsBody = calls
+    .filter((call) => call.url.endsWith("/graphql"))
+    .map((call) => JSON.parse(call.options.body || "{}"))
+    .find((body) => String(body.query).includes("httpRequests1hGroups"));
+  // 04:22:33 floors to 04:00 on both ends so the in-progress hour is dropped
+  assert.equal(analyticsBody.variables.end, "2026-06-10T04:00:00.000Z");
+  assert.equal(analyticsBody.variables.start, "2026-06-09T04:00:00.000Z");
+  assert.equal(analyticsBody.variables.prevStart, "2026-06-08T04:00:00.000Z");
 });
 
 test("collectCloudflareDirectDrilldown omits the path table when the dataset is not entitled", async () => {
