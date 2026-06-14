@@ -1,132 +1,64 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-07 | Updated: 2026-05-07 -->
+<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
 
 # sidecar
 
-## Purpose
-Local Node.js sidecar that the macOS app launches as a child process. Provides a WebSocket bridge for chat/streaming, runs the Claude Agent SDK and Codex SDK provider streams, exposes an MCP server for tool surfacing, an ACP adapter for IDE integration, BIP coach state machine, foundation-summary review loop, monetization-ask flow, onboarding hypothesis derivation, IDD doc gate, adaptive curriculum, Google Workspace client, Notion OAuth, Meta Ads client, qmd memory support, and PostHog-style telemetry events. Entry points are `index.mjs` (default WebSocket runner), `mcp-server.mjs`, and `acp-adapter.mjs`.
+## OVERVIEW
+Node.js ESM sidecar launched by the macOS app. Owns the localhost WebSocket daemon, provider execution, MCP/ACP entry points, workspace scans, curriculum/program state, BIP, foundation-summary integration, monetization, onboarding hypothesis, morning briefing, integrations, and telemetry.
 
-## Key Files
+## STRUCTURE
+| Path | Purpose |
+|------|---------|
+| `index.mjs` | Main WebSocket daemon and sidecar lifetime owner |
+| `mcp-server.mjs` | MCP server for workspace/user-input/doc tools |
+| `acp-adapter.mjs`, `acp-utils.mjs` | Agent Client Protocol surface |
+| `provider-runner.mjs`, `auth-context.mjs` | Claude, Codex, Gemini, Cursor execution and scrubbed auth env |
+| `chat-route.mjs`, `inline-decision.mjs`, `structured-input-tools.mjs` | Routing and structured decision contracts |
+| `foundation-chat.mjs`, `foundation-summary-integration.mjs` | Unified foundation chat and Day-7 summary glue |
+| `bip-*.mjs`, `monetization-ask-*.mjs`, `onboarding-*.mjs` | Stateful product subsystems |
+| `program-gate-engine.mjs`, `day-progress-state.mjs`, `mission-card.mjs` | 30-day program gates, progress, bridge events |
+| `morning-briefing*.mjs`, `news-market-radar.mjs`, `work-history.mjs` | Briefing, external digest, history surfaces |
+| `workspace-*.mjs`, `local-discovery.mjs`, `read-only-workspace-tool-policy.mjs` | Workspace scan/safety/discovery |
+| `github/posthog/cloudflare/vercel *-mcp-config*.mjs` | Integration settings and OAuth/API-key config |
+| `foundation-summary/` | Claude-only read-only review loop |
+| `specialists/` | Project-owned specialist prompt builders |
+| `vendor/` | Upstream gstack assets; synced, not edited |
 
-### Entry points
-| File | Description |
-|------|-------------|
-| `index.mjs` | WebSocket sidecar daemon — the one big front door (~226k chars). Owns session routing, provider dispatch, BIP coach + foundation-summary integration, telemetry, OAuth flows |
-| `mcp-server.mjs` | MCP server exposing tool surfaces (Read/Glob/Grep, qmd memory) for Codex parity and external MCP clients |
-| `acp-adapter.mjs` | ACP (Agent Client Protocol) adapter for IDE integrations |
-| `acp-utils.mjs` | Shared helpers for the ACP adapter |
-| `preflight-cli.mjs` | CLI wrapper for `preflight.mjs` (`npm run preflight:release`) |
+## WHERE TO LOOK
+| Task | Location | Notes |
+|------|----------|-------|
+| Bridge event shape | `index.mjs`, Swift decoders in `../agentic30/` | Update both sides and tests |
+| Provider auth/execution | `provider-runner.mjs`, `auth-context.mjs`, `provider-sdk-contracts.mjs` | Never log secrets or tokens |
+| Workspace scanning | `index.mjs`, `scan-provider-select.mjs`, `workspace-safety.mjs` | Read-only provider readiness is fail-closed |
+| Office Hours cards | `office-hours-structured-input.mjs`, `office-hours-resume.mjs`, `index.mjs` | Provider channels converge through card-ready payloads |
+| MCP OAuth status | `mcp-oauth-prewarm.mjs`, `mcp-oauth-state.mjs`, `integration-status.mjs` | Durable state is verification only, never tokens |
+| State schema changes | `session-store.mjs`, `bip-coach-state.mjs`, `monetization-ask-state.mjs`, `day-progress-state.mjs` | Bump schema and add migration tests |
+| Build bundle inputs | `../scripts/build-sidecar.mjs`, `../agentic30.xcodeproj/project.pbxproj` | Keep entry-point list and Xcode input paths in sync |
 
-### Provider runner
-| File | Description |
-|------|-------------|
-| `provider-runner.mjs` | Central provider dispatcher — Claude Agent SDK, Codex SDK, Gemini (Gen AI), Cursor (`@cursor/sdk`) streams, auth state, model selection (~46k chars) |
-| `auth-context.mjs` | Builds env/auth context for provider invocations; mutable per-session |
-| `chat-route.mjs` | Classifies chat input → execution route (foundation, BIP, monetization, generic) |
-| `inline-decision.mjs` | Inline decision sentinel parsing/validation for AskUserQuestion-style flows |
+## CONVENTIONS
+- ESM only. Prefer explicit named exports and small pure helpers beside the owner module.
+- `index.mjs` is intentionally large because it owns daemon lifetime; extract helpers, but do not split lifetime orchestration casually.
+- Provider streams must remain cancellable and avoid synchronous blocking inside async stream consumers.
+- Workspace-derived state persists under `<workspace>/.agentic30/` with versioned schemas.
+- `workspace-safety.mjs` is the runtime path-safety/secret-redaction source; `scripts/check-public-safety.mjs` is the repo CI gate.
 
-### Foundation / BIP / monetization subsystems
-| File | Description |
-|------|-------------|
-| `foundation-chat.mjs` | Unified Day-7 foundation chat orchestration |
-| `foundation-summary-integration.mjs` | Glue between foundation-chat and the foundation-summary review loop |
-| `bip-coach-state.mjs` | BIP (Build in Public) coach state machine + Google Doc/Sheet plumbing (~38k chars) |
-| `bip-prompt.mjs` | Prompt builder for BIP coach |
-| `bip-readiness.mjs` | BIP readiness gating logic |
-| `monetization-ask-state.mjs` | Monetization-ask flow state machine |
-| `monetization-ask-prompt.mjs` | Prompt builder for monetization-ask |
-| `monetization-ask-result.mjs` | Result handling/normalization for monetization-ask |
-| `monetization-ask-integration.mjs` | Glue between monetization-ask and the chat surface |
-| `onboarding-hypothesis.mjs` | Derives + merges workspace onboarding hypothesis; accepts an injected `agentHistory` digest (attached as `recentWork`) |
-| `agent-work-history.mjs` | Deterministic, redacted digest of recent agent work on a workspace from `~/.claude` (encoded project dir) + `~/.codex` (grep + cwd verify). cli-first (excludes Agentic30's own sdk-ts runs), streaming, KST-bucketed. Pure record→event reducers exported for tests; `collectAgentWorkEvents` exposes raw session-level events for the work-history indexer |
-| `work-history.mjs` | History 탭 weekly retrospective indexer (schemaVersion 1). Mon–Sun local-tz week; AI session wall-clock time (Claude/Codex/Gemini) per feature area; commits (git `--all`) as activity/evidence only; session↔commit linking via file overlap (+prompt token boost); unlinked sessions → 미분류; gh CLI remote data with `github_required` fail-closed; derived-data-only snapshot at `<workspace>/.agentic30/work-history.json` (no raw prompts persisted). Optional agent refinement via injectable `queryImpl` (deterministic fallback). Hourly background + tab-entry fingerprint + manual refresh via `work_history_get`/`work_history_refresh` |
-| `workspace-safety.mjs` | Single runtime source for workspace path-safety + secret redaction (`isSecretPath`, `isSecretFilename`, `redactSecrets`, `SEARCH_EXCLUDE_GLOBS`). Used by the MCP workspace tools + agent-work-history. Separate from the CI gate in `scripts/check-public-safety.mjs` |
-| `workspace-gitignore.mjs` | Keeps `<workspace>/.agentic30/` out of git: `ensureAgentic30Gitignored` appends/creates a `.gitignore` entry (ancestor `.git` walk covers monorepo subdir workspaces; `!.agentic30/` negation = durable user opt-in, never overridden). Fail-soft statuses, never throws. Wired at `runWorkspaceScan` start + once per daemon start (`onlyIfAgentic30Exists`) |
-| `readme-drift.mjs` | Deterministic README ↔ reality drift detector (recent commits/agent intents/files vs README vocabulary) → `missingFromReadme` / `staleInReadme` + suggestion |
-| `generate-day1-situation-summary.mjs` | Day-1 project situation v3 summary (evidence graph, ranked diagnosis, optional reality gap, baseline, observed path, evidence-backed actions, quality gate, trust). Deterministic local floor + optional provider signals; broadcast on `workspace_scan_result.day1SituationSummary` |
-| `onboarding-helper.mjs` | Onboarding helper CLI: `agentic30-onboarding --register --path X --source Y --token T` registers the current project folder by calling `registerOnboardingWorkspaceRequest` and exits. No MCP, no stdio server. No-args invocation prints usage and exits 64. |
-| `onboarding-workspace-request.mjs` | Persists pending workspace registrations under `appSupport/onboarding-workspace-requests/` with 30 min TTL; verifies nonce from `AGENTIC30_ONBOARDING_NONCE_PATH` when provided; records caller-claimed source as `claimedSource` (do not treat as trusted). |
-| `idd-doc-gate.mjs` | Iterative Doc Development gate (~37k chars) |
-| `adaptive-curriculum.mjs` | Adaptive curriculum builder |
+## ANTI-PATTERNS
+- Do not edit `vendor/` by hand.
+- Do not add write-capable tools to read-only provider or foundation-summary paths.
+- Do not parse inline-decision sentinels with ad hoc string surgery.
+- Do not add provider-specific behavior that breaks Claude/Codex parity unless the app gate explicitly fails closed.
+- Do not persist raw prompts, provider tokens, OAuth credentials, or raw external event rows.
 
-### 30-day program (gates / evidence / adaptive rules — spec `docs/specs/agentic30-30day-adaptive-program.md`)
-| File | Description |
-|------|-------------|
-| `program-gate-engine.mjs` | Milestone gate engine (G1–G7): pure, idempotent evaluation persisted to `<ws>/.agentic30/gate-ledger.json` (schema v1). Owns the §15.3 recovery substitution table, §13.4 intervention tokens (once per gate, program cap 3, dueDay expiry), §21 provisional overlays, and `evaluateDayProgressPatchGate` — wired BEFORE `patchDayStep` in index.mjs (the authority seat) |
-| `proof-ledger-write-through.mjs` | Terminal verification verdicts (auto pass → verified/strong, judge accepted → strength by curriculum actionType, insufficient → weak) written through to proof-ledger `action_evidence` events; judge errors/auto failures never write (fail-closed) |
-| `mission-card.mjs` | `mission_card` bridge event for execution-step entry: IDD mission + evidence spec (education/review days are evidence-free) + gate context; gate-ledger substitutions override the mission |
-| `active-users-snapshot.mjs` | §15.4 active-user store (`.agentic30/metrics/active-users.json`): one cumulative `first_value` HogQL query, piggybacked on the morning-briefing cycle; `latestFirstValueSignal` feeds G4② |
-| `oh-intervention.mjs` / `oh-intervention-prompts.mjs` | §13 system-triggered Office Hours interventions: the prompts module OWNS the trigger registry (unregistered triggers never fire); the wiring module builds `office_hours_intervention_required` events, the session-contract context block, and commitment-confirmed token issuance |
-| `adaptive-rules.mjs` / `adaptive-rule-signals.mjs` | §12 MVP rules AR-01/02/05/07/08/14/17/19 evaluated over persisted-store signals; firings land in gate-ledger `adaptiveEvents` (one per rule per day), false-positive labels impose a 48h cooldown, AR-17 enforces the new-commitment block |
+## TESTS
+```bash
+npm run test:sidecar
+node --test sidecar-tests/<module>.test.mjs
+```
+Live provider canaries are gated by `AGENTIC30_RUN_LIVE_PROVIDER_*=1`.
 
-### Specialists / prompts
-| File | Description |
-|------|-------------|
-| `specialist-router.mjs` | Routes to a specialist module (office-hours, plan-ceo-review, design-*, devex-*) |
-| `office-hours-docs-prompt.mjs` | Builds the `/office-hours-docs` prompt that updates `docs/{ICP,GOAL,VALUES,SPEC}.md` |
-| `ad-strategy-prompt.mjs` | Prompt builder for `/analyze-ads` |
-
-### Integrations
-| File | Description |
-|------|-------------|
-| `gws-client.mjs` | Google Workspace client — Docs/Sheets read |
-| `gws-memory.mjs` | qmd-backed Google Workspace memory cache |
-| `notion-oauth.mjs` | Notion OAuth flow (initiate, exchange, refresh) |
-| `meta-ads.mjs` | Meta Ads API client |
-| `qmd-support.mjs` | qmd guidance + MCP config for the qmd memory subsystem |
-| `vendor-skill-loader.mjs` | Loads vendored gstack skills into specialists |
-
-### Infrastructure / utilities
-| File | Description |
-|------|-------------|
-| `session-store.mjs` | Session persistence (load/save with schema versioning) |
-| `context-cache.mjs` | Cached BIP context |
-| `diagnostics.mjs` | Builds diagnostics snapshots |
-| `preflight.mjs` | Preflight report generator |
-| `telemetry.mjs` | PostHog-style telemetry client |
-| `structured-input-tools.mjs` | Helpers for structured input parsing |
-| `user-input.mjs` | User input normalization helpers |
-
-## Subdirectories
-
-| Directory | Purpose |
-|-----------|---------|
-| `foundation-summary/` | Day-7 foundation-summary review loop sub-workflow (see `foundation-summary/AGENTS.md`) |
-| `specialists/` | Vendored specialist prompt builders (office-hours, plan-ceo-review, design suite, devex suite) (see `specialists/AGENTS.md`) |
-| `vendor/` | Vendored gstack assets — synced via `scripts/sync-gstack.mjs`, do not edit (see `vendor/AGENTS.md`) |
-
-## For AI Agents
-
-### Working In This Directory
-- ESM only (`.mjs`). Use named exports, not default exports.
-- The bridge to the Mac app is WebSocket on a localhost port; the protocol envelope shapes are tested in `agentic30Tests/SidecarEventDecodingTests.swift` and `sidecar-tests/chat-route.test.mjs`. Changing event shapes requires updates on both sides.
-- Provider auth: never log raw API keys or OAuth tokens. Auth values flow through `auth-context.mjs` and are scrubbed in telemetry.
-- Long-running provider streams must remain cancellable. Avoid blocking on synchronous work inside async stream consumers.
-- `index.mjs` is intentionally a single large file because it owns the lifetime of the daemon — prefer extracting helpers into siblings rather than splitting `index.mjs` itself.
-- Do not modify `vendor/` — it is upstream-synced.
-
-### Testing Requirements
-- Most modules in this directory have a sibling `node --test` suite in `sidecar-tests/`; a few (`ad-strategy-prompt`, `meta-ads`, `notion-oauth`, `structured-input-tools`) are exercised only indirectly through `index.mjs`. Run `npm run test:sidecar` before pushing.
-- Live provider canaries are gated by `AGENTIC30_RUN_LIVE_PROVIDER_*=1` env vars.
-- Schema-changing edits to `session-store.mjs`, BIP coach state, or monetization-ask state require a version bump and a migration path.
-
-### Common Patterns
-- Sentinel-bracketed inline decisions: `INLINE_DECISION_SENTINEL_START`/`END` from `inline-decision.mjs`.
-- Office Hours structured input ("three providers, one card"): `office-hours-structured-input.mjs` is the single source of truth. `officeHoursStructuredInputChannel(provider)` describes how each provider asks a forcing question (claude → `AskUserQuestion` tool, codex → `agentic30_request_user_input` MCP tool, gemini → `inline_decision` sentinel — text-only). All channels converge through `prepareOfficeHoursStructuredInputRequest`, the single "make card-ready" entry point: it canonicalizes demand choices, normalizes each question's presentation (intent-derived Korean header fallback so the card title never shows a raw placeholder; validated `highlightPhrases`/`emphasis` spans for consistent statement styling — the tool schemas in `mcp-server.mjs` + `normalizeClaudeQuestions` carry these through), and stamps an `office_hours*` `generation.mode`. With the stamp the Mac timeline renders a stacked submitted card (not a "you" bubble) and submit logs an Office Hours turn. The `generation.mode` `office_hours` prefix is the Swift card-vs-bubble switch (`isOfficeHoursStructuredPrompt`). Result: the stacked card is provider-identical (Claude/Codex/Gemini); the only residual difference is inter-card prose-bubble count (tool channels block-and-resume one run; Gemini, being text-only, continues per answer), which is intrinsic to the channel, not the card.
-- Interview resume (Day 1 + Day 2+ standard): in-flight interview state (provider stream, question index, pendingUserInput) dies with the daemon and `sessions.json` is wiped on boot, so `runOfficeHours` rebuilds an in-progress interview from the two stores that survive — `.agentic30/day-progress.json` (the day's kind-scoped interview step still `active`: `day1` → `first_interview`, `standard` → `interview`; unknown kinds fail closed to a fresh start) + `.agentic30/memory/office-hours-turns.json` (answered day-scoped turns, deduped per question keep-last). Pure gating/preamble helpers live in `office-hours-resume.mjs`; `index.mjs` seeds the prior Q/A into the new session transcript with the `officeHoursSeededTurn` wire marker (decoded by `ChatMessage`, pinned in `agentic30Tests/ChatMessageDecodingTests.swift`; the Mac exempts seeded rows from snapshot-based hiding/dedup since their card snapshots died with the prior session) and stamps `session.runtime.officeHours.resumedTurns` with OTHER-session turns only (the Mac retry path reuses the same failed session, whose own turns the incomplete-interview detector already counts). A concluded resume skips the provider run entirely and settles idle: turns ≥ expected, or a `terminal: true` turn (대안 비교 closing-card answer — smart-skip interviews legitimately end below the expected count), which also restores `runtime.officeHours.terminalAnswered` from the durable turn flag so the Mac interview-complete gate and the incomplete-interview detector treat the resumed session as done. The commitment bar closes the interview from the seeded count + day-progress.
-- Past-day Office Hours snapshot: the Day timeline scopes the live Office Hours screen by day and the Mac auto-start fires for whichever day-scoped session it lands on, so `runOfficeHours` gates on `isPastOfficeHoursSnapshotDay` (`office-hours-resume.mjs`) — a start whose day is strictly before the challenge-elapsed day never runs a provider (and never resumes the interview). It rebuilds the read-only transcript from that day's turn log via `selectOfficeHoursSnapshotTurns` (same seeded-row shape/`officeHoursSeededTurn` marker as resume, but deliberately ignoring day-progress step state — the day is over) and settles idle. The gate sits BEFORE the Day 2+ source gate so viewing a past Day 2+ never surfaces a source-gate error. Same-day relaunches keep the resume path; day 999 and unknown elapsed days fail open.
-- Commitment-close candidates: the interview's last stage (the commitment bar) mirrors the interview's option pattern — `office-hours-commitment-suggest.mjs` (pure prompt builder + parser + merge) turns THIS interview's turn log + open memory threads into ≤3 next-customer-action proposals. `index.mjs` serves them via `office_hours_commitment_candidates_request` → broadcast `office_hours_commitment_candidates` (`generating` → `ready`), generated read-only through `runProviderStream` with a soft timeout. Fail-open everywhere: missing provider/timeout/junk output still emit `ready` with the memory-thread fallback, so the close never blocks. Proposals only — the user-origin gate in `office-hours-memory.mjs` still governs the actual commitment write.
-- Read-only tool gating via Claude Agent SDK `canUseTool` + `allowedTools` allowlist (see `foundation-summary/index.mjs` for the pattern).
-- Stateful subsystems persist to JSON in the workspace's `.agentic30/` directory.
-
-## Dependencies
-
-### Internal
-- Mac app via WebSocket (`agentic30/SidecarBridge.swift`).
-- `scripts/sync-gstack.mjs` populates `vendor/`.
-
-### External
-- `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`, `@google/genai`, `@cursor/sdk`, `@modelcontextprotocol/sdk`, `@tobilu/qmd`, `ws`, `zod`.
+## DEPENDENCIES
+- Internal: Swift app bridge, `scripts/build-sidecar.mjs`, `sidecar-tests/`, vendored gstack sync.
+- External: Claude Agent SDK, OpenAI Codex SDK, Google GenAI, Cursor SDK, MCP SDK, qmd, `ws`, `zod`.
 
 <!-- MANUAL: -->
 

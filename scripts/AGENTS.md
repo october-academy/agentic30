@@ -1,51 +1,48 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-07 | Updated: 2026-05-07 -->
+<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
 
 # scripts
 
-## Purpose
-Build, sync, preflight, and verification scripts wired into `package.json`. Covers sidecar bundling for distribution, gstack vendor sync, response-time reporting, foundation-first prompt verification, and the gstack skill patcher.
+## OVERVIEW
+Build, release, sync, preflight, safety, and reporting scripts wired through `package.json`. Most Node scripts are ESM and most release/test wrappers are Bash.
 
-## Key Files
+## WHERE TO LOOK
+| Task | Location | Notes |
+|------|----------|-------|
+| Sidecar bundle | `build-sidecar.mjs`, `preflight-bundle.mjs` | Bundle/runtime smoke checks for app distribution |
+| Swift tests | `xcode-test.sh` | Unit/UI split and local UI E2E gate |
+| Release preflight | `preflight-release.sh`, `check-release-automation.sh` | Version/feed/build/test/env checks |
+| Release build | `build-and-notarize.sh`, `sign-sidecar-native-binaries.sh` | Archive/export/notarize/sign/verify |
+| Publishing | `publish-github-release.sh`, `upload-sparkle-r2.sh`, `r2-upload-object.mjs`, `setup-sparkle-r2.sh` | GitHub Releases, Sparkle appcasts, R2 |
+| Public safety | `check-public-safety.mjs`, `scan-secrets-ci.sh`, `scan-secrets-gh.sh`, `git-hooks/` | Secret/path gates |
+| Vendor sync | `sync-gstack.mjs`, `gstack-pin.json`, `patch-gstack-skill.mjs` | Upstream gstack import and specialist patching |
+| Alignment/reporting | `sync-alignment-sources.mjs`, `check-alignment-leak.mjs`, `report-response-timings.mjs`, `posthog-release-funnel.mjs` | Private alignment and release analytics |
+| Prompt verification | `verify-foundation-first-prompts.mjs` | Covered by sidecar tests |
 
-| File | Description |
-|------|-------------|
-| `build-sidecar.mjs` | Bundles the sidecar for inclusion in the Mac app DMG (`npm run build:sidecar`) |
-| `preflight-bundle.mjs` | Bundle preflight checks (`npm run preflight:bundle`) |
-| `xcode-test.sh` | Wrapper for Swift unit/UI E2E test modes; blocks local UI E2E unless explicitly approved |
-| `check-release-automation.sh` | Preflight for the GitHub Actions release configuration |
-| `publish-github-release.sh` | Publishes appcast/DMG artifacts to GitHub Releases |
-| `upload-sparkle-r2.sh` | Uploads Sparkle appcast artifacts to Cloudflare R2 |
-| `sync-gstack.mjs` | Pulls gstack assets into `sidecar/vendor/gstack/` per `gstack-pin.json` (`npm run sync:gstack`) |
-| `gstack-pin.json` | Pinned gstack version + integrity metadata consumed by `sync-gstack.mjs` |
-| `patch-gstack-skill.mjs` | Patches a vendored gstack skill into a sidecar specialist |
-| `report-response-timings.mjs` | Aggregates sidecar response-time logs (`npm run report:timings`) |
-| `verify-foundation-first-prompts.mjs` | Verifies the foundation-first prompt registry; executable script |
+## CONVENTIONS
+- `.mjs` scripts run with plain `node` and should stay dependency-light.
+- Bash release scripts should fail fast and keep env-var validation near the top.
+- `build-sidecar.mjs` must be idempotent outside `sidecar-build/`.
+- When `build-sidecar.mjs` entry points change, update the Xcode "Build Sidecar Bundle" Run Script `inputPaths`.
+- Git hooks are opt-in local config via `npm run hooks:install`; do not assume they are installed.
 
-## For AI Agents
+## ANTI-PATTERNS
+- Do not write to `sidecar/vendor/` except through `sync-gstack.mjs`.
+- Do not weaken `xcode-test.sh`'s local UI E2E approval gate.
+- Do not add release scripts that silently skip signing/notarization/Sparkle validation.
+- Do not store credentials, app-store keys, R2 keys, or signing material in the repo.
 
-### Working In This Directory
-- Scripts are ES modules (`.mjs`) executed with plain `node`. Keep them dependency-free or rely only on what is already in `package.json`.
-- Do not write to `sidecar/vendor/` outside of `sync-gstack.mjs`. The vendor tree is upstream-owned.
-- `build-sidecar.mjs` is invoked during the Mac app build and must remain idempotent and side-effect-free outside its output directory (`sidecar-build/`, gitignored).
-- `verify-foundation-first-prompts.mjs` is referenced by tests in `sidecar-tests/`; changes to its CLI surface should be matched by test updates.
-- `xcode-test.sh` must keep local UI E2E gated by `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1` unless running in CI/GitHub Actions.
+## TESTS
+```bash
+npm run preflight:bundle
+npm run release:preflight
+npm run check:public-safety
+node --test sidecar-tests/patch-gstack-skill.test.mjs
+```
+`release:preflight` may invoke a Release xcodebuild dry-run and sidecar tests.
 
-### Testing Requirements
-- `patch-gstack-skill.mjs` has coverage in `sidecar-tests/patch-gstack-skill.test.mjs`.
-- Bundling and preflight are validated end-to-end at release time per `docs/release-checklist.md`.
-
-### Common Patterns
-- ESM, `node:` built-ins (`fs/promises`, `path`, `child_process`).
-- Scripts exit non-zero on failure to integrate cleanly with CI.
-
-## Dependencies
-
-### Internal
-- `sidecar/vendor/gstack/` — managed by `sync-gstack.mjs`.
-- `sidecar-evals/` — `report-response-timings.mjs` consumes evaluator output.
-
-### External
-- Node `node:*` only.
+## DEPENDENCIES
+- Internal: `sidecar/`, `sidecar-build/`, `.github/workflows/`, `agentic30.xcodeproj`.
+- External CLIs by script: `xcodebuild`, `xcrun`, `gh`, `wrangler`, TruffleHog, Sparkle tools.
 
 <!-- MANUAL: -->

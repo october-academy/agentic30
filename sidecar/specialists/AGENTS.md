@@ -1,50 +1,41 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-07 | Updated: 2026-05-07 -->
+<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
 
 # specialists
 
-## Purpose
-Catalog of specialist prompt builders that can be invoked through `../specialist-router.mjs`. Each module exports `ID`, `NAME`, `PHASES`, `DECISIONS`, `SUMMARY`, and `buildPrompt(context)`; `index.mjs` aggregates them into `SPECIALIST_CATALOG`. `buildPrompt` returns an inline prompt string (not a wrapped vendored skill). The vendored gstack skill files under `../vendor/gstack/` are surfaced separately by `specialist-router.mjs` via `specialistVendorPath()` and attached to the selection, so the agent has access to both representations.
+## OVERVIEW
+Project-owned specialist prompt catalog used by `../specialist-router.mjs`. Each module is an inline prompt builder; vendored gstack skill files are attached separately by the router.
 
-## Key Files
+## WHERE TO LOOK
+| Task | Location | Notes |
+|------|----------|-------|
+| Catalog wiring | `index.mjs` | `MODULES`, `SPECIALIST_CATALOG`, lookup helpers |
+| Office Hours | `office-hours.mjs` | Planning-phase forcing-question specialist |
+| CEO plan review | `plan-ceo-review.mjs` | Founder-mode plan critique |
+| Design work | `design-shotgun.mjs`, `design-html.mjs`, `design-review.mjs`, `plan-design-review.mjs`, `design-consultation.mjs` | Planning/build design specialists |
+| DevEx work | `devex-review.mjs`, `plan-devex-review.mjs` | Live and pre-implementation DevEx review |
+| Vendor attachment | `../vendor-skill-loader.mjs`, `../specialist-router.mjs` | Resolves synced gstack assets outside this directory |
 
-| File | Description |
-|------|-------------|
-| `index.mjs` | Aggregates the specialist modules into `SPECIALIST_CATALOG`, `SPECIALIST_IDS`, and provides `getSpecialist`/`listSpecialists`/`listSpecialistsByPhase`/`buildSpecialistPrompt` |
-| `office-hours.mjs` | YC-style Office Hours specialist (forcing questions / design thinking) |
-| `plan-ceo-review.mjs` | CEO/founder-mode plan review specialist |
-| `design-shotgun.mjs` | Multiple AI design variants comparison |
-| `design-html.mjs` | Pretext-native HTML/CSS finalization |
-| `design-review.mjs` | Designer's-eye QA over a live site |
-| `plan-design-review.mjs` | Designer's-eye plan review (pre-implementation) |
-| `design-consultation.mjs` | Design system consultation → DESIGN.md |
-| `devex-review.mjs` | Live developer experience audit |
-| `plan-devex-review.mjs` | Developer experience plan review |
+## CONVENTIONS
+- Every specialist exports `ID`, `NAME`, `PHASES`, `DECISIONS`, `SUMMARY`, and `buildPrompt(context)`.
+- `buildPrompt(context)` must be pure: no filesystem, network, process env, time, or mutation.
+- Add new modules to `index.mjs` so `listSpecialists*` and `buildSpecialistPrompt` can reach them.
+- Keep `PHASES` accurate; they gate availability by session phase.
 
-## For AI Agents
+## ANTI-PATTERNS
+- Do not splice vendored skill text into these modules. Update inline prompt and vendored source deliberately when both need to move.
+- Do not mutate catalog entries at runtime; callers expect frozen/stable data.
+- Do not add side effects to prompt builders.
 
-### Working In This Directory
-- Each specialist exports the same surface (`ID`, `NAME`, `PHASES`, `DECISIONS`, `SUMMARY`, `buildPrompt`). Adding a new specialist means adding a module here and wiring it into `index.mjs`'s `MODULES` array.
-- `buildPrompt` is inline. It does not read or splice the vendored gstack skill text. The router attaches vendor paths separately via `vendor-skill-loader.mjs`. If you need to keep an inline prompt and the vendored skill in lockstep, update both deliberately.
-- `buildPrompt(context)` is pure — it must not perform I/O. Side effects belong in `../specialist-router.mjs` or higher up.
-- Phases gate specialist availability per session phase; keep `PHASES` accurate.
+## TESTS
+```bash
+npm run test:sidecar
+node --test sidecar-tests/specialist-router.test.mjs
+```
+Adding a specialist should add router coverage proving its `ID` is reachable.
 
-### Testing Requirements
-- The router and aggregator are exercised by `../../sidecar-tests/specialist-router.test.mjs`.
-- Adding a specialist should come with a router test that confirms its `ID` is reachable.
-
-### Common Patterns
-- Frozen catalog entries to prevent accidental mutation.
-- Phase filtering via `Array.prototype.includes`.
-
-## Dependencies
-
-### Internal
-- `../specialist-router.mjs` — the dispatcher.
-- `../vendor-skill-loader.mjs` — resolves the upstream gstack skill path; called from `specialist-router.mjs`, not from inside `buildPrompt`.
-- `../vendor/gstack/` — vendored skill assets.
-
-### External
-- None directly; specialists are pure prompt builders.
+## DEPENDENCIES
+- Internal: `../specialist-router.mjs`, `../vendor-skill-loader.mjs`, `../vendor/gstack/`.
+- External: none directly.
 
 <!-- MANUAL: -->

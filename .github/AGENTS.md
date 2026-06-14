@@ -1,44 +1,39 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-07 | Updated: 2026-05-07 -->
+<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
 
 # .github
 
-## Purpose
-GitHub repository metadata: pull request template, issue templates, public-safety checks, and release automation workflows.
+## OVERVIEW
+GitHub repository metadata: PR template, issue templates, secret/public-safety workflow, and release automation.
 
-## Key Files
+## WHERE TO LOOK
+| Task | Location | Notes |
+|------|----------|-------|
+| PR shape | `PULL_REQUEST_TEMPLATE.md` | Keep brief; contribution norms live in `CONTRIBUTING.md` |
+| Issue forms | `ISSUE_TEMPLATE/` | Bug and feature templates; child AGENTS applies |
+| Secret/public safety CI | `workflows/secret-scanning.yml` | Runs public-safety check and pinned TruffleHog scan |
+| Release CI | `workflows/release.yml` | Tag/manual release, arm64 + x64 macOS matrix, draft/publish gate |
 
-| File | Description |
-|------|-------------|
-| `PULL_REQUEST_TEMPLATE.md` | PR description scaffolding |
-| `workflows/secret-scanning.yml` | Public-safety and secret scanning checks |
-| `workflows/release.yml` | Tag/manual release workflow: parallel arm64 + Intel x64 build/notarize/publish on macOS runners |
+## CONVENTIONS
+- Workflow changes should keep secrets out of YAML and use repository/Actions secrets.
+- Release workflow publishes only after both architecture DMGs are present.
+- Release jobs use macOS runners, Node 20, `npm ci`, Wrangler, signing/notarization env, Sparkle feed controls.
+- PR template stays short and points to test evidence rather than duplicating this knowledge base.
 
-## Subdirectories
+## ANTI-PATTERNS
+- Do not add public issue paths for security disclosures; point reporters to `security@october-academy.com`.
+- Do not weaken the secret scanning/public-safety workflow.
+- Do not bypass draft-release cleanup or the two-architecture publish check in release automation.
 
-| Directory | Purpose |
-|-----------|---------|
-| `ISSUE_TEMPLATE/` | Bug report and feature request templates (see `ISSUE_TEMPLATE/AGENTS.md`) |
+## TESTS
+```bash
+npm run check:public-safety
+npm run release:preflight
+```
+Use `actionlint` locally when available for workflow syntax.
 
-## For AI Agents
-
-### Working In This Directory
-- The PR template should not list every checkbox under the sun — keep it brief, since the repo's contribution norms live in `CONTRIBUTING.md`.
-- Adding a workflow file under `.github/workflows/` is fine if introduced deliberately; keep secrets and credentials out of the repo.
-- Security disclosures go to `security@october-academy.com` (per `CONTRIBUTING.md`), not via public issues.
-
-### Testing Requirements
-- None — these are Markdown forms.
-
-### Common Patterns
-- GitHub front-matter (`name`, `about`, `title`, `labels`) for issue templates.
-
-## Dependencies
-
-### Internal
-- `CONTRIBUTING.md` — referenced from the PR template.
-
-### External
-- None.
+## DEPENDENCIES
+- Internal: `CONTRIBUTING.md`, `scripts/check-public-safety.mjs`, `scripts/scan-secrets-ci.sh`, release scripts.
+- External: GitHub Actions, macOS runners, TruffleHog, Wrangler, Apple signing/notarization services.
 
 <!-- MANUAL: -->

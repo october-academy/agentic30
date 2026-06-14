@@ -1,68 +1,62 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-07 | Updated: 2026-05-07 -->
+<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
 
-# agentic30 (Swift App)
+# agentic30
 
-## Purpose
-SwiftUI/AppKit source for the macOS app target. Owns the menu bar extra, workspace window, settings window, onboarding flow, Keychain-backed credential storage, OAuth presentation, PostHog telemetry, and the WebSocket bridge to the Node sidecar. The view model (`AgenticViewModel`) is the single source of truth that the views observe.
+## OVERVIEW
+SwiftUI/AppKit macOS app target. Owns windows, menu bar extra, Settings, onboarding, Keychain/OAuth, telemetry preferences, Sparkle update UI, PostHog SDK capture, and the WebSocket client to the Node sidecar.
 
-## Key Files
+## STRUCTURE
+| Path | Purpose |
+|------|---------|
+| `agentic30App.swift` | `@main`, `AppDelegate`, workspace window, Settings scene, MenuBarExtra, Sparkle updater |
+| `AgenticViewModel.swift` | Central observable state and event reducer; very large by design |
+| `ContentView.swift` | Main workspace/chat/mission surface |
+| `SettingsView.swift` | Provider, integration, workspace, telemetry, diagnostics settings |
+| `SidecarBridge.swift` | Launches `sidecar/index.mjs`, authenticates local WebSocket, decodes events |
+| `AgenticModels.swift` | Shared app models, including morning briefing drilldown decoders |
+| `KeychainHelper.swift` | Only path for Keychain reads/writes |
+| `NodeExecutableResolver.swift` | `NODE_BINARY`, common paths, mise/asdf/Volta, login-shell PATH |
+| `MacOnboarding*.swift` | First-run onboarding and selected-project context |
+| `IntakeV2*.swift` | Intake, decision, notification, and showcase screens |
+| `OpenDesign*.swift` | Open Design Day reference/workspace screens |
+| `MorningBriefing*.swift` | Briefing and per-source drilldown screens |
+| `OnboardingWorkspaceRequestStore.swift` | Helper CLI registration, nonce, app-support plumbing |
+| `Assets.xcassets/` | App icon, status icon, provider/integration brand assets |
 
-| File | Description |
-|------|-------------|
-| `agentic30App.swift` | `@main` SwiftUI app: workspace window, Settings scene, MenuBarExtra; `AppDelegate` owns `AgenticViewModel` |
-| `AgenticViewModel.swift` | Central observable view model — sidecar bridge wiring, session/state, auth, provider routing, BIP coach, onboarding hypothesis (large file, treat as the central nervous system) |
-| `AgenticModels.swift` | Shared data models for messages, sessions, providers, settings |
-| `ContentView.swift` | Main workspace view tree (large file housing chat surface, panel routing, mission UI) |
-| `SettingsView.swift` | Settings UI: providers, Keychain entries, workspace picker, telemetry toggle |
-| `SidecarBridge.swift` | WebSocket client that talks to `sidecar/index.mjs`; encodes outgoing requests, decodes events |
-| `KeychainHelper.swift` | Keychain CRUD wrapper for provider keys, OAuth tokens, BIP coach config |
-| `NodeExecutableResolver.swift` | Locates a usable Node binary via `NODE_BINARY`, common install paths, mise/asdf/Volta shims, login shell `PATH` |
-| `MacAuthModels.swift` | Auth session models for the `agentic30.app` Mac auth endpoint |
-| `MacOnboardingView.swift` | First-run onboarding flow (3 questions → project stage, users, proof target) |
-| `MacOnboardingContextView.swift` | Onboarding context surface (project picker, summary) |
-| `MacOnboardingContext.swift` | Onboarding context data structure |
-| `BipReadinessModels.swift` | Models for the BIP (Build in Public) readiness flow |
-| `BipCoachConstants.swift` | Constants shared with the sidecar BIP coach |
-| `WorkspaceSettings.swift` | Persisted workspace path + scoped bookmark handling |
-| `PostHogTelemetry.swift` | PostHog event capture wrapper (respects telemetry toggle) |
-| `Item.swift` | Minimal SwiftData example model — likely scaffold residue |
-| `Info.plist` | App bundle metadata |
-| `OnboardingWorkspaceRequestStore.swift` | Onboarding helper plumbing: `OnboardingWorkspaceRequestStore` reads pending registrations from `appSupport/onboarding-workspace-requests/`; `OnboardingNonceStore` issues/rotates/invalidates the per-session onboarding token in `appSupport/onboarding-nonce.json`; `OnboardingHelperInstaller` writes the zsh launcher at `bin/agentic30-onboarding` and exports `AGENTIC30_APP_SUPPORT_PATH` + `AGENTIC30_ONBOARDING_NONCE_PATH`. |
+## WHERE TO LOOK
+| Task | Location | Notes |
+|------|----------|-------|
+| Add a bridge event | `AgenticViewModel.swift`, `AgenticModels.swift`, `SidecarBridge.swift` | Mirror sidecar emitter and Swift decoding tests |
+| Add app UI state | `AgenticViewModel.swift` | Keep `@MainActor` expectations intact |
+| Add settings/integration UI | `SettingsView.swift`, `AgenticModels.swift` | Probe result shapes come from sidecar integration modules |
+| Add onboarding behavior | `MacOnboardingContext*.swift`, `OnboardingWorkspaceRequestStore.swift` | Keep helper token/TTL semantics aligned with sidecar |
+| Add telemetry | `PostHogTelemetry.swift` | Respect opt-out and debug telemetry env gates |
+| Add updater behavior | `agentic30App.swift`, `docs/release-*.md` | Sparkle feed/public key rules are release blockers |
 
-## Subdirectories
+## CONVENTIONS
+- UI state is observed from `@Published` view-model properties. Long async flows marshal back to the main actor.
+- Use `KeychainHelper` for credentials and tokens. Never call `SecItem*` directly in feature code.
+- Use `PostHogTelemetry.capture(...)`; never call PostHog directly from feature surfaces.
+- Hermetic UI tests inject `--ui-testing-opaque-window` and `AGENTIC30_TEST_STUB_PROVIDER=1`; new views must respect those flags.
+- Forks should change Bundle ID from `october-academy.agentic30` to avoid Keychain and Launch Services collisions.
 
-| Directory | Purpose |
-|-----------|---------|
-| `Assets.xcassets/` | Xcode asset catalog (app icon, accent color, status bar icon, profile image) |
+## ANTI-PATTERNS
+- Do not refactor `AgenticViewModel.swift` or `ContentView.swift` structurally without focused coverage.
+- Do not introduce wall-clock, locale, network, or provider-auth assumptions into default UI state.
+- Do not update sidecar event payloads here without matching `sidecar/` emitters and `agentic30Tests/` decoders.
 
-## For AI Agents
+## TESTS
+```bash
+npm run test:swift:unit
+AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke
+```
+Local UI E2E requires the root approval prompt before launch.
 
-### Working In This Directory
-- `AgenticViewModel.swift` is enormous (~135k chars) by design — keep additions composable and test-backed; do not blindly refactor without coverage.
-- All UI state must be `@MainActor`-safe. Sidecar callbacks marshal back through `SidecarBridge` onto the main actor.
-- Telemetry events go through `PostHogTelemetry.capture(...)` and must respect the user's telemetry preference; never call PostHog directly.
-- Hermetic UI tests inject `AGENTIC30_TEST_STUB_PROVIDER=1` and `--ui-testing-opaque-window`. New views must respect these flags so screenshots stay stable.
-- Bundle ID is `october-academy.agentic30`. Forks should change it to avoid Keychain/Launch Services collisions.
-
-### Testing Requirements
-- Unit tests in `agentic30Tests/` use XCTest; run via `xcodebuild test ...` from the repo root.
-- UI tests in `agentic30UITests/` should be hermetic by default; live canaries are opt-in via env vars (`AGENTIC30_RUN_LIVE_PROVIDER_E2E`, Google credentials, etc.).
-- Avoid time-of-day or network-dependent assertions.
-
-### Common Patterns
-- View models expose `@Published` state; views observe via `@ObservedObject`/`@StateObject`.
-- Long-running async work uses Swift concurrency; bridge events are bridged through `AsyncStream`.
-- Keychain access goes through `KeychainHelper` only — never call `SecItem*` directly.
-
-## Dependencies
-
-### Internal
-- The Swift target depends on the Node sidecar at runtime — see `sidecar/AGENTS.md`.
-
-### External
-- SwiftUI / AppKit / UserNotifications (Apple frameworks)
-- No third-party Swift packages currently — all integrations are Apple SDKs plus the WebSocket-driven sidecar.
+## DEPENDENCIES
+- Apple frameworks: SwiftUI, AppKit, UserNotifications, AuthenticationServices.
+- Swift packages: Sparkle updater, PostHog SDK.
+- Runtime dependency: bundled or local Node sidecar launched by `SidecarBridge`.
 
 <!-- MANUAL: -->
 

@@ -1,71 +1,87 @@
-<!-- Generated: 2026-05-07 | Updated: 2026-05-07 -->
+<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
 
-# agentic30-public
+# PROJECT KNOWLEDGE BASE: agentic30-public
 
-## Purpose
-Native macOS menu bar assistant that pairs a SwiftUI app shell with a local Node.js sidecar. The Mac app owns macOS surface area (floating panel, settings, Keychain, OAuth presentation, pet/wolf UI, menu bar extra) while the sidecar handles provider execution (Claude Agent SDK, Codex SDK), MCP/ACP adapters, workspace introspection, session persistence, BIP coach state, foundation-summary review loop, and Google Workspace integration. Public companion to the private October Academy `agentic30` learning platform — code merges here flow back into the platform via a one-way submodule pointer bump.
+## OVERVIEW
+Native macOS menu bar assistant with a SwiftUI/AppKit shell and a local Node.js ESM sidecar. The app owns macOS surfaces, Keychain/OAuth, telemetry preferences, and the WebSocket client; the sidecar owns provider execution, MCP/ACP, workspace scanning, curriculum state, foundation-summary review, BIP, and external integrations.
 
-## Key Files
+## STRUCTURE
+```
+agentic30-public/
+├── agentic30/              # Swift app target; not SwiftPM
+├── agentic30.xcodeproj/    # Xcode project; edit deliberately, not by hand casually
+├── agentic30Tests/         # Swift XCTest unit coverage
+├── agentic30UITests/       # Blocking desktop XCUITest coverage
+├── sidecar/                # Node ESM daemon, MCP/ACP, provider runners
+├── sidecar-tests/          # node:test integration suite
+├── sidecar-evals/          # dogfood evaluator and fixtures
+├── scripts/                # build, release, sync, preflight, test wrappers
+├── docs/                   # product, specs, diagnostics, release docs
+└── .github/                # workflows, PR template, issue templates
+```
 
-| File | Description |
-|------|-------------|
-| `package.json` | Sidecar npm manifest: `test:sidecar`, `eval:dogfood`, `build:sidecar`, `sidecar`, `mcp`, `acp`, `preflight:*`, `sync:gstack` scripts; deps include Claude Agent SDK, Codex SDK, MCP SDK, qmd, ws, zod |
-| `package-lock.json` | Pinned npm dependency tree |
-| `README.md` | Run-locally guide, runtime requirements (macOS 26.4 SDK, Node 20+), UI E2E modes, contributor checks, distribution posture (DMG, not MAS) |
-| `CONTRIBUTING.md` | PR guidelines, fork-and-sign instructions, public/private repo relationship to October Academy |
-| `CODE_OF_CONDUCT.md` | Contributor Covenant |
-| `LICENSE` | License file |
-| `.gitignore` | Excludes `node_modules/`, `dist/`, `sidecar-build/`, `sidecar-evals/.artifacts/`, `.omc/`, `.omx/`, `.env*`, `xcuserdata/` |
+## WHERE TO LOOK
+| Task | Location | Notes |
+|------|----------|-------|
+| App entry / menus / windows | `agentic30/agentic30App.swift` | `@main`, `AppDelegate`, MenuBarExtra, workspace window |
+| Main app state / routing | `agentic30/AgenticViewModel.swift` | Large by design; bridge events, auth, sessions, missions, UI state |
+| Swift ↔ Node bridge | `agentic30/SidecarBridge.swift`, `sidecar/index.mjs` | Envelope/schema changes require both sides plus tests |
+| Provider execution | `sidecar/provider-runner.mjs`, `sidecar/auth-context.mjs`, `sidecar/chat-route.mjs` | Claude, Codex, Gemini, Cursor paths; scrub auth values |
+| MCP / ACP surfaces | `sidecar/mcp-server.mjs`, `sidecar/acp-adapter.mjs` | Separate entry points, both bundled for release |
+| Foundation summary | `sidecar/foundation-summary/` | Claude-only read-only sub-workflow; fail-closed allowlist |
+| BIP / program state | `sidecar/bip-coach-state.mjs`, `sidecar/program-gate-engine.mjs`, `sidecar/day-progress-state.mjs` | JSON schemas need migrations when changed |
+| Specialist prompts | `sidecar/specialists/`, `sidecar/vendor/gstack/` | Modify project specialists, not vendored upstream |
+| Swift unit tests | `agentic30Tests/` | XCTest, no real sidecar process |
+| UI E2E | `agentic30UITests/`, `scripts/xcode-test.sh` | Requires explicit local approval before launching |
+| Sidecar tests | `sidecar-tests/` | `node:test`, deterministic fakes |
+| Dogfood eval | `sidecar-evals/` | Offline by default; live mode env-gated |
+| Release / CI | `scripts/`, `.github/workflows/` | PKG primary, DMG fallback, Sparkle update archive |
 
-## Subdirectories
+## CODE MAP
+| Symbol | Type | Location | Refs | Role |
+|--------|------|----------|------|------|
+| `agentic30App` | Swift `@main` struct | `agentic30/agentic30App.swift:26` | LSP | App process entry |
+| `AppDelegate` | Swift class | `agentic30/agentic30App.swift:81` | LSP | App lifecycle, updater, workspace window |
+| `SidecarBridge` | Swift class | `agentic30/SidecarBridge.swift:31` | LSP | Launches Node, authenticates WebSocket, decodes events |
+| `AgenticViewModel` | Swift class | `agentic30/AgenticViewModel.swift:2233` | LSP | Observable app state and command dispatcher |
+| `SidecarEvent` | Swift struct | `agentic30/AgenticViewModel.swift:12224` | LSP | Swift decoder for sidecar event envelope |
+| `index.mjs` | Node entry | `sidecar/index.mjs` | rg | WebSocket daemon and sidecar lifetime owner |
+| `runDogfoodSimulation` | Node export | `sidecar-evals/dogfood-simulation.mjs:33` | rg | Dogfood evaluator runner |
+| `build-sidecar.mjs` | Node script | `scripts/build-sidecar.mjs` | rg | Bundles Node entry points into app distribution |
 
-| Directory | Purpose |
-|-----------|---------|
-| `agentic30/` | SwiftUI macOS app source (see `agentic30/AGENTS.md`) |
-| `agentic30.xcodeproj/` | Xcode project — do not edit by hand; use Xcode |
-| `agentic30Tests/` | XCTest unit tests for Swift code (see `agentic30Tests/AGENTS.md`) |
-| `agentic30UITests/` | XCTest UI tests including hermetic E2E with stub provider (see `agentic30UITests/AGENTS.md`) |
-| `sidecar/` | Node.js sidecar — provider runner, MCP/ACP, foundation-summary, BIP coach, specialists (see `sidecar/AGENTS.md`) |
-| `sidecar-tests/` | `node --test` integration suite for sidecar modules (see `sidecar-tests/AGENTS.md`) |
-| `sidecar-evals/` | Dogfood simulation evaluator with judge + compare/summary tools (see `sidecar-evals/AGENTS.md`) |
-| `scripts/` | Build, sync, preflight, and verification scripts (see `scripts/AGENTS.md`) |
-| `docs/` | Product docs (ICP, GOAL, VALUES, SPEC), release/known-limitations, response-time plan (see `docs/AGENTS.md`) |
-| `.github/` | GitHub issue templates and PR template (see `.github/AGENTS.md`) |
+## CONVENTIONS
+- Swift uses an Xcode project layout, not SwiftPM. Add files to the proper target membership when needed.
+- Node code is ESM (`.mjs`) with explicit named exports; `package.json` is the command registry.
+- There is no repo-level ESLint, Prettier, EditorConfig, SwiftLint, or SwiftFormat config. Follow local style and tests.
+- Sidecar stateful subsystems persist versioned JSON under the selected workspace's `.agentic30/`; schema bumps require migration coverage.
+- Release distribution is Developer ID signed/notarized PKG first, DMG fallback, plus Sparkle appcast. Mac App Store and App Sandbox are intentionally out of scope.
 
-## For AI Agents
+## ANTI-PATTERNS
+- Do not edit `sidecar/vendor/` directly. It is synced from upstream by `scripts/sync-gstack.mjs`.
+- Do not run local UI E2E without explicit approval. Ask: "이 명령은 Agentic30 앱을 전면으로 띄우고 키보드/마우스/포커스를 점유할 수 있습니다. 지금 실행할까요?" Then set `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`.
+- Do not introduce time-of-day, locale, network, or live-provider assumptions into default tests.
+- Do not log raw API keys, OAuth tokens, Keychain values, or workspace secrets.
+- Do not hand-roll inline-decision parsing; use the sentinel helpers in `sidecar/inline-decision.mjs`.
 
-### Working In This Directory
-- The Swift app and the Node sidecar are coupled via a WebSocket bridge (`SidecarBridge.swift` ↔ `sidecar/index.mjs`). Changes to message envelopes, event types, or session-store schema must be reflected on both sides.
-- Do not modify `sidecar/vendor/` directly — it is synced from upstream via `scripts/sync-gstack.mjs`.
-- Provider execution must support both Claude (Anthropic) and Codex (OpenAI) auth paths. Test fixtures often gate live runs behind `AGENTIC30_RUN_LIVE_PROVIDER_*=1` env vars.
-- Hermetic UI tests rely on `--ui-testing-opaque-window` and `AGENTIC30_TEST_STUB_PROVIDER=1`. Do not introduce non-determinism (time-of-day, network) into UI assertions.
-- Blocking local UI E2E requires explicit user approval before execution because XCUITest launches Agentic30 in the foreground and can take keyboard, mouse, and focus. This includes the `agentic30UITests` scheme, full `agentic30` scheme tests, `-only-testing:agentic30UITests/*`, and any macOS XCUITest that opens the app and clicks or types. Ask with the structured question tool available to you (Codex: `request_user_input`/`ask_user_question`; Claude: `AskUserQuestion`/`ask_user_question`) using: "이 명령은 Agentic30 앱을 전면으로 띄우고 키보드/마우스/포커스를 점유할 수 있습니다. 지금 실행할까요?" If the user does not approve, do not run it. After approval, set `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`.
-- Distribution target is direct DMG, not the Mac App Store. App Sandbox is intentionally disabled because the app spawns a Node child process and accesses user-selected workspace paths.
+## COMMANDS
+```bash
+npm install
+npm run doctor
+npm run check:public-safety
+npm run test:sidecar
+npm run test:swift:unit
+npm run build:sidecar
+npm run preflight:bundle
+npm run eval:dogfood
+npm run eval:dogfood:gate
+AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke
+AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full
+```
 
-### Testing Requirements
-- Sidecar logic: `npm run test:sidecar` (uses `node --test` against `sidecar-tests/**/*.test.mjs`).
-- Swift unit tests: `npm run test:swift:unit` (does not run XCUITest).
-- UI E2E smoke/full: `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` or `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full` after local approval. GitHub Actions or a self-hosted Mac runner may run UI E2E without local desktop approval.
-- Dogfood evaluator: `npm run eval:dogfood` (offline) or `npm run eval:dogfood:live` (provider canary).
-- Run both Swift and sidecar suites before any PR that touches the bridge contract.
-
-### Common Patterns
-- Sidecar modules are ES modules (`.mjs`) with explicit named exports; treat them like a library, not a framework.
-- BIP coach, foundation-summary, monetization-ask, and onboarding-hypothesis are stateful subsystems with their own persistence; check the state schema before mutating.
-- Inline decisions use sentinel-bracketed payloads (`INLINE_DECISION_SENTINEL_START/END`) — see `sidecar/inline-decision.mjs`.
-
-## Dependencies
-
-### External
-- `@anthropic-ai/claude-agent-sdk` — Claude provider runner and tool gating
-- `@openai/codex-sdk` — Codex provider runner
-- `@modelcontextprotocol/sdk` — MCP server bindings (`sidecar/mcp-server.mjs`)
-- `@tobilu/qmd` — qmd memory subsystem
-- `ws` — WebSocket bridge between Mac app and sidecar
-- `zod` — runtime schema validation
-
-### Internal
-- The Swift app expects the sidecar binary at runtime; locate Node via `NodeExecutableResolver.swift`.
-- `sidecar/vendor/gstack/` provides shared Claude/Codex skill assets used by `sidecar/specialists/`.
+## NOTES
+- Build, cache, local state, and artifact directories can exist in the checkout (`build/`, `sidecar-build/`, `sidecar-evals/.artifacts/`, `.agentic30/`, `.omo/`, `.omc/`, `.omx/`, `Library/`, `_workspace/`). Do not score or document them as source modules.
+- Bridge-contract edits need both Swift and sidecar tests: `npm run test:sidecar` and `npm run test:swift:unit`.
+- Live provider canaries are opt-in behind `AGENTIC30_RUN_LIVE_PROVIDER_*=1` and related credential env vars.
+- Public-safety and secret scans are part of the normal contribution surface: `npm run check:public-safety`, optional `npm run scan:secrets:gh`.
 
 <!-- MANUAL: Custom project notes can be added below -->
