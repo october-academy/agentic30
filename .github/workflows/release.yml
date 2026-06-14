@@ -1,6 +1,6 @@
 name: Release
 
-# Push a v* tag (scripts/cut-release.sh) → two parallel macos-15 jobs build,
+# Push a v* tag (scripts/cut-release.sh) → two parallel macos-26 jobs build,
 # sign, notarize, and publish per-arch DMGs (arm64 + Intel x64), upload the
 # per-arch Sparkle appcasts to R2, and attach everything to a GitHub Release.
 
@@ -94,7 +94,7 @@ jobs:
     # draft creation failed — the per-arch fallback create would publish a
     # non-draft release and reintroduce the half-published-release bug.
     if: ${{ !cancelled() && (needs.draft-release.result == 'success' || needs.draft-release.result == 'skipped') }}
-    runs-on: macos-15
+    runs-on: macos-26
     # Build takes ~15 min; each notarytool submit is capped at 2h. Cap the job
     # so a hung Apple notary connection fails fast instead of burning the
     # default 6h runner timeout (observed 2026-06-10: DMG submit hung 5h46m).
