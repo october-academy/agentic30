@@ -1419,7 +1419,7 @@ export async function collectGithubDrilldown({
     valueLabel: String(commits),
     deltaLabel: commitDelta === null ? null : commitDelta === 0 ? "=" : `${commitDelta > 0 ? "▲" : "▼"} ${Math.abs(commitDelta)}`,
     direction: commitDelta === null ? null : commitDelta > 0 ? "up" : commitDelta < 0 ? "down" : "flat",
-    vsLabel: previous !== null ? `어제 ${previous}` : null,
+    vsLabel: previous !== null ? `직전 ${previous}` : null,
   });
   if (ghReady) {
     kpis.push({

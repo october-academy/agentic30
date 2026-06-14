@@ -110,7 +110,7 @@ test("collectGithubDrilldown builds kpis, buckets, lists, scan, and maintenance 
   const commitKpi = drilldown.kpis.find((kpi) => kpi.label === "커밋");
   assert.equal(commitKpi.valueLabel, "9");
   assert.equal(commitKpi.deltaLabel, "▲ 3");
-  assert.equal(commitKpi.vsLabel, "어제 6");
+  assert.equal(commitKpi.vsLabel, "직전 6");
   const deployKpi = drilldown.kpis.find((kpi) => kpi.label === "배포");
   assert.equal(deployKpi.valueLabel, "1");
   assert.equal(deployKpi.deltaLabel, "성공");
