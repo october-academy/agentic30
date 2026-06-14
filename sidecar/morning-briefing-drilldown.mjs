@@ -202,7 +202,7 @@ function normalizeListRows(values = []) {
       if (!title) return null;
       const kind = cleanString(row?.kind, 16);
       return {
-        kind: ["merged", "open", "deploy"].includes(kind) ? kind : "open",
+        kind: ["merged", "open", "deploy", "check"].includes(kind) ? kind : "open",
         title,
         metaItems: (Array.isArray(row?.metaItems) ? row.metaItems : [])
           .map((item) => cleanString(item, 60))
@@ -1200,6 +1200,13 @@ const PACKAGE_ENDPOINTS = Object.freeze([
   "orgs/{owner}/packages?package_type=container",
 ]);
 
+// A successful Actions run is not a GitHub deployment — this repo (like most
+// solo projects) has zero Deployments API objects, so a green run tells us
+// nothing about deploy state. Only release/deploy/publish-style workflows are
+// treated as deploy signals; pure CI (secret scanning, lint, test) is surfaced
+// as a "check" instead of being mislabeled "deployed".
+const DEPLOY_WORKFLOW_RE = /deploy|release|publish|ship|rollout|배포|릴리스|출시/i;
+
 async function readGithubScanFacts({ cwd, execImpl, nowMs }) {
   const [issueResult, releaseResult, runResult, ...packageResults] = await Promise.all([
     execImpl("gh", ["issue", "list", "--state", "open", "--limit", "30", "--json", "number,title,author,createdAt"], { cwd }),
@@ -1303,6 +1310,7 @@ export async function collectGithubDrilldown({
 
   let prRows = [];
   let deploys = [];
+  let workflowChecks = [];
   let scanFacts = null;
   let repoFacts = null;
   let readme = null;
@@ -1349,11 +1357,22 @@ export async function collectGithubDrilldown({
         };
       });
 
-    const runDeploys = (facts.runs || [])
-      .filter((run) => String(run?.conclusion || "").toLowerCase() === "success" && inWindow(run.updatedAt || run.createdAt))
+    const successfulRuns = (facts.runs || [])
+      .filter((run) => String(run?.conclusion || "").toLowerCase() === "success" && inWindow(run.updatedAt || run.createdAt));
+    const runDeploys = successfulRuns
+      .filter((run) => DEPLOY_WORKFLOW_RE.test(String(run.workflowName || "")))
       .slice(0, 2)
       .map((run) => ({
         kind: "workflow",
+        at: run.updatedAt || run.createdAt,
+        workflowName: cleanString(run.workflowName, 60),
+        durationMs: Date.parse(run.updatedAt || "") - Date.parse(run.createdAt || ""),
+        headBranch: cleanString(run.headBranch, 60),
+      }));
+    workflowChecks = successfulRuns
+      .filter((run) => !DEPLOY_WORKFLOW_RE.test(String(run.workflowName || "")))
+      .slice(0, 2)
+      .map((run) => ({
         at: run.updatedAt || run.createdAt,
         workflowName: cleanString(run.workflowName, 60),
         durationMs: Date.parse(run.updatedAt || "") - Date.parse(run.createdAt || ""),
@@ -1406,6 +1425,17 @@ export async function collectGithubDrilldown({
           tag: "deployed",
         });
       }
+    }
+    for (const check of workflowChecks) {
+      prRows.push({
+        kind: "check",
+        title: `워크플로 ${check.workflowName || "run"} · ${check.headBranch || "main"}`,
+        metaItems: [
+          `${shortTime(check.at)} 통과`,
+          durationLabel(check.durationMs) ? `실행 ${durationLabel(check.durationMs)}` : "",
+        ].filter(Boolean),
+        tag: "passed",
+      });
     }
   }
 
@@ -1632,7 +1662,9 @@ export async function collectGithubDrilldown({
       footnote: deploys.length ? deployFootnote(deploys[0]) : null,
     },
     listRows: prRows,
-    listMeta: ghReady ? `머지 ${mergedPrs} · 오픈 ${openPrs} · 배포 ${deploys.length}` : null,
+    listMeta: ghReady
+      ? `머지 ${mergedPrs} · 오픈 ${openPrs} · 배포 ${deploys.length}${workflowChecks.length ? ` · 체크 ${workflowChecks.length}` : ""}`
+      : null,
     scan,
     drafts: [],
     draftsEmpty: {

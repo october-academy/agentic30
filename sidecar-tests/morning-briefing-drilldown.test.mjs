@@ -191,6 +191,35 @@ test("collectGithubDrilldown counts in-window releases and packages as deploys",
   assert.equal(drilldown.meta.progress.valueLabel, "3 · 성공");
 });
 
+test("collectGithubDrilldown counts deploy workflows but surfaces pure-CI runs as checks", async () => {
+  const { exec } = stubGithubExec({
+    runList: [
+      { conclusion: "success", createdAt: "2026-06-09T04:00:00.000Z", updatedAt: "2026-06-09T04:00:17.000Z", workflowName: "Secret Scanning", displayTitle: "Secret Scanning", headBranch: "main" },
+      { conclusion: "success", createdAt: "2026-06-09T03:10:00.000Z", updatedAt: "2026-06-09T03:12:00.000Z", workflowName: "deploy", displayTitle: "deploy main", headBranch: "main" },
+    ],
+  });
+  const drilldown = await collectGithubDrilldown({
+    workspaceRoot: "/tmp/ws",
+    window: WINDOW,
+    gitSource: gitSourceFixture(),
+    ghSource: ghSourceFixture(),
+    previousCommitCount: 6,
+    execImpl: exec,
+  });
+
+  // The deploy workflow counts as a deploy; Secret Scanning (pure CI) does not.
+  const deployKpi = drilldown.kpis.find((kpi) => kpi.label === "배포");
+  assert.equal(deployKpi.valueLabel, "1");
+  const deployRows = drilldown.listRows.filter((row) => row.kind === "deploy");
+  assert.ok(deployRows.some((row) => row.tag === "deployed" && /deploy/.test(row.title)));
+  assert.ok(!deployRows.some((row) => /Secret Scanning/.test(row.title)));
+
+  // Secret Scanning is surfaced as a passed check, not a deployment.
+  const checkRows = drilldown.listRows.filter((row) => row.kind === "check");
+  assert.ok(checkRows.some((row) => row.tag === "passed" && /Secret Scanning/.test(row.title)));
+  assert.match(drilldown.listMeta, /· 체크 1/);
+});
+
 test("collectGithubDrilldown returns null when no github source is ready", async () => {
   const drilldown = await collectGithubDrilldown({
     workspaceRoot: "/tmp/ws",
