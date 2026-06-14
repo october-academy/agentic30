@@ -2,13 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildPosthogCollectionFailureDrilldown,
   cloudflareSourceSignalFromDrilldown,
   collectCloudflareDirectDrilldown,
   collectPosthogDirectDrilldown,
   mergeMorningBriefingDrilldown,
   mergeMorningBriefingDrilldownMaps,
 } from "../sidecar/morning-briefing-direct-sources.mjs";
-import { normalizeMorningBriefingDrilldown } from "../sidecar/morning-briefing-drilldown.mjs";
+import {
+  normalizeMorningBriefingDrilldown,
+  normalizeMorningBriefingDrilldowns,
+} from "../sidecar/morning-briefing-drilldown.mjs";
 
 const WINDOW = {
   startMs: Date.parse("2026-06-09T00:00:00.000Z"),
@@ -131,7 +135,11 @@ test("collectPosthogDirectDrilldown builds Day-1 return curve, KPIs, and web sig
   assert.ok(!webPathQuery.includes("properties.telemetry_source"));
 });
 
-test("collectPosthogDirectDrilldown returns null without a valid token", async () => {
+test("collectPosthogDirectDrilldown returns null without an API key so the OAuth digest survives", async () => {
+  // OAuth-only mode: posthog is "ready" via MCP OAuth but there is no stored
+  // Query-API key. The direct path is not configured, so it must defer to the
+  // digest's real OAuth-collected numbers — NOT emit a terminal "수집 실패" card
+  // that would discard them (regression guard).
   const result = await collectPosthogDirectDrilldown({
     window: WINDOW,
     settings: { token: "", tokenValid: false, region: "us" },
@@ -140,7 +148,9 @@ test("collectPosthogDirectDrilldown returns null without a valid token", async (
   assert.equal(result, null);
 });
 
-test("collectPosthogDirectDrilldown surfaces API failures as thrown errors", async () => {
+test("collectPosthogDirectDrilldown surfaces API failures as thrown errors (index.mjs converts them to a failure card)", async () => {
+  // A genuine direct-collection error must propagate; the index.mjs orchestration
+  // catch captures telemetry and substitutes buildPosthogCollectionFailureDrilldown.
   await assert.rejects(
     collectPosthogDirectDrilldown({
       window: WINDOW,
@@ -149,6 +159,16 @@ test("collectPosthogDirectDrilldown surfaces API failures as thrown errors", asy
     }),
     /PostHog query failed/,
   );
+});
+
+test("buildPosthogCollectionFailureDrilldown emits an explicit failure card, never fabricated zeros", () => {
+  const card = buildPosthogCollectionFailureDrilldown({ reason: "PostHog query failed: invalid key", region: "us", window: WINDOW });
+  assert.equal(card.id, "posthog");
+  assert.equal(card.collectionFailed, true);
+  assert.match(card.title, /수집 실패/);
+  assert.ok(card.kpis.length >= 1);
+  assert.ok(card.kpis.every((kpi) => kpi.valueLabel !== "0" && kpi.valueLabel !== "0명"));
+  assert.ok(card.kpis.some((kpi) => kpi.valueLabel === "수집 실패"));
 });
 
 // ── Cloudflare ───────────────────────────────────────────────────────────────
@@ -393,6 +413,58 @@ test("mergeMorningBriefingDrilldown keeps direct numbers and fills narrative fro
 
   assert.equal(mergeMorningBriefingDrilldown(null, digest), digest);
   assert.equal(mergeMorningBriefingDrilldown(direct, null), direct);
+});
+
+test("mergeMorningBriefingDrilldown keeps a collection-failure card terminal", () => {
+  const failure = buildPosthogCollectionFailureDrilldown({ reason: "boom", region: "us", window: WINDOW });
+  // A digest that would otherwise assert authoritative zeros + a "계측 공백" story.
+  const digest = normalizeMorningBriefingDrilldown("posthog", {
+    title: "PostHog · 계측·활성 공백",
+    kpis: [{ label: "이벤트", valueLabel: "0" }, { label: "활성 사용자", valueLabel: "0명" }],
+    signals: [{ time: "계측 공백", text: "가입 이벤트 미관측" }],
+    chart: { kind: "curve", title: "Day-1", points: [{ label: "a", pct: 0 }, { label: "b", pct: 0 }] },
+  });
+
+  const merged = mergeMorningBriefingDrilldown(failure, digest);
+  assert.equal(merged.collectionFailed, true);
+  assert.match(merged.title, /수집 실패/);
+  // The digest's zeros and "계측 공백" narrative must NOT bleed into the failure card.
+  assert.ok(merged.kpis.every((kpi) => kpi.valueLabel !== "0" && kpi.valueLabel !== "0명"));
+  assert.ok(!merged.signals.some((signal) => /계측 공백/.test(signal.time)));
+  assert.equal(merged.chart, null);
+});
+
+test("collection-failure card survives the buildMorningBriefing re-normalization boundary", () => {
+  // buildMorningBriefing re-runs normalizeMorningBriefingDrilldowns on the merged
+  // map before broadcast. Pin that the no-fabricated-zero guarantee AND the
+  // collectionFailed marker survive that second normalization — not just the merge.
+  const failure = buildPosthogCollectionFailureDrilldown({ reason: "401 invalid key", region: "us", window: WINDOW });
+  const renormalized = normalizeMorningBriefingDrilldowns({ posthog: failure });
+  const posthog = renormalized.posthog;
+
+  assert.ok(posthog, "failure card must survive re-normalization (has content)");
+  assert.equal(posthog.collectionFailed, true);
+  assert.match(posthog.title, /수집 실패/);
+  assert.ok(posthog.kpis.every((kpi) => kpi.valueLabel !== "0" && kpi.valueLabel !== "0명"));
+  assert.ok(posthog.kpis.some((kpi) => kpi.valueLabel === "수집 실패"));
+});
+
+test("OAuth-only PostHog (collector returned null) keeps the digest's real numbers — no false 수집 실패", () => {
+  // Regression: without an API key collectPosthogDirectDrilldown returns null, so
+  // the primary map has no posthog entry. The digest's OAuth-collected posthog
+  // drilldown (real KPIs) must survive the merge instead of being replaced by a
+  // 수집 실패 card or zero-defaults.
+  const digest = {
+    posthog: normalizeMorningBriefingDrilldown("posthog", {
+      title: "PostHog · 리텐션·이탈 드릴다운",
+      kpis: [{ label: "활성 사용자", valueLabel: "13" }, { label: "이벤트", valueLabel: "297" }],
+    }),
+  };
+  const merged = mergeMorningBriefingDrilldownMaps({ /* collector returned null */ }, digest);
+  assert.equal(merged.posthog.kpis.find((kpi) => kpi.label === "활성 사용자").valueLabel, "13");
+  assert.equal(merged.posthog.kpis.find((kpi) => kpi.label === "이벤트").valueLabel, "297");
+  assert.ok(!merged.posthog.collectionFailed);
+  assert.doesNotMatch(merged.posthog.title, /수집 실패/);
 });
 
 test("mergeMorningBriefingDrilldownMaps merges per source id", () => {

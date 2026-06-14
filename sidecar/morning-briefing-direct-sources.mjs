@@ -126,6 +126,66 @@ async function runHogql({ fetchImpl, host, token, query }) {
   return payload.results;
 }
 
+function posthogWindowRangeLabel(window = {}) {
+  const start = window.startIso
+    || (Number.isFinite(window.startMs) ? new Date(window.startMs).toISOString() : "");
+  const until = window.untilIso
+    || (Number.isFinite(window.untilMs) ? new Date(window.untilMs).toISOString() : "");
+  if (!start && !until) return "기간 미상";
+  return `${dayLabel(start) || "?"}~${dayLabel(until) || "?"}`;
+}
+
+// When the deterministic Query-API collection genuinely ERRORS (a thrown HogQL
+// query — caught in index.mjs with telemetry), we must NOT silently fall back to
+// the LLM digest's zero-defaults: that masks the failure as "0 events / 0 active"
+// and reads as "you have no users" when measurement simply did not complete. This
+// explicit card says "수집 실패" instead of "0", and its `collectionFailed` marker
+// makes mergeMorningBriefingDrilldown keep it terminal (no narrative/zero backfill
+// from the digest). NOTE: a missing API key is NOT an error — in OAuth-only mode
+// collectPosthogDirectDrilldown returns null and the digest's real OAuth-collected
+// numbers are kept, so this card is reserved strictly for genuine errors.
+// normalizeMorningBriefingDrilldown preserves the marker through merge and the
+// re-normalization in buildMorningBriefing, so it reaches the broadcast; Swift's
+// synthesized Codable ignores it today but can later render a retry affordance.
+export function buildPosthogCollectionFailureDrilldown({ reason = "", region = "us", window = {} } = {}) {
+  const windowLabel = posthogWindowRangeLabel(window);
+  const detail = String(reason || "").replace(/\s+/g, " ").trim().slice(0, 160)
+    || "PostHog 집계 쿼리를 완료하지 못했습니다.";
+  const regionLabel = String(region || "us").toUpperCase();
+  const failedKpi = (label, vs) => ({
+    label,
+    valueLabel: "수집 실패",
+    deltaLabel: "재시도 필요",
+    direction: "flat",
+    vs,
+    flag: true,
+  });
+  return normalizeMorningBriefingDrilldown("posthog", {
+    collectionFailed: true,
+    title: "PostHog · 측정 수집 실패",
+    subtitle: "수집 경로 오류 — 0과 실제 공백을 구분할 수 없음",
+    syncPills: ["측정 수집 실패", "수치는 0이 아니라 미수집"],
+    kpis: [
+      failedKpi("이벤트", windowLabel),
+      failedKpi("활성 사용자", "집계 미완료"),
+      failedKpi("Day-1 리텐션", "집계 미완료"),
+    ],
+    kpisMeta: "PostHog Query API 수집 실패 · 수치 미표시",
+    signals: [
+      { time: "수집 실패", text: detail },
+      { time: "주의", text: "측정값이 0이라는 뜻이 아니라 집계를 끝내지 못했다는 뜻이에요. 재시도 후 갱신하세요." },
+    ],
+    meta: {
+      progress: { label: "측정 상태", valueLabel: "수집 실패", sub: "재시도 후 갱신", ratio: 0 },
+      rows: [
+        { key: "집계", value: "PostHog Query API", tone: "accent" },
+        { key: "리전", value: regionLabel },
+        { key: "상태", value: "수집 실패 — 재시도 필요", tone: "amber" },
+      ],
+    },
+  });
+}
+
 export async function collectPosthogDirectDrilldown({
   window = {},
   env = process.env,
@@ -134,6 +194,13 @@ export async function collectPosthogDirectDrilldown({
   fetchImpl = fetch,
 } = {}) {
   const resolved = settings ?? resolvePostHogMcpSettings({ env, appSupportPath });
+  // No stored Query-API key. In production this is only reached when PostHog is
+  // "ready" via MCP OAuth (readiness = tokenValid || oauthReady, see
+  // daily-office-hours-digest.mjs), where the real numbers arrive through the LLM
+  // digest's posthog drilldown. Return null so the merge keeps those real digest
+  // numbers — a missing API key is NOT a collection failure. The terminal failure
+  // card is reserved for a genuine direct-collection error (a thrown HogQL query,
+  // caught in index.mjs with telemetry).
   if (!resolved?.tokenValid) return null;
   const host = posthogHost(resolved.region);
   const token = resolved.token;
@@ -324,6 +391,38 @@ export async function collectPosthogDirectDrilldown({
 // ── Cloudflare (GraphQL Analytics API) ───────────────────────────────────────
 
 const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";
+const DEFAULT_CLOUDFLARE_WEB_HOST = "agentic30.app";
+
+// Resolve which Cloudflare zone this drilldown reports on. Hardcoding the
+// product domain would break forks (CLAUDE.md requires forks to change the
+// domain), while blindly taking the first active zone silently switches to the
+// wrong domain's traffic once the account holds more than one zone (or a zone
+// sorts ahead alphabetically). Prefer an explicit env override, then the
+// configured web host, then fall back to the first active zone so single-zone
+// tokens and unconfigured forks keep working exactly as before.
+function cloudflareWebHost(env = process.env) {
+  const raw = String(env.AGENTIC30_WEB_BASE_URL || `https://${DEFAULT_CLOUDFLARE_WEB_HOST}`).trim();
+  try {
+    return new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return DEFAULT_CLOUDFLARE_WEB_HOST;
+  }
+}
+
+function pickCloudflareZone(zones = [], env = process.env) {
+  if (!Array.isArray(zones) || zones.length === 0) return null;
+  const preferredId = String(env.CLOUDFLARE_ZONE_ID || "").trim();
+  const preferredName = String(env.CLOUDFLARE_ZONE_NAME || "").trim().toLowerCase();
+  const webHost = cloudflareWebHost(env);
+  const byName = (name) => zones.find((zone) => String(zone?.name || "").toLowerCase() === name);
+  return (
+    (preferredId && zones.find((zone) => zone?.id === preferredId))
+    || (preferredName && byName(preferredName))
+    || (webHost && byName(webHost))
+    || zones[0]
+    || null
+  );
+}
 
 async function cloudflareGraphql({ fetchImpl, token, query, variables }) {
   const { ok, payload } = await fetchJson(fetchImpl, `${CLOUDFLARE_API_BASE}/graphql`, {
