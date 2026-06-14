@@ -1530,7 +1530,7 @@ private enum OfficeHoursTimelineRowStyle {
     case incomplete
 }
 
-struct OfficeHoursSubmittedPromptSnapshot: Identifiable, Hashable {
+struct OfficeHoursSubmittedPromptSnapshot: Identifiable, nonisolated Hashable {
     let sessionId: String
     let requestId: String
     let prompt: StructuredPromptRequest
@@ -1588,7 +1588,7 @@ struct OfficeHoursSubmittedPromptSnapshot: Identifiable, Hashable {
     }
 }
 
-struct OfficeHoursLoadingSnapshot: Identifiable, Hashable {
+struct OfficeHoursLoadingSnapshot: Identifiable, nonisolated Hashable {
     let sessionId: String
     let requestId: String
     let startedAt: Date
@@ -1713,6 +1713,52 @@ struct OfficeHoursPendingPromptPresentation: Hashable {
             questionNumber: questionNumber,
             total: total
         )
+    }
+}
+
+struct OfficeHoursCompletedCommitmentPresentation: Equatable {
+    let completedDay: Int
+    let nextDay: Int
+    let canAdvance: Bool
+    let buttonTitle: String
+    let accessibilityLabel: String
+    let detail: String
+
+    static func resolve(
+        activeDay: Int,
+        supportsNextDay: Bool
+    ) -> OfficeHoursCompletedCommitmentPresentation {
+        let completedDay = max(1, min(activeDay, 30))
+        let nextDay = min(completedDay + 1, 30)
+        let canAdvance = completedDay < 30 && supportsNextDay
+        let buttonTitle = canAdvance
+            ? "Day \(completedDay) 완료 → Day \(nextDay)"
+            : "Day \(completedDay) 완료"
+        let accessibilityLabel = canAdvance
+            ? "Day \(completedDay) 완료 후 Day \(nextDay)로 이동"
+            : "Day \(completedDay) 완료"
+        return OfficeHoursCompletedCommitmentPresentation(
+            completedDay: completedDay,
+            nextDay: nextDay,
+            canAdvance: canAdvance,
+            buttonTitle: buttonTitle,
+            accessibilityLabel: accessibilityLabel,
+            detail: detail(completedDay: completedDay, nextDay: nextDay, canAdvance: canAdvance)
+        )
+    }
+
+    private static func detail(completedDay: Int, nextDay: Int, canAdvance: Bool) -> String {
+        guard canAdvance else {
+            return "오늘 약속은 기록됐습니다. 다음 Day 화면이 열리면 이어갈 수 있습니다."
+        }
+        switch completedDay {
+        case 1:
+            return "이제 Day 2에서 오늘의 시장 신호를 이어서 확인합니다."
+        case 2:
+            return "이제 Day 3에서 실제 행동 인터뷰를 시작합니다."
+        default:
+            return "이제 Day \(nextDay)로 이어갈 수 있습니다."
+        }
     }
 }
 
@@ -1957,7 +2003,7 @@ struct OfficeHoursTranscriptScrollPolicy {
     }
 }
 
-enum WorkspaceChromeStyle: Equatable {
+enum WorkspaceChromeStyle: nonisolated Equatable {
     case standard
     case day1OfficeHours
 
@@ -2069,6 +2115,7 @@ struct ContentView: View {
     private static let officeHoursCompletionSummaryHeaderID = "office-hours-completion-summary-header"
     private static let officeHoursCommitmentBarID = "opendesign.officeHours.commitmentBar"
     private static let officeHoursDay1CompleteButtonID = "opendesign.officeHours.day1.completeDay"
+    private static let officeHoursDayCompleteButtonIDPrefix = "opendesign.officeHours.day"
     private static let officeHoursTranscriptBottomID = "office-hours-transcript-bottom"
     private static let officeHoursMinimumQuestionLoadingSeconds: TimeInterval = 3
 
@@ -3235,14 +3282,14 @@ struct ContentView: View {
             // (대안 비교) 답변을 스탬프한 뒤에야 닫기-약속 게이트를 흐름의 종착지로
             // 보여준다. 진행 중에는 메인 인터뷰 흐름과 경쟁하지 않도록 숨긴다.
             let allQuestionsAnswered = officeHoursInterviewComplete(session: session)
-            if activeDay == 1 && stepStatus == .done && officeHoursDay1DocumentsWritten {
+            if stepStatus == .done {
                 VStack(spacing: 12) {
                     Rectangle()
                         .fill(OpenDesignOfficeHoursColor.borderSoft)
                         .frame(height: 1)
                         .padding(.top, 6)
-                    officeHoursCommitmentClosedCard()
-                    officeHoursDay1CompleteButton()
+                    officeHoursCommitmentClosedCard(activeDay: activeDay)
+                    officeHoursDayCompleteButton(activeDay: activeDay)
                 }
                 .id(Self.officeHoursCommitmentBarID)
                 .transition(.officeHoursPromptReveal)
@@ -3359,8 +3406,9 @@ struct ContentView: View {
         }
     }
 
-    private func officeHoursCommitmentClosedCard() -> some View {
-        VStack(alignment: .leading, spacing: 9) {
+    private func officeHoursCommitmentClosedCard(activeDay: Int) -> some View {
+        let presentation = officeHoursCompletedCommitmentPresentation(activeDay: activeDay)
+        return VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Text("마지막 단계")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -3381,7 +3429,7 @@ struct ContentView: View {
                 .font(.system(size: 13.5, weight: .semibold))
                 .foregroundStyle(OpenDesignOfficeHoursColor.fg)
 
-            Text("이제 Day 2에서 오늘의 시장 신호를 이어서 확인합니다.")
+            Text(presentation.detail)
                 .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
                 .lineSpacing(2.8)
@@ -3411,28 +3459,50 @@ struct ContentView: View {
                 .stroke(OpenDesignOfficeHoursColor.border, lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("약속 완료. Day 2로 이동할 수 있습니다.")
+        .accessibilityLabel("약속 완료. \(presentation.accessibilityLabel)")
         .accessibilityIdentifier("opendesign.officeHours.commitmentBar.closed")
     }
 
-    private func officeHoursDay1CompleteButton() -> some View {
-        Button {
-            completeOfficeHoursDay1AndAdvance()
+    private func officeHoursDayCompleteButton(activeDay: Int) -> some View {
+        let presentation = officeHoursCompletedCommitmentPresentation(activeDay: activeDay)
+        return Button {
+            completeOfficeHoursDayAndAdvance(activeDay: activeDay)
         } label: {
-            Text("Day 1 완료 → Day 2")
+            Text(presentation.buttonTitle)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(OpenDesignOfficeHoursColor.bgDeep)
+                .foregroundStyle(presentation.canAdvance ? OpenDesignOfficeHoursColor.bgDeep : OpenDesignOfficeHoursColor.mutedDeep)
                 .frame(maxWidth: .infinity)
                 .frame(height: 40)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(OpenDesignOfficeHoursColor.accent)
+                        .fill(presentation.canAdvance ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.surface2)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(presentation.canAdvance ? Color.clear : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                        )
                 )
         }
         .buttonStyle(.plain)
-        .id(Self.officeHoursDay1CompleteButtonID)
-        .accessibilityLabel("Day 1 완료 후 Day 2로 이동")
-        .accessibilityIdentifier(Self.officeHoursDay1CompleteButtonID)
+        .disabled(!presentation.canAdvance)
+        .id(officeHoursDayCompleteButtonID(activeDay: activeDay))
+        .accessibilityLabel(presentation.accessibilityLabel)
+        .accessibilityValue(presentation.canAdvance ? "active" : "locked")
+        .accessibilityIdentifier(officeHoursDayCompleteButtonID(activeDay: activeDay))
+    }
+
+    private func officeHoursCompletedCommitmentPresentation(activeDay: Int) -> OfficeHoursCompletedCommitmentPresentation {
+        let nextDay = min(max(activeDay, 1) + 1, 30)
+        return OfficeHoursCompletedCommitmentPresentation.resolve(
+            activeDay: activeDay,
+            supportsNextDay: OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: nextDay)
+        )
+    }
+
+    private func officeHoursDayCompleteButtonID(activeDay: Int) -> String {
+        if activeDay == 1 {
+            return Self.officeHoursDay1CompleteButtonID
+        }
+        return "\(Self.officeHoursDayCompleteButtonIDPrefix)\(max(1, activeDay)).completeDay"
     }
 
     // 약속 카드의 행동 후보(≤3) — ① 사이드카가 이번 인터뷰 6답변에서 생성한 후보(우선)
@@ -4849,7 +4919,7 @@ struct ContentView: View {
               let stepStatus = officeHoursCommitmentStepStatus(activeDay: activeDay) else {
             return false
         }
-        if activeDay == 1, stepStatus == .done {
+        if stepStatus == .done {
             return true
         }
         return stepStatus == .active && officeHoursInterviewComplete(session: session)
@@ -6699,15 +6769,27 @@ struct ContentView: View {
     }
 
     private func completeOfficeHoursDay1AndAdvance() {
-        _ = viewModel.markFoundationDayCompleted(1)
+        completeOfficeHoursDayAndAdvance(activeDay: 1)
+    }
+
+    private func completeOfficeHoursDayAndAdvance(activeDay: Int) {
+        let completedDay = max(1, min(activeDay, 30))
+        _ = viewModel.markFoundationDayCompleted(completedDay)
         selectedTimelineDay = nil
         selectedPastReviewDay = nil
         officeHoursStartedSessionIDs.removeAll()
         clearOpenDesignReferenceRoute()
-        viewModel.selectFoundationDay(2)
-        if LocalDevelopmentDayFastForward.isEnabled {
-            primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: 2)
-            viewModel.ensureOfficeHoursSession(forDay: 2)
+
+        let nextDay = min(completedDay + 1, 30)
+        guard OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: nextDay),
+              viewModel.isFoundationDayUnlocked(nextDay) else {
+            return
+        }
+
+        viewModel.selectFoundationDay(nextDay)
+        if LocalDevelopmentDayFastForward.isEnabled, (2...3).contains(nextDay) {
+            primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: nextDay)
+            viewModel.ensureOfficeHoursSession(forDay: nextDay)
         }
     }
 
@@ -8762,14 +8844,14 @@ struct ContentView: View {
             let snapshots = officeHoursSubmittedPromptSnapshots(for: session)
             return (snapshots.isEmpty ? Self.officeHoursQuestionStageTopID : loader.requestId, .top)
         }
+        if shouldRenderOfficeHoursCommitmentBar(session: session, activeDay: activeDay) {
+            if officeHoursCommitmentStepStatus(activeDay: activeDay) == .done {
+                return (officeHoursDayCompleteButtonID(activeDay: activeDay), .top)
+            }
+            return (Self.officeHoursCommitmentBarID, .top)
+        }
         if officeHoursIsDocReady(session: session, activeDay: activeDay) {
             if officeHoursDay1DocumentsWritten {
-                if officeHoursDay1CommitmentClosed(activeDay: activeDay) {
-                    return (Self.officeHoursDay1CompleteButtonID, .top)
-                }
-                if shouldRenderOfficeHoursCommitmentBar(session: session, activeDay: activeDay) {
-                    return (Self.officeHoursCommitmentBarID, .top)
-                }
                 return (Self.officeHoursDocReadyHeaderID, .top)
             }
             return (Self.officeHoursDocReadyHeaderID, .top)

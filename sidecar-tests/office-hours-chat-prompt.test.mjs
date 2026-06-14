@@ -225,6 +225,31 @@ test("office-hours Day 2+ goal-driven prompt requires live briefing and goal-spe
   assert.doesNotMatch(prompt, /handoff_for: day1-docs/);
 });
 
+test("office-hours redesign v1 prompt closes days with evidence or explicit debt", () => {
+  const context = [
+    "DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS",
+    "Goal lane: get_users / 활성 사용자 100명 모으기",
+    "OFFICE_HOURS_REDESIGN_V1_DAY_CLOSE_POLICY",
+    "BIP research candidate policy: manual_fallback",
+  ].join("\n");
+  const prompt = buildOfficeHoursChatSystemPrompt("/workspace", {
+    provider: "codex",
+    context,
+  });
+
+  assert.match(prompt, /evidence-closing operator|증거 마감/);
+  assert.match(prompt, /오늘의 가장 좁은 외부 검증 행동/);
+  assert.match(prompt, /customer evidence|고객 증거/);
+  assert.match(prompt, /posted URL|posted_url|게시.*URL/i);
+  assert.match(prompt, /blocked|carry/);
+  assert.match(prompt, /mandatory BIP.*target behavior/i);
+  assert.match(prompt, /proofSink.*local\|bip_optional/);
+  assert.match(prompt, /never posts automatically|자동 게시하지 않는다/i);
+  assert.match(prompt, /ready \.agentic30\/bip\/research\/day-N-cache\.json/);
+  assert.match(prompt, /manually named reachable customer|수동.*이름.*고객/i);
+  assert.match(prompt, /Do not invent analytics, traffic, revenue, user, deployment, git, GitHub, PostHog, Cloudflare, or market radar card facts/i);
+});
+
 test("office-hours chat system prompt routes Claude forcing questions through AskUserQuestion", () => {
   const prompt = buildOfficeHoursChatSystemPrompt("/workspace", {
     provider: "claude",

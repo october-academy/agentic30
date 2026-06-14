@@ -1,14 +1,14 @@
 import Foundation
 
-struct AgenticAppRoute: Equatable {
-    enum Destination: Equatable {
+struct AgenticAppRoute: nonisolated Equatable {
+    enum Destination: nonisolated Equatable {
         case settings(section: SettingsSection?)
         case officeHoursQuestion(sessionId: String, requestId: String?)
         case openDesign(route: LongRunningCompletionRoute, day: Int?, anchor: String?, placement: Placement)
         case document(path: String)
     }
 
-    enum Placement: String, Equatable {
+    enum Placement: String, nonisolated Equatable {
         case section
         case action
 

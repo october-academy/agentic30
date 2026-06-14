@@ -43,6 +43,7 @@ import {
   normalizeExternalOfficeHoursDigest,
   normalizeOfficeHoursSelectedSources,
   persistDailyOfficeHoursDigest,
+  resolveDailyOfficeHoursDigestPath,
   selectedExternalOfficeHoursSources,
 } from "./daily-office-hours-digest.mjs";
 import {
@@ -334,6 +335,10 @@ import {
   loadBipResearchSnapshot,
   refreshBipResearch,
 } from "./bip-research-radar.mjs";
+import {
+  buildOfficeHoursDayClosePolicy,
+  formatOfficeHoursDayClosePolicyForPrompt,
+} from "./office-hours-redesign-policy.mjs";
 import {
   discoverExaMcpRoutes,
   redactExaResearchRoute,
@@ -3262,6 +3267,7 @@ async function handleDay1GoalSave(socket, payload = {}) {
           officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
           dayReviews: await loadOfficeHoursDayReviews(root, updated, currentDay),
           evidenceOS: await loadOfficeHoursEvidenceOS(root, updated, currentDay),
+          dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, currentDay),
         });
       }
     } catch (progressError) {
@@ -3302,6 +3308,7 @@ async function handleDayProgressGet(socket, payload = {}) {
     officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
     dayReviews: await loadOfficeHoursDayReviews(root, dayProgress, currentDay),
     evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
+    dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, currentDay),
   });
 }
 
@@ -3352,6 +3359,68 @@ async function loadOfficeHoursEvidenceOS(root, dayProgress, currentDay = null) {
   }
 }
 
+async function loadOfficeHoursDayClosePolicy(root, currentDay = null) {
+  const day = Number.parseInt(currentDay, 10) || 1;
+  const [selection, bipResearchSnapshot, unavailableSources, marketRadar] = await Promise.all([
+    loadDay1GoalSelection({ workspaceRoot: root }).catch(() => null),
+    loadBipResearchSnapshot({
+      workspaceRoot: root,
+      dayNumber: day,
+      exaConfigured: true,
+    }).catch(() => null),
+    loadOfficeHoursUnavailableSources(root),
+    loadOfficeHoursMarketRadarPolicy(root),
+  ]);
+  return buildOfficeHoursDayClosePolicy({
+    day,
+    proofSink: selection?.proofSink || "local",
+    bipResearchSnapshot,
+    unavailableSources,
+    marketRadar,
+  });
+}
+
+async function loadOfficeHoursUnavailableSources(root) {
+  try {
+    const raw = JSON.parse(await fs.readFile(resolveDailyOfficeHoursDigestPath(root), "utf8"));
+    const sources = Array.isArray(raw?.sources) ? raw.sources : [];
+    return sources
+      .filter((source) => {
+        const state = String(source?.state || "").toLowerCase();
+        return !["ready", "available", "ok"].includes(state);
+      })
+      .map((source) => String(source?.id || source?.label || "").trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function loadOfficeHoursMarketRadarPolicy(root) {
+  try {
+    const snapshot = await loadNewsMarketRadarSnapshot({
+      workspaceRoot: root,
+      exaConfigured: true,
+    });
+    const lanes = Array.isArray(snapshot?.lanes) ? snapshot.lanes : [];
+    const cardCount = lanes.reduce((sum, lane) =>
+      sum + (Array.isArray(lane?.cards) ? lane.cards.length : 0), 0);
+    const confidences = lanes
+      .map((lane) => String(lane?.confidence || "").toLowerCase())
+      .filter(Boolean);
+    const confidence = cardCount === 0
+      ? "weak"
+      : confidences.includes("strong")
+        ? "strong"
+        : confidences.includes("medium")
+          ? "medium"
+          : "weak";
+    return { cardCount, confidence };
+  } catch {
+    return { cardCount: 0, confidence: "weak" };
+  }
+}
+
 async function sendOfficeHoursEvidenceState(socket, root, { broadcastToAll = true } = {}) {
   const dayProgress = await loadDayProgress({ workspaceRoot: root });
   if (path.resolve(root) === path.resolve(workspaceRoot)) {
@@ -3367,6 +3436,7 @@ async function sendOfficeHoursEvidenceState(socket, root, { broadcastToAll = tru
     officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
     dayReviews: await loadOfficeHoursDayReviews(root, dayProgress, currentDay),
     evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
+    dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, currentDay),
   };
   if (broadcastToAll) {
     broadcast(payload);
@@ -3679,6 +3749,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
         officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
         dayReviews: await loadOfficeHoursDayReviews(root, current, currentDay),
         evidenceOS: await loadOfficeHoursEvidenceOS(root, current, currentDay),
+        dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, currentDay),
       });
       telemetry.captureEvent("mac_sidecar_interview_gate_blocked", {
         step_id: String(stepId || ""),
@@ -3735,6 +3806,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
         officeHoursHistory: await loadOfficeHoursHistorySummary(root, ar17CurrentDay),
         dayReviews: await loadOfficeHoursDayReviews(root, current, ar17CurrentDay),
         evidenceOS: await loadOfficeHoursEvidenceOS(root, current, ar17CurrentDay),
+        dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, ar17CurrentDay),
       });
       return;
     }
@@ -3874,6 +3946,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
             requiredEvidence: gateCheck.gate.requiredEvidence,
           },
           message: buildGateBlockedMessage(gateCheck.gate),
+          dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, blockedCurrentDay),
         });
         if (gateCheck.stateChanged) {
           telemetry.captureEvent("mac_sidecar_gate_blocked", {
@@ -3983,6 +4056,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
       officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
       dayReviews: await loadOfficeHoursDayReviews(root, dayProgress, currentDay),
       evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
+      dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, currentDay),
     });
     // §11.0/§17.2: entering the execution step loads the day's IDD mission as a
     // mission_card. Emission points: a Day 2+ interview close (execution becomes
@@ -4497,7 +4571,7 @@ async function runPrompt(
       executionMode: route.executionMode,
     });
   } catch (error) {
-    if (abortController.signal.aborted || error?.name === "AbortError") {
+    if (abortController.signal.aborted) {
       telemetry.captureEvent("mac_sidecar_prompt_aborted", {
         session_id: session.id,
         provider: session.provider,
@@ -5110,7 +5184,7 @@ async function runUnifiedFoundationChat(
       transport,
     });
   } catch (error) {
-    if (abortController.signal.aborted || error?.name === "AbortError") {
+    if (abortController.signal.aborted) {
       telemetry.captureEvent("mac_sidecar_foundation_chat_aborted", {
         session_id: session.id,
         provider: session.provider,
@@ -5370,7 +5444,7 @@ async function warmSession(session, payload = {}) {
       });
     }
   } catch (error) {
-    if (abortController.signal.aborted || error?.name === "AbortError") {
+    if (abortController.signal.aborted) {
       setCodexWarmRuntime(session, {
         ...warmSpec,
         state: "cancelled",
@@ -5611,15 +5685,16 @@ async function buildExternalOfficeHoursDigestSignals(session, {
       },
     });
   } catch (error) {
-    // A provider/MCP outage must not surface as a raw run failure. Aborts keep
-    // propagating; everything else falls through with empty text so the selected
-    // sources resolve to "failed" and finalize throws the structured
-    // OfficeHoursSourceGateError (connect actions + retry, not a crash).
-    if (abortController?.signal?.aborted || error?.name === "AbortError") {
+    // A provider/MCP outage must not surface as a raw run failure. Local aborts
+    // keep propagating; provider-originated aborts fall through with empty text
+    // so the selected sources resolve to "failed" instead of pretending to be
+    // local user cancellation.
+    if (abortController?.signal?.aborted) {
       throw error;
     }
-    telemetry.captureException(error, {
+    reportProviderRunError(error, {
       operation: "office_hours_external_digest",
+      provider: session.provider,
       sources: externalSources.join(","),
     });
     externalText = "";
@@ -7067,6 +7142,11 @@ async function runOfficeHours(session, {
         })),
       };
     }
+    const dayClosePolicy = await loadOfficeHoursDayClosePolicy(workspaceRoot, runtimeDay);
+    officeHoursRuntime.context = clampOfficeHoursContext(
+      `${officeHoursRuntime.context}\n\n${formatOfficeHoursDayClosePolicyForPrompt(dayClosePolicy)}`,
+    );
+    officeHoursRuntime.dayClosePolicy = dayClosePolicy;
     session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
     touch(session);
     await persistSessions();
@@ -7311,7 +7391,7 @@ async function runOfficeHours(session, {
       elapsedMs: performance.now() - runStartedAt,
     });
   } catch (error) {
-    if (abortController.signal.aborted || isAbortLikeError(error)) {
+    if (abortController.signal.aborted) {
       telemetry.captureEvent("mac_sidecar_office_hours_aborted", {
         session_id: session.id,
         provider: session.provider,
@@ -7419,6 +7499,7 @@ async function runOfficeHours(session, {
 async function runOfficeHoursDocs(session, topic, originalPrompt) {
   const abortController = new AbortController();
   const runKey = randomUUID();
+  const runStartedAt = performance.now();
   const assistantMessage = makeMessage({
     role: "assistant",
     provider: session.provider,
@@ -7508,7 +7589,7 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
   session.status = "idle";
   session.error = null;
   } catch (error) {
-    if (abortController.signal.aborted || error?.name === "AbortError") {
+    if (abortController.signal.aborted) {
       telemetry.captureEvent("mac_sidecar_office_hours_docs_aborted", {
         session_id: session.id,
         provider: session.provider,
@@ -7517,7 +7598,7 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
     session.status = "idle";
       session.error = null;
     } else {
-      telemetry.captureException(error, {
+      const errorKind = reportProviderRunError(error, {
         operation: "runOfficeHoursDocs",
         session_id: session.id,
         provider: session.provider,
@@ -7539,7 +7620,9 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
       broadcast({
         type: "error",
         sessionId: session.id,
+        provider: session.provider,
         message: formatError(error),
+        ...providerRecoverableErrorEnvelope(errorKind),
     });
     }
   } finally {
@@ -7765,7 +7848,7 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
   session.status = "idle";
   session.error = null;
   } catch (error) {
-    if (abortController.signal.aborted || error?.name === "AbortError") {
+    if (abortController.signal.aborted) {
       telemetry.captureEvent("mac_sidecar_analyze_ads_aborted", {
         session_id: session.id,
         provider: session.provider,
@@ -7774,7 +7857,7 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
     session.status = "idle";
       session.error = null;
     } else {
-      telemetry.captureException(error, {
+      const errorKind = reportProviderRunError(error, {
         operation: "runAnalyzeAds",
         session_id: session.id,
         provider: session.provider,
@@ -7790,7 +7873,9 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
       broadcast({
         type: "error",
         sessionId: session.id,
+        provider: session.provider,
         message: assistantMessage.error,
+        ...providerRecoverableErrorEnvelope(errorKind),
     });
     }
   } finally {
@@ -8595,7 +8680,7 @@ async function runBipDraft(session, topic, originalPrompt) {
   session.status = "idle";
   session.error = null;
   } catch (error) {
-    if (abortController.signal.aborted || error?.name === "AbortError") {
+    if (abortController.signal.aborted) {
       telemetry.captureEvent("mac_sidecar_bip_draft_aborted", {
         session_id: session.id,
         provider: session.provider,
@@ -8604,7 +8689,7 @@ async function runBipDraft(session, topic, originalPrompt) {
     session.status = "idle";
       session.error = null;
     } else {
-      telemetry.captureException(error, {
+      const errorKind = reportProviderRunError(error, {
         operation: "runBipDraft",
         session_id: session.id,
         provider: session.provider,
@@ -8619,7 +8704,9 @@ async function runBipDraft(session, topic, originalPrompt) {
       broadcast({
         type: "error",
         sessionId: session.id,
+        provider: session.provider,
         message: assistantMessage.error,
+        ...providerRecoverableErrorEnvelope(errorKind),
     });
     }
   } finally {
@@ -11519,7 +11606,8 @@ async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", s
  * swallows a failure into "use local signals instead":
  * - `{ ok: true, provider, model, result }` on success
  * - `{ ok: false, provider, model, reason, message }` with reason
- *   "unavailable" (no auth), "usage_limit" (quota), or "error" (run fault).
+ *   "unavailable" (no auth), "usage_limit" (quota), "aborted" (canceled), or
+ *   "error" (run fault).
  * The foreground scan path turns a failed outcome into workspace_scan_blocked;
  * background refreshes simply skip the merge.
  */
@@ -11654,6 +11742,16 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
           totalSteps: 3,
         },
       );
+    } else if (errorKind === PROVIDER_ABORTED_ERROR_KIND) {
+      broadcastWorkspaceScanProgress(
+        scanRoot,
+        `scan.agent · ${providerLabel} 실행 중단됨`,
+        {
+          stage: "verifying",
+          stepIndex: 2,
+          totalSteps: 3,
+        },
+      );
     }
     return {
       ok: false,
@@ -11663,7 +11761,9 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
         ? "usage_limit"
         : errorKind === PROVIDER_AUTH_REQUIRED_ERROR_KIND
           ? "unavailable"
-          : "error",
+          : errorKind === PROVIDER_ABORTED_ERROR_KIND
+            ? "aborted"
+            : "error",
       message: formatError(error),
     };
   } finally {
@@ -11692,10 +11792,10 @@ function broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stag
 }
 
 /**
- * The scan's agent verification failed (usage limit, missing provider auth, or
- * a run error). Day 1 must not proceed on local-only signals, so instead of a
- * successful workspace_scan_result the Mac side gets this blocking notice with
- * the next scan-ready provider in the consent chain.
+ * The scan's agent verification failed (usage limit, missing provider auth,
+ * provider abort, or a run error). Day 1 must not proceed on local-only signals,
+ * so instead of a successful workspace_scan_result the Mac side gets this
+ * blocking notice with the next scan-ready provider in the consent chain.
  * Switching still requires the user's click; when no provider is available at
  * all (`nextProvider: null`) the UI says Agentic30 cannot proceed.
  */
@@ -11787,6 +11887,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     localFindings,
     ...(reason === "usage_limit" ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND } : {}),
     ...(reason === "unavailable" ? { errorKind: PROVIDER_AUTH_REQUIRED_ERROR_KIND } : {}),
+    ...(reason === "aborted" ? { errorKind: PROVIDER_ABORTED_ERROR_KIND } : {}),
   });
 }
 
@@ -12207,7 +12308,7 @@ async function runDay1ChoiceFrontierProvider({ provider, model, scanRoot, prompt
         });
       },
       onLateError: (error) => {
-        telemetry.captureException(error, {
+        reportProviderRunError(error, {
           operation: "runDay1ChoiceFrontierProviderLateError",
           provider,
           model,
@@ -14955,13 +15056,14 @@ function reportMcpOauthConnectOutcome(result = {}) {
 }
 
 /**
- * Marks the `type: "error"` envelope so the Mac side can tell an expected
- * upstream provider usage-limit (quota) condition apart from a real fault. The
- * Swift bridge keys on `errorKind` to surface a "retry later / switch provider"
- * message instead of capturing a generic exception (see AgenticViewModel).
+ * Marks the `type: "error"` envelope so the Mac side can tell expected
+ * upstream provider states apart from real faults. The Swift bridge keys on
+ * `errorKind` to surface the actionable message instead of capturing a generic
+ * exception (see AgenticViewModel).
  */
 const PROVIDER_USAGE_LIMIT_ERROR_KIND = "provider_usage_limit";
 const PROVIDER_AUTH_REQUIRED_ERROR_KIND = "provider_auth_required";
+const PROVIDER_ABORTED_ERROR_KIND = "provider_aborted";
 
 /**
  * True for an expected, recoverable upstream provider quota condition
@@ -14976,6 +15078,7 @@ function isRecoverableProviderQuotaError(error) {
 function providerRecoverableErrorKind(error) {
   if (isRecoverableProviderQuotaError(error)) return PROVIDER_USAGE_LIMIT_ERROR_KIND;
   if (isProviderAuthRequiredError(error)) return PROVIDER_AUTH_REQUIRED_ERROR_KIND;
+  if (isAbortLikeError(error)) return PROVIDER_ABORTED_ERROR_KIND;
   return null;
 }
 
@@ -14999,6 +15102,11 @@ function reportProviderRunError(error, captureProps) {
   if (errorKind === PROVIDER_AUTH_REQUIRED_ERROR_KIND) {
     telemetry.captureEvent("mac_sidecar_provider_auth_required", captureProps);
     captureSidecarLog("provider auth required", "warn", logProps);
+    return errorKind;
+  }
+  if (errorKind === PROVIDER_ABORTED_ERROR_KIND) {
+    telemetry.captureEvent("mac_sidecar_provider_aborted", captureProps);
+    captureSidecarLog("provider aborted", "warn", logProps);
     return errorKind;
   }
   captureSidecarLog("provider run failed", "error", logProps);

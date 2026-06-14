@@ -2064,6 +2064,154 @@ enum Day1ProofSink: String, Codable, Hashable {
     case bipOptional = "bip_optional"
 }
 
+struct OfficeHoursDayClosePolicy: Codable, Equatable, Hashable {
+    struct MandatoryBip: Codable, Equatable, Hashable {
+        let state: String?
+        let currentProofSink: Day1ProofSink?
+        let allowedProofSinks: [Day1ProofSink]
+        let autoPosting: Bool?
+        let userApprovalRequired: Bool?
+
+        private enum CodingKeys: String, CodingKey {
+            case state, currentProofSink, allowedProofSinks, autoPosting, userApprovalRequired
+        }
+
+        init(
+            state: String? = nil,
+            currentProofSink: Day1ProofSink? = nil,
+            allowedProofSinks: [Day1ProofSink] = [],
+            autoPosting: Bool? = nil,
+            userApprovalRequired: Bool? = nil
+        ) {
+            self.state = state
+            self.currentProofSink = currentProofSink
+            self.allowedProofSinks = allowedProofSinks
+            self.autoPosting = autoPosting
+            self.userApprovalRequired = userApprovalRequired
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            state = try c.decodeIfPresent(String.self, forKey: .state)
+            currentProofSink = try c.decodeIfPresent(Day1ProofSink.self, forKey: .currentProofSink)
+            allowedProofSinks = try c.decodeIfPresent([Day1ProofSink].self, forKey: .allowedProofSinks) ?? []
+            autoPosting = try c.decodeIfPresent(Bool.self, forKey: .autoPosting)
+            userApprovalRequired = try c.decodeIfPresent(Bool.self, forKey: .userApprovalRequired)
+        }
+    }
+
+    struct BipResearchCandidatePolicy: Codable, Equatable, Hashable {
+        let state: String?
+        let readyCacheRequired: Bool?
+        let cachePath: String?
+        let candidateCount: Int?
+        let candidateTitles: [String]
+        let fallbackAction: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case state, readyCacheRequired, cachePath, candidateCount, candidateTitles, fallbackAction
+        }
+
+        init(
+            state: String? = nil,
+            readyCacheRequired: Bool? = nil,
+            cachePath: String? = nil,
+            candidateCount: Int? = nil,
+            candidateTitles: [String] = [],
+            fallbackAction: String? = nil
+        ) {
+            self.state = state
+            self.readyCacheRequired = readyCacheRequired
+            self.cachePath = cachePath
+            self.candidateCount = candidateCount
+            self.candidateTitles = candidateTitles
+            self.fallbackAction = fallbackAction
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            state = try c.decodeIfPresent(String.self, forKey: .state)
+            readyCacheRequired = try c.decodeIfPresent(Bool.self, forKey: .readyCacheRequired)
+            cachePath = try c.decodeIfPresent(String.self, forKey: .cachePath)
+            candidateCount = try c.decodeIfPresent(Int.self, forKey: .candidateCount)
+            candidateTitles = try c.decodeIfPresent([String].self, forKey: .candidateTitles) ?? []
+            fallbackAction = try c.decodeIfPresent(String.self, forKey: .fallbackAction)
+        }
+    }
+
+    struct EvidenceSourcePolicy: Codable, Equatable, Hashable {
+        let externalSourcesFailClosed: Bool?
+        let unavailableSources: [String]
+        let marketRadarCardsAvailable: Bool?
+
+        private enum CodingKeys: String, CodingKey {
+            case externalSourcesFailClosed, unavailableSources, marketRadarCardsAvailable
+        }
+
+        init(
+            externalSourcesFailClosed: Bool? = nil,
+            unavailableSources: [String] = [],
+            marketRadarCardsAvailable: Bool? = nil
+        ) {
+            self.externalSourcesFailClosed = externalSourcesFailClosed
+            self.unavailableSources = unavailableSources
+            self.marketRadarCardsAvailable = marketRadarCardsAvailable
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            externalSourcesFailClosed = try c.decodeIfPresent(Bool.self, forKey: .externalSourcesFailClosed)
+            unavailableSources = try c.decodeIfPresent([String].self, forKey: .unavailableSources) ?? []
+            marketRadarCardsAvailable = try c.decodeIfPresent(Bool.self, forKey: .marketRadarCardsAvailable)
+        }
+    }
+
+    let schemaVersion: Int?
+    let role: String?
+    let definition: String?
+    let closeTypes: [String]
+    let mandatoryBip: MandatoryBip
+    let bipResearchCandidatePolicy: BipResearchCandidatePolicy
+    let evidenceSourcePolicy: EvidenceSourcePolicy
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, role, definition, closeTypes
+        case mandatoryBip, bipResearchCandidatePolicy, evidenceSourcePolicy
+    }
+
+    init(
+        schemaVersion: Int? = nil,
+        role: String? = nil,
+        definition: String? = nil,
+        closeTypes: [String] = [],
+        mandatoryBip: MandatoryBip = MandatoryBip(),
+        bipResearchCandidatePolicy: BipResearchCandidatePolicy = BipResearchCandidatePolicy(),
+        evidenceSourcePolicy: EvidenceSourcePolicy = EvidenceSourcePolicy()
+    ) {
+        self.schemaVersion = schemaVersion
+        self.role = role
+        self.definition = definition
+        self.closeTypes = closeTypes
+        self.mandatoryBip = mandatoryBip
+        self.bipResearchCandidatePolicy = bipResearchCandidatePolicy
+        self.evidenceSourcePolicy = evidenceSourcePolicy
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion)
+        role = try c.decodeIfPresent(String.self, forKey: .role)
+        definition = try c.decodeIfPresent(String.self, forKey: .definition)
+        closeTypes = try c.decodeIfPresent([String].self, forKey: .closeTypes) ?? []
+        mandatoryBip = try c.decodeIfPresent(MandatoryBip.self, forKey: .mandatoryBip)
+            ?? MandatoryBip()
+        bipResearchCandidatePolicy = try c.decodeIfPresent(BipResearchCandidatePolicy.self, forKey: .bipResearchCandidatePolicy)
+            ?? BipResearchCandidatePolicy()
+        evidenceSourcePolicy = try c.decodeIfPresent(EvidenceSourcePolicy.self, forKey: .evidenceSourcePolicy)
+            ?? EvidenceSourcePolicy()
+    }
+}
+
 struct Day1GoalSelection: Codable, Equatable, Hashable {
     let schemaVersion: Int
     let schema: String?
@@ -2290,6 +2438,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var officeHoursMemory: OfficeHoursMemorySummary?
     @Published private(set) var officeHoursHistory: OfficeHoursHistorySummary?
     @Published private(set) var evidenceOS: EvidenceOSSummary?
+    @Published private(set) var dayClosePolicy: OfficeHoursDayClosePolicy?
     @Published private(set) var officeHoursSourceGate: OfficeHoursSourceGate?
     /// Day 2+ daily digest briefing (`office_hours_daily_digest_result`): the sidecar
     /// broadcasts `status: "collecting"` before the (potentially slow) gh CLI + external
@@ -2875,13 +3024,13 @@ final class AgenticViewModel: ObservableObject {
         hydrateWorkspaceScanResultFromCacheIfAvailable()
     }
 
-    struct StructuredPromptSubmission: Codable, Hashable {
+    struct StructuredPromptSubmission: Codable, nonisolated Hashable {
         let question: String
         let selectedOptions: [String]
         let freeText: String
     }
 
-    struct StructuredPromptSubmissionState: Hashable {
+    struct StructuredPromptSubmissionState: nonisolated Hashable {
         let sessionId: String
         let requestId: String
         let responses: [StructuredPromptSubmission]
@@ -7552,6 +7701,7 @@ final class AgenticViewModel: ObservableObject {
             if let memory = event.officeHoursMemory { officeHoursMemory = memory }
             if let history = event.officeHoursHistory { officeHoursHistory = history }
             if let evidence = event.evidenceOS { evidenceOS = evidence }
+            if let policy = event.dayClosePolicy { dayClosePolicy = policy }
             // Interview gate: surface the soft nudge when a close was withheld; clear it on
             // any non-blocked update so it disappears once the founder commits or confesses.
             if event.needsCommitment == true {
@@ -8102,16 +8252,29 @@ final class AgenticViewModel: ObservableObject {
                 }
                 markStartupQueuedActionFailed(event.message ?? "실행 보조 앱 연결이 끊겼습니다.")
             }
-            if event.errorKind == "provider_usage_limit" || event.errorKind == "provider_auth_required" {
-                // Expected upstream provider states (quota cap or missing auth).
-                // The sidecar already surfaced the actionable session error;
-                // track a benign event instead of a captured exception so the
-                // bridge does not double-report it as an error-tracking issue.
+            if [
+                "provider_usage_limit",
+                "provider_auth_required",
+                "provider_aborted",
+                "sidecar_connection_state",
+            ].contains(event.errorKind ?? "") {
+                let telemetryEvent: String
+                switch event.errorKind {
+                case "provider_usage_limit":
+                    telemetryEvent = "mac_provider_usage_limit"
+                case "provider_auth_required":
+                    telemetryEvent = "mac_provider_auth_required"
+                case "provider_aborted":
+                    telemetryEvent = "mac_provider_aborted"
+                default:
+                    telemetryEvent = "mac_sidecar_connection_state"
+                }
                 PostHogTelemetry.capture(
-                    event.errorKind == "provider_usage_limit" ? "mac_provider_usage_limit" : "mac_provider_auth_required",
+                    telemetryEvent,
                     properties: [
                         "component": "agentic_view_model",
                         "operation": "sidecar_event_error",
+                        "error_kind": event.errorKind ?? "",
                         "provider": event.provider ?? "",
                         "session_id": event.sessionId ?? "",
                     ],
@@ -12279,6 +12442,7 @@ struct SidecarEvent: Decodable {
     let officeHoursMemory: OfficeHoursMemorySummary?
     let officeHoursHistory: OfficeHoursHistorySummary?
     let evidenceOS: EvidenceOSSummary?
+    let dayClosePolicy: OfficeHoursDayClosePolicy?
     // Interview-gate block fields (day_progress_state): when the founder tries to close a
     // gated interview step without naming a next customer action, the sidecar withholds the
     // patch and sends needsCommitment=true + a soft `message`. `message` is shared (declared
@@ -12480,6 +12644,7 @@ struct SidecarEvent: Decodable {
         officeHoursMemory: OfficeHoursMemorySummary? = nil,
         officeHoursHistory: OfficeHoursHistorySummary? = nil,
         evidenceOS: EvidenceOSSummary? = nil,
+        dayClosePolicy: OfficeHoursDayClosePolicy? = nil,
         needsCommitment: Bool? = nil,
         gatedStep: String? = nil,
         gateBlocked: DayGateBlocked? = nil,
@@ -12591,6 +12756,7 @@ struct SidecarEvent: Decodable {
         self.officeHoursMemory = officeHoursMemory
         self.officeHoursHistory = officeHoursHistory
         self.evidenceOS = evidenceOS
+        self.dayClosePolicy = dayClosePolicy
         self.needsCommitment = needsCommitment
         self.gatedStep = gatedStep
         self.gateBlocked = gateBlocked
@@ -12990,6 +13156,7 @@ extension SidecarEvent {
         case officeHoursMemory
         case officeHoursHistory
         case evidenceOS
+        case dayClosePolicy
         case needsCommitment
         case gatedStep
         case gateBlocked
@@ -13110,6 +13277,7 @@ extension SidecarEvent {
         officeHoursMemory = Self.decodeIfPresent(OfficeHoursMemorySummary.self, from: container, forKey: .officeHoursMemory)
         officeHoursHistory = Self.decodeIfPresent(OfficeHoursHistorySummary.self, from: container, forKey: .officeHoursHistory)
         evidenceOS = Self.decodeIfPresent(EvidenceOSSummary.self, from: container, forKey: .evidenceOS)
+        dayClosePolicy = Self.decodeIfPresent(OfficeHoursDayClosePolicy.self, from: container, forKey: .dayClosePolicy)
         needsCommitment = Self.decodeIfPresent(Bool.self, from: container, forKey: .needsCommitment)
         gatedStep = Self.decodeIfPresent(String.self, from: container, forKey: .gatedStep)
         gateBlocked = Self.decodeIfPresent(DayGateBlocked.self, from: container, forKey: .gateBlocked)

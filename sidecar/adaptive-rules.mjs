@@ -82,7 +82,7 @@ export function evaluateAdaptiveRules({
         ruleId: "AR-02",
         confidence: "high",
         userMessage: `이번 주 인터뷰 쿼터 미달 (${interviews}/${quota}).`,
-        nextAction: "BIP radar 후보 3명 제시 + DM 초안",
+        nextAction: "ready BIP research cache 후보 또는 수동 고객 1명으로 인터뷰 요청",
         progression: "allow",
         ohEscalation: interviews < quota * 0.5 ? "scheduled" : "none",
         signals: { weekNumber: week, weeklyInterviewStrongCount: interviews, quota },
