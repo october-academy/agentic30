@@ -2103,7 +2103,7 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
       const failedState = setIddSetupError(nextState, {
         provider,
         docType: DAY1_HANDOFF_DOC_TYPES[0],
-        message: `Office Hours 문서 judge가 ${judgeResult?.score ?? 0}/10으로 저장을 보류했습니다. 기준은 ${OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE}/10입니다.`,
+        message: `Office Hours 문서 judge가 ${judgeResult?.score ?? 0}/10으로 문서 리뷰를 보류했습니다. 기준은 ${OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE}/10입니다.`,
       });
       return {
         state: failedState,

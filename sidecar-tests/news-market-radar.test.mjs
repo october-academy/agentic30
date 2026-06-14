@@ -134,6 +134,7 @@ test("Exa MCP config is BYOK and redacts diagnostics by construction", () => {
   const config = buildExaMcpConfig("exa_test_key");
   assert.equal(config.type, "http");
   assert.match(config.url, /mcp\.exa\.ai/);
+  assert.match(config.url, /web_search_exa/);
   assert.match(config.url, /web_search_advanced_exa/);
   assert.match(config.url, /web_fetch_exa/);
   assert.deepEqual(Object.keys(config.headers), ["x-api-key"]);
@@ -771,7 +772,7 @@ test("refresh persists provider result and missing Exa route returns stale cache
       }),
     });
     assert.equal(snapshot.status.state, "ready");
-    assert.equal(snapshot.status.researchSource, "EXA_API_KEY fallback");
+    assert.equal(snapshot.status.researchSource, "Exa Search (EXA_API_KEY)");
     assert.equal(snapshot.lanes.find((lane) => lane.id === "icp").cards.length, 1);
     const stat = await fs.stat(resolveNewsMarketRadarCachePath(root));
     assert.equal(stat.mode & 0o777, 0o600);
@@ -838,6 +839,7 @@ test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async 
 
     assert.equal(observedRoute.exaApiKeyConfigured, false);
     assert.match(observedRoute.exaMcpConfig.url, /web_search_advanced_exa/);
+    assert.match(observedRoute.exaMcpConfig.url, /web_search_exa/);
     assert.match(observedRoute.exaMcpConfig.url, /web_fetch_exa/);
     assert.equal(observedRoute.exaResearchRoute.label, "Codex Exa MCP");
     assert.equal(snapshot.status.state, "ready");

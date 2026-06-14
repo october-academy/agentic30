@@ -625,6 +625,36 @@ function kpiNumber(drilldown, label) {
   return Number.isFinite(number) ? Math.max(0, Math.round(number)) : null;
 }
 
+export function posthogSourceSignalFromDrilldown(drilldown, existing = {}) {
+  if (!drilldown || drilldown.id !== "posthog") return null;
+  const activeUsers = kpiNumber(drilldown, "활성 사용자");
+  if (activeUsers === null) return null;
+  const events = kpiNumber(drilldown, "이벤트") ?? 0;
+  const signups = kpiNumber(drilldown, "신규(첫 핵심 행동)") ?? 0;
+  return {
+    ...existing,
+    id: "posthog",
+    label: existing.label || "PostHog",
+    state: "ready",
+    available: true,
+    detail: "PostHog Query API direct aggregation succeeded",
+    counts: {
+      activeUsers,
+      events,
+      signups,
+    },
+    highlights: [
+      `PostHog 활성 사용자 ${activeUsers}명 · 이벤트 ${events}건`,
+      ...(signups ? [`첫 핵심 행동 ${signups}명`] : []),
+      ...(Array.isArray(existing.highlights) ? existing.highlights : []),
+    ].slice(0, 6),
+    summary: `PostHog 활성 사용자 ${activeUsers}명`,
+    goalSignals: Array.isArray(existing.goalSignals) ? existing.goalSignals : [],
+    evidenceGaps: Array.isArray(existing.evidenceGaps) ? existing.evidenceGaps : [],
+    events: Array.isArray(existing.events) ? existing.events : [],
+  };
+}
+
 export function cloudflareSourceSignalFromDrilldown(drilldown, existing = {}) {
   if (!drilldown || drilldown.id !== "cloudflare") return null;
   const uniqueVisitors = kpiNumber(drilldown, "순 방문");

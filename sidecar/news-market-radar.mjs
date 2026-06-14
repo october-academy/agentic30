@@ -28,6 +28,7 @@ export const NEWS_MARKET_RADAR_LANE_CONCURRENCY = 2;
 export const NEWS_MARKET_RADAR_MAX_CARDS_PER_LANE = 4;
 export const NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
 export const NEWS_MARKET_RADAR_EXA_MCP_TOOLS = Object.freeze([
+  "web_search_exa",
   "web_search_advanced_exa",
   "web_fetch_exa",
 ]);
@@ -2343,7 +2344,7 @@ function normalizeExaResearchRoutes({
   return [{
     provider: "",
     source: "api_key",
-    label: "EXA_API_KEY fallback",
+    label: "Exa Search (EXA_API_KEY)",
     mcpConfig: buildExaMcpConfig(key),
   }];
 }

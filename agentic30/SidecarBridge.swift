@@ -2,6 +2,9 @@ import Darwin
 import Foundation
 
 enum LocalDevelopmentDayFastForward {
+    static let productionMaxOpenDesignDay = 2
+    static let localDevelopmentMaxOpenDesignDay = 30
+
     static var isEnabled: Bool {
         #if DEBUG
         ProcessInfo.processInfo.environment["AGENTIC30_DISABLE_LOCAL_DEV_FAST_DAYS"] != "1"
@@ -11,11 +14,16 @@ enum LocalDevelopmentDayFastForward {
     }
 
     static func supportsOpenDesignDay(_ day: Int) -> Bool {
-        day == 1 || day == 2 || (isEnabled && day == 3)
+        guard day >= 1 else { return false }
+        return day <= maxUnlockedOpenDesignDay
     }
 
     static var maxUnlockedOpenDesignDay: Int {
-        isEnabled ? 3 : 2
+        isEnabled ? localDevelopmentMaxOpenDesignDay : productionMaxOpenDesignDay
+    }
+
+    static func isFastForwardOfficeHoursDay(_ day: Int) -> Bool {
+        isEnabled && (2...localDevelopmentMaxOpenDesignDay).contains(day)
     }
 }
 

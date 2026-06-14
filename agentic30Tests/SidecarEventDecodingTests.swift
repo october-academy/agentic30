@@ -853,6 +853,7 @@ struct SidecarEventDecodingTests {
             "posthog": { "state": "failed", "detail": "PostHog API 검증 실패 (HTTP 401)" },
             "cloudflare": { "state": "missing", "detail": "API 토큰을 저장하면 활성화돼요." },
             "vercel": { "state": "oauth", "detail": "MCP는 OAuth로 동작" },
+            "exa": { "state": "ready", "detail": "Exa MCP route configured" },
             "checkedAt": "2026-06-10T09:00:00.000Z"
           }
         }
@@ -868,7 +869,54 @@ struct SidecarEventDecodingTests {
         #expect(status.posthog?.isReady == false)
         #expect(status.cloudflare?.isMissing == true)
         #expect(status.vercel?.isOauthDelegated == true)
+        #expect(status.exa?.isReady == true)
         #expect(status.checkedAt == "2026-06-10T09:00:00.000Z")
+    }
+
+    @MainActor @Test func decodesExaMcpConnectResultPayload() throws {
+        let payload = """
+        {
+          "type": "exa_mcp_connect_result",
+          "exaMcpConnect": {
+            "provider": "cursor",
+            "state": "ready",
+            "detail": "Cursor Exa MCP config saved.",
+            "changed": true,
+            "configPath": "/Users/test/.cursor/mcp.json",
+            "backupPath": null,
+            "validationTool": "web_search_exa",
+            "checkedAt": "2026-06-14T00:00:00.000Z",
+            "route": {
+              "provider": "cursor",
+              "source": "api_key",
+              "label": "Exa Search (EXA_API_KEY)",
+              "serverName": "exa",
+              "configPath": null,
+              "transport": "http",
+              "urlHost": "mcp.exa.ai",
+              "command": "",
+              "hasHeaders": true,
+              "hasEnv": false
+            }
+          },
+          "integrationStatus": {
+            "exa": { "state": "ready", "detail": "Exa MCP route configured" },
+            "checkedAt": "2026-06-14T00:00:00.000Z"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "exa_mcp_connect_result")
+        let result = try #require(event.exaMcpConnect)
+        #expect(result.provider == "cursor")
+        #expect(result.isReady == true)
+        #expect(result.changed == true)
+        #expect(result.validationTool == "web_search_exa")
+        #expect(result.route?.urlHost == "mcp.exa.ai")
+        #expect(result.route?.hasHeaders == true)
+        #expect(event.integrationStatus?.exa?.isReady == true)
     }
 
     @MainActor @Test func decodesMcpOauthConnectResultPayload() throws {
@@ -1079,6 +1127,82 @@ struct SidecarEventDecodingTests {
         #expect(event.type == "morning_briefing_status")
         #expect(event.morningBriefing == nil)
         #expect(event.morningBriefingStatus?.state == "collecting")
+    }
+
+    @MainActor @Test func morningBriefingResultTopLevelFailureMarksStaleBriefingFailed() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        let collectingPayload = """
+        {
+          "type": "morning_briefing_status",
+          "status": { "state": "collecting", "reason": "manual" }
+        }
+        """
+        let failedPayload = """
+        {
+          "type": "morning_briefing_result",
+          "status": { "state": "failed", "detail": "브리핑 수집 실패 - 이전 브리핑 표시 중" },
+          "morningBriefing": {
+            "schemaVersion": 2,
+            "generatedAt": "2026-06-14T10:21:41.391Z",
+            "day": 1,
+            "totalDays": 30,
+            "summary": { "title": "old ready briefing" },
+            "sync": {
+              "readyCount": 1,
+              "syncedAt": "2026-06-14T10:21:41.391Z",
+              "syncedAtLabel": "19:21"
+            },
+            "status": { "state": "ready", "detail": "old success" }
+          }
+        }
+        """
+
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(collectingPayload.utf8)))
+        #expect(viewModel.morningBriefingCollecting)
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(failedPayload.utf8))
+        #expect(event.morningBriefingStatus?.state == "failed")
+        viewModel.applySidecarEventForTesting(event)
+
+        #expect(viewModel.morningBriefingCollecting == false)
+        #expect(viewModel.morningBriefing?.status?.state == "failed")
+        #expect(viewModel.morningBriefing?.status?.detail == "브리핑 수집 실패 - 이전 브리핑 표시 중")
+        #expect(viewModel.morningBriefing?.sync?.syncedAtLabel == "19:21")
+    }
+
+    @MainActor @Test func morningBriefingFailedStatusMarksExistingBriefingStale() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        let readyPayload = """
+        {
+          "type": "morning_briefing_result",
+          "morningBriefing": {
+            "schemaVersion": 2,
+            "generatedAt": "2026-06-14T10:21:41.391Z",
+            "day": 1,
+            "totalDays": 30,
+            "summary": { "title": "old ready briefing" },
+            "sync": {
+              "readyCount": 1,
+              "syncedAt": "2026-06-14T10:21:41.391Z",
+              "syncedAtLabel": "19:21"
+            },
+            "status": { "state": "ready", "detail": "old success" }
+          }
+        }
+        """
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(readyPayload.utf8)))
+
+        let failedPayload = """
+        {
+          "type": "morning_briefing_status",
+          "status": { "state": "failed", "detail": "새 스냅샷을 만들지 못했습니다." }
+        }
+        """
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(failedPayload.utf8)))
+
+        #expect(viewModel.morningBriefingCollecting == false)
+        #expect(viewModel.morningBriefing?.status?.state == "failed")
+        #expect(viewModel.morningBriefing?.status?.detail == "새 스냅샷을 만들지 못했습니다.")
     }
 
     @MainActor @Test func decodesMorningBriefingProgressPayload() throws {

@@ -48,6 +48,7 @@ import {
 } from "./daily-office-hours-digest.mjs";
 import {
   applyMorningBriefingLiveSync,
+  appendMorningBriefingRunLog,
   buildMorningBriefing,
   labelMorningBriefingAnomaly,
   loadMorningBriefingStore,
@@ -67,6 +68,7 @@ import {
   collectCloudflareDirectDrilldown,
   collectPosthogDirectDrilldown,
   mergeMorningBriefingDrilldownMaps,
+  posthogSourceSignalFromDrilldown,
 } from "./morning-briefing-direct-sources.mjs";
 import {
   collectIntegrationStatus,
@@ -341,7 +343,10 @@ import {
   formatOfficeHoursDayClosePolicyForPrompt,
 } from "./office-hours-redesign-policy.mjs";
 import {
+  assureCodexExaMcpConfig,
+  connectExaMcpWithApiKey,
   discoverExaMcpRoutes,
+  normalizeExaMcpProvider,
   redactExaResearchRoute,
   resolveExaResearchRoutes,
 } from "./exa-mcp-discovery.mjs";
@@ -1747,6 +1752,10 @@ async function handleClientMessage(socket, payload) {
       // answering so the transcript entry can carry rubric-dimension lineage
       // for the next follow-up's dimension-transition stamp (F6).
       const answeredGeneration = pendingUserInput?.generation || null;
+      const answeredGenerationMode = String(answeredGeneration?.mode || "").trim().toLowerCase();
+      const answeredGenerationDocType = String(answeredGeneration?.docType || "").trim().toLowerCase();
+      const isDay1DocHandoffJudgeResponse = answeredGenerationMode === "office_hours"
+        && answeredGenerationDocType === "day1_doc_handoff_judge";
       const answeredSignalId = answeredGeneration?.signalId ? String(answeredGeneration.signalId) : null;
       const answeredSignalLabel = answeredGeneration?.signalLabel ? String(answeredGeneration.signalLabel) : null;
       const isOfficeHoursStructuredInputResponse = isOfficeHoursStructuredInputMode(
@@ -1758,8 +1767,8 @@ async function handleClientMessage(socket, payload) {
       broadcastIddSubmitProgress("accepted", "답변 저장됨");
       if (userResponseText) {
         markWorkspaceSetupFirstInput("structured_input");
-    }
-      if (userResponseText) {
+      }
+      if (userResponseText && !isDay1DocHandoffJudgeResponse) {
         if (isOfficeHoursStructuredInputResponse
             && shouldAppendOfficeHoursStructuredQuestionMessage(
               session.messages,
@@ -1782,7 +1791,7 @@ async function handleClientMessage(socket, payload) {
             state: "final",
           }),
         );
-    }
+      }
       const hasActiveRun = state.activeRuns.has(session.id);
       const hasNonBlockingOfficeHoursCardRun = hasActiveRun
         && isCodexOfficeHoursNonBlockingPendingInput(session, pendingUserInput);
@@ -1800,7 +1809,8 @@ async function handleClientMessage(socket, payload) {
         // runtime (broadcast to the Mac client, which gates the commitment
         // bar on it) so the incomplete-interview detector and the UI both
         // treat this as a conclusion, not an early stop.
-        const officeHoursTerminalAnswered = isOfficeHoursTerminalAlternativesRequest(pendingUserInput);
+        const officeHoursTerminalAnswered = !isDay1DocHandoffJudgeResponse
+          && isOfficeHoursTerminalAlternativesRequest(pendingUserInput);
         if (officeHoursTerminalAnswered && session.runtime?.officeHours) {
           session.runtime.officeHours.terminalAnswered = true;
         }
@@ -1847,10 +1857,12 @@ async function handleClientMessage(socket, payload) {
             day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day) || 0,
           });
         });
-        officeHoursProgressAfterAnswer = await getOfficeHoursQuestionProgress(session, {
-          currentRequestId: requestId,
-        });
-        stampOfficeHoursExpectedCountCompletion(session, officeHoursProgressAfterAnswer);
+        if (!isDay1DocHandoffJudgeResponse) {
+          officeHoursProgressAfterAnswer = await getOfficeHoursQuestionProgress(session, {
+            currentRequestId: requestId,
+          });
+          stampOfficeHoursExpectedCountCompletion(session, officeHoursProgressAfterAnswer);
+        }
       }
       await writeUserInputResponse(appSupportPath, {
         sessionId: session.id,
@@ -1872,6 +1884,53 @@ async function handleClientMessage(socket, payload) {
         await abortActiveOfficeHoursRunAtQuestionCap(session);
       }
       touch(session);
+
+      if (isDay1DocHandoffJudgeResponse) {
+        const retryHandoff = normalizeDay1HandoffPayload(session.runtime?.day1Handoff || {});
+        session.runtime = {
+          ...(session.runtime || {}),
+          day1Handoff: retryHandoff,
+          iddMode: null,
+          pendingIddContinuation: null,
+          iddPendingAdaptiveContinuation: null,
+        };
+        session.status = "running";
+        session.error = null;
+        touch(session);
+        await persistSessions();
+        broadcast({ type: "session_updated", session });
+        broadcastIddSubmitProgress(
+          "review_retry",
+          "보완 답변을 반영해 문서 리뷰를 다시 실행 중",
+          "all",
+        );
+        try {
+          await writeAllDay1DocHandoff({
+            sessionId: session.id,
+            provider: session.provider,
+            day1Handoff: retryHandoff,
+          });
+        } catch (error) {
+          const message = `문서 리뷰를 다시 실행하지 못했습니다: ${formatError(error)}`;
+          session.status = "idle";
+          session.error = message;
+          touch(session);
+          await persistSessions();
+          broadcast({ type: "session_updated", session });
+          broadcast({
+            type: "error",
+            sessionId: session.id,
+            message,
+            recoverable: true,
+          });
+          telemetry.captureException(error, {
+            operation: "day1_doc_handoff_review_retry",
+            session_id: session.id,
+            provider: session.provider,
+          });
+        }
+        return;
+      }
 
       if (iddContinuationDocType) {
         const completedDoc = IDD_FOUNDATION_DOCS.find((doc) => doc.type === iddContinuationDocType)
@@ -1903,7 +1962,7 @@ async function handleClientMessage(socket, payload) {
               iddMode: "day1_handoff",
               day1HandoffFollowupCount: followupCount + 1,
             };
-            broadcastIddSubmitProgress("routing_followup", "문서 저장 전 빠진 근거를 한 번 더 묻는 중", completedDoc.type);
+            broadcastIddSubmitProgress("routing_followup", "문서 리뷰 전 빠진 근거를 한 번 더 묻는 중", completedDoc.type);
             await createHostIddQuestionRequest(session, completedDoc, {
               previousRequestId: requestId,
               progressText: "Day 1 문서 보완 질문 준비 완료",
@@ -1930,11 +1989,11 @@ async function handleClientMessage(socket, payload) {
           // Fail closed: a build failure (null) or missing hard evidence both
           // block the save, matching the bulk write_all path's safety bar.
           if (!perDocEvidence || !officeHoursEvidenceHasHardEvidence(perDocEvidence)) {
-            broadcastIddSubmitProgress("blocked", "하드 증거가 없어 단일 문서 저장을 보류", completedDoc.type);
+            broadcastIddSubmitProgress("blocked", "하드 증거가 없어 단일 문서 리뷰를 보류", completedDoc.type);
             session.messages.push(makeMessage({
               role: "assistant",
               provider: session.provider,
-              content: `${completedDoc.title} 저장을 보류했습니다. 결제·계약·완료 행동 같은 하드 증거가 evidence에 있어야 정식 문서로 승격됩니다.`,
+              content: `${completedDoc.title} 리뷰를 보류했습니다. 결제·계약·완료 행동 같은 하드 증거가 evidence에 있어야 정식 문서로 승격됩니다.`,
               state: "final",
             }));
             session.status = "idle";
@@ -2518,12 +2577,15 @@ async function handleClientMessage(socket, payload) {
     }
     case "integration_status_check": {
       // Settings > 연동 "상태 확인": live-verify gh CLI/GitHub MCP, PostHog key,
-      // and Cloudflare token against the real services.
+      // Cloudflare token, and Exa MCP route availability.
       // MCP OAuth 배지는 프로바이더 토큰 캐시 단위 — 현재 선택한 프로바이더
       // 기준으로 판정한다(claude/codex 외 선택은 가용 프로바이더로 폴백).
+      const provider = resolveIntegrationStatusProvider(payload.preferredProvider);
       const integrationStatus = await collectIntegrationStatus({
         appSupportPath,
-        provider: resolveIntegrationStatusProvider(payload.preferredProvider),
+        exaApiKey: currentExaApiKey(),
+        exaProvider: normalizeExaMcpProvider(payload.preferredProvider),
+        provider,
       });
       state.integrationStatusSnapshot = integrationStatus;
       send(socket, { type: "integration_status_result", integrationStatus });
@@ -2533,6 +2595,73 @@ async function handleClientMessage(socket, payload) {
         posthog: integrationStatus.posthog?.state || "",
         cloudflare: integrationStatus.cloudflare?.state || "",
         vercel: integrationStatus.vercel?.state || "",
+        exa: integrationStatus.exa?.state || "",
+      });
+      reportIntegrationStatusFailures(integrationStatus);
+      return;
+    }
+    case "exa_mcp_connect_validate": {
+      const provider = normalizeExaMcpProvider(payload.preferredProvider) || "codex";
+      const result = await connectExaMcpWithApiKey({
+        apiKey: payload.apiKey,
+        provider,
+      });
+      const integrationStatus = await collectIntegrationStatus({
+        appSupportPath,
+        exaApiKey: result.state === "ready" ? payload.apiKey : currentExaApiKey(),
+        exaProvider: provider,
+        provider: resolveIntegrationStatusProvider(payload.preferredProvider),
+      });
+      if (result.state !== "ready") {
+        integrationStatus.exa = {
+          state: result.state,
+          detail: result.detail,
+          ...(result.route ? { route: result.route } : {}),
+        };
+      }
+      state.integrationStatusSnapshot = integrationStatus;
+      send(socket, {
+        type: "exa_mcp_connect_result",
+        exaMcpConnect: result,
+        integrationStatus,
+      });
+      telemetry.captureEvent("mac_sidecar_exa_mcp_connect_validate", {
+        state: result.state || "",
+        changed: result.changed === true,
+        has_backup: Boolean(result.backupPath),
+        provider,
+        validation_tool: result.validationTool || "",
+        exa: integrationStatus.exa?.state || "",
+      });
+      reportIntegrationStatusFailures(integrationStatus);
+      return;
+    }
+    case "exa_codex_mcp_config_assure": {
+      const provider = resolveIntegrationStatusProvider(payload.preferredProvider);
+      const exaCodexConfig = assureCodexExaMcpConfig({
+        apiKey: currentExaApiKey(),
+      });
+      const integrationStatus = await collectIntegrationStatus({
+        appSupportPath,
+        exaApiKey: currentExaApiKey(),
+        exaProvider: "codex",
+        provider,
+      });
+      if (["failed", "missing"].includes(String(exaCodexConfig.state || ""))) {
+        integrationStatus.exa = {
+          state: exaCodexConfig.state,
+          detail: exaCodexConfig.detail,
+          ...(exaCodexConfig.route ? { route: exaCodexConfig.route } : {}),
+        };
+      }
+      state.integrationStatusSnapshot = integrationStatus;
+      send(socket, { type: "integration_status_result", integrationStatus });
+      telemetry.captureEvent("mac_sidecar_exa_codex_mcp_config_assure", {
+        state: exaCodexConfig.state || "",
+        changed: exaCodexConfig.changed === true,
+        has_backup: Boolean(exaCodexConfig.backupPath),
+        provider,
+        exa: integrationStatus.exa?.state || "",
       });
       reportIntegrationStatusFailures(integrationStatus);
       return;
@@ -3714,6 +3843,10 @@ function bandRevenueAmount(amount) {
   return "gte_1m";
 }
 
+function localDevFastDaysEnabled(env = process.env) {
+  return String(env?.AGENTIC30_LOCAL_DEV_FAST_DAYS || "").trim() === "1";
+}
+
 async function handleDayProgressPatch(socket, payload = {}) {
   const root = resolveDay1GoalWorkspaceRoot(payload);
   const stepId = payload.stepId ?? payload.step ?? payload.step_id;
@@ -3729,6 +3862,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
   const predictionText = payload.predictionText ?? payload.prediction_text;
   const predictionVerdict = payload.predictionVerdict ?? payload.prediction_verdict;
   try {
+    const localDevFastDays = localDevFastDaysEnabled();
     // Interview/first_interview completion gate (founder decision: block-once-then-
     // confession). The single anti-displacement chokepoint identified by the
     // first_interview-evidence-gate trace.
@@ -3789,6 +3923,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
     if (
       gate.mode === "commit"
       && !pendingIntervention
+      && !localDevFastDays
       && await isNewCommitmentBlockedByAr17({ workspaceRoot: root })
     ) {
       const current = await loadDayProgress({ workspaceRoot: root });
@@ -3843,7 +3978,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
     const gateTargetDay = Number.parseInt(day, 10) || null;
     let gateCheck = null;
     let gateLedgerAfterSubstitution = null;
-    if (gateTargetDay && gate.mode !== "confess") {
+    if (gateTargetDay && gate.mode !== "confess" && !localDevFastDays) {
       // G4② input (spec §15.4/§21): latest persisted first_value snapshot plus
       // PostHog source availability — both local reads, no network on this path.
       gateCheck = await evaluateDayProgressPatchGate({
@@ -5864,6 +5999,105 @@ function evaluateMorningBriefingSourceGate({ day = 2, preferredProvider = "" } =
   });
 }
 
+function formatMorningBriefingRunError(error) {
+  return formatError(error).replace(/\s+/g, " ").trim().slice(0, 220);
+}
+
+function createMorningBriefingRunLogger({ reason = "manual", force = false } = {}) {
+  const runId = randomUUID();
+  async function record(stage, outcome, fields = {}) {
+    try {
+      await appendMorningBriefingRunLog({
+        workspaceRoot,
+        runId,
+        record: {
+          stage,
+          outcome,
+          reason,
+          force,
+          ...fields,
+        },
+      });
+    } catch (error) {
+      telemetry.captureException(error, { operation: "morning_briefing_run_log", stage });
+    }
+  }
+  return { runId, record };
+}
+
+function morningBriefingFailedSourceFromGate(gate, id, detail) {
+  const source = (gate?.sources || []).find((entry) => entry.id === id) || {};
+  return {
+    ...source,
+    id,
+    label: source.label || (id === "gh_cli" ? "gh CLI" : id),
+    state: "failed",
+    selected: Boolean(source.selected),
+    required: false,
+    detail,
+    counts: {},
+    highlights: [],
+    summary: detail,
+    goalSignals: [],
+    evidenceGaps: [detail],
+    events: [],
+  };
+}
+
+function fallbackMorningBriefingGate(detail = "") {
+  const until = new Date();
+  const start = new Date(until.getTime() - 24 * 60 * 60 * 1000);
+  const source = (id, label) => ({
+    id,
+    label,
+    state: "ready",
+    selected: true,
+    required: false,
+    detail: "fallback local collection after source gate failure",
+  });
+  return {
+    ok: true,
+    blocking: false,
+    selectedSources: ["git", "gh_cli"],
+    sources: [
+      source("git", "git"),
+      source("gh_cli", "gh CLI"),
+      { id: "posthog", label: "PostHog", state: "failed", selected: false, required: false, detail },
+      { id: "cloudflare", label: "Cloudflare", state: "failed", selected: false, required: false, detail },
+    ],
+    window: {
+      startMs: start.getTime(),
+      untilMs: until.getTime(),
+      startIso: start.toISOString(),
+      untilIso: until.toISOString(),
+      label: `${start.toISOString().slice(0, 16)} -> ${until.toISOString().slice(0, 16)}`,
+    },
+  };
+}
+
+async function collectMorningBriefingStage({ runLog, stage, fields = {}, fn, fallback }) {
+  const startedAt = Date.now();
+  await runLog.record(stage, "started", fields);
+  try {
+    const value = await fn();
+    await runLog.record(stage, "completed", {
+      ...fields,
+      durationMs: Date.now() - startedAt,
+    });
+    return value;
+  } catch (error) {
+    const detail = formatMorningBriefingRunError(error);
+    await runLog.record(stage, "failed", {
+      ...fields,
+      durationMs: Date.now() - startedAt,
+      error: detail,
+    });
+    telemetry.captureException(error, { operation: `morning_briefing_${stage}` });
+    if (fallback === undefined) throw error;
+    return typeof fallback === "function" ? fallback(error, detail) : fallback;
+  }
+}
+
 // 브리핑 서빙 직전 연결 상태 라이브 오버레이. 디스크 스냅샷의 sync.sources는
 // 생성 시점 연결 상태라, 이후 Settings의 MCP OAuth 연결/해제·프로바이더 전환을
 // 모른다(설정 "MCP 연결됨" vs 브리핑 "미연결" 모순의 근본 원인). 연결 상태의
@@ -5908,13 +6142,24 @@ function scheduleMorningBriefingRefresh({
 
 async function runMorningBriefingRefresh({ reason = "manual", force = false, preferredProvider = "" } = {}) {
   const startedAt = Date.now();
-  broadcast({ type: "morning_briefing_status", status: { state: "collecting", reason } });
+  const runLog = createMorningBriefingRunLogger({ reason, force });
+  await runLog.record("refresh", "started", { preferredProvider });
+  broadcast({ type: "morning_briefing_status", status: { state: "collecting", reason, runId: runLog.runId } });
   try {
-    const store = await loadMorningBriefingStore({ workspaceRoot });
+    const store = await collectMorningBriefingStage({
+      runLog,
+      stage: "load_store",
+      fn: () => loadMorningBriefingStore({ workspaceRoot }),
+      fallback: () => ({ current: null, previous: null, history: [] }),
+    });
     // A persisted "locked" briefing predates Day-1 support — never serve it from
     // the same-date cache; fall through and collect a real one.
     const cachedIsLocked = store.current?.status?.state === "locked";
     if (!force && !cachedIsLocked && store.current && isSameLocalDate(store.current.generatedAt, new Date())) {
+      await runLog.record("cache", "served", {
+        generatedAt: store.current.generatedAt,
+        syncedAt: store.current.sync?.syncedAt,
+      });
       await emitMorningBriefingWithLiveSync({
         briefing: store.current,
         previous: store.previous,
@@ -5928,16 +6173,26 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
       return store.current;
     }
 
-    const day = await challengeElapsedOfficeHoursDay();
+    const day = await collectMorningBriefingStage({
+      runLog,
+      stage: "day_progress",
+      fn: () => challengeElapsedOfficeHoursDay(),
+      fallback: null,
+    });
     // Day 1 gets a real briefing from git/gh CLI (plus PostHog/Cloudflare when
     // already connected). The gate probe is clamped to >= 2 because the Office
     // Hours gate short-circuits Day 1 (fixed interview) with zero sources —
     // the briefing must still probe what is actually connected.
     // 게이트의 MCP OAuth 판정은 브리핑을 실제로 실행할 프로바이더 기준이어야
     // 한다 — collectMorningBriefingExternalSignals의 primary와 같은 계산.
-    const probeGate = await evaluateMorningBriefingSourceGate({
-      day: Math.max(2, Number.isFinite(day) ? day : 2),
-      preferredProvider,
+    const probeGate = await collectMorningBriefingStage({
+      runLog,
+      stage: "source_gate",
+      fn: () => evaluateMorningBriefingSourceGate({
+        day: Math.max(2, Number.isFinite(day) ? day : 2),
+        preferredProvider,
+      }),
+      fallback: (_error, detail) => fallbackMorningBriefingGate(detail),
     });
     const readySources = (probeGate.sources || [])
       .filter((source) => source.state === "ready")
@@ -5956,6 +6211,10 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
         required: false,
       })),
     };
+    await runLog.record("source_gate", "selected", {
+      selectedSources: gate.selectedSources,
+      readySources,
+    });
 
     // 카드별 라이브 진행: 수집이 분 단위로 걸리는 동안 각 카드에 스피너와
     // 에이전트 로그를 스트리밍한다. ready인 카드만 begin — 미연결 카드에
@@ -5969,18 +6228,47 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     if (readySources.includes("cloudflare")) progress.begin("cloudflare", "Cloudflare MCP digest 수집 중");
     if (readySources.includes("posthog")) progress.begin("posthog", "PostHog MCP digest 수집 중");
 
-    const localSignals = await collectLocalDailyOfficeHoursSignals({ workspaceRoot, gate });
-    if (githubTracked) progress.log("github", "git 커밋 · gh CLI 신호 집계 완료");
-    const external = await collectMorningBriefingExternalSignals({ gate, preferredProvider, progress });
+    const localSignals = await collectMorningBriefingStage({
+      runLog,
+      stage: "local_git_gh",
+      fields: { sources: ["git", "gh_cli"] },
+      fn: () => collectLocalDailyOfficeHoursSignals({ workspaceRoot, gate }),
+      fallback: (_error, detail) => ["git", "gh_cli"].map((id) =>
+        morningBriefingFailedSourceFromGate(gate, id, detail),
+      ),
+    });
+    if (githubTracked) {
+      const githubReady = localSignals.some((source) => source.state === "ready");
+      if (githubReady) {
+        progress.log("github", "git 커밋 · gh CLI 신호 집계 완료");
+      } else {
+        progress.finish("github", { state: "failed", detail: "git · gh CLI 신호 수집 실패" });
+      }
+    }
+    const externalSourceIds = selectedExternalOfficeHoursSources(gate);
+    const external = await collectMorningBriefingStage({
+      runLog,
+      stage: "external_digest",
+      fields: { sources: externalSourceIds },
+      fn: () => collectMorningBriefingExternalSignals({ gate, preferredProvider, progress }),
+      fallback: (_error, detail) => ({
+        sources: externalSourceIds.map((id) => morningBriefingFailedSourceFromGate(gate, id, detail)),
+        drilldowns: {},
+      }),
+    });
     // §15.4: 활성 사용자 스냅샷은 브리핑 수집 사이클에 편승한다(일 1회 — 같은
     // 날짜 스냅샷은 모듈이 교체). 미연동/실패는 아무것도 기록하지 않는다
     // (fail-closed — G4②는 §21 provisional 경로로 처리). 브리핑을 막지 않는다.
+    await runLog.record("active_user_snapshot", "scheduled");
     void collectActiveUserSnapshot({
       workspaceRoot,
       day: Number.isFinite(day) ? day : null,
       env: process.env,
       appSupportPath,
     }).then((result) => {
+      void runLog.record("active_user_snapshot", result.status === "ok" ? "completed" : "skipped", {
+        status: result.status,
+      });
       if (result.status === "ok") {
         telemetry.captureEvent("mac_sidecar_active_user_snapshot", {
           active_user_count: result.snapshot.activeUserCount,
@@ -5988,43 +6276,75 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
         });
       }
     }).catch((error) => {
+      void runLog.record("active_user_snapshot", "failed", { error: formatMorningBriefingRunError(error) });
       telemetry.captureException(error, { operation: "active_user_snapshot" });
     });
     const [cloudflareDirect, posthogDirect] = await Promise.all([
       readySources.includes("cloudflare")
-        ? collectCloudflareDirectDrilldown({ window: gate.window, appSupportPath }).catch((error) => {
-            telemetry.captureException(error, { operation: "morning_briefing_cloudflare_direct" });
-            return null;
+        ? collectMorningBriefingStage({
+            runLog,
+            stage: "cloudflare_direct",
+            fields: { source: "cloudflare" },
+            fn: () => collectCloudflareDirectDrilldown({ window: gate.window, appSupportPath }),
+            fallback: null,
           })
         : Promise.resolve(null),
       readySources.includes("posthog")
-        ? collectPosthogDirectDrilldown({ window: gate.window, appSupportPath }).catch((error) => {
-            telemetry.captureException(error, { operation: "morning_briefing_posthog_direct" });
-            return buildPosthogCollectionFailureDrilldown({ reason: error?.message, window: gate.window });
+        ? collectMorningBriefingStage({
+            runLog,
+            stage: "posthog_direct",
+            fields: { source: "posthog" },
+            fn: () => collectPosthogDirectDrilldown({ window: gate.window, appSupportPath }),
+            fallback: (error) => buildPosthogCollectionFailureDrilldown({ reason: error?.message, window: gate.window }),
           })
         : Promise.resolve(null),
     ]);
     const cloudflareDirectSource = cloudflareSourceSignalFromDrilldown(
       cloudflareDirect,
-      external.sources.find((source) => source.id === "cloudflare") || {},
+      (external.sources || []).find((source) => source.id === "cloudflare") || {},
     );
-    const externalSourcesForDigest = cloudflareDirectSource
-      ? external.sources.map((source) => source.id === "cloudflare"
-          ? {
-              ...source,
-              ...cloudflareDirectSource,
-              selected: source.selected,
-              required: source.required,
-              checkedAt: source.checkedAt,
-            }
-          : source)
-      : external.sources;
-    const digest = finalizeDailyOfficeHoursDigest({
-      gate,
-      localSignals,
-      externalSignals: externalSourcesForDigest,
-      context: "",
+    const posthogDirectSource = posthogSourceSignalFromDrilldown(
+      posthogDirect,
+      (external.sources || []).find((source) => source.id === "posthog") || {},
+    );
+    let externalSourcesForDigest = Array.isArray(external.sources) ? external.sources : [];
+    for (const directSource of [cloudflareDirectSource, posthogDirectSource].filter(Boolean)) {
+      let matched = false;
+      externalSourcesForDigest = externalSourcesForDigest.map((source) => {
+        if (source.id !== directSource.id) return source;
+        matched = true;
+        return {
+          ...source,
+          ...directSource,
+          selected: source.selected,
+          required: source.required,
+          checkedAt: source.checkedAt,
+        };
+      });
+      if (!matched) {
+        const gateSource = (gate.sources || []).find((source) => source.id === directSource.id) || {};
+        externalSourcesForDigest.push({
+          ...directSource,
+          selected: Boolean(gateSource.selected ?? true),
+          required: false,
+          checkedAt: gateSource.checkedAt,
+        });
+      }
+    }
+    const digest = await collectMorningBriefingStage({
+      runLog,
+      stage: "finalize_digest",
+      fn: () => finalizeDailyOfficeHoursDigest({
+        gate,
+        localSignals,
+        externalSignals: externalSourcesForDigest,
+        context: "",
+      }),
     });
+    const validSourceCount = (digest.sources || []).filter((source) => source.state === "ready").length;
+    if (validSourceCount === 0 && readySources.length > 0) {
+      throw new Error("Morning briefing refresh produced no readable source data.");
+    }
     const previousMetrics = store.current?.metrics
       || store.history[store.history.length - 1]?.metrics
       || {};
@@ -6033,36 +6353,66 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     // The provider digest's drilldown only fills narrative sections the APIs
     // cannot produce (action drafts, app-specific funnels).
     if (githubTracked) progress.log("github", "GitHub 드릴다운 집계 중");
-    const githubDrilldown = await collectGithubDrilldown({
-      workspaceRoot,
-      window: gate.window,
-      gitSource: localSignals.find((source) => source.id === "git"),
-      ghSource: localSignals.find((source) => source.id === "gh_cli"),
-      previousCommitCount: previousMetrics.github ?? null,
-    }).catch((error) => {
-      telemetry.captureException(error, { operation: "morning_briefing_github_drilldown" });
-      return null;
+    const githubDrilldown = await collectMorningBriefingStage({
+      runLog,
+      stage: "github_drilldown",
+      fields: { source: "github" },
+      fn: () => collectGithubDrilldown({
+        workspaceRoot,
+        window: gate.window,
+        gitSource: localSignals.find((source) => source.id === "git"),
+        ghSource: localSignals.find((source) => source.id === "gh_cli"),
+        previousCommitCount: previousMetrics.github ?? null,
+      }),
+      fallback: null,
     });
     if (githubTracked) progress.finish("github", { detail: "수집 완료" });
-    const briefing = buildMorningBriefing({
-      digest,
-      day,
-      previous: store.current ? { metrics: store.current.metrics } : null,
-      history: store.history,
-      drilldowns: mergeMorningBriefingDrilldownMaps(
-        {
-          ...(githubDrilldown ? { github: githubDrilldown } : {}),
-          ...(cloudflareDirect ? { cloudflare: cloudflareDirect } : {}),
-          ...(posthogDirect ? { posthog: posthogDirect } : {}),
-        },
-        external.drilldowns || {},
-      ),
+    const briefing = await collectMorningBriefingStage({
+      runLog,
+      stage: "build_briefing",
+      fields: { validSourceCount },
+      fn: () => buildMorningBriefing({
+        digest,
+        day,
+        previous: store.current
+          ? {
+              metrics: store.current.metrics,
+              generatedAt: store.current.generatedAt,
+            }
+          : null,
+        history: store.history,
+        drilldowns: mergeMorningBriefingDrilldownMaps(
+          {
+            ...(githubDrilldown ? { github: githubDrilldown } : {}),
+            ...(cloudflareDirect ? { cloudflare: cloudflareDirect } : {}),
+            ...(posthogDirect ? { posthog: posthogDirect } : {}),
+          },
+          external.drilldowns || {},
+        ),
+      }),
     });
-    const persistedStore = await persistMorningBriefing({ workspaceRoot, briefing });
+    const persistedStore = await collectMorningBriefingStage({
+      runLog,
+      stage: "persist",
+      fields: {
+        generatedAt: briefing.generatedAt,
+        syncedAt: briefing.sync?.syncedAt,
+        syncedAtLabel: briefing.sync?.syncedAtLabel,
+      },
+      fn: () => persistMorningBriefing({ workspaceRoot, briefing }),
+    });
     broadcast({
       type: "morning_briefing_result",
       morningBriefing: briefing,
       morningBriefingPrevious: persistedStore.previous,
+    });
+    await runLog.record("refresh", "completed", {
+      durationMs: Date.now() - startedAt,
+      generatedAt: briefing.generatedAt,
+      syncedAt: briefing.sync?.syncedAt,
+      syncedAtLabel: briefing.sync?.syncedAtLabel,
+      readyCount: briefing.sync?.readyCount ?? validSourceCount,
+      status: briefing.status?.state || "",
     });
     telemetry.captureEvent("mac_sidecar_morning_briefing_refresh_completed", {
       reason,
@@ -6076,17 +6426,16 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
   } catch (error) {
     telemetry.captureException(error, { operation: "morning_briefing_refresh", reason });
     state.morningBriefingProgressTracker?.failAll("브리핑 수집이 실패했어요 — 다시 동기화를 눌러 주세요.");
-    const store = await loadMorningBriefingStore({ workspaceRoot });
-    await emitMorningBriefingWithLiveSync({
-      briefing: store.current,
-      preferredProvider,
-      emit: (morningBriefing) => broadcast({
-        type: "morning_briefing_result",
-        morningBriefing,
-        status: { state: "failed", detail: "브리핑 수집에 실패했어요. 다시 동기화를 눌러 주세요." },
-      }),
+    const detail = "브리핑 수집에 실패했어요. 이전 브리핑을 stale 상태로 유지합니다.";
+    await runLog.record("refresh", "failed", {
+      durationMs: Date.now() - startedAt,
+      error: formatMorningBriefingRunError(error),
     });
-    return store.current;
+    broadcast({
+      type: "morning_briefing_status",
+      status: { state: "failed", detail, reason, runId: runLog.runId },
+    });
+    return null;
   }
 }
 
@@ -10713,6 +11062,79 @@ function findExistingDay1HandoffSession(docType) {
   ) || null;
 }
 
+function reusableDay1DocReviewSession(sessionId = "") {
+  const requestedSessionId = String(sessionId || "").trim();
+  if (requestedSessionId && state.sessions.has(requestedSessionId)) {
+    const requestedSession = state.sessions.get(requestedSessionId);
+    return isArchivedSession(requestedSession) ? null : requestedSession;
+  }
+
+  const currentSessionId = state.bipCoach?.sessionId;
+  if (currentSessionId && state.sessions.has(currentSessionId)) {
+    const currentSession = state.sessions.get(currentSessionId);
+    if (!isArchivedSession(currentSession) && !currentSession.pendingUserInput) {
+      return currentSession;
+    }
+  }
+
+  return [...state.sessions.values()]
+    .filter((session) =>
+      !isArchivedSession(session)
+        && !session.pendingUserInput
+        && session.status !== "running"
+        && (
+          normalizeOfficeHoursDay(session.runtime?.officeHours?.day) === 1
+          || session.runtime?.iddMode === "day1_handoff"
+          || session.runtime?.day1Handoff
+        )
+    )
+    .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""))[0]
+    || null;
+}
+
+async function ensureDay1DocReviewSession({
+  sessionId = "",
+  provider = "",
+  handoffSnapshot = {},
+} = {}) {
+  const seed = resolveIddSessionSeed({ sessionId, provider });
+  let session = reusableDay1DocReviewSession(sessionId);
+  const isNewSession = !session;
+  if (!session) {
+    session = createSession({
+      provider: seed.provider,
+      model: seed.model,
+      officeHoursDay: 1,
+      source: "day1_doc_review",
+    });
+  }
+
+  const priorOfficeHours = session.runtime?.officeHours || {};
+  session.title = "Day 1 문서 리뷰";
+  session.runtime = {
+    ...(session.runtime || {}),
+    iddMode: null,
+    pendingIddContinuation: null,
+    iddPendingAdaptiveContinuation: null,
+    iddAdaptiveRegenerationInFlight: false,
+    day1Handoff: handoffSnapshot,
+    officeHours: {
+      ...priorOfficeHours,
+      active: true,
+      source: priorOfficeHours.source || "day1_doc_review",
+      day: normalizeOfficeHoursDay(priorOfficeHours.day) || 1,
+      context: priorOfficeHours.context || "Day 1 문서 리뷰: GOAL/ICP/VALUES/SPEC이 기준 8/10을 넘을 때까지 보완 질문으로 근거를 좁힙니다.",
+    },
+  };
+  session.error = null;
+  touch(session);
+  state.sessions.set(session.id, session);
+  await persistSessions();
+  await syncAndBroadcastBipCoachSessionState({ preferredSessionId: session.id });
+  broadcast({ type: isNewSession ? "session_created" : "session_updated", session });
+  return session;
+}
+
 async function startDay1DocHandoff({
   sessionId = "",
   provider = "",
@@ -10791,6 +11213,77 @@ async function startDay1DocHandoff({
   return session;
 }
 
+function buildDay1HandoffJudgeBlockedStructuredInput(result = {}) {
+  const judge = result?.judgeResult || {};
+  const followUps = Array.isArray(judge.followUpQuestions)
+    ? judge.followUpQuestions.map((question) => cleanShortText(question, 180)).filter(Boolean)
+    : [];
+  const debts = Array.isArray(judge.evidenceDebt)
+    ? judge.evidenceDebt.map((debt) => cleanShortText(debt, 96)).filter(Boolean).slice(0, 3)
+    : [];
+  const score = Number.isFinite(Number(judge.score)) ? Number(judge.score) : 0;
+  const primaryQuestion = followUps[0] || "문서 리뷰 기준을 넘기려면 어떤 증거를 먼저 보완할까요?";
+
+  return {
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: "Office Hours 문서 리뷰 보완",
+    intro: {
+      title: "문서 리뷰 보류",
+      body: `문서 judge 점수는 ${score}/10이고 기준은 8/10입니다. 자유 입력 대신 하나를 골라 다음 리뷰 인터뷰를 이어갑니다.`,
+      bullets: debts.length ? debts : ["열린 약속, 비용 숫자, 유료 진입점 중 하나를 더 좁혀야 합니다."],
+    },
+    questions: [
+      {
+        questionId: "day1_doc_handoff_judge_blocked",
+        header: "보완 질문",
+        question: primaryQuestion,
+        helperText: "지금 답할 수 있는 가장 구체적인 보완 방향 하나를 선택하세요.",
+        options: [
+          {
+            label: "실명 고객 3명에게 결제 요청 발송 완료",
+            description: "실명 후보 3명에게 가격/계약 조건을 포함한 결제 요청을 보냈고 캡처와 보낸 시각으로 확인할 수 있습니다.",
+            evidenceTarget: "실명 고객 3명에게 보낸 결제 요청 캡처와 보낸 시각",
+            failureMode: "오늘 3명에게 가격/계약 조건이 담긴 결제 요청을 못 보내면 이번 cycle은 실패입니다.",
+            mapsTo: "GOAL.activation_action",
+            nextIntent: "actual_payment_or_contract",
+          },
+          {
+            label: "열린 약속부터 추적",
+            description: "실명 후보, 날짜, 완료 조건이 있는 약속을 다음 Office Hours 근거로 삼습니다.",
+            nextIntent: "track_open_commitment",
+          },
+          {
+            label: "비용을 숫자로 확정",
+            description: "잃은 시간, 미룬 결정, 놓친 돈 중 하나를 숫자로 고정해 문제 압박을 보강합니다.",
+            nextIntent: "quantify_pressure_cost",
+          },
+          {
+            label: "유료 진입점 1개로 축소",
+            description: "이번 주에 보여주거나 팔 수 있는 가장 작은 작업 단위 하나로 문서 범위를 줄입니다.",
+            nextIntent: "narrow_paid_entry",
+          },
+          {
+            label: "증거 없음으로 보류",
+            description: "아직 정식 문서로 저장하지 않고, 먼저 실제 고객 행동 증거를 모읍니다.",
+            nextIntent: "defer_until_hard_evidence",
+          },
+        ],
+        multiSelect: false,
+        allowFreeText: false,
+        requiresFreeText: false,
+        textMode: "short",
+      },
+    ],
+    generation: {
+      mode: "office_hours",
+      docType: "day1_doc_handoff_judge",
+      signalId: "day1_doc_handoff_judge_blocked",
+      signalLabel: "문서 리뷰 보완",
+      dimensionTotal: 6,
+    },
+  };
+}
+
 async function writeAllDay1DocHandoff({
   sessionId = "",
   provider = "",
@@ -10798,7 +11291,11 @@ async function writeAllDay1DocHandoff({
 } = {}) {
   const seed = resolveIddSessionSeed({ sessionId, provider });
   const handoffSnapshot = normalizeDay1HandoffPayload(day1Handoff);
-  const session = resolveBipCoachSession(sessionId);
+  const session = await ensureDay1DocReviewSession({
+    sessionId,
+    provider: seed.provider,
+    handoffSnapshot,
+  });
   const startedAt = Date.now();
 
   state.iddSetup = await persistIddSetupState(workspaceRoot, {
@@ -10827,72 +11324,81 @@ async function writeAllDay1DocHandoff({
     });
   };
 
-  progress("bulk_started", "GOAL/ICP/VALUES/SPEC 문서 저장 시작", "all");
+  progress("bulk_started", "GOAL/ICP/VALUES/SPEC 문서 리뷰 시작", "all");
   const result = await writeAllDay1HandoffDocuments(workspaceRoot, state.iddSetup, {
     day1Handoff: handoffSnapshot,
     provider: seed.provider,
     runEvidenceJudge: true,
     onProgress: ({ stage, doc }) => {
       if (stage === "recorded") {
-        progress("recording_response", `${doc.title} 문서 초안 구성 중`, doc.type);
+        progress("recording_response", `${doc.title} 문서 리뷰 자료 구성 중`, doc.type);
       } else if (stage === "written") {
-        progress("file_written", `${doc.canonicalPath} 저장 완료`, doc.type);
+        progress("file_written", `기준 통과 후 ${doc.canonicalPath} 저장 완료`, doc.type);
       } else if (stage === "skipped") {
-        progress("file_written", `${doc.canonicalPath} 이미 저장됨`, doc.type);
+        progress("file_written", `기준 통과 후 ${doc.canonicalPath} 이미 저장됨`, doc.type);
       }
     },
   });
   state.iddSetup = await persistIddSetupState(workspaceRoot, result.state);
 
   if (result.blocked) {
-    progress("judge_blocked", "Office Hours 증거 judge가 문서 저장을 보류했습니다.", "all");
+    progress("judge_blocked", "Office Hours 증거 judge가 문서 리뷰를 보류했습니다.", "all");
     telemetry.captureEvent("mac_sidecar_day1_doc_handoff_write_all_blocked", {
       session_id: session?.id ?? "",
       provider: seed.provider,
       judge_score: result.judgeResult?.score ?? 0,
       judge_status: result.judgeResult?.status || "failed",
     });
-    if (session) {
-      const followUps = Array.isArray(result.judgeResult?.followUpQuestions)
-        ? result.judgeResult.followUpQuestions
-        : [];
-      const content = [
-        `GOAL/ICP/VALUES/SPEC 저장을 보류했습니다. Office Hours 문서 judge 점수는 ${result.judgeResult?.score ?? 0}/10이고, 기준은 8/10입니다.`,
-        result.evidenceDebtCard || "",
-        followUps.length ? "다음 질문:" : "",
-        ...followUps.slice(0, 2).map((question, index) => `${index + 1}. ${question}`),
-      ].filter(Boolean).join("\n\n");
+    let promptCreationError = null;
+    try {
+      const blockedInput = buildDay1HandoffJudgeBlockedStructuredInput(result);
+      const request = await createUserInputRequest(appSupportPath, {
+        sessionId: session.id,
+        ...blockedInput,
+      });
       session.runtime = {
         ...(session.runtime || {}),
         iddMode: null,
         pendingIddContinuation: null,
         iddPendingAdaptiveContinuation: null,
+        day1Handoff: handoffSnapshot,
+        day1DocHandoffReviewAttempt: (Number.parseInt(session.runtime?.day1DocHandoffReviewAttempt ?? 0, 10) || 0) + 1,
       };
+      session.pendingUserInput = request;
+      session.status = "awaiting_input";
+      session.error = null;
+    } catch (error) {
+      promptCreationError = error;
       session.pendingUserInput = null;
       session.status = "idle";
-      session.error = result.judgeResult?.summary || "Office Hours evidence judge blocked document save.";
-      session.messages.push(makeMessage({
-        role: "assistant",
-        provider: session.provider,
-        content,
-        state: "final",
-      }));
-      touch(session);
+      session.error = `문서 리뷰 보완 질문을 준비하지 못했습니다: ${formatError(error)}`;
+      telemetry.captureException(error, {
+        operation: "day1_doc_handoff_judge_prompt_create",
+        session_id: session.id,
+        provider: seed.provider,
+      });
     }
+    touch(session);
+    await persistSessions();
+    broadcast({ type: "session_updated", session });
     broadcast({
       type: "idd_setup_state",
       ...serializeIddSetupFields(state.iddSetup),
       ...serializeBipSetupGate(currentBipSetupGate()),
     });
     broadcastBipSetupGateState(currentBipSetupGate());
-    if (session) {
-      await persistSessions();
-      broadcast({ type: "session_updated", session });
+    if (promptCreationError) {
+      broadcast({
+        type: "error",
+        sessionId: session.id,
+        message: session.error,
+        recoverable: true,
+      });
     }
     return state.iddSetup;
   }
 
-  progress("bulk_written", "GOAL/ICP/VALUES/SPEC 문서 저장 완료", "all");
+  progress("bulk_written", "GOAL/ICP/VALUES/SPEC 문서 리뷰 통과 및 저장 완료", "all");
   telemetry.captureEvent("mac_sidecar_day1_doc_handoff_write_all_completed", {
     session_id: session?.id ?? "",
     provider: seed.provider,
@@ -10907,6 +11413,7 @@ async function writeAllDay1DocHandoff({
       pendingIddContinuation: null,
       iddPendingAdaptiveContinuation: null,
       day1HandoffFollowupCount: 0,
+      day1DocHandoffReviewAttempt: 0,
     };
     session.pendingUserInput = null;
     session.status = "idle";
@@ -15049,6 +15556,7 @@ function reportIntegrationStatusFailures(integrationStatus = {}) {
     ["posthog", integrationStatus.posthog],
     ["cloudflare", integrationStatus.cloudflare],
     ["vercel", integrationStatus.vercel],
+    ["exa", integrationStatus.exa],
   ];
   for (const [integration, probe] of probes) {
     const stateName = String(probe?.state || "");

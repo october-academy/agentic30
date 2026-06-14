@@ -9,10 +9,24 @@ import {
 
 export const MORNING_BRIEFING_SCHEMA_VERSION = 2;
 export const MORNING_BRIEFING_FILE = "morning-briefing.json";
+export const MORNING_BRIEFING_RUNS_DIR = "morning-briefing-runs";
 export const MORNING_BRIEFING_HISTORY_LIMIT = 14;
 export const MORNING_BRIEFING_TOTAL_DAYS = 30;
 
 const CARD_ORDER = Object.freeze(["cloudflare", "github", "posthog"]);
+const RUN_LOG_FIELD_LIMIT = 80;
+const RUN_LOG_ARRAY_LIMIT = 20;
+const RUN_LOG_STRING_LIMIT = 260;
+const RUN_LOG_SECRET_KEY_RE = /token|secret|password|authorization|api[_-]?key|email|ip|raw|row|rows|payload|body/i;
+const RUN_LOG_SECRET_VALUE_PATTERNS = Object.freeze([
+  /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g,
+  /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g,
+  /\bAIza[A-Za-z0-9_-]{20,}\b/g,
+  /\bxox[baprs]-[A-Za-z0-9_-]{10,}\b/g,
+  /\bph[xa]_[A-Za-z0-9_-]{20,}\b/g,
+  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+  /\b(?:\d{1,3}\.){3}\d{1,3}\b/g,
+]);
 
 export const MORNING_BRIEFING_ANOMALY_OPTION_SETS = Object.freeze({
   metric_drop: [
@@ -253,6 +267,56 @@ function sparkPointsFrom(history = [], cardId = "", current = null, { generatedA
     });
   }
   return points.slice(-8);
+}
+
+function assertSparklineHistoryAvailable({ history = [], cardId = "", previousValue = null } = {}) {
+  const previous = finiteNumber(previousValue);
+  if (previous === null) return;
+  const safeHistory = Array.isArray(history) ? history : [];
+  if (safeHistory.some((entry) => finiteNumber(entry?.metrics?.[cardId]) !== null)) return;
+  throw new Error(
+    `Morning briefing sparkline history missing for ${cardId}: previous.metrics.${cardId} exists but history has no prior metric.`,
+  );
+}
+
+function metricHistoryForRefresh({ history = [], previous = null, generatedAt = "" } = {}) {
+  const currentDate = localDateKey(generatedAt);
+  const priorHistory = (Array.isArray(history) ? history : [])
+    .filter((entry) => entry?.date !== currentDate);
+  const previousMetrics = previous?.metrics || {};
+  const previousMetricIds = Object.keys(previousMetrics)
+    .filter((id) => finiteNumber(previousMetrics[id]) !== null);
+  const previousAt = toIso(previous?.generatedAt || "");
+  if (!previousMetricIds.length || !previousAt) {
+    return { priorHistory, metricHistory: priorHistory };
+  }
+  const historyHasEveryPreviousMetric = previousMetricIds.every((id) =>
+    priorHistory.some((entry) => finiteNumber(entry?.metrics?.[id]) !== null),
+  );
+  if (historyHasEveryPreviousMetric) {
+    return { priorHistory, metricHistory: priorHistory };
+  }
+  const previousDate = localDateKey(previousAt) || currentDate;
+  const duplicatePrevious = priorHistory.some((entry) => {
+    const entryAt = toIso(entry?.generatedAt || "");
+    return entryAt && entryAt === previousAt;
+  });
+  const metricHistory = duplicatePrevious
+    ? priorHistory
+    : [
+        ...priorHistory,
+        {
+          date: previousDate,
+          generatedAt: previousAt,
+          metrics: previousMetrics,
+        },
+      ];
+  return {
+    priorHistory,
+    metricHistory: metricHistory
+      .slice()
+      .sort((a, b) => String(a?.generatedAt || a?.date || "").localeCompare(String(b?.generatedAt || b?.date || ""))),
+  };
 }
 
 // ── Customer evidence verdict ────────────────────────────────────────────────
@@ -514,6 +578,11 @@ function buildCard({
   const ready = state === "ready";
   const failed = state === "failed";
   const delta = ready ? deltaFor(metricValue, previousMetrics?.[id]) : null;
+  assertSparklineHistoryAvailable({
+    history,
+    cardId: id,
+    previousValue: previousMetrics?.[id],
+  });
   const note = cleanString(
     ready
       ? (source?.evidenceGaps?.[0] || source?.goalSignals?.[0] || source?.highlights?.[0] || "")
@@ -809,8 +878,8 @@ export function buildMorningBriefing({
   const previousMetrics = previous?.metrics
     || history[history.length - 1]?.metrics
     || {};
-  const priorHistory = history.filter((entry) => entry?.date !== localDateKey(generatedAt));
-  const cards = buildMorningBriefingCards({ digest, previousMetrics, history: priorHistory, generatedAt });
+  const { priorHistory, metricHistory } = metricHistoryForRefresh({ history, previous, generatedAt });
+  const cards = buildMorningBriefingCards({ digest, previousMetrics, history: metricHistory, generatedAt });
   const anomaly = detectMorningBriefingAnomaly({ digest, cards });
   const evidenceFunnel = buildMorningBriefingEvidenceFunnel({ digest });
   const customerEvidenceVerdict = buildCustomerEvidenceVerdict({ digest, cards, evidenceFunnel });
@@ -976,6 +1045,65 @@ function sanitizeFailedMorningBriefingCards(cards = [], sources = []) {
 
 export function resolveMorningBriefingPath(workspaceRoot) {
   return path.join(path.resolve(String(workspaceRoot || ".")), ".agentic30", MORNING_BRIEFING_FILE);
+}
+
+export function resolveMorningBriefingRunsDir(workspaceRoot) {
+  return path.join(path.resolve(String(workspaceRoot || ".")), ".agentic30", MORNING_BRIEFING_RUNS_DIR);
+}
+
+function safeRunLogFilePart(value = "") {
+  const cleaned = String(value || "").replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 96);
+  return cleaned || "run";
+}
+
+export function resolveMorningBriefingRunLogPath(workspaceRoot, runId = "") {
+  return path.join(resolveMorningBriefingRunsDir(workspaceRoot), `${safeRunLogFilePart(runId)}.jsonl`);
+}
+
+function redactMorningBriefingRunLogString(value = "") {
+  let output = String(value || "").replace(/\s+/g, " ").trim();
+  for (const pattern of RUN_LOG_SECRET_VALUE_PATTERNS) {
+    output = output.replace(pattern, "[redacted]");
+  }
+  return output.slice(0, RUN_LOG_STRING_LIMIT);
+}
+
+export function sanitizeMorningBriefingRunLogRecord(value, key = "") {
+  if (value === null || value === undefined) return null;
+  if (RUN_LOG_SECRET_KEY_RE.test(String(key || ""))) return "[redacted]";
+  if (typeof value === "string") return redactMorningBriefingRunLogString(value);
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, RUN_LOG_ARRAY_LIMIT)
+      .map((entry) => sanitizeMorningBriefingRunLogRecord(entry, key));
+  }
+  if (typeof value === "object") {
+    const output = {};
+    for (const [entryKey, entryValue] of Object.entries(value).slice(0, RUN_LOG_FIELD_LIMIT)) {
+      output[entryKey] = sanitizeMorningBriefingRunLogRecord(entryValue, entryKey);
+    }
+    return output;
+  }
+  return null;
+}
+
+export async function appendMorningBriefingRunLog({
+  workspaceRoot,
+  runId,
+  record,
+  fsImpl = fs,
+} = {}) {
+  const filePath = resolveMorningBriefingRunLogPath(workspaceRoot, runId);
+  await fsImpl.mkdir(path.dirname(filePath), { recursive: true });
+  const safeRecord = sanitizeMorningBriefingRunLogRecord({
+    ts: new Date().toISOString(),
+    ...record,
+    runId,
+  });
+  await fsImpl.appendFile(filePath, `${JSON.stringify(safeRecord)}\n`, "utf8");
+  return filePath;
 }
 
 export async function loadMorningBriefingStore({ workspaceRoot, fsImpl = fs } = {}) {

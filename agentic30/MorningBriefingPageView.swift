@@ -1,6 +1,100 @@
 import AppKit
 import SwiftUI
 
+nonisolated enum MorningBriefingColdLoadKind: Hashable {
+    case none
+    case loading
+    case error
+}
+
+nonisolated struct MorningBriefingColdLoadPresentation: Hashable {
+    let kind: MorningBriefingColdLoadKind
+    let rows: [MorningBriefingLoadingRow]
+    let detail: String?
+}
+
+nonisolated struct MorningBriefingLoadingRow: Hashable, Identifiable {
+    let id: String
+    let title: String
+    let state: String
+    let detail: String?
+    let logLines: [String]
+}
+
+nonisolated func morningBriefingColdLoadPresentation(
+    briefing: MorningBriefing?,
+    collecting: Bool,
+    sourceProgress: [String: MorningBriefingSourceProgress]
+) -> MorningBriefingColdLoadPresentation {
+    if briefing?.status?.state == "failed",
+       briefing?.cards?.isEmpty ?? true {
+        return MorningBriefingColdLoadPresentation(
+            kind: .error,
+            rows: morningBriefingLoadingRows(sourceProgress: sourceProgress),
+            detail: briefing?.status?.detail
+        )
+    }
+    if briefing == nil && collecting {
+        return MorningBriefingColdLoadPresentation(
+            kind: .loading,
+            rows: morningBriefingLoadingRows(sourceProgress: sourceProgress),
+            detail: nil
+        )
+    }
+    return MorningBriefingColdLoadPresentation(kind: .none, rows: [], detail: nil)
+}
+
+nonisolated func morningBriefingLoadingRows(
+    sourceProgress: [String: MorningBriefingSourceProgress]
+) -> [MorningBriefingLoadingRow] {
+    if sourceProgress.isEmpty {
+        return ["cloudflare", "github", "posthog"].map { id in
+            MorningBriefingLoadingRow(
+                id: id,
+                title: morningBriefingSourceTitle(id),
+                state: "waiting",
+                detail: "대기 중",
+                logLines: []
+            )
+        }
+    }
+
+    return sourceProgress.values
+        .sorted { lhs, rhs in
+            let lhsOrder = morningBriefingSourceOrder(lhs.id)
+            let rhsOrder = morningBriefingSourceOrder(rhs.id)
+            if lhsOrder == rhsOrder { return lhs.id < rhs.id }
+            return lhsOrder < rhsOrder
+        }
+        .map { progress in
+            MorningBriefingLoadingRow(
+                id: progress.id,
+                title: morningBriefingSourceTitle(progress.id),
+                state: progress.state ?? "waiting",
+                detail: progress.detail,
+                logLines: progress.logLines ?? []
+            )
+        }
+}
+
+nonisolated private func morningBriefingSourceOrder(_ id: String) -> Int {
+    switch id {
+    case "cloudflare": return 0
+    case "github": return 1
+    case "posthog": return 2
+    default: return 100
+    }
+}
+
+nonisolated private func morningBriefingSourceTitle(_ id: String) -> String {
+    switch id {
+    case "cloudflare": return "Cloudflare"
+    case "github": return "GitHub"
+    case "posthog": return "PostHog"
+    default: return id
+    }
+}
+
 /// Morning briefing screen (OD reference: agentic30-morning-briefing.html).
 /// Rendered inside OpenDesignDayShell to the right of the rail; owns its own
 /// three-column layout (section nav / main scroll / meta panel) using the
@@ -67,6 +161,13 @@ struct MorningBriefingPageView: View {
     private var totalDays: Int { displayBriefing?.totalDays ?? 30 }
     private var isLocked: Bool { displayBriefing?.status?.state == "locked" }
     private var isCollectingWithoutBriefing: Bool { displayBriefing == nil && collecting }
+    private var coldLoadPresentation: MorningBriefingColdLoadPresentation {
+        morningBriefingColdLoadPresentation(
+            briefing: displayBriefing,
+            collecting: collecting,
+            sourceProgress: sourceProgress
+        )
+    }
     private var phaseLabel: String {
         if let phase = displayBriefing?.phase, !phase.isEmpty { return phase }
         return AgenticCurriculumDay.days.first(where: { $0.day == day })?.phase.title ?? ""
@@ -451,8 +552,10 @@ struct MorningBriefingPageView: View {
 
             if isLocked {
                 lockedState
-            } else if displayBriefing == nil && collecting {
-                collectingState
+            } else if coldLoadPresentation.kind == .loading {
+                collectingState(coldLoadPresentation)
+            } else if coldLoadPresentation.kind == .error {
+                loadingErrorState(coldLoadPresentation)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -1269,7 +1372,7 @@ struct MorningBriefingPageView: View {
     // MARK: - Timeline
 
     private var timelineList: some View {
-        let events = displayBriefing?.timeline ?? []
+        let events = sortedTimelineEvents(displayBriefing?.timeline ?? [])
         let generatedAt = displayBriefing?.generatedAt
         return VStack(spacing: 1) {
             if events.isEmpty {
@@ -1283,10 +1386,6 @@ struct MorningBriefingPageView: View {
                 ForEach(Array(events.enumerated()), id: \.offset) { index, event in
                     let badge = timelineDayBadge(for: event, generatedAt: generatedAt)
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text(event.timeLabel ?? "")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(OpenDesignDayColor.muted)
-                            .frame(width: 44, alignment: .leading)
                         if let badge {
                             timelineDayBadgeView(badge)
                                 .accessibilityIdentifier("morningBriefing.timeline.badge.\(index)")
@@ -1295,6 +1394,10 @@ struct MorningBriefingPageView: View {
                                 .frame(width: 42, height: 19)
                                 .accessibilityHidden(true)
                         }
+                        Text(event.timeLabel ?? "")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .frame(width: 44, alignment: .leading)
                         Image(systemName: sourceLogoSymbol(event.source ?? ""))
                             .font(.system(size: 11))
                             .foregroundStyle(sourceLogoColor(event.source ?? ""))
@@ -1323,6 +1426,25 @@ struct MorningBriefingPageView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("morningBriefing.timeline")
+    }
+
+    private func sortedTimelineEvents(_ events: [MorningBriefingTimelineEvent]) -> [MorningBriefingTimelineEvent] {
+        events.enumerated()
+            .map { (offset: $0.offset, event: $0.element, date: parseTimelineDate($0.element.at)) }
+            .sorted { lhs, rhs in
+                switch (lhs.date, rhs.date) {
+                case let (.some(lhsDate), .some(rhsDate)):
+                    if lhsDate == rhsDate { return lhs.offset < rhs.offset }
+                    return lhsDate > rhsDate
+                case (.some, .none):
+                    return true
+                case (.none, .some):
+                    return false
+                case (.none, .none):
+                    return lhs.offset < rhs.offset
+                }
+            }
+            .map(\.event)
     }
 
     private func timelineDayBadgeView(_ badge: TimelineDayBadge) -> some View {
@@ -2064,16 +2186,142 @@ struct MorningBriefingPageView: View {
         .accessibilityIdentifier("morningBriefing.locked")
     }
 
-    private var collectingState: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-                .controlSize(.small)
-            Text("밤사이 신호를 모으는 중…")
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(OpenDesignDayColor.muted)
+    private func collectingState(_ presentation: MorningBriefingColdLoadPresentation) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top, spacing: 12) {
+                    ProgressView()
+                        .controlSize(.small)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("밤사이 신호를 모으는 중")
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .foregroundStyle(OpenDesignDayColor.fg)
+                        Text("소스별 수집 로그가 도착하는 대로 업데이트됩니다.")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(presentation.rows) { row in
+                        loadingSourceRow(row)
+                    }
+                }
+            }
+            .frame(maxWidth: 780, alignment: .leading)
+            .padding(24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("morningBriefing.collecting")
+        .accessibilityIdentifier("morningBriefing.loading")
+    }
+
+    private func loadingErrorState(_ presentation: MorningBriefingColdLoadPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 24, weight: .bold))
+                .foregroundStyle(OpenDesignDayColor.amber)
+            Text("브리핑 수집을 완료하지 못했습니다")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text(presentation.detail ?? "소스 수집 중 문제가 발생했습니다. 연결 상태를 확인한 뒤 다시 시도하세요.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button(action: refresh) {
+                Label("다시 수집", systemImage: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(height: 32)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(OpenDesignDayColor.accentDim))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+            .accessibilityIdentifier("morningBriefing.loading.retry")
+
+            if !presentation.rows.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(presentation.rows) { row in
+                        loadingSourceRow(row)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: 780, alignment: .leading)
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityIdentifier("morningBriefing.loading.error")
+    }
+
+    private func loadingSourceRow(_ row: MorningBriefingLoadingRow) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: sourceLogoSymbol(row.id))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(sourceLogoColor(row.id))
+                    .frame(width: 24, height: 24)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(sourceLogoColor(row.id).opacity(0.13))
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.title)
+                        .font(.system(size: 12.5, weight: .bold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text(row.detail?.isEmpty == false ? row.detail! : loadingStateLabel(row.state))
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                loadingStateBadge(row.state)
+            }
+
+            if !row.logLines.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(row.logLines.suffix(3).enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .padding(.leading, 34)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(OpenDesignDayColor.surface))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+        .accessibilityIdentifier("morningBriefing.loading.card.\(row.id)")
+    }
+
+    private func loadingStateBadge(_ state: String) -> some View {
+        let isCollecting = state == "collecting"
+        return HStack(spacing: 5) {
+            if isCollecting {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.72)
+            } else {
+                Circle()
+                    .fill(OpenDesignDayColor.muted.opacity(0.65))
+                    .frame(width: 6, height: 6)
+            }
+            Text(loadingStateLabel(state))
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(isCollecting ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+        }
+    }
+
+    private func loadingStateLabel(_ state: String) -> String {
+        switch state {
+        case "collecting": return "수집 중"
+        case "failed": return "실패"
+        case "ready": return "완료"
+        default: return "대기 중"
+        }
     }
 
     // MARK: - Helpers
@@ -2265,7 +2513,7 @@ private struct MorningBriefingSourceSparkline: View {
 
     private func accessibilityLabel(samples: [Sample]) -> String {
         guard let last = samples.last else { return "라인 차트" }
-        return "라인 차트, \(last.timeLabel), \(unitLabel) \(formatValue(last.value))"
+        return "라인 차트, \(samples.count)개 포인트, \(last.timeLabel), \(unitLabel) \(formatValue(last.value))"
     }
 
     private func formatValue(_ value: Double) -> String {

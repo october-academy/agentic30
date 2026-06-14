@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum OpenDesignReferencePageKind: String, CaseIterable, Hashable, Identifiable {
+nonisolated enum OpenDesignReferencePageKind: String, CaseIterable, Hashable, Identifiable {
     case projects
     case settings
     case interviews
@@ -406,7 +406,7 @@ enum OpenDesignReferenceCatalog {
             ]),
             .init(id: "integrations", title: "연동", meta: "OAuth · API 키 — Keychain 보관", markerTone: .amber, blocks: [
                 .init("integrations", style: .rows, rows: [
-                    .init("exa", leading: "E", title: "Exa Research", subtitle: "뉴스 시장 리서치 예비 키. AI 프로바이더의 웹 검색 도구가 없을 때만 사용합니다.", trailing: "Keychain", tone: .amber),
+                    .init("exa", leading: "E", title: "Exa Search", subtitle: "뉴스/마켓 레이더가 공개 근거를 검색할 때 사용하는 Exa MCP 키입니다.", trailing: "Keychain", tone: .amber),
                     .init("github", leading: "GH", title: "GitHub", subtitle: "gh CLI 인증으로 PR / 이슈 / 릴리즈 활동을 읽어 History에 반영합니다.", trailing: "gh 로그인", tone: .amber),
                     .init("cloudflare", leading: "CF", title: "Cloudflare", subtitle: "Cloudflare MCP 토큰과 endpoint를 저장해 Workers, R2, DNS 도구를 AI 실행에 연결합니다.", trailing: "MCP", tone: .amber),
                     .init("posthog-mcp", leading: "PH", title: "PostHog", subtitle: "phx_ / pha_ personal API key로 HogQL, insights, web analytics MCP 도구를 연결합니다.", trailing: "MCP", tone: .amber),
@@ -2595,17 +2595,11 @@ private struct OpenDesignNewsShell: View {
     let layout: OpenDesignDayLayoutMetrics
     let openSearch: () -> Void
     let snapshot: NewsMarketRadarSnapshot
+    let isPreparing: Bool
+    @Binding var userState: NewsMarketRadarUserState
     let refresh: () -> Void
     let prepare: () -> Void
     let openSettings: () -> Void
-
-    @State private var selectedLaneID = "alternatives_pricing"
-
-    private var selectedLane: NewsMarketRadarLane {
-        snapshot.lanes.first(where: { $0.id == selectedLaneID })
-            ?? snapshot.lanes.first
-            ?? NewsMarketRadarLane.defaultLanes[0]
-    }
 
     var body: some View {
         Group {
@@ -2613,9 +2607,9 @@ private struct OpenDesignNewsShell: View {
                 ZStack {
                     NewsMarketRadarSidebarView(
                         snapshot: snapshot,
-                        selectedLaneID: selectedLaneID,
+                        userState: $userState,
                         openSearch: openSearch,
-                        selectLane: { selectedLaneID = $0 }
+                        selectStream: { userState.selectedStreamID = $0 }
                     )
                     Color.clear
                         .accessibilityElement(children: .ignore)
@@ -2633,8 +2627,8 @@ private struct OpenDesignNewsShell: View {
                 NewsMarketRadarMainView(
                     layout: layout,
                     snapshot: snapshot,
-                    selectedLane: selectedLane,
-                    selectedLaneID: $selectedLaneID,
+                    isPreparing: isPreparing,
+                    userState: $userState,
                     refresh: refresh,
                     openSettings: openSettings
                 )
@@ -2648,7 +2642,7 @@ private struct OpenDesignNewsShell: View {
 
             if layout.showsMetaPanel {
                 ZStack {
-                    NewsMarketRadarMetaPanelView(snapshot: snapshot)
+                    NewsMarketRadarMetaPanelView(snapshot: snapshot, userState: userState)
                     Color.clear
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("OpenDesign News Meta")
@@ -2660,23 +2654,47 @@ private struct OpenDesignNewsShell: View {
                 .background(OpenDesignDayColor.bg)
             }
         }
-        .onAppear(perform: prepare)
+        .onAppear {
+            normalizeSelection()
+            prepare()
+        }
         .onChange(of: snapshot.lanes.map(\.id)) { _, laneIDs in
-            if !laneIDs.contains(selectedLaneID) {
-                selectedLaneID = laneIDs.first ?? "icp"
-            }
+            normalizeSelection(laneIDs: laneIDs)
+        }
+        .onChange(of: snapshot.cardIDs) { _, _ in
+            normalizeSelection()
+        }
+    }
+
+    private func normalizeSelection(laneIDs: [String]? = nil) {
+        let availableStreamIDs = Set(newsMarketRadarStreamItems(snapshot: snapshot, userState: userState).map(\.id))
+        if !availableStreamIDs.contains(userState.selectedStreamID) {
+            userState.selectedStreamID = NewsMarketRadarUserState.defaultStreamID
+        }
+        let valueFilterIDs = Set(newsMarketRadarValueFilters.map(\.id))
+        if !valueFilterIDs.contains(userState.selectedValueFilter) {
+            userState.selectedValueFilter = NewsMarketRadarUserState.defaultValueFilter
+        }
+        if let laneIDs,
+           userState.selectedStreamID.hasPrefix("lane:"),
+           !laneIDs.contains(newsMarketRadarStreamPayload(userState.selectedStreamID)) {
+            userState.selectedStreamID = NewsMarketRadarUserState.defaultStreamID
         }
     }
 }
 
 private struct NewsMarketRadarSidebarView: View {
     let snapshot: NewsMarketRadarSnapshot
-    let selectedLaneID: String
+    @Binding var userState: NewsMarketRadarUserState
     let openSearch: () -> Void
-    let selectLane: (String) -> Void
+    let selectStream: (String) -> Void
+
+    private var streamItems: [NewsMarketRadarStreamItem] {
+        newsMarketRadarStreamItems(snapshot: snapshot, userState: userState)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "newspaper")
                     .font(.system(size: 12, weight: .bold))
@@ -2708,13 +2726,36 @@ private struct NewsMarketRadarSidebarView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(snapshot.lanes) { lane in
-                    NewsMarketRadarLaneButton(
-                        lane: lane,
-                        isSelected: lane.id == selectedLaneID,
-                        action: { selectLane(lane.id) }
+            NewsMarketRadarSidebarSection(title: "스트림") {
+                ForEach(streamItems.filter { $0.kind == .primary }) { item in
+                    NewsMarketRadarStreamButton(
+                        item: item,
+                        isSelected: item.id == userState.selectedStreamID,
+                        action: { selectStream(item.id) }
                     )
+                }
+            }
+
+            NewsMarketRadarSidebarSection(title: "레이더 레인") {
+                ForEach(streamItems.filter { $0.kind == .lane }) { item in
+                    NewsMarketRadarStreamButton(
+                        item: item,
+                        isSelected: item.id == userState.selectedStreamID,
+                        action: { selectStream(item.id) }
+                    )
+                }
+            }
+
+            let sourceItems = streamItems.filter { $0.kind == .source }
+            if !sourceItems.isEmpty {
+                NewsMarketRadarSidebarSection(title: "소스") {
+                    ForEach(sourceItems) { item in
+                        NewsMarketRadarStreamButton(
+                            item: item,
+                            isSelected: item.id == userState.selectedStreamID,
+                            action: { selectStream(item.id) }
+                        )
+                    }
                 }
             }
 
@@ -2724,7 +2765,7 @@ private struct NewsMarketRadarSidebarView: View {
                 Text("로컬 보관")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                Text("Day 답변과 snippets는 workspace의 .agentic30/news에 30일 동안만 남습니다.")
+                Text("읽음/저장은 이 Mac의 현재 workspace UserDefaults에만 남습니다.")
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(OpenDesignDayColor.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2737,8 +2778,23 @@ private struct NewsMarketRadarSidebarView: View {
     }
 }
 
-private struct NewsMarketRadarLaneButton: View {
-    let lane: NewsMarketRadarLane
+private struct NewsMarketRadarSidebarSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                .padding(.horizontal, 2)
+            content
+        }
+    }
+}
+
+private struct NewsMarketRadarStreamButton: View {
+    let item: NewsMarketRadarStreamItem
     let isSelected: Bool
     let action: () -> Void
 
@@ -2747,21 +2803,22 @@ private struct NewsMarketRadarLaneButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
-                Circle()
-                    .fill(newsImpactTone(lane.impact).color)
-                    .frame(width: 7, height: 7)
+                Image(systemName: item.systemImage)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(item.tone.color)
+                    .frame(width: 16)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(lane.title)
+                    Text(item.title)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.fg)
                         .lineLimit(1)
-                    Text(lane.hypothesis)
+                    Text(item.subtitle)
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(OpenDesignDayColor.muted)
                         .lineLimit(2)
                 }
                 Spacer(minLength: 6)
-                Text("\(lane.cards.count)")
+                Text("\(item.count)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(isSelected ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
                     .frame(minWidth: 18)
@@ -2778,63 +2835,121 @@ private struct NewsMarketRadarLaneButton: View {
 private struct NewsMarketRadarMainView: View {
     let layout: OpenDesignDayLayoutMetrics
     let snapshot: NewsMarketRadarSnapshot
-    let selectedLane: NewsMarketRadarLane
-    @Binding var selectedLaneID: String
+    let isPreparing: Bool
+    @Binding var userState: NewsMarketRadarUserState
     let refresh: () -> Void
     let openSettings: () -> Void
+
+    private var selectedStreamTitle: String {
+        newsMarketRadarStreamItems(snapshot: snapshot, userState: userState)
+            .first(where: { $0.id == userState.selectedStreamID })?
+            .title ?? "전체"
+    }
+
+    private var visibleCards: [NewsMarketRadarCard] {
+        newsMarketRadarVisibleCards(snapshot: snapshot, userState: userState)
+    }
+
+    private var presentationState: NewsMarketRadarPresentationState {
+        newsMarketRadarPresentationState(
+            snapshot: snapshot,
+            userState: userState,
+            isPreparing: isPreparing
+        )
+    }
+
+    private var highlightedCard: NewsMarketRadarCard? {
+        newsMarketRadarHighlightedCard(cards: visibleCards, userState: userState)
+    }
+
+    private var groupedCards: [NewsMarketRadarCardGroup] {
+        newsMarketRadarGroupedCards(
+            snapshot: snapshot,
+            cards: visibleCards.filter { $0.id != highlightedCard?.id }
+        )
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                NewsMarketRadarHeader(snapshot: snapshot, refresh: refresh, openSettings: openSettings)
+                NewsMarketRadarHeader(
+                    snapshot: snapshot,
+                    progressStatus: presentationState.progressStatus,
+                    userState: userState,
+                    visibleCount: visibleCards.count,
+                    refresh: refresh,
+                    openSettings: openSettings
+                )
 
-                if snapshot.status.state == "failed",
-                   snapshot.status.needsExaConfiguration,
-                   snapshot.cardCount == 0 {
-                    NewsMarketRadarNoExaRouteState(openSettings: openSettings)
+                NewsMarketRadarFilterBar(
+                    selectedValueFilter: Binding(
+                        get: { userState.selectedValueFilter },
+                        set: { userState.selectedValueFilter = $0 }
+                    )
+                )
+
+                if presentationState.primaryContent == .exaConfiguration {
+                        NewsMarketRadarExaConfigurationState(openSettings: openSettings)
                 } else {
-                    if snapshot.status.isRefreshing {
-                        NewsMarketRadarProgressState(snapshot: snapshot)
+                    if presentationState.showsProgress,
+                       let progressStatus = presentationState.progressStatus {
+                        NewsMarketRadarProgressState(
+                            status: progressStatus,
+                            showsWaitingForCardsNote: presentationState.suppressesEmptyStream
+                        )
                     }
 
-                    if !snapshot.status.isRefreshing, selectedLane.cards.isEmpty {
-                        NewsMarketRadarEmptyLane(lane: selectedLane, refresh: refresh)
-                    } else if !selectedLane.cards.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack(spacing: 8) {
-                                Text(selectedLane.title)
-                                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                                    .foregroundStyle(OpenDesignDayColor.fg)
-                                Text(newsConfidenceLabel(selectedLane.confidence))
-                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(newsConfidenceTone(selectedLane.confidence).color)
-                                    .padding(.horizontal, 7)
-                                    .frame(height: 20)
-                                    .background(Capsule().fill(newsConfidenceTone(selectedLane.confidence).dim))
-                                Spacer(minLength: 0)
-                            }
-                            Text(selectedLane.hypothesis)
-                                .font(.system(size: 12.5, weight: .medium))
-                                .foregroundStyle(OpenDesignDayColor.muted)
-                                .fixedSize(horizontal: false, vertical: true)
+                    if presentationState.primaryContent == .error {
+                        NewsMarketRadarErrorState(snapshot: snapshot, refresh: refresh)
+                    } else if presentationState.primaryContent == .empty {
+                        NewsMarketRadarEmptyStream(
+                            title: selectedStreamTitle,
+                            snapshot: snapshot,
+                            refresh: refresh
+                        )
+                    } else if presentationState.primaryContent == .cards {
+                        if let highlightedCard {
+                            NewsMarketRadarHighlightedCardView(
+                                card: highlightedCard,
+                                isRead: userState.isRead(cardID: highlightedCard.id),
+                                isSaved: userState.isSaved(cardID: highlightedCard.id),
+                                toggleRead: { toggleRead(cardID: highlightedCard.id) },
+                                toggleSaved: { userState.toggleSaved(cardID: highlightedCard.id) }
+                            )
+                        }
 
-                            ForEach(selectedLane.cards) { card in
-                                NewsMarketRadarCardView(card: card)
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(groupedCards) { group in
+                                NewsMarketRadarLaneGroupView(
+                                    group: group,
+                                    userState: $userState
+                                )
                             }
                         }
                     }
                 }
             }
-            .frame(maxWidth: 820, alignment: .leading)
+            .frame(maxWidth: 880, alignment: .leading)
             .padding(.horizontal, layout.mainHorizontalPadding)
             .padding(.top, 24)
             .padding(.bottom, 42)
+        }
+    }
+
+    private func toggleRead(cardID: String) {
+        if userState.isRead(cardID: cardID) {
+            userState.markUnread(cardID: cardID)
+        } else {
+            userState.markRead(cardID: cardID)
         }
     }
 }
 
 private struct NewsMarketRadarHeader: View {
     let snapshot: NewsMarketRadarSnapshot
+    let progressStatus: NewsMarketRadarStatus?
+    let userState: NewsMarketRadarUserState
+    let visibleCount: Int
     let refresh: () -> Void
     let openSettings: () -> Void
 
@@ -2854,8 +2969,8 @@ private struct NewsMarketRadarHeader: View {
                 VStack(alignment: .trailing, spacing: 8) {
                     newsPill(newsStatusDisplayLabel(snapshot), tone: newsStatusTone(snapshot.status))
                     HStack(spacing: 8) {
-                        if snapshot.status.isRefreshing {
-                            NewsMarketRadarRunningIndicator(status: snapshot.status)
+                        if let progressStatus {
+                            NewsMarketRadarRunningIndicator(status: progressStatus)
                         } else {
                             OpenDesignNewsActionButton(
                                 icon: "arrow.clockwise",
@@ -2873,12 +2988,495 @@ private struct NewsMarketRadarHeader: View {
 
             HStack(spacing: 10) {
                 newsMetric("\(snapshot.cardCount)", "카드", tone: .accent)
-                newsMetric("\(snapshot.lanes.filter { !$0.cards.isEmpty }.count)", "가정", tone: .sky)
+                newsMetric("\(userState.unreadCount(in: snapshot))", "안 읽음", tone: .amber)
+                newsMetric("\(userState.savedCount(in: snapshot))", "저장", tone: .sky)
+                newsMetric("\(visibleCount)", "표시", tone: .muted)
                 newsMetric(snapshot.generatedAt.map(relativeNewsDate(_:)) ?? "없음", "갱신", tone: .muted)
             }
         }
         .padding(18)
         .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct NewsMarketRadarFilterBar: View {
+    @Binding var selectedValueFilter: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Value")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            ForEach(newsMarketRadarValueFilters) { filter in
+                Button {
+                    selectedValueFilter = filter.id
+                } label: {
+                    Text(filter.title)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(selectedValueFilter == filter.id ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+                        .padding(.horizontal, 9)
+                        .frame(height: 26)
+                        .background(referenceRounded(
+                            fill: selectedValueFilter == filter.id ? OpenDesignDayColor.selected : OpenDesignDayColor.surface,
+                            stroke: selectedValueFilter == filter.id ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft,
+                            radius: 7
+                        ))
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 9))
+    }
+}
+
+private enum NewsMarketRadarStreamKind: Hashable {
+    case primary
+    case lane
+    case source
+}
+
+private struct NewsMarketRadarStreamItem: Identifiable, Hashable {
+    let id: String
+    let kind: NewsMarketRadarStreamKind
+    let title: String
+    let subtitle: String
+    let count: Int
+    let systemImage: String
+    let tone: OpenDesignReferenceTone
+}
+
+private struct NewsMarketRadarValueFilter: Identifiable, Hashable {
+    let id: String
+    let title: String
+}
+
+private struct NewsMarketRadarCardGroup: Identifiable {
+    let lane: NewsMarketRadarLane
+    let cards: [NewsMarketRadarCard]
+
+    var id: String { lane.id }
+}
+
+private struct NewsMarketRadarSourceGroup: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let count: Int
+    let systemImage: String
+}
+
+private let newsMarketRadarValueFilters: [NewsMarketRadarValueFilter] = [
+    .init(id: "all", title: "전체"),
+    .init(id: "high", title: "High"),
+    .init(id: "medium", title: "Medium"),
+    .init(id: "low", title: "Low"),
+    .init(id: "unknown", title: "Unknown"),
+]
+
+private func newsMarketRadarStreamItems(
+    snapshot: NewsMarketRadarSnapshot,
+    userState: NewsMarketRadarUserState
+) -> [NewsMarketRadarStreamItem] {
+    var items: [NewsMarketRadarStreamItem] = [
+        NewsMarketRadarStreamItem(
+            id: NewsMarketRadarUserState.defaultStreamID,
+            kind: .primary,
+            title: "전체",
+            subtitle: "모든 레이더 카드",
+            count: snapshot.cardCount,
+            systemImage: "tray.full",
+            tone: .accent
+        ),
+        NewsMarketRadarStreamItem(
+            id: "saved",
+            kind: .primary,
+            title: "Saved",
+            subtitle: "이 workspace에서 저장",
+            count: userState.savedCount(in: snapshot),
+            systemImage: "bookmark.fill",
+            tone: .sky
+        ),
+    ]
+
+    items.append(contentsOf: snapshot.lanes.map { lane in
+        NewsMarketRadarStreamItem(
+            id: "lane:\(lane.id)",
+            kind: .lane,
+            title: lane.title,
+            subtitle: lane.hypothesis,
+            count: lane.cards.count,
+            systemImage: "line.3.horizontal.decrease.circle",
+            tone: newsImpactTone(lane.impact)
+        )
+    })
+
+    items.append(contentsOf: newsMarketRadarSourceGroups(snapshot: snapshot).map { group in
+        NewsMarketRadarStreamItem(
+            id: "source:\(group.id)",
+            kind: .source,
+            title: group.title,
+            subtitle: "출처 그룹",
+            count: group.count,
+            systemImage: group.systemImage,
+            tone: .muted
+        )
+    })
+
+    return items
+}
+
+nonisolated private func newsMarketRadarStreamPayload(_ streamID: String) -> String {
+    streamID.split(separator: ":", maxSplits: 1).dropFirst().first.map(String.init) ?? streamID
+}
+
+nonisolated func newsMarketRadarVisibleCards(
+    snapshot: NewsMarketRadarSnapshot,
+    userState: NewsMarketRadarUserState
+) -> [NewsMarketRadarCard] {
+    let streamID = userState.selectedStreamID
+    let streamCards: [NewsMarketRadarCard]
+    if streamID == "saved" {
+        streamCards = snapshot.lanes.flatMap(\.cards).filter { userState.isSaved(cardID: $0.id) }
+    } else if streamID.hasPrefix("lane:") {
+        let laneID = newsMarketRadarStreamPayload(streamID)
+        streamCards = snapshot.lanes.first(where: { $0.id == laneID })?.cards ?? []
+    } else if streamID.hasPrefix("source:") {
+        let sourceType = newsMarketRadarStreamPayload(streamID)
+        streamCards = snapshot.lanes.flatMap(\.cards).filter { card in
+            card.sourceRefs.contains { newsNormalizedSourceType($0.sourceType) == sourceType }
+        }
+    } else {
+        streamCards = snapshot.lanes.flatMap(\.cards)
+    }
+
+    guard userState.selectedValueFilter != NewsMarketRadarUserState.defaultValueFilter else {
+        return streamCards
+    }
+    return streamCards.filter { card in
+        card.impact == userState.selectedValueFilter || card.confidence == userState.selectedValueFilter
+    }
+}
+
+private func newsMarketRadarHighlightedCard(
+    cards: [NewsMarketRadarCard],
+    userState: NewsMarketRadarUserState
+) -> NewsMarketRadarCard? {
+    cards.first(where: { !userState.isRead(cardID: $0.id) }) ?? cards.first
+}
+
+private func newsMarketRadarGroupedCards(
+    snapshot: NewsMarketRadarSnapshot,
+    cards: [NewsMarketRadarCard]
+) -> [NewsMarketRadarCardGroup] {
+    let cardIDs = Set(cards.map(\.id))
+    return snapshot.lanes.compactMap { lane in
+        let laneCards = lane.cards.filter { cardIDs.contains($0.id) }
+        guard !laneCards.isEmpty else { return nil }
+        return NewsMarketRadarCardGroup(lane: lane, cards: laneCards)
+    }
+}
+
+nonisolated enum NewsMarketRadarPrimaryContent: Hashable {
+    case progress
+    case exaConfiguration
+    case error
+    case empty
+    case cards
+}
+
+nonisolated struct NewsMarketRadarPresentationState {
+    let primaryContent: NewsMarketRadarPrimaryContent
+    let showsProgress: Bool
+    let suppressesEmptyStream: Bool
+    let progressStatus: NewsMarketRadarStatus?
+
+    var progressTitle: String? {
+        guard let progressStatus else { return nil }
+        if progressStatus.stage == "checking_exa_route",
+           progressStatus.progressText == "리서치 준비 중" {
+            return "리서치 준비 중"
+        }
+        return newsMarketRadarProgressTitle(for: progressStatus)
+    }
+}
+
+nonisolated func newsMarketRadarPresentationState(
+    snapshot: NewsMarketRadarSnapshot,
+    userState: NewsMarketRadarUserState,
+    isPreparing: Bool
+) -> NewsMarketRadarPresentationState {
+    let visibleCards = newsMarketRadarVisibleCards(snapshot: snapshot, userState: userState)
+    let progressStatus: NewsMarketRadarStatus? = {
+        if isPreparing { return newsMarketRadarPreparingStatus() }
+        if snapshot.status.state == "refreshing" { return snapshot.status }
+        return nil
+    }()
+    let showsProgress = progressStatus != nil
+
+    if snapshot.status.state == "failed",
+       newsMarketRadarStatusNeedsExaConfiguration(snapshot.status),
+       newsMarketRadarCardCount(snapshot) == 0 {
+        return NewsMarketRadarPresentationState(
+            primaryContent: .exaConfiguration,
+            showsProgress: false,
+            suppressesEmptyStream: false,
+            progressStatus: nil
+        )
+    }
+
+    if visibleCards.isEmpty, showsProgress {
+        return NewsMarketRadarPresentationState(
+            primaryContent: .progress,
+            showsProgress: true,
+            suppressesEmptyStream: true,
+            progressStatus: progressStatus
+        )
+    }
+
+    if visibleCards.isEmpty, snapshot.status.state == "failed" {
+        return NewsMarketRadarPresentationState(
+            primaryContent: .error,
+            showsProgress: false,
+            suppressesEmptyStream: false,
+            progressStatus: nil
+        )
+    }
+
+    if visibleCards.isEmpty {
+        return NewsMarketRadarPresentationState(
+            primaryContent: .empty,
+            showsProgress: false,
+            suppressesEmptyStream: false,
+            progressStatus: nil
+        )
+    }
+
+    return NewsMarketRadarPresentationState(
+        primaryContent: .cards,
+        showsProgress: showsProgress,
+        suppressesEmptyStream: false,
+        progressStatus: progressStatus
+    )
+}
+
+nonisolated func newsMarketRadarPreparingStatus() -> NewsMarketRadarStatus {
+    NewsMarketRadarStatus(
+        state: "refreshing",
+        lastSuccessAt: nil,
+        stale: false,
+        error: nil,
+        reason: nil,
+        researchSource: nil,
+        stage: "checking_exa_route",
+        progressText: "리서치 준비 중",
+        elapsedMs: nil,
+        stepIndex: 1,
+        stepCount: newsMarketRadarProgressSteps.count,
+        partialFailures: nil
+    )
+}
+
+nonisolated private func newsMarketRadarStatusNeedsExaConfiguration(_ status: NewsMarketRadarStatus) -> Bool {
+    ["exa_api_key_missing", "exa_mcp_missing"].contains(status.reason ?? "")
+}
+
+nonisolated private func newsMarketRadarCardCount(_ snapshot: NewsMarketRadarSnapshot) -> Int {
+    snapshot.lanes.reduce(0) { $0 + $1.cards.count }
+}
+
+nonisolated private func newsMarketRadarProgressTitle(for status: NewsMarketRadarStatus) -> String {
+    if let stage = status.stage?.nonEmpty,
+       let step = newsMarketRadarProgressSteps.first(where: { $0.id == stage }) {
+        return step.title
+    }
+    if let stepIndex = status.stepIndex,
+       stepIndex > 0,
+       let step = newsMarketRadarProgressSteps.first(where: { $0.order == stepIndex }) {
+        return step.title
+    }
+    return "리서치 준비"
+}
+
+private func newsMarketRadarSourceGroups(snapshot: NewsMarketRadarSnapshot) -> [NewsMarketRadarSourceGroup] {
+    var counts: [String: Int] = [:]
+    for card in snapshot.lanes.flatMap(\.cards) {
+        let sourceTypes = Set(card.sourceRefs.map { newsNormalizedSourceType($0.sourceType) })
+        for sourceType in sourceTypes {
+            counts[sourceType, default: 0] += 1
+        }
+    }
+    return counts
+        .map { key, count in
+            NewsMarketRadarSourceGroup(
+                id: key,
+                title: newsSourceTypeLabel(key),
+                count: count,
+                systemImage: newsSourceTypeIcon(key)
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.count == rhs.count { return lhs.title < rhs.title }
+            return lhs.count > rhs.count
+        }
+}
+
+nonisolated private func newsNormalizedSourceType(_ sourceType: String) -> String {
+    let normalized = sourceType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized.isEmpty ? "unknown" : normalized
+}
+
+private func newsSourceTypeLabel(_ sourceType: String) -> String {
+    switch newsNormalizedSourceType(sourceType) {
+    case "web", "exa":
+        return "Web"
+    case "workspace", "local":
+        return "Workspace"
+    case "answer", "interview":
+        return "Answers"
+    default:
+        return sourceType.capitalized
+    }
+}
+
+private func newsSourceTypeIcon(_ sourceType: String) -> String {
+    switch newsNormalizedSourceType(sourceType) {
+    case "web", "exa":
+        return "globe"
+    case "workspace", "local":
+        return "folder"
+    case "answer", "interview":
+        return "bubble.left.and.bubble.right"
+    default:
+        return "doc.text"
+    }
+}
+
+private struct NewsMarketRadarEmptyStream: View {
+    let title: String
+    let snapshot: NewsMarketRadarSnapshot
+    let refresh: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text(snapshot.cardCount == 0 ? "아직 레이더 카드가 없습니다. 새로고침하면 워크스페이스 근거와 일차 답변을 기준으로 리서치를 실행합니다." : "현재 필터에 맞는 카드가 없습니다. 왼쪽 스트림이나 Value 필터를 바꿔보세요.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            OpenDesignNewsActionButton(icon: "play.fill", title: "리서치 실행", tone: .ghost, action: refresh)
+        }
+        .padding(18)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+        .accessibilityIdentifier("opendesign.reference.news.empty")
+    }
+}
+
+private struct NewsMarketRadarHighlightedCardView: View {
+    let card: NewsMarketRadarCard
+    let isRead: Bool
+    let isSaved: Bool
+    let toggleRead: () -> Void
+    let toggleSaved: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                newsPill(isRead ? "읽음" : "하이라이트", tone: isRead ? .muted : .accent)
+                newsPill(newsImpactLabel(card.impact), tone: newsImpactTone(card.impact))
+                Spacer(minLength: 0)
+                NewsMarketRadarCardActions(
+                    isRead: isRead,
+                    isSaved: isSaved,
+                    toggleRead: toggleRead,
+                    toggleSaved: toggleSaved
+                )
+            }
+            Text(card.title)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(card.summary)
+                .font(.system(size: 13.5, weight: .medium))
+                .lineSpacing(3)
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .background(referenceRounded(fill: OpenDesignReferenceTone.accent.dim, stroke: OpenDesignReferenceTone.accent.line, radius: 10))
+        .accessibilityIdentifier("opendesign.reference.news.highlighted")
+    }
+}
+
+private struct NewsMarketRadarLaneGroupView: View {
+    let group: NewsMarketRadarCardGroup
+    @Binding var userState: NewsMarketRadarUserState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text(group.lane.title)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                newsPill("\(group.cards.count)", tone: newsImpactTone(group.lane.impact))
+                Spacer(minLength: 0)
+            }
+            Text(group.lane.hypothesis)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ForEach(group.cards) { card in
+                NewsMarketRadarCardView(
+                    card: card,
+                    isRead: userState.isRead(cardID: card.id),
+                    isSaved: userState.isSaved(cardID: card.id),
+                    toggleRead: { toggleRead(cardID: card.id) },
+                    toggleSaved: { userState.toggleSaved(cardID: card.id) }
+                )
+            }
+        }
+    }
+
+    private func toggleRead(cardID: String) {
+        if userState.isRead(cardID: cardID) {
+            userState.markUnread(cardID: cardID)
+        } else {
+            userState.markRead(cardID: cardID)
+        }
+    }
+}
+
+private struct NewsMarketRadarCardActions: View {
+    let isRead: Bool
+    let isSaved: Bool
+    let toggleRead: () -> Void
+    let toggleSaved: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: toggleRead) {
+                Image(systemName: isRead ? "envelope.open" : "envelope.badge")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(isRead ? OpenDesignDayColor.muted : OpenDesignDayColor.accent)
+                    .frame(width: 24, height: 24)
+                    .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 7))
+            }
+            .buttonStyle(.plain)
+            .help(isRead ? "안 읽음으로 표시" : "읽음으로 표시")
+
+            Button(action: toggleSaved) {
+                Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(isSaved ? OpenDesignDayColor.sky : OpenDesignDayColor.muted)
+                    .frame(width: 24, height: 24)
+                    .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 7))
+            }
+            .buttonStyle(.plain)
+            .help(isSaved ? "저장 해제" : "저장")
+        }
     }
 }
 
@@ -2904,7 +3502,7 @@ private struct NewsMarketRadarRunningIndicator: View {
     }
 }
 
-private struct NewsMarketRadarNoExaRouteState: View {
+private struct NewsMarketRadarExaConfigurationState: View {
     let openSettings: () -> Void
 
     var body: some View {
@@ -2912,10 +3510,10 @@ private struct NewsMarketRadarNoExaRouteState: View {
             Image(systemName: "key.slash")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(OpenDesignDayColor.amber)
-            Text("웹 검색 도구 연결이 필요합니다")
+            Text("Exa Search 연결이 필요합니다")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(OpenDesignDayColor.fg)
-            Text("리서치 레이더는 Codex, Claude Code, Gemini에 연결된 웹 검색 도구를 우선 사용합니다. 없을 때만 설정의 EXA_API_KEY 대체 경로를 사용합니다.")
+            Text("Market Radar는 Exa MCP의 web_search_advanced_exa와 web_fetch_exa로 공개 근거를 검색합니다. Settings의 EXA_API_KEY 또는 Codex/Claude/Gemini MCP 설정에 Exa를 연결하세요.")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(OpenDesignDayColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2923,6 +3521,30 @@ private struct NewsMarketRadarNoExaRouteState: View {
         }
         .padding(18)
         .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.amberLine, radius: 10))
+    }
+}
+
+private struct NewsMarketRadarErrorState: View {
+    let snapshot: NewsMarketRadarSnapshot
+    let refresh: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(OpenDesignDayColor.amber)
+            Text("리서치를 완료하지 못했습니다")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text(snapshot.status.error?.nonEmpty ?? "공개 근거 검색이 실패했습니다. 연결 상태를 확인한 뒤 다시 실행하세요.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            OpenDesignNewsActionButton(icon: "arrow.clockwise", title: "다시 리서치", tone: .accent, action: refresh)
+        }
+        .padding(18)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.amberLine, radius: 10))
+        .accessibilityIdentifier("opendesign.reference.news.error")
     }
 }
 
@@ -2947,7 +3569,8 @@ private struct NewsMarketRadarEmptyLane: View {
 }
 
 private struct NewsMarketRadarProgressState: View {
-    let snapshot: NewsMarketRadarSnapshot
+    let status: NewsMarketRadarStatus
+    let showsWaitingForCardsNote: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -2957,24 +3580,24 @@ private struct NewsMarketRadarProgressState: View {
                     .foregroundStyle(OpenDesignDayColor.sky)
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
-                        Text(snapshot.status.progressTitle)
+                        Text(status.progressTitle)
                             .font(.system(size: 17, weight: .bold, design: .rounded))
                             .foregroundStyle(OpenDesignDayColor.fg)
-                        if let ordinal = snapshot.status.progressOrdinal {
+                        if let ordinal = status.progressOrdinal {
                             newsPill(ordinal, tone: .sky)
                         }
                     }
-                    Text(snapshot.status.progressDetail)
+                    Text(status.progressDetail)
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(OpenDesignDayColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 VStack(alignment: .trailing, spacing: 5) {
-                    if let elapsed = snapshot.status.elapsedLabel {
+                    if let elapsed = status.elapsedLabel {
                         newsPill(elapsed, tone: .muted)
                     }
-                    if let researchSource = snapshot.status.researchSource?.nonEmpty {
+                    if let researchSource = status.researchSource?.nonEmpty {
                         Text(researchSource)
                             .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                             .foregroundStyle(OpenDesignDayColor.sky)
@@ -2983,10 +3606,18 @@ private struct NewsMarketRadarProgressState: View {
                 }
             }
 
-            NewsMarketRadarProgressChecklist(status: snapshot.status)
+            NewsMarketRadarProgressChecklist(status: status)
+
+            if showsWaitingForCardsNote {
+                Text("카드가 준비되면 표시됩니다")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(18)
         .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.sky.opacity(0.36), radius: 10))
+        .accessibilityIdentifier("opendesign.reference.news.progress")
     }
 }
 
@@ -3028,6 +3659,10 @@ private struct NewsMarketRadarProgressChecklist: View {
 
 private struct NewsMarketRadarCardView: View {
     let card: NewsMarketRadarCard
+    let isRead: Bool
+    let isSaved: Bool
+    let toggleRead: () -> Void
+    let toggleSaved: () -> Void
     @State private var showsUpdate = false
 
     private var visibleSourceRefs: [NewsMarketRadarSourceDisplayRef] {
@@ -3040,9 +3675,19 @@ private struct NewsMarketRadarCardView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        if !isRead {
+                            Circle()
+                                .fill(OpenDesignDayColor.accent)
+                                .frame(width: 6, height: 6)
+                        }
+                        Text(isRead ? "읽음" : "안 읽음")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(isRead ? OpenDesignDayColor.muted : OpenDesignDayColor.accent)
+                    }
                     Text(card.title)
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .foregroundStyle(isRead ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.fg)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(card.summary)
                         .font(.system(size: 13, weight: .medium))
@@ -3052,6 +3697,12 @@ private struct NewsMarketRadarCardView: View {
                 }
                 Spacer(minLength: 10)
                 VStack(alignment: .trailing, spacing: 6) {
+                    NewsMarketRadarCardActions(
+                        isRead: isRead,
+                        isSaved: isSaved,
+                        toggleRead: toggleRead,
+                        toggleSaved: toggleSaved
+                    )
                     newsPill(newsImpactLabel(card.impact), tone: newsImpactTone(card.impact))
                     newsPill(newsConfidenceLabel(card.confidence), tone: newsConfidenceTone(card.confidence))
                 }
@@ -3107,7 +3758,11 @@ private struct NewsMarketRadarCardView: View {
             }
         }
         .padding(16)
-        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+        .background(referenceRounded(
+            fill: isRead ? OpenDesignDayColor.surface.opacity(0.72) : OpenDesignDayColor.surface,
+            stroke: isSaved ? OpenDesignDayColor.sky.opacity(0.42) : OpenDesignDayColor.borderSoft,
+            radius: 10
+        ))
     }
 }
 
@@ -3162,10 +3817,23 @@ private struct NewsMarketRadarSourceRow: View {
 
 private struct NewsMarketRadarMetaPanelView: View {
     let snapshot: NewsMarketRadarSnapshot
+    let userState: NewsMarketRadarUserState
+
+    private var sourceGroups: [NewsMarketRadarSourceGroup] {
+        newsMarketRadarSourceGroups(snapshot: snapshot)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                newsMetaTitle("왜 이 리서치")
+                Text("현재 workspace의 ICP, 문제, 대안/가격, 채널, 플랫폼 가정을 공개 근거와 나란히 읽기 위한 레이더입니다.")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+
                 newsMetaTitle("Radar 상태")
                 VStack(alignment: .leading, spacing: 8) {
                     newsMetaRow("상태", newsStatusDisplayLabel(snapshot), tone: newsStatusTone(snapshot.status))
@@ -3173,6 +3841,8 @@ private struct NewsMarketRadarMetaPanelView: View {
                         NewsMarketRadarMetaProgress(status: snapshot.status)
                     }
                     newsMetaRow("카드", "\(snapshot.cardCount)", tone: .accent)
+                    newsMetaRow("안 읽음", "\(userState.unreadCount(in: snapshot))", tone: .amber)
+                    newsMetaRow("저장", "\(userState.savedCount(in: snapshot))", tone: .sky)
                     newsMetaRow("마지막 성공", snapshot.status.lastSuccessAt.map(relativeNewsDate(_:)) ?? "없음", tone: .muted)
                     if let researchSource = snapshot.status.researchSource?.nonEmpty {
                         newsMetaRow("소스", researchSource, tone: .sky)
@@ -3212,9 +3882,73 @@ private struct NewsMarketRadarMetaPanelView: View {
                         .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
                     }
                 }
+
+                if !sourceGroups.isEmpty {
+                    newsMetaTitle("소스 요약")
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(sourceGroups) { group in
+                            HStack(spacing: 8) {
+                                Image(systemName: group.systemImage)
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(OpenDesignDayColor.muted)
+                                    .frame(width: 16)
+                                Text(group.title)
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                                Spacer(minLength: 0)
+                                Text("\(group.count)")
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(OpenDesignDayColor.muted)
+                            }
+                            .padding(10)
+                            .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+                        }
+                    }
+                }
+
+                newsMetaTitle("다음 액션")
+                VStack(alignment: .leading, spacing: 8) {
+                    NewsMarketRadarRecommendationRow(
+                        icon: snapshot.status.needsExaConfiguration ? "key.fill" : "arrow.clockwise",
+                        title: snapshot.status.needsExaConfiguration ? "웹 검색 설정 확인" : "오래된 레이더 새로고침",
+                        tone: snapshot.status.stale == true || snapshot.status.needsExaConfiguration ? .amber : .muted
+                    )
+                    NewsMarketRadarRecommendationRow(
+                        icon: "envelope.open",
+                        title: "\(userState.unreadCount(in: snapshot))개 안 읽은 카드 검토",
+                        tone: userState.unreadCount(in: snapshot) > 0 ? .accent : .muted
+                    )
+                    NewsMarketRadarRecommendationRow(
+                        icon: "bookmark.fill",
+                        title: "\(userState.savedCount(in: snapshot))개 저장 카드로 문서 갱신",
+                        tone: userState.savedCount(in: snapshot) > 0 ? .sky : .muted
+                    )
+                }
             }
             .padding(14)
         }
+    }
+}
+
+private struct NewsMarketRadarRecommendationRow: View {
+    let icon: String
+    let title: String
+    let tone: OpenDesignReferenceTone
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(tone.color)
+                .frame(width: 16)
+            Text(title)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(referenceRounded(fill: tone.dim, stroke: tone.line, radius: 8))
     }
 }
 
@@ -3315,11 +4049,11 @@ private struct NewsMarketRadarProgressStep: Identifiable {
     }
 }
 
-private let newsMarketRadarProgressSteps: [NewsMarketRadarProgressStep] = [
-    .init(id: "checking_exa_route", order: 1, title: "연결 확인", fallbackDetail: "웹 검색 도구 연결을 확인하는 중"),
+nonisolated private let newsMarketRadarProgressSteps: [NewsMarketRadarProgressStep] = [
+    .init(id: "checking_exa_route", order: 1, title: "Exa 연결", fallbackDetail: "Exa Search 연결을 확인하는 중"),
     .init(id: "loading_workspace_evidence", order: 2, title: "근거 수집", fallbackDetail: "워크스페이스 근거와 일차 답변을 읽는 중"),
     .init(id: "building_research_prompt", order: 3, title: "질문 구성", fallbackDetail: "리서치 질문을 구성하는 중"),
-    .init(id: "running_provider_research", order: 4, title: "웹 검색", fallbackDetail: "웹 검색 도구로 공개 근거를 검색하는 중"),
+    .init(id: "running_provider_research", order: 4, title: "Exa 검색", fallbackDetail: "Exa Search로 공개 근거를 검색하는 중"),
     .init(id: "normalizing_cards", order: 5, title: "카드 정리", fallbackDetail: "근거를 가정별 카드로 정리하는 중"),
     .init(id: "saving_results", order: 6, title: "저장", fallbackDetail: "리서치 결과를 로컬 캐시에 저장하는 중"),
 ]
@@ -3396,7 +4130,7 @@ private func newsElapsedLabel(_ elapsedMs: Int) -> String {
 }
 
 private extension String {
-    var nonEmpty: String? {
+    nonisolated var nonEmpty: String? {
         trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
     }
 }
@@ -4484,6 +5218,8 @@ struct OpenDesignReferenceShell: View {
     let layout: OpenDesignDayLayoutMetrics
     let openSearch: () -> Void
     var newsMarketRadar: NewsMarketRadarSnapshot = .empty
+    var newsMarketRadarPreparingForDisplay: Bool = false
+    @Binding var newsMarketRadarUserState: NewsMarketRadarUserState
     var refreshNewsMarketRadar: () -> Void = {}
     var prepareNewsMarketRadar: () -> Void = {}
     var bipResearch: BipResearchSnapshot = .empty
@@ -4506,6 +5242,8 @@ struct OpenDesignReferenceShell: View {
                 layout: layout,
                 openSearch: openSearch,
                 snapshot: newsMarketRadar,
+                isPreparing: newsMarketRadarPreparingForDisplay,
+                userState: $newsMarketRadarUserState,
                 refresh: refreshNewsMarketRadar,
                 prepare: prepareNewsMarketRadar,
                 openSettings: openNewsSettings
@@ -5083,7 +5821,7 @@ private struct OpenDesignSettingsProviderList: View {
         case "gemini":
             return "API 키"
         case "exa":
-            return "fallback API key"
+            return "Exa Search key"
         default:
             return "로컬 런타임"
         }

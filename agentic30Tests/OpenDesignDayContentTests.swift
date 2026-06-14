@@ -649,6 +649,72 @@ struct OpenDesignDayContentTests {
         )
     }
 
+    private func makeNewsRadarSnapshot(
+        state: String,
+        stale: Bool = false,
+        reason: String? = nil,
+        cardIDs: [String],
+        impacts: [String: String] = [:],
+        sourceTypes: [String: [String]] = [:]
+    ) -> NewsMarketRadarSnapshot {
+        NewsMarketRadarSnapshot(
+            schemaVersion: 1,
+            generatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            nextRefreshAfter: nil,
+            status: NewsMarketRadarStatus(
+                state: state,
+                lastSuccessAt: nil,
+                stale: stale,
+                error: nil,
+                reason: reason,
+                researchSource: nil,
+                stage: nil,
+                progressText: nil,
+                elapsedMs: nil,
+                stepIndex: nil,
+                stepCount: nil,
+                partialFailures: nil
+            ),
+            workspaceEvidenceRefs: [],
+            lanes: [
+                NewsMarketRadarLane(
+                    id: "icp",
+                    title: "ICP",
+                    hypothesis: "누가 가장 절박한 사용자인가",
+                    impact: "high",
+                    confidence: "medium",
+                    cards: cardIDs.map { cardID in
+                        NewsMarketRadarCard(
+                            id: cardID,
+                            title: "Radar card \(cardID)",
+                            summary: "Summary",
+                            impact: impacts[cardID] ?? "high",
+                            confidence: "medium",
+                            whyItMatters: nil,
+                            suggestedHypothesisUpdate: nil,
+                            suggestedDocTargets: nil,
+                            relatedDays: nil,
+                            relatedAnswerIds: nil,
+                            sourceRefs: (sourceTypes[cardID] ?? []).enumerated().map { index, sourceType in
+                                NewsMarketRadarSourceRef(
+                                    id: "\(cardID)-source-\(index)",
+                                    sourceType: sourceType,
+                                    title: "\(sourceType) source",
+                                    url: sourceType == "web" ? "https://example.com/\(cardID)" : nil,
+                                    domain: sourceType == "web" ? "example.com" : nil,
+                                    path: sourceType == "workspace" ? ".agentic30/\(cardID).md" : nil,
+                                    publishedAt: nil,
+                                    excerpt: nil
+                                )
+                            },
+                            evidenceStrength: nil
+                        )
+                    }
+                ),
+            ]
+        )
+    }
+
     @Test func officeHoursRealProjectTestRequiresFreshIdleSession() {
         let fresh = makeChatSession()
         #expect(OfficeHoursRealProjectTestSessionPolicy.canStartTest(in: fresh, provider: .codex))
@@ -900,6 +966,8 @@ struct OpenDesignDayContentTests {
         #expect(content.railItems.map(\.title) == [
             "오늘 · Day 1",
             "아침 브리핑",
+            "전략",
+            "뉴스",
             "설정",
         ])
         #expect(content.taskGroups.count == 4)
@@ -953,6 +1021,8 @@ struct OpenDesignDayContentTests {
         #expect(railIDs == [
             "today",
             "briefing",
+            "strategy",
+            "news",
             "settings",
         ])
         #expect(pageIDs == [
@@ -990,6 +1060,8 @@ struct OpenDesignDayContentTests {
         #expect(productionRailIDs == [
             "today",
             "briefing",
+            "strategy",
+            "news",
             "settings",
         ])
         #expect(allRailIDs == Set(productionRailIDs))
@@ -998,8 +1070,374 @@ struct OpenDesignDayContentTests {
             "page-today",
             "page-search",
             "page-settings",
+            "page-news",
         ])
         #expect(allPageIDs.subtracting(Set(productionPageIDs)) == OpenDesignDayContent.developmentOnlyReferenceSearchItemIDs)
+    }
+
+    @Test func strategyRailItemAppearsInProductionPrimaryRailOrder() {
+        let railIDs = OpenDesignDayContent.makeRailItems(
+            todayTitle: "오늘 · Day 1",
+            showsDevelopmentOnlyReferencePages: false
+        ).map(\.id)
+
+        #expect(railIDs == [
+            "today",
+            "briefing",
+            "strategy",
+            "news",
+            "settings",
+        ])
+    }
+
+    @Test func strategyRailItemUsesStrategyRouteWithoutNavigationSideEffect() throws {
+        let railItem = try #require(OpenDesignDayContent.makeRailItems(
+            todayTitle: "오늘 · Day 1",
+            showsDevelopmentOnlyReferencePages: false
+        ).first(where: { $0.id == "strategy" }))
+
+        #expect(railItem.title == "전략")
+        #expect(railItem.route == .strategy)
+        #expect(openDesignRailNavigationEffect(for: railItem) == .none)
+    }
+
+    @Test func strategyCanvasReferenceContainsRequiredSectionsAndNoAnalyzeAdsWorkflow() {
+        #expect(OpenDesignStrategyCanvasReference.sectionIdentifiers == [
+            "strategy.diagnosis",
+            "strategy.criteria",
+            "strategy.canvas",
+            "strategy.matrix",
+            "strategy.swot",
+            "strategy.judgement",
+        ])
+
+        let copy = OpenDesignStrategyCanvasReference.searchableCopy.joined(separator: "\n")
+        #expect(copy.contains("Business diagnosis"))
+        #expect(copy.contains("분석 기준"))
+        #expect(copy.contains("비즈니스 캔버스"))
+        #expect(copy.contains("2x2 경쟁자 Matrix"))
+        #expect(copy.contains("SWOT 분석"))
+        #expect(copy.contains("전략 판단"))
+        #expect(!copy.contains("/analyze-ads"))
+    }
+
+    @Test func strategyCanvasReferenceContainsNineBlocksAndFiveCompetitors() {
+        #expect(OpenDesignStrategyCanvasReference.canvasBlocks.map(\.id) == [
+            "partners",
+            "activities",
+            "value-proposition",
+            "customer-segments",
+            "relationships",
+            "resources",
+            "channels",
+            "cost-structure",
+            "revenue-streams",
+        ])
+        #expect(OpenDesignStrategyCanvasReference.businessCanvasTopRows == [
+            ["partners", "activities", "value-proposition", "relationships", "customer-segments"],
+            ["partners", "resources", "value-proposition", "channels", "customer-segments"],
+        ])
+        #expect(OpenDesignStrategyCanvasReference.businessCanvasBottomRow == [
+            "cost-structure",
+            "revenue-streams",
+        ])
+        #expect(Set(
+            OpenDesignStrategyCanvasReference.businessCanvasTopRows.flatMap { $0 }
+                + OpenDesignStrategyCanvasReference.businessCanvasBottomRow
+        ) == Set(OpenDesignStrategyCanvasReference.canvasBlocks.map(\.id)))
+        let canvasNumbersByID = Dictionary(uniqueKeysWithValues: OpenDesignStrategyCanvasReference.canvasBlocks.map { ($0.id, $0.number) })
+        #expect(canvasNumbersByID == [
+            "customer-segments": "01",
+            "value-proposition": "02",
+            "channels": "03",
+            "relationships": "04",
+            "revenue-streams": "05",
+            "resources": "06",
+            "activities": "07",
+            "partners": "08",
+            "cost-structure": "09",
+        ])
+        #expect(OpenDesignStrategyCanvasReference.competitors.map(\.id) == [
+            "agentic30",
+            "coding",
+            "yc",
+            "content",
+            "chatbot",
+        ])
+        #expect(OpenDesignStrategyCanvasReference.competitors.contains { $0.title == "YC Startup School" })
+    }
+
+    @Test func strategyCanvasReferenceContainsSWOTAndStrategicJudgement() {
+        #expect(OpenDesignStrategyCanvasReference.swotGroups.map(\.title) == [
+            "Strengths",
+            "Weaknesses",
+            "Opportunities",
+            "Threats",
+        ])
+        #expect(OpenDesignStrategyCanvasReference.swotMatrixColumnCount == 2)
+        #expect(OpenDesignStrategyCanvasReference.swotMatrixRows == [
+            ["strengths", "weaknesses"],
+            ["opportunities", "threats"],
+        ])
+        #expect(OpenDesignStrategyCanvasReference.swotMatrixRows.count == 2)
+        #expect(OpenDesignStrategyCanvasReference.swotMatrixRows.allSatisfy { $0.count == 2 })
+        #expect(OpenDesignStrategyCanvasReference.swotMatrixRows.flatMap { $0 } == OpenDesignStrategyCanvasReference.swotGroups.map(\.id))
+        #expect(OpenDesignStrategyCanvasReference.judgement.contains("전업 1인 개발자"))
+        #expect(OpenDesignStrategyCanvasReference.judgement.contains("macOS assistant"))
+    }
+
+    @Test func newsRailItemRoutesToReferencePageAndPreparesDisplay() throws {
+        let railItem = try #require(OpenDesignDayContent.makeRailItems(
+            todayTitle: "오늘 · Day 1",
+            showsDevelopmentOnlyReferencePages: false
+        ).first(where: { $0.id == "news" }))
+
+        #expect(OpenDesignReferencePageKind(railItemID: railItem.id) == .news)
+        #expect(railItem.route == .inert)
+        #expect(openDesignRailNavigationEffect(for: railItem) == .prepareNewsMarketRadar)
+    }
+
+    @Test func newsRailBadgeTonePrioritizesRefreshThenAttentionThenLocalUpdates() {
+        var userState = NewsMarketRadarUserState()
+        userState.markRead(cardID: "card-ready")
+
+        #expect(openDesignNewsRailBadgeTone(
+            snapshot: makeNewsRadarSnapshot(state: "refreshing", cardIDs: ["card-ready"]),
+            userState: userState
+        ) == .sky)
+        #expect(openDesignNewsRailBadgeTone(
+            snapshot: makeNewsRadarSnapshot(state: "ready", stale: true, cardIDs: ["card-ready"]),
+            userState: userState
+        ) == .amber)
+        #expect(openDesignNewsRailBadgeTone(
+            snapshot: makeNewsRadarSnapshot(state: "failed", reason: "exa_api_key_missing", cardIDs: []),
+            userState: NewsMarketRadarUserState()
+        ) == .amber)
+        #expect(openDesignNewsRailBadgeTone(
+            snapshot: makeNewsRadarSnapshot(state: "ready", cardIDs: ["card-unread"]),
+            userState: NewsMarketRadarUserState()
+        ) == .accent)
+
+        var savedOnlyState = NewsMarketRadarUserState()
+        savedOnlyState.markRead(cardID: "card-saved")
+        savedOnlyState.toggleSaved(cardID: "card-saved")
+        #expect(openDesignNewsRailBadgeTone(
+            snapshot: makeNewsRadarSnapshot(state: "ready", cardIDs: ["card-saved"]),
+            userState: savedOnlyState
+        ) == .accent)
+        #expect(openDesignNewsRailBadgeTone(
+            snapshot: makeNewsRadarSnapshot(state: "ready", cardIDs: ["card-ready"]),
+            userState: userState
+        ) == nil)
+    }
+
+    @Test func briefingRailStatusShowsLoadingAndFailure() {
+        let sourceProgress = [
+            "github": MorningBriefingSourceProgress(
+                id: "github",
+                state: "collecting",
+                detail: "git 로그를 읽는 중",
+                logLines: ["git log --since yesterday"]
+            ),
+        ]
+        let briefingLoading = openDesignBriefingRailItemStatus(
+            collecting: true,
+            sourceProgress: sourceProgress,
+            briefing: nil
+        )
+        #expect(briefingLoading?.badgeTone == .sky)
+        #expect(openDesignRailAccessibilityValue(isActive: true, status: briefingLoading) == "active, loading")
+        #expect(openDesignRailAccessibilityValue(isActive: false, status: briefingLoading) == "inactive, loading")
+
+        var failedBriefing = MorningBriefing.uiTestingSample
+        failedBriefing.cards = nil
+        failedBriefing.status = MorningBriefingStatus(state: "failed", detail: "수집 실패")
+        let briefingFailed = openDesignBriefingRailItemStatus(
+            collecting: false,
+            sourceProgress: [:],
+            briefing: failedBriefing
+        )
+        #expect(briefingFailed?.badgeTone == .amber)
+        #expect(openDesignRailAccessibilityValue(isActive: true, status: briefingFailed) == "active, failed")
+    }
+
+    @Test func newsRailStatusIncludesPreparingRefreshingAndAttention() {
+        var readState = NewsMarketRadarUserState()
+        readState.markRead(cardID: "card-ready")
+        let newsPreparing = openDesignNewsRailItemStatus(
+            snapshot: makeNewsRadarSnapshot(state: "ready", cardIDs: ["card-ready"]),
+            userState: readState,
+            isPreparing: true
+        )
+        #expect(newsPreparing?.badgeTone == .sky)
+        #expect(openDesignRailAccessibilityValue(isActive: true, status: newsPreparing) == "active, loading")
+
+        let newsAttention = openDesignNewsRailItemStatus(
+            snapshot: makeNewsRadarSnapshot(state: "failed", reason: "exa_api_key_missing", cardIDs: []),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: false
+        )
+        #expect(newsAttention?.badgeTone == .amber)
+        #expect(openDesignRailAccessibilityValue(isActive: false, status: newsAttention) == "inactive, needs attention")
+
+        let newsUpdated = openDesignNewsRailItemStatus(
+            snapshot: makeNewsRadarSnapshot(state: "ready", cardIDs: ["card-unread"]),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: false
+        )
+        #expect(newsUpdated?.badgeTone == .accent)
+        #expect(openDesignRailAccessibilityValue(isActive: false, status: newsUpdated) == "inactive, updated")
+    }
+
+    @Test func newsLoadingPresentationSuppressesStandaloneEmptyStreamWhileRefreshing() {
+        let preparing = newsMarketRadarPresentationState(
+            snapshot: makeNewsRadarSnapshot(state: "ready", cardIDs: []),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: true
+        )
+        #expect(preparing.primaryContent == .progress)
+        #expect(preparing.progressTitle == "리서치 준비 중")
+        #expect(preparing.suppressesEmptyStream)
+
+        let refreshing = newsMarketRadarPresentationState(
+            snapshot: makeNewsRadarSnapshot(state: "refreshing", cardIDs: []),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: false
+        )
+        #expect(refreshing.primaryContent == .progress)
+        #expect(refreshing.suppressesEmptyStream)
+
+        let cachedRefresh = newsMarketRadarPresentationState(
+            snapshot: makeNewsRadarSnapshot(state: "refreshing", cardIDs: ["cached-card"]),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: false
+        )
+        #expect(cachedRefresh.primaryContent == .cards)
+        #expect(cachedRefresh.showsProgress)
+        #expect(!cachedRefresh.suppressesEmptyStream)
+
+        let exaMissing = newsMarketRadarPresentationState(
+            snapshot: makeNewsRadarSnapshot(state: "failed", reason: "exa_api_key_missing", cardIDs: []),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: false
+        )
+        #expect(exaMissing.primaryContent == .exaConfiguration)
+
+        let failedGeneric = newsMarketRadarPresentationState(
+            snapshot: makeNewsRadarSnapshot(state: "failed", reason: "search_failed", cardIDs: []),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: false
+        )
+        #expect(failedGeneric.primaryContent == .error)
+
+        let readyEmpty = newsMarketRadarPresentationState(
+            snapshot: makeNewsRadarSnapshot(state: "ready", cardIDs: []),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: false
+        )
+        #expect(readyEmpty.primaryContent == .empty)
+    }
+
+    @Test func morningBriefingLoadingPresentationUsesSourceProgressAndFallbackRows() {
+        let fallbackRows = morningBriefingLoadingRows(sourceProgress: [:])
+        #expect(fallbackRows.map(\.id) == ["cloudflare", "github", "posthog"])
+        #expect(fallbackRows.allSatisfy { $0.state == "waiting" })
+
+        let progressRows = morningBriefingLoadingRows(sourceProgress: [
+            "posthog": MorningBriefingSourceProgress(
+                id: "posthog",
+                state: "collecting",
+                detail: "events 쿼리 중",
+                logLines: ["query events", "group conversions"]
+            ),
+        ])
+        #expect(progressRows.map(\.id) == ["posthog"])
+        #expect(progressRows.first?.title == "PostHog")
+        #expect(progressRows.first?.state == "collecting")
+        #expect(progressRows.first?.logLines == ["query events", "group conversions"])
+
+        var failedBriefing = MorningBriefing.uiTestingSample
+        failedBriefing.cards = nil
+        failedBriefing.status = MorningBriefingStatus(state: "failed", detail: "수집 실패")
+        #expect(morningBriefingColdLoadPresentation(
+            briefing: nil,
+            collecting: true,
+            sourceProgress: [:]
+        ).kind == .loading)
+        #expect(morningBriefingColdLoadPresentation(
+            briefing: failedBriefing,
+            collecting: false,
+            sourceProgress: [:]
+        ).kind == .error)
+        #expect(morningBriefingColdLoadPresentation(
+            briefing: MorningBriefing.uiTestingSample,
+            collecting: true,
+            sourceProgress: [:]
+        ).kind == .none)
+    }
+
+    @Test func newsMarketRadarUserStatePersistsByWorkspaceAndCardID() throws {
+        let suiteName = "agentic30.news-market-radar.user-state.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let workspaceA = "/tmp/agentic30-news-a"
+        let workspaceB = "/tmp/agentic30-news-b"
+        let storeA = NewsMarketRadarUserStateStore(workspaceRoot: workspaceA, defaults: defaults)
+        let storeB = NewsMarketRadarUserStateStore(workspaceRoot: workspaceB, defaults: defaults)
+        var state = NewsMarketRadarUserState()
+        state.markRead(cardID: "lane-1-card")
+        state.toggleSaved(cardID: "lane-1-card")
+        state.selectedStreamID = "saved"
+        state.selectedValueFilter = "strong"
+
+        storeA.save(state)
+
+        #expect(storeA.load().readCardIDs == ["lane-1-card"])
+        #expect(storeA.load().savedCardIDs == ["lane-1-card"])
+        #expect(storeA.load().selectedStreamID == "saved")
+        #expect(storeA.load().selectedValueFilter == "strong")
+        #expect(storeB.load().readCardIDs.isEmpty)
+        #expect(storeB.load().savedCardIDs.isEmpty)
+    }
+
+    @Test func newsMarketRadarVisibleCardsFollowStreamAndValueFilters() {
+        let snapshot = makeNewsRadarSnapshot(
+            state: "ready",
+            cardIDs: ["high-web", "medium-local", "low-web"],
+            impacts: [
+                "high-web": "high",
+                "medium-local": "medium",
+                "low-web": "low",
+            ],
+            sourceTypes: [
+                "high-web": ["web"],
+                "medium-local": ["workspace"],
+                "low-web": ["web"],
+            ]
+        )
+        var userState = NewsMarketRadarUserState()
+
+        #expect(newsMarketRadarVisibleCards(snapshot: snapshot, userState: userState).map(\.id) == [
+            "high-web",
+            "medium-local",
+            "low-web",
+        ])
+
+        userState.selectedValueFilter = "high"
+        #expect(newsMarketRadarVisibleCards(snapshot: snapshot, userState: userState).map(\.id) == ["high-web"])
+
+        userState.selectedValueFilter = "all"
+        userState.selectedStreamID = "source:web"
+        #expect(newsMarketRadarVisibleCards(snapshot: snapshot, userState: userState).map(\.id) == ["high-web", "low-web"])
+
+        userState.selectedStreamID = "saved"
+        userState.toggleSaved(cardID: "medium-local")
+        #expect(newsMarketRadarVisibleCards(snapshot: snapshot, userState: userState).map(\.id) == ["medium-local"])
+
+        userState.selectedStreamID = "lane:icp"
+        userState.selectedValueFilter = "low"
+        #expect(newsMarketRadarVisibleCards(snapshot: snapshot, userState: userState).map(\.id) == ["low-web"])
     }
 
     @Test func day2MarketFixtureMatchesOpenDesignDashboard() {
@@ -1808,40 +2246,68 @@ struct OpenDesignDayContentTests {
         #expect(day3Search?.route == .inert)
     }
 
-    @Test func localDevLockingCanKeepDayThreeOpen() {
-        let content = OpenDesignDayContent.day2.lockingDays(after: 3)
+    @Test func localDevLockingKeepsDayFourOpenAfterProgressProjection() throws {
+        let day4 = try #require(AgenticCurriculumDay.days.first(where: { $0.day == 4 }))
+        let snapshot = FoundationProgressSnapshot(
+            workspaceRoot: "/tmp/project",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            selectedDay: 4,
+            completedDays: [1, 2, 3]
+        )
+        let content = OpenDesignDayContent.localDevelopmentHarnessDay(day4)
+            .applyingFoundationProgress(snapshot, selectedDay: 4)
+            .lockingDays(after: 30)
         let week1Tasks = content.taskGroups.first?.tasks ?? []
 
-        let day3IsPending: Bool
-        if case .pending? = week1Tasks.first(where: { $0.id == "day3" })?.state {
-            day3IsPending = true
+        let day4IsActive: Bool
+        if case .active? = week1Tasks.first(where: { $0.id == "day4" })?.state {
+            day4IsActive = true
         } else {
-            day3IsPending = false
+            day4IsActive = false
         }
 
-        let day4IsLocked: Bool
-        if case .locked? = week1Tasks.first(where: { $0.id == "day4" })?.state {
-            day4IsLocked = true
+        let day5IsPending: Bool
+        if case .pending? = week1Tasks.first(where: { $0.id == "day5" })?.state {
+            day5IsPending = true
         } else {
-            day4IsLocked = false
+            day5IsPending = false
         }
 
-        #expect(day3IsPending)
-        #expect(day4IsLocked)
-        #expect(content.rankedSearchItems(query: "day3").first?.isLocked == false)
-        #expect(content.rankedSearchItems(query: "day4").first?.isLocked == true)
+        #expect(content.railItems.first?.title == "오늘 · Day 4")
+        #expect(content.market == nil)
+        #expect(day4IsActive)
+        #expect(day5IsPending)
+        #expect(content.rankedSearchItems(query: "day4").first?.isLocked == false)
+        #expect(content.rankedSearchItems(query: "day4").first?.title == day4.title)
     }
 
-    @Test func openDesignRoutePolicySupportsDayThreeOnlyForLocalDevFastForward() {
+    @Test func openDesignRoutePolicySupportsAllDaysOnlyForLocalDevFastForward() {
         #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 1, localDevelopmentFastForwardEnabled: false))
         #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 2, localDevelopmentFastForwardEnabled: false))
         #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 3, localDevelopmentFastForwardEnabled: false))
+        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 4, localDevelopmentFastForwardEnabled: false))
+        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 30, localDevelopmentFastForwardEnabled: false))
         #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 3, localDevelopmentFastForwardEnabled: true))
-        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 8, localDevelopmentFastForwardEnabled: true))
-        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 30, localDevelopmentFastForwardEnabled: true))
+        #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 4, localDevelopmentFastForwardEnabled: true))
+        #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 30, localDevelopmentFastForwardEnabled: true))
+        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 31, localDevelopmentFastForwardEnabled: true))
     }
 
-    @Test func workspaceDayResolverAllowsSelectedDayThreeOnlyForLocalDevFastForward() {
+    @Test func completedCommitmentPresentationCanAdvanceFromDayThreeToDayFourInLocalDev() {
+        let presentation = OfficeHoursCompletedCommitmentPresentation.resolve(
+            activeDay: 3,
+            supportsNextDay: OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(
+                dayNumber: 4,
+                localDevelopmentFastForwardEnabled: true
+            )
+        )
+
+        #expect(presentation.canAdvance)
+        #expect(presentation.buttonTitle == "Day 3 완료 → Day 4")
+        #expect(presentation.accessibilityLabel == "Day 3 완료 후 Day 4로 이동")
+    }
+
+    @Test func workspaceDayResolverAllowsSelectedFutureDaysForLocalDevFastForward() {
         #expect(OpenDesignWorkspaceDayResolver.dayNumber(
             selectedDay: 3,
             completedDays: [1, 2],
@@ -1852,19 +2318,30 @@ struct OpenDesignDayContentTests {
             completedDays: [1, 2],
             localDevelopmentFastForwardEnabled: true
         ) == 3)
+        #expect(OpenDesignWorkspaceDayResolver.dayNumber(
+            selectedDay: 30,
+            completedDays: [1, 2],
+            localDevelopmentFastForwardEnabled: true
+        ) == 30)
     }
 
-    @Test func localDevProgressPrimerEmitsDayTwoAndDayThreeInterviewPatchesWithoutRegressingDone() {
+    @Test func localDevProgressPrimerEmitsDayTwoThroughThirtyInterviewPatchesWithoutRegressingDone() {
         let allPatches = LocalDevelopmentDayProgressPrimer.patchRequests(day: 2, record: nil)
         #expect(allPatches.map(\.stepId) == ["scan", "retro", "goal", "interview"])
         #expect(allPatches.map(\.status) == [.done, .done, .done, .active])
 
-        let day3Patches = LocalDevelopmentDayProgressPrimer.patchRequests(day: 3, record: DayRecord(
-            day: 3,
+        let day30Patches = LocalDevelopmentDayProgressPrimer.patchRequests(day: 30, record: nil)
+        #expect(day30Patches.map(\.stepId) == ["scan", "retro", "goal", "interview"])
+        #expect(day30Patches.map(\.status) == [.done, .done, .done, .active])
+        #expect(LocalDevelopmentDayProgressPrimer.patchRequests(day: 1, record: nil).isEmpty)
+        #expect(LocalDevelopmentDayProgressPrimer.patchRequests(day: 31, record: nil).isEmpty)
+
+        let day4Patches = LocalDevelopmentDayProgressPrimer.patchRequests(day: 4, record: DayRecord(
+            day: 4,
             kind: .standard,
             steps: ["scan": .done, "retro": .done, "goal": .done, "interview": .done, "execution": .pending]
         ))
-        #expect(day3Patches.isEmpty)
+        #expect(day4Patches.isEmpty)
     }
 
     @Test func officeHoursSidebarTimelineUsesDateDayByDefault() {
@@ -2419,7 +2896,7 @@ struct OpenDesignDayContentTests {
 
             #expect(OpenDesignReferencePageKind(railItemID: kind.railItemID) == kind)
             #expect(OpenDesignReferencePageKind(searchItemID: searchID) == kind)
-            if kind == .settings {
+            if kind == .settings || kind == .news {
                 #expect(railIDs.contains(kind.railItemID))
             } else {
                 #expect(!railIDs.contains(kind.railItemID))

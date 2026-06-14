@@ -33,6 +33,7 @@ struct OpenDesignDayContent {
             case search
             case officeHours
             case morningBriefing
+            case strategy
             case settings
             case inert
         }
@@ -374,7 +375,6 @@ struct OpenDesignDayContent {
         "projects",
         "interviews",
         "bip",
-        "news",
         "history",
     ]
 
@@ -382,7 +382,6 @@ struct OpenDesignDayContent {
         "page-projects",
         "page-interviews",
         "page-bip",
-        "page-news",
         "page-history",
     ]
 
@@ -418,8 +417,71 @@ struct OpenDesignDayContent {
         visibleRailItems([
             RailItem(id: "today", title: todayTitle, systemImage: "calendar", isActive: true, hasNewDot: false, route: todayRoute),
             RailItem(id: "briefing", title: "아침 브리핑", systemImage: "sunrise", isActive: false, hasNewDot: false, route: .morningBriefing),
+            RailItem(id: "strategy", title: "전략", systemImage: "chart.line.uptrend.xyaxis", isActive: false, hasNewDot: false, route: .strategy),
+            RailItem(id: "news", title: "뉴스", systemImage: "newspaper", isActive: false, hasNewDot: false, route: .inert),
             RailItem(id: "settings", title: "설정", systemImage: "gearshape", isActive: false, hasNewDot: false, route: .settings),
         ], showsDevelopmentOnlyReferencePages: showsDevelopmentOnlyReferencePages)
+    }
+
+    static func localDevelopmentHarnessDay(_ curriculumDay: AgenticCurriculumDay) -> OpenDesignDayContent {
+        let dayNumber = max(1, min(curriculumDay.day, LocalDevelopmentDayFastForward.localDevelopmentMaxOpenDesignDay))
+        return OpenDesignDayContent(
+            railItems: makeRailItems(todayTitle: "오늘 · Day \(dayNumber)", todayRoute: .officeHours),
+            taskGroups: [],
+            contextTitle: "Day \(dayNumber) · \(curriculumDay.title)",
+            contextBody: curriculumDay.summary,
+            mission: Mission(
+                markedTitle: curriculumDay.shortTitle,
+                titleSuffix: "을 진행합니다.",
+                body: curriculumDay.summary,
+                rules: curriculumDay.tasks,
+                footnote: "로컬 개발 fast-forward용 Day \(dayNumber) harness",
+                acceptLabel: "Office Hours 시작",
+                acceptedLabel: "Office Hours 준비됨"
+            ),
+            interviewSteps: [],
+            searchItems: makeLocalDevelopmentHarnessSearchItems(curriculumDay),
+            plan: nil
+        )
+    }
+
+    private static func makeLocalDevelopmentHarnessSearchItems(_ curriculumDay: AgenticCurriculumDay) -> [SearchItem] {
+        let dayNumber = max(1, min(curriculumDay.day, LocalDevelopmentDayFastForward.localDevelopmentMaxOpenDesignDay))
+        let pages = makeSearchItems()
+            .filter { $0.kind == .page }
+            .map { item -> SearchItem in
+                guard item.id == "page-today" else { return item }
+                return SearchItem(
+                    id: item.id,
+                    kind: item.kind,
+                    title: "오늘 · Day \(dayNumber)",
+                    subtitle: "Office Hours",
+                    day: nil,
+                    systemImage: "scope",
+                    isActive: true,
+                    isLocked: false,
+                    lockNote: nil,
+                    targetSectionID: "top",
+                    route: .officeHours
+                )
+            }
+        let tasks = AgenticCurriculumDay.days.map { day -> SearchItem in
+            let isActive = day.day == dayNumber
+            return SearchItem(
+                id: "task-day\(day.day)",
+                kind: .task,
+                title: day.title,
+                subtitle: day.shortTitle,
+                day: "Day \(day.day)",
+                systemImage: isActive ? "circle.dotted" : "circle",
+                isActive: isActive,
+                isLocked: false,
+                lockNote: nil,
+                targetSectionID: isActive ? "top" : nil,
+                route: isActive ? .officeHours : .inert
+            )
+        }
+        return tasks + pages
     }
 
     var lockingFutureDays: OpenDesignDayContent {
@@ -2078,6 +2140,295 @@ struct OpenDesignScrollRequest: Equatable {
     }
 }
 
+nonisolated enum OpenDesignRailNavigationEffect: Hashable {
+    case none
+    case prepareNewsMarketRadar
+}
+
+nonisolated func openDesignRailNavigationEffect(for item: OpenDesignDayContent.RailItem) -> OpenDesignRailNavigationEffect {
+    guard OpenDesignReferencePageKind(railItemID: item.id) == .news else {
+        return .none
+    }
+    return .prepareNewsMarketRadar
+}
+
+struct OpenDesignStrategySummaryTile: Hashable, Identifiable {
+    let id: String
+    let label: String
+    let title: String
+    let detail: String
+}
+
+struct OpenDesignStrategyCriterionRow: Hashable, Identifiable {
+    let id: String
+    let label: String
+    let value: String
+}
+
+struct OpenDesignStrategyCanvasBlock: Hashable, Identifiable {
+    let id: String
+    let number: String
+    let eyebrow: String
+    let title: String
+    let bullets: [String]
+    let tone: OpenDesignStrategyTone
+}
+
+struct OpenDesignStrategyCompetitor: Hashable, Identifiable {
+    let id: String
+    let title: String
+    let body: String
+    let gap: String
+    let x: CGFloat
+    let y: CGFloat
+    let isAgentic30: Bool
+}
+
+struct OpenDesignStrategySWOTGroup: Hashable, Identifiable {
+    let id: String
+    let title: String
+    let tag: String
+    let bullets: [String]
+    let tone: OpenDesignStrategyTone
+}
+
+enum OpenDesignStrategyTone: Hashable {
+    case accent
+    case sky
+    case amber
+    case rose
+}
+
+enum OpenDesignStrategyCanvasReference {
+    static let sectionIdentifiers = [
+        "strategy.diagnosis",
+        "strategy.criteria",
+        "strategy.canvas",
+        "strategy.matrix",
+        "strategy.swot",
+        "strategy.judgement",
+    ]
+
+    static let commandLine = "strategy@agentic30 ~/code/agentic30 $ synthesize business-canvas --from SPEC ICP VALUES"
+    static let diagnosisKicker = "Business diagnosis"
+    static let diagnosisTitle = "Agentic30은 코딩 도구가 아니라, 전업 1인 개발자의 PMF 검증 리듬을 운영하는 macOS assistant입니다."
+    static let diagnosisLead = "핵심 웨지는 프로젝트 path + 업무 일지 + 인터뷰 transcript + BIP 기록을 읽어, 누구에게 무엇을 검증할지 매일 좁히는 것입니다. 경쟁은 더 잘 코딩하기가 아니라 30일 안에 계속/전환/중단 판단을 만들 수 있느냐입니다."
+    static let positioningStatement = "Agentic30은 전업 1인 개발자가 30일 안에 PMF 검증 방향을 좁히도록, 로컬 프로젝트/업무/인터뷰/BIP 기록에서 오늘의 증거 목표를 뽑는 macOS assistant입니다."
+    static let judgement = "Agentic30은 AI 코파운더나 코딩 assistant로 넓히면 경쟁이 흐려집니다. 지금의 강한 포지션은 전업 1인 개발자가 30일 안에 PMF 검증 방향을 좁히도록, 로컬 실행 기록에서 다음 증거 목표를 뽑는 macOS assistant입니다. 따라서 다음 검증은 기능 확장이 아니라 Day 0-3 루프의 반복 사용, 기록 입력률, 외부 ICP의 유료 ask 반응에 집중해야 합니다."
+
+    static let summaryTiles = [
+        OpenDesignStrategySummaryTile(id: "primary-icp", label: "Primary ICP", title: "전업 1인 개발자", detail: "수익 0원 · macOS · AI 코딩 도구 사용 · 기록 의향"),
+        OpenDesignStrategySummaryTile(id: "wedge", label: "Wedge", title: "Foundation Day 0-3", detail: "고객/문제/시장 신호를 코드보다 먼저 닫는 루프"),
+        OpenDesignStrategySummaryTile(id: "proof-target", label: "Proof Target", title: "증거 기반 행동", detail: "인터뷰, ask, 첫 가치 도달, Go/No-Go 결정"),
+    ]
+
+    static let criteriaRows = [
+        OpenDesignStrategyCriterionRow(id: "product-form", label: "제품 형태", value: "SwiftUI macOS 메뉴바 앱 + 로컬 Node sidecar. 사용자는 프로젝트 path와 기록 폴더를 지정합니다."),
+        OpenDesignStrategyCriterionRow(id: "core-pain", label: "핵심 고통", value: "만들 줄은 알지만 무엇을 팔아야 할지, 누구에게 검증해야 할지, 오늘 어떤 증거를 만들지 모릅니다."),
+        OpenDesignStrategyCriterionRow(id: "differentiation", label: "차별 기준", value: "정적 강의가 아니라 사용자의 프로젝트와 실행 기록에서 adaptive Day 과제를 생성합니다."),
+        OpenDesignStrategyCriterionRow(id: "stage", label: "현재 단계", value: "외부 ICP evidence와 private pilot feedback을 우선하는 단계. 가격과 public launch는 아직 검증 대상입니다."),
+    ]
+
+    static let canvasBlocks = [
+        OpenDesignStrategyCanvasBlock(id: "partners", number: "08", eyebrow: "Partners", title: "핵심 파트너", bullets: [
+            "Claude / Codex / Cursor 같은 provider 생태계",
+            "Zoom, caret.so, Granola 등 인터뷰 기록 도구",
+            "Threads, Discord, 개발자 커뮤니티의 초기 ICP 접근면",
+            "Sparkle, Developer ID, notarization 배포 체계",
+        ], tone: .sky),
+        OpenDesignStrategyCanvasBlock(id: "activities", number: "07", eyebrow: "Activities", title: "핵심 활동", bullets: [
+            "Foundation Day 0-3 daily dogfood와 외부 pilot 반복",
+            "프로젝트/업무/인터뷰/BIP 기록에서 다음 과제 생성",
+            "Mom Test 질문, ask, Go/No-Go 기준을 개인 맥락에 맞춤",
+            "로컬 sidecar 안정화와 provider routing 유지",
+        ], tone: .accent),
+        OpenDesignStrategyCanvasBlock(id: "value-proposition", number: "02", eyebrow: "Value Proposition", title: "가치 제안", bullets: [
+            "프로젝트와 실행 기록을 연결하면, 당신을 위한 30일 커리큘럼이 나온다.",
+            "코딩 속도보다 고객 증거, 수요 신호, 첫 ask를 매일 남기게 함",
+            "혼자 판단하는 편향을 transcript와 숫자로 교정",
+            "30일 안에 PMF 방향을 계속/전환/중단 중 하나로 좁힘",
+        ], tone: .accent),
+        OpenDesignStrategyCanvasBlock(id: "customer-segments", number: "01", eyebrow: "Customer Segments", title: "고객 세그먼트", bullets: [
+            "전업 1인 개발자, 첫 매출 전, macOS 사용자",
+            "Claude Code / Codex / Cursor 등 AI 코딩 도구 사용",
+            "30일 동안 프로젝트/업무/인터뷰/BIP 기록을 남길 의향",
+            "비타겟: 직장인 사이드프로젝트, 성장 단계, 대신 해줘 수요",
+        ], tone: .accent),
+        OpenDesignStrategyCanvasBlock(id: "relationships", number: "04", eyebrow: "Relationships", title: "고객 관계", bullets: [
+            "메뉴바 상주 assistant의 매일 체크인",
+            "private pilot에서 맞춤 작업과 강한 피드백 루프",
+            "과제 수행 결과를 다시 앱에 제출하는 evidence cycle",
+            "대신 해주는 agency가 아니라 실행 판단 코치",
+        ], tone: .accent),
+        OpenDesignStrategyCanvasBlock(id: "resources", number: "06", eyebrow: "Resources", title: "핵심 자원", bullets: [
+            "SwiftUI 앱, Node sidecar, session store",
+            "MDX 31개 Day 커리큘럼과 Day별 프롬프트 자산",
+            "익명화된 외부 ICP 인터뷰와 pilot feedback",
+            "창업자 본인의 dogfood 기록과 BIP proof",
+        ], tone: .accent),
+        OpenDesignStrategyCanvasBlock(id: "channels", number: "03", eyebrow: "Channels", title: "채널", bullets: [
+            "초기: 외부 ICP 인터뷰와 private pilot 직접 모집",
+            "확장: 개발자 커뮤니티, Threads, Claude/Codex 생태계",
+            "제품 배포: Developer ID PKG / DMG 직접 배포",
+            "증거 채널: BIP, landing, DM, 인터뷰 transcript",
+        ], tone: .accent),
+        OpenDesignStrategyCanvasBlock(id: "cost-structure", number: "09", eyebrow: "Cost Structure", title: "비용 구조", bullets: [
+            "AI provider 호출 비용과 긴 분석 context 관리",
+            "macOS 배포, 서명, 진단, setup support",
+            "초기 pilot의 founder-led manual curation 시간",
+            "커리큘럼/프롬프트 버전 관리와 리서치 유지 비용",
+        ], tone: .rose),
+        OpenDesignStrategyCanvasBlock(id: "revenue-streams", number: "05", eyebrow: "Revenue Streams", title: "수익원 가설", bullets: [
+            "현재: pilot-specific offer와 결제 의사 확인 전 단계",
+            "가설 A: 30일 검증 스프린트 유료 cohort",
+            "가설 B: macOS assistant 월 구독 + provider BYOK",
+            "검증 기준: 흥미롭다가 아니라 money signal 또는 유료 ask",
+        ], tone: .amber),
+    ]
+    static let businessCanvasTopRows = [
+        ["partners", "activities", "value-proposition", "relationships", "customer-segments"],
+        ["partners", "resources", "value-proposition", "channels", "customer-segments"],
+    ]
+    static let businessCanvasBottomRow = ["cost-structure", "revenue-streams"]
+
+    static func canvasBlock(id: String) -> OpenDesignStrategyCanvasBlock {
+        canvasBlocks.first { $0.id == id }
+            ?? OpenDesignStrategyCanvasBlock(id: id, number: "--", eyebrow: id, title: id, bullets: [], tone: .accent)
+    }
+
+    static let competitors = [
+        OpenDesignStrategyCompetitor(id: "agentic30", title: "Agentic30", body: "프로젝트 path와 실행 기록을 읽어 오늘의 검증 과제를 생성합니다. 강점은 build 도구와 강의 사이가 아니라, 사용자의 실제 evidence를 다음 행동으로 바꾸는 좁은 루프입니다.", gap: "빈자리: 한국어 + 전업 1인 개발자 + macOS local-first + 30일 adaptive PMF 검증.", x: 0.82, y: 0.22, isAgentic30: true),
+        OpenDesignStrategyCompetitor(id: "coding", title: "Cursor · Claude Code", body: "코딩 생산성은 압도적이지만, 고객 인터뷰와 ask 결과를 기준으로 오늘의 검증 과제를 강제하지 않습니다. Agentic30은 이 도구들을 대체하지 않고 보완합니다.", gap: "차이: 더 빨리 만드는 도구가 아니라 무엇을 더 만들지 멈추게 하는 루프.", x: 0.77, y: 0.72, isAgentic30: false),
+        OpenDesignStrategyCompetitor(id: "yc", title: "YC Startup School", body: "PMF와 고객 대화 프레임은 강하지만 영어권, 팀/스타트업 맥락, 정적 커리큘럼 성격이 강합니다. 개인 프로젝트 기록을 매일 읽는 제품은 아닙니다.", gap: "차이: 글로벌 교육 콘텐츠보다 한국어 1인 개발자의 로컬 실행 기록에 붙습니다.", x: 0.36, y: 0.34, isAgentic30: false),
+        OpenDesignStrategyCompetitor(id: "content", title: "IH · YouTube", body: "영감과 사례는 풍부하지만, 오늘 누구에게 어떤 질문을 할지 사용자의 프로젝트 맥락으로 좁혀주지 않습니다. 실행 accountability도 약합니다.", gap: "차이: 정보 소비를 줄이고 당일 행동과 증거 제출로 닫습니다.", x: 0.21, y: 0.61, isAgentic30: false),
+        OpenDesignStrategyCompetitor(id: "chatbot", title: "범용 AI cofounder", body: "대화형 조언은 가능하지만 로컬 프로젝트 path, transcript, BIP 기록, Day별 진행 로그가 제품 구조 안에 고정되어 있지 않습니다.", gap: "차이: 한 번의 조언이 아니라 30일 동안 누적되는 evidence state를 관리합니다.", x: 0.58, y: 0.49, isAgentic30: false),
+    ]
+
+    static let swotGroups = [
+        OpenDesignStrategySWOTGroup(id: "strengths", title: "Strengths", tag: "내부 강점", bullets: [
+            "차별 축이 명확합니다. 코딩이 아니라 PMF evidence와 다음 행동을 다룹니다.",
+            "local-first 맥락으로 프로젝트 path, transcript, 업무 일지를 직접 연결할 수 있습니다.",
+            "ICP가 좁습니다. 전업 1인 개발자, 수익 0원, macOS, 기록 의향.",
+            "가치 체계가 제품 행동과 맞닿아 있습니다. 제약, 고객, 숫자, 공개, adaptive.",
+        ], tone: .accent),
+        OpenDesignStrategySWOTGroup(id: "weaknesses", title: "Weaknesses", tag: "내부 약점", bullets: [
+            "pre-dogfood / pilot 단계라 반복 사용 데이터와 결제 검증이 부족합니다.",
+            "macOS + Node/provider 셋업은 강한 차별이지만 온보딩 마찰입니다.",
+            "기록 의존 제품입니다. 사용자가 transcript와 업무 일지를 남기지 않으면 가치가 약해집니다.",
+            "수익 모델이 미확정입니다. cohort, 구독, pilot offer 중 돈이 되는 축을 더 좁혀야 합니다.",
+        ], tone: .amber),
+        OpenDesignStrategySWOTGroup(id: "opportunities", title: "Opportunities", tag: "외부 기회", bullets: [
+            "Agentic coding 확산으로 빠르게 만들지만 못 파는 1인 개발자가 늘어납니다.",
+            "한국어 시장 빈자리가 있습니다. 영어권 startup school과 범용 콘텐츠는 로컬 실행 맥락이 약합니다.",
+            "private pilot evidence를 축적하면 강의가 아닌 제품으로 포지셔닝할 수 있습니다.",
+            "Claude/Codex 생태계 주변에서 BYOK, local-first, developer workflow 수요가 커집니다.",
+        ], tone: .accent),
+        OpenDesignStrategySWOTGroup(id: "threats", title: "Threats", tag: "외부 위협", bullets: [
+            "코딩 도구가 planning/PMF 기능을 흡수하면 차별 서사가 약해질 수 있습니다.",
+            "커뮤니티와 강의 프로그램은 신뢰, 네트워크, accountability를 이미 갖고 있습니다.",
+            "개인 기록/프로젝트 접근은 privacy 우려와 배포 제한을 동반합니다.",
+            "고객이 기록을 싫어하면 adaptive 엔진의 핵심 입력이 사라집니다.",
+        ], tone: .rose),
+    ]
+    static let swotMatrixColumnCount = 2
+    static let swotMatrixRows = [
+        ["strengths", "weaknesses"],
+        ["opportunities", "threats"],
+    ]
+
+    static var searchableCopy: [String] {
+        var values = [
+            commandLine,
+            diagnosisKicker,
+            diagnosisTitle,
+            diagnosisLead,
+            "분석 기준",
+            "비즈니스 캔버스",
+            "2x2 경쟁자 Matrix",
+            "SWOT 분석",
+            "전략 판단",
+            positioningStatement,
+            judgement,
+        ]
+        values.append(contentsOf: summaryTiles.flatMap { [$0.label, $0.title, $0.detail] })
+        values.append(contentsOf: criteriaRows.flatMap { [$0.label, $0.value] })
+        values.append(contentsOf: canvasBlocks.flatMap { [$0.eyebrow, $0.title] + $0.bullets })
+        values.append(contentsOf: competitors.flatMap { [$0.title, $0.body, $0.gap] })
+        values.append(contentsOf: swotGroups.flatMap { [$0.title, $0.tag] + $0.bullets })
+        return values
+    }
+}
+
+nonisolated enum OpenDesignRailBadgeTone: Hashable {
+    case accent
+    case amber
+    case sky
+}
+
+nonisolated struct OpenDesignRailItemStatus: Hashable {
+    let badgeTone: OpenDesignRailBadgeTone
+    let accessibilityState: String
+}
+
+nonisolated func openDesignRailAccessibilityValue(
+    isActive: Bool,
+    status: OpenDesignRailItemStatus?
+) -> String {
+    let base = isActive ? "active" : "inactive"
+    guard let status else { return base }
+    return "\(base), \(status.accessibilityState)"
+}
+
+nonisolated func openDesignBriefingRailItemStatus(
+    collecting: Bool,
+    sourceProgress: [String: MorningBriefingSourceProgress],
+    briefing: MorningBriefing?
+) -> OpenDesignRailItemStatus? {
+    if collecting || !sourceProgress.isEmpty {
+        return OpenDesignRailItemStatus(badgeTone: .sky, accessibilityState: "loading")
+    }
+    if briefing?.status?.state == "failed" {
+        return OpenDesignRailItemStatus(badgeTone: .amber, accessibilityState: "failed")
+    }
+    return nil
+}
+
+nonisolated func openDesignNewsRailItemStatus(
+    snapshot: NewsMarketRadarSnapshot,
+    userState: NewsMarketRadarUserState,
+    isPreparing: Bool
+) -> OpenDesignRailItemStatus? {
+    if isPreparing || snapshot.status.state == "refreshing" {
+        return OpenDesignRailItemStatus(badgeTone: .sky, accessibilityState: "loading")
+    }
+    if openDesignNewsStatusNeedsAttention(snapshot.status) {
+        return OpenDesignRailItemStatus(badgeTone: .amber, accessibilityState: "needs attention")
+    }
+    if snapshot.status.state == "ready",
+       userState.unreadCount(in: snapshot) > 0 || userState.savedCount(in: snapshot) > 0 {
+        return OpenDesignRailItemStatus(badgeTone: .accent, accessibilityState: "updated")
+    }
+    return nil
+}
+
+nonisolated func openDesignNewsRailBadgeTone(
+    snapshot: NewsMarketRadarSnapshot,
+    userState: NewsMarketRadarUserState
+) -> OpenDesignRailBadgeTone? {
+    openDesignNewsRailItemStatus(
+        snapshot: snapshot,
+        userState: userState,
+        isPreparing: false
+    )?.badgeTone
+}
+
+nonisolated private func openDesignNewsStatusNeedsAttention(_ status: NewsMarketRadarStatus) -> Bool {
+    status.state == "failed"
+        || status.state == "stale"
+        || status.stale == true
+        || ["exa_api_key_missing", "exa_mcp_missing"].contains(status.reason ?? "")
+}
+
 enum OpenDesignIntroStage: Int, Comparable {
     case context
     case signals
@@ -3142,6 +3493,7 @@ struct OpenDesignDayPageView: View {
     let openSettings: () -> Void
     let submitStructuredPromptChoice: (OpenDesignDayAnswerSubmission) -> Void
     let newsMarketRadar: NewsMarketRadarSnapshot
+    let newsMarketRadarPreparingForDisplay: Bool
     let refreshNewsMarketRadar: () -> Void
     let prepareNewsMarketRadar: () -> Void
     let settingsScreen: AnyView?
@@ -3163,8 +3515,12 @@ struct OpenDesignDayPageView: View {
     let officeHoursScreen: ((Bool) -> AnyView)?
     let shareOfficeHoursScreenshot: ((NSView?) -> Void)?
     let morningBriefingScreen: AnyView?
+    let morningBriefing: MorningBriefing?
+    let morningBriefingCollecting: Bool
+    let morningBriefingSourceProgress: [String: MorningBriefingSourceProgress]
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
+    let isDay1HandoffAwaitingFollowupPrompt: Bool
     let day1HandoffError: String?
     let day1SituationSummary: Day1SituationSummary?
     let onChooseDay1SituationGoal: (String) -> Void
@@ -3180,6 +3536,7 @@ struct OpenDesignDayPageView: View {
     @Binding private var selectedReferencePage: OpenDesignReferencePageKind?
     @Binding private var isOfficeHoursPresented: Bool
     @Binding private var isMorningBriefingPresented: Bool
+    @Binding private var isStrategyPresented: Bool
     @Binding private var pendingScrollRequest: OpenDesignScrollRequest?
     @State private var isSearchPresented = false
     @State private var searchQuery = ""
@@ -3197,6 +3554,7 @@ struct OpenDesignDayPageView: View {
         selectedReferencePage: Binding<OpenDesignReferencePageKind?> = .constant(nil),
         isOfficeHoursPresented: Binding<Bool> = .constant(false),
         isMorningBriefingPresented: Binding<Bool> = .constant(false),
+        isStrategyPresented: Binding<Bool> = .constant(false),
         pendingScrollRequest: Binding<OpenDesignScrollRequest?> = .constant(nil),
         openSettings: @escaping () -> Void,
         settingsScreen: AnyView? = nil,
@@ -3208,6 +3566,7 @@ struct OpenDesignDayPageView: View {
         saveDay1GoalDraft: @escaping (Day1GoalDraft) -> Void = { _ in },
         submitStructuredPromptChoice: @escaping (OpenDesignDayAnswerSubmission) -> Void = { _ in },
         newsMarketRadar: NewsMarketRadarSnapshot = .empty,
+        newsMarketRadarPreparingForDisplay: Bool = false,
         refreshNewsMarketRadar: @escaping () -> Void = {},
         prepareNewsMarketRadar: @escaping () -> Void = {},
         bipResearch: BipResearchSnapshot = .empty,
@@ -3222,8 +3581,12 @@ struct OpenDesignDayPageView: View {
         officeHoursScreen: ((Bool) -> AnyView)? = nil,
         shareOfficeHoursScreenshot: ((NSView?) -> Void)? = nil,
         morningBriefingScreen: AnyView? = nil,
+        morningBriefing: MorningBriefing? = nil,
+        morningBriefingCollecting: Bool = false,
+        morningBriefingSourceProgress: [String: MorningBriefingSourceProgress] = [:],
         activeDay1HandoffDocType: String? = nil,
         pendingDay1HandoffDocType: String? = nil,
+        isDay1HandoffAwaitingFollowupPrompt: Bool = false,
         day1HandoffError: String? = nil,
         day1SituationSummary: Day1SituationSummary? = nil,
         onChooseDay1SituationGoal: @escaping (String) -> Void = { _ in },
@@ -3239,6 +3602,7 @@ struct OpenDesignDayPageView: View {
         _selectedReferencePage = selectedReferencePage
         _isOfficeHoursPresented = isOfficeHoursPresented
         _isMorningBriefingPresented = isMorningBriefingPresented
+        _isStrategyPresented = isStrategyPresented
         _pendingScrollRequest = pendingScrollRequest
         self.openSettings = openSettings
         self.settingsScreen = settingsScreen
@@ -3250,6 +3614,7 @@ struct OpenDesignDayPageView: View {
         self.saveDay1GoalDraft = saveDay1GoalDraft
         self.submitStructuredPromptChoice = submitStructuredPromptChoice
         self.newsMarketRadar = newsMarketRadar
+        self.newsMarketRadarPreparingForDisplay = newsMarketRadarPreparingForDisplay
         self.refreshNewsMarketRadar = refreshNewsMarketRadar
         self.prepareNewsMarketRadar = prepareNewsMarketRadar
         self.bipResearch = bipResearch
@@ -3264,8 +3629,12 @@ struct OpenDesignDayPageView: View {
         self.officeHoursScreen = officeHoursScreen
         self.shareOfficeHoursScreenshot = shareOfficeHoursScreenshot
         self.morningBriefingScreen = morningBriefingScreen
+        self.morningBriefing = morningBriefing
+        self.morningBriefingCollecting = morningBriefingCollecting
+        self.morningBriefingSourceProgress = morningBriefingSourceProgress
         self.activeDay1HandoffDocType = activeDay1HandoffDocType
         self.pendingDay1HandoffDocType = pendingDay1HandoffDocType
+        self.isDay1HandoffAwaitingFollowupPrompt = isDay1HandoffAwaitingFollowupPrompt
         self.day1HandoffError = day1HandoffError
         self.day1SituationSummary = day1SituationSummary
         self.onChooseDay1SituationGoal = onChooseDay1SituationGoal
@@ -3303,6 +3672,7 @@ struct OpenDesignDayPageView: View {
                     selectedReferencePage: selectedReferencePage,
                     isOfficeHoursPresented: effectiveOfficeHoursPresented,
                     isMorningBriefingPresented: effectiveMorningBriefingPresented,
+                    isStrategyPresented: effectiveStrategyPresented,
                     pendingScrollRequest: $pendingScrollRequest,
                     searchPulseTarget: $searchPulseTarget,
                     layout: layout,
@@ -3311,6 +3681,7 @@ struct OpenDesignDayPageView: View {
                     activateRailItem: activateRailItem,
                     usesDay1WindowChrome: routesTodayToOfficeHours,
                     newsMarketRadar: newsMarketRadar,
+                    newsMarketRadarPreparingForDisplay: newsMarketRadarPreparingForDisplay,
                     refreshNewsMarketRadar: refreshNewsMarketRadar,
                     prepareNewsMarketRadar: prepareNewsMarketRadar,
                     settingsScreen: settingsScreen,
@@ -3332,10 +3703,14 @@ struct OpenDesignDayPageView: View {
                     officeHoursScreen: officeHoursScreen,
                     shareOfficeHoursScreenshot: shareOfficeHoursScreenshot,
                     morningBriefingScreen: morningBriefingScreen,
+                    morningBriefing: morningBriefing,
+                    morningBriefingCollecting: morningBriefingCollecting,
+                    morningBriefingSourceProgress: morningBriefingSourceProgress,
                     isOfficeHoursRightSidebarExpanded: isOfficeHoursRightSidebarExpanded,
                     isOfficeHoursRightSidebarVisible: officeHoursLayout.showsMeta,
                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
+                    isDay1HandoffAwaitingFollowupPrompt: isDay1HandoffAwaitingFollowupPrompt,
                     day1HandoffError: day1HandoffError,
                     day1SituationSummary: day1SituationSummary,
                     onChooseDay1SituationGoal: onChooseDay1SituationGoal,
@@ -3459,6 +3834,7 @@ struct OpenDesignDayPageView: View {
     private func openSearch() {
         searchQuery = ""
         selectedSearchIndex = 0
+        isStrategyPresented = false
         withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.12)) {
             isSearchPresented = true
         }
@@ -3509,6 +3885,7 @@ struct OpenDesignDayPageView: View {
            let dayNumber = openDesignFoundationDayNumber(taskID: item.id) {
             closeSearch()
             selectedReferencePage = nil
+            isStrategyPresented = false
             isOfficeHoursPresented = item.route == .officeHours || officeHoursRoutedDayNumbers.contains(dayNumber)
             selectDay(dayNumber)
             return
@@ -3517,6 +3894,7 @@ struct OpenDesignDayPageView: View {
             selectedReferencePage = referencePage
             isOfficeHoursPresented = false
             closeSearch()
+            isStrategyPresented = false
             return
         }
 
@@ -3526,8 +3904,10 @@ struct OpenDesignDayPageView: View {
             selectedReferencePage = nil
             isOfficeHoursPresented = false
             isMorningBriefingPresented = false
+            isStrategyPresented = false
             openSettings()
         case .search:
+            isStrategyPresented = false
             openSearch()
         case .officeHours:
             closeSearch()
@@ -3535,6 +3915,9 @@ struct OpenDesignDayPageView: View {
         case .morningBriefing:
             closeSearch()
             openMorningBriefingFromRail()
+        case .strategy:
+            closeSearch()
+            openStrategyFromRail()
         case .today, .inert:
             closeSearch()
             if routesTodayToOfficeHours {
@@ -3544,6 +3927,7 @@ struct OpenDesignDayPageView: View {
             selectedReferencePage = nil
             isOfficeHoursPresented = false
             isMorningBriefingPresented = false
+            isStrategyPresented = false
             let target = OpenDesignSectionAnchor(rawValue: item.targetSectionID ?? "") ?? .top
             revealIntroIfNeeded(for: target)
             focusWorkflowStepIfNeeded(for: target)
@@ -3582,6 +3966,11 @@ struct OpenDesignDayPageView: View {
         if let referencePage = OpenDesignReferencePageKind(railItemID: item.id) {
             selectedReferencePage = referencePage
             isOfficeHoursPresented = false
+            isMorningBriefingPresented = false
+            isStrategyPresented = false
+            if openDesignRailNavigationEffect(for: item) == .prepareNewsMarketRadar {
+                prepareNewsMarketRadar()
+            }
             return
         }
 
@@ -3590,13 +3979,17 @@ struct OpenDesignDayPageView: View {
             selectedReferencePage = nil
             isOfficeHoursPresented = false
             isMorningBriefingPresented = false
+            isStrategyPresented = false
             openSettings()
         case .search:
+            isStrategyPresented = false
             openSearch()
         case .officeHours:
             openOfficeHoursFromRail()
         case .morningBriefing:
             openMorningBriefingFromRail()
+        case .strategy:
+            openStrategyFromRail()
         case .today:
             openTodayFromRail()
         case .inert:
@@ -3612,6 +4005,7 @@ struct OpenDesignDayPageView: View {
         selectedReferencePage = nil
         isOfficeHoursPresented = false
         isMorningBriefingPresented = false
+        isStrategyPresented = false
         requestScroll(to: .top)
     }
 
@@ -3620,6 +4014,7 @@ struct OpenDesignDayPageView: View {
         withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
             isOfficeHoursPresented = true
             isMorningBriefingPresented = false
+            isStrategyPresented = false
         }
     }
 
@@ -3628,6 +4023,16 @@ struct OpenDesignDayPageView: View {
         withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
             isOfficeHoursPresented = false
             isMorningBriefingPresented = true
+            isStrategyPresented = false
+        }
+    }
+
+    private func openStrategyFromRail() {
+        selectedReferencePage = nil
+        withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
+            isOfficeHoursPresented = false
+            isMorningBriefingPresented = false
+            isStrategyPresented = true
         }
     }
 
@@ -3914,11 +4319,18 @@ struct OpenDesignDayPageView: View {
         if isMorningBriefingPresented {
             return false
         }
+        if isStrategyPresented {
+            return false
+        }
         return isOfficeHoursPresented || routesTodayToOfficeHours
     }
 
     private var effectiveMorningBriefingPresented: Bool {
-        selectedReferencePage == nil && isMorningBriefingPresented
+        selectedReferencePage == nil && !isStrategyPresented && isMorningBriefingPresented
+    }
+
+    private var effectiveStrategyPresented: Bool {
+        selectedReferencePage == nil && isStrategyPresented
     }
 }
 
@@ -3928,6 +4340,7 @@ struct OpenDesignDayShell: View {
     let selectedReferencePage: OpenDesignReferencePageKind?
     let isOfficeHoursPresented: Bool
     let isMorningBriefingPresented: Bool
+    let isStrategyPresented: Bool
     @Binding var pendingScrollRequest: OpenDesignScrollRequest?
     @Binding var searchPulseTarget: String?
     let layout: OpenDesignDayLayoutMetrics
@@ -3936,6 +4349,7 @@ struct OpenDesignDayShell: View {
     let activateRailItem: (OpenDesignDayContent.RailItem) -> Void
     let usesDay1WindowChrome: Bool
     let newsMarketRadar: NewsMarketRadarSnapshot
+    let newsMarketRadarPreparingForDisplay: Bool
     let refreshNewsMarketRadar: () -> Void
     let prepareNewsMarketRadar: () -> Void
     let settingsScreen: AnyView?
@@ -3957,10 +4371,14 @@ struct OpenDesignDayShell: View {
     let officeHoursScreen: ((Bool) -> AnyView)?
     let shareOfficeHoursScreenshot: ((NSView?) -> Void)?
     let morningBriefingScreen: AnyView?
+    let morningBriefing: MorningBriefing?
+    let morningBriefingCollecting: Bool
+    let morningBriefingSourceProgress: [String: MorningBriefingSourceProgress]
     let isOfficeHoursRightSidebarExpanded: Bool
     let isOfficeHoursRightSidebarVisible: Bool
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
+    let isDay1HandoffAwaitingFollowupPrompt: Bool
     let day1HandoffError: String?
     let day1SituationSummary: Day1SituationSummary?
     let onChooseDay1SituationGoal: (String) -> Void
@@ -3975,6 +4393,150 @@ struct OpenDesignDayShell: View {
     let toggleOfficeHoursRightSidebar: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var newsMarketRadarUserState = NewsMarketRadarUserState()
+
+    init(
+        content: OpenDesignDayContent,
+        interaction: Binding<OpenDesignDayInteractionState>,
+        selectedReferencePage: OpenDesignReferencePageKind?,
+        isOfficeHoursPresented: Bool,
+        isMorningBriefingPresented: Bool,
+        isStrategyPresented: Bool,
+        pendingScrollRequest: Binding<OpenDesignScrollRequest?>,
+        searchPulseTarget: Binding<String?>,
+        layout: OpenDesignDayLayoutMetrics,
+        openSearch: @escaping () -> Void,
+        toggleSearch: @escaping () -> Void,
+        activateRailItem: @escaping (OpenDesignDayContent.RailItem) -> Void,
+        usesDay1WindowChrome: Bool,
+        newsMarketRadar: NewsMarketRadarSnapshot,
+        newsMarketRadarPreparingForDisplay: Bool,
+        refreshNewsMarketRadar: @escaping () -> Void,
+        prepareNewsMarketRadar: @escaping () -> Void,
+        settingsScreen: AnyView?,
+        requiresDay1Goal: Bool,
+        day1GoalDrafts: [Day1GoalDraft],
+        day1GoalSelection: Day1GoalSelection?,
+        day1GoalError: String?,
+        bipProofSinkAvailable: Bool,
+        saveDay1GoalDraft: @escaping (Day1GoalDraft) -> Void,
+        bipResearch: BipResearchSnapshot,
+        refreshBipResearch: @escaping () -> Void,
+        prepareBipResearch: @escaping () -> Void,
+        openNewsSettings: @escaping () -> Void,
+        workHistory: WorkHistorySnapshot,
+        refreshWorkHistory: @escaping () -> Void,
+        prepareWorkHistory: @escaping () -> Void,
+        day1DocPreviews: [IddDocPreview],
+        day1HandoffPromptCard: AnyView?,
+        officeHoursScreen: ((Bool) -> AnyView)?,
+        shareOfficeHoursScreenshot: ((NSView?) -> Void)?,
+        morningBriefingScreen: AnyView?,
+        morningBriefing: MorningBriefing?,
+        morningBriefingCollecting: Bool,
+        morningBriefingSourceProgress: [String: MorningBriefingSourceProgress],
+        isOfficeHoursRightSidebarExpanded: Bool,
+        isOfficeHoursRightSidebarVisible: Bool,
+        activeDay1HandoffDocType: String?,
+        pendingDay1HandoffDocType: String?,
+        isDay1HandoffAwaitingFollowupPrompt: Bool,
+        day1HandoffError: String?,
+        day1SituationSummary: Day1SituationSummary?,
+        onChooseDay1SituationGoal: @escaping (String) -> Void,
+        startDay1DocHandoff: @escaping (String, [String: Any]) -> Void,
+        submitStep: @escaping (OpenDesignDayContent.InterviewStep, Int) -> Void,
+        acceptMission: @escaping () -> Void,
+        completeDayAction: @escaping () -> Void,
+        advanceToNextDay: @escaping () -> Void,
+        selectDay: @escaping (Int) -> Void,
+        shareSummary: String,
+        toggleRightSidebar: @escaping () -> Void,
+        toggleOfficeHoursRightSidebar: @escaping () -> Void
+    ) {
+        self.content = content
+        _interaction = interaction
+        self.selectedReferencePage = selectedReferencePage
+        self.isOfficeHoursPresented = isOfficeHoursPresented
+        self.isMorningBriefingPresented = isMorningBriefingPresented
+        self.isStrategyPresented = isStrategyPresented
+        _pendingScrollRequest = pendingScrollRequest
+        _searchPulseTarget = searchPulseTarget
+        self.layout = layout
+        self.openSearch = openSearch
+        self.toggleSearch = toggleSearch
+        self.activateRailItem = activateRailItem
+        self.usesDay1WindowChrome = usesDay1WindowChrome
+        self.newsMarketRadar = newsMarketRadar
+        self.newsMarketRadarPreparingForDisplay = newsMarketRadarPreparingForDisplay
+        self.refreshNewsMarketRadar = refreshNewsMarketRadar
+        self.prepareNewsMarketRadar = prepareNewsMarketRadar
+        self.settingsScreen = settingsScreen
+        self.requiresDay1Goal = requiresDay1Goal
+        self.day1GoalDrafts = day1GoalDrafts
+        self.day1GoalSelection = day1GoalSelection
+        self.day1GoalError = day1GoalError
+        self.bipProofSinkAvailable = bipProofSinkAvailable
+        self.saveDay1GoalDraft = saveDay1GoalDraft
+        self.bipResearch = bipResearch
+        self.refreshBipResearch = refreshBipResearch
+        self.prepareBipResearch = prepareBipResearch
+        self.openNewsSettings = openNewsSettings
+        self.workHistory = workHistory
+        self.refreshWorkHistory = refreshWorkHistory
+        self.prepareWorkHistory = prepareWorkHistory
+        self.day1DocPreviews = day1DocPreviews
+        self.day1HandoffPromptCard = day1HandoffPromptCard
+        self.officeHoursScreen = officeHoursScreen
+        self.shareOfficeHoursScreenshot = shareOfficeHoursScreenshot
+        self.morningBriefingScreen = morningBriefingScreen
+        self.morningBriefing = morningBriefing
+        self.morningBriefingCollecting = morningBriefingCollecting
+        self.morningBriefingSourceProgress = morningBriefingSourceProgress
+        self.isOfficeHoursRightSidebarExpanded = isOfficeHoursRightSidebarExpanded
+        self.isOfficeHoursRightSidebarVisible = isOfficeHoursRightSidebarVisible
+        self.activeDay1HandoffDocType = activeDay1HandoffDocType
+        self.pendingDay1HandoffDocType = pendingDay1HandoffDocType
+        self.isDay1HandoffAwaitingFollowupPrompt = isDay1HandoffAwaitingFollowupPrompt
+        self.day1HandoffError = day1HandoffError
+        self.day1SituationSummary = day1SituationSummary
+        self.onChooseDay1SituationGoal = onChooseDay1SituationGoal
+        self.startDay1DocHandoff = startDay1DocHandoff
+        self.submitStep = submitStep
+        self.acceptMission = acceptMission
+        self.completeDayAction = completeDayAction
+        self.advanceToNextDay = advanceToNextDay
+        self.selectDay = selectDay
+        self.shareSummary = shareSummary
+        self.toggleRightSidebar = toggleRightSidebar
+        self.toggleOfficeHoursRightSidebar = toggleOfficeHoursRightSidebar
+    }
+
+    private var newsMarketRadarUserStateStore: NewsMarketRadarUserStateStore {
+        NewsMarketRadarUserStateStore(workspaceRoot: WorkspaceSettings.resolvedURL().path)
+    }
+
+    private var newsRailStatus: OpenDesignRailItemStatus? {
+        openDesignNewsRailItemStatus(
+            snapshot: newsMarketRadar,
+            userState: newsMarketRadarUserState,
+            isPreparing: newsMarketRadarPreparingForDisplay
+        )
+    }
+
+    private var briefingRailStatus: OpenDesignRailItemStatus? {
+        openDesignBriefingRailItemStatus(
+            collecting: morningBriefingCollecting,
+            sourceProgress: morningBriefingSourceProgress,
+            briefing: morningBriefing
+        )
+    }
+
+    private var railItemStatuses: [String: OpenDesignRailItemStatus] {
+        var statuses: [String: OpenDesignRailItemStatus] = [:]
+        if let briefingRailStatus { statuses["briefing"] = briefingRailStatus }
+        if let newsRailStatus { statuses["news"] = newsRailStatus }
+        return statuses
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -3995,6 +4557,8 @@ struct OpenDesignDayShell: View {
                     isRightSidebarVisible: isOfficeHoursRightSidebarVisible,
                     toggleRightSidebar: toggleOfficeHoursRightSidebar
                 )
+            } else if isStrategyPresented {
+                OpenDesignStrategyTitlebar(openSearch: toggleSearch)
             } else if let market = content.market {
                 OpenDesignMarketTitlebar(
                     market: market,
@@ -4018,8 +4582,10 @@ struct OpenDesignDayShell: View {
                         content: content,
                         isOfficeHoursPresented: isOfficeHoursPresented,
                         isMorningBriefingPresented: isMorningBriefingPresented,
+                        isStrategyPresented: isStrategyPresented,
                         railWidth: layout.railWidth,
                         selectedReferencePage: selectedReferencePage,
+                        itemStatuses: railItemStatuses,
                         activate: activateRailItem
                     )
                 }
@@ -4051,6 +4617,8 @@ struct OpenDesignDayShell: View {
                             layout: layout,
                             openSearch: openSearch,
                             newsMarketRadar: newsMarketRadar,
+                            newsMarketRadarPreparingForDisplay: newsMarketRadarPreparingForDisplay,
+                            newsMarketRadarUserState: $newsMarketRadarUserState,
                             refreshNewsMarketRadar: refreshNewsMarketRadar,
                             prepareNewsMarketRadar: prepareNewsMarketRadar,
                             bipResearch: bipResearch,
@@ -4073,6 +4641,10 @@ struct OpenDesignDayShell: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .transition(.opacity)
                     }
+                } else if isStrategyPresented {
+                    OpenDesignStrategyPageView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
                 } else if isOfficeHoursPresented {
                     if let officeHoursScreen {
                         officeHoursScreen(isOfficeHoursRightSidebarExpanded)
@@ -4126,6 +4698,7 @@ struct OpenDesignDayShell: View {
                             day1HandoffPromptCard: day1HandoffPromptCard,
                             activeDay1HandoffDocType: activeDay1HandoffDocType,
                             pendingDay1HandoffDocType: pendingDay1HandoffDocType,
+                            isDay1HandoffAwaitingFollowupPrompt: isDay1HandoffAwaitingFollowupPrompt,
                             day1HandoffError: day1HandoffError,
                             day1SituationSummary: day1SituationSummary,
                             requiresDay1Goal: requiresDay1Goal,
@@ -4166,6 +4739,12 @@ struct OpenDesignDayShell: View {
         .background(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.bg : OpenDesignDayColor.bg)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("opendesign.day.shell")
+        .onAppear {
+            newsMarketRadarUserState = newsMarketRadarUserStateStore.load()
+        }
+        .onChange(of: newsMarketRadarUserState) { _, state in
+            newsMarketRadarUserStateStore.save(state)
+        }
     }
 }
 
@@ -4374,6 +4953,937 @@ private struct OpenDesignOfficeHoursTitlebar: View {
     }
 }
 
+private struct OpenDesignStrategyTitlebar: View {
+    let openSearch: () -> Void
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 8) {
+                Spacer(minLength: 82)
+                Text("Agentic30")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text("/")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                Text("전략")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 4) {
+                Spacer()
+                OpenDesignToolbarButton(
+                    systemImage: "magnifyingglass",
+                    label: "검색 · ⌘ K",
+                    keyboardKey: "k",
+                    accessibilityIdentifier: "strategy.titlebar.search",
+                    action: openSearch
+                )
+            }
+            .padding(.trailing, 12)
+        }
+        .frame(height: 36)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+        .openDesignWindowTitlebarAccessibility()
+    }
+}
+
+private enum OpenDesignStrategyStep: String, CaseIterable, Identifiable {
+    case canvas
+    case matrix
+    case swot
+
+    var id: String { rawValue }
+
+    var index: String {
+        switch self {
+        case .canvas: return "1"
+        case .matrix: return "2"
+        case .swot: return "3"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .canvas: return "Business Canvas"
+        case .matrix: return "2x2 경쟁 구도"
+        case .swot: return "SWOT · 전략 판단"
+        }
+    }
+
+    var scrollTargetID: String {
+        switch self {
+        case .canvas: return "strategy.canvas"
+        case .matrix: return "strategy.matrix.section"
+        case .swot: return "strategy.swot"
+        }
+    }
+}
+
+private struct OpenDesignStrategyPageView: View {
+    @State private var selectedStep: OpenDesignStrategyStep = .canvas
+    @State private var selectedCompetitorID = "agentic30"
+    @State private var didCopyPositioning = false
+
+    private var selectedCompetitor: OpenDesignStrategyCompetitor {
+        OpenDesignStrategyCanvasReference.competitors.first { $0.id == selectedCompetitorID }
+            ?? OpenDesignStrategyCanvasReference.competitors[0]
+    }
+
+    var body: some View {
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header {
+                        scroll(to: .matrix, using: scrollProxy)
+                    }
+                    stepper { step in
+                        scroll(to: step, using: scrollProxy)
+                    }
+                    commandLine
+                    diagnosisSection
+                    criteriaSection
+                    businessCanvasSection
+                        .id(OpenDesignStrategyStep.canvas.scrollTargetID)
+                    matrixSection
+                        .id(OpenDesignStrategyStep.matrix.scrollTargetID)
+                    swotSection
+                        .id(OpenDesignStrategyStep.swot.scrollTargetID)
+                    judgementSection
+                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 24)
+                .frame(maxWidth: 1180, alignment: .leading)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("strategy.screen")
+            }
+            .background(StrategyBackdropView().ignoresSafeArea())
+            .accessibilityIdentifier("strategy.scroll")
+        }
+    }
+
+    private func scroll(to step: OpenDesignStrategyStep, using scrollProxy: ScrollViewProxy) {
+        selectedStep = step
+        withAnimation(.easeInOut(duration: 0.2)) {
+            scrollProxy.scrollTo(step.scrollTargetID, anchor: .top)
+        }
+    }
+
+    private func header(showMatrix: @escaping () -> Void) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            Text("BC")
+                .font(.system(size: 18, weight: .bold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.accent)
+                .frame(width: 46, height: 46)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(OpenDesignDayColor.accent.opacity(0.13))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(OpenDesignDayColor.accentLine, lineWidth: 1)
+                )
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Agentic30 사업 캔버스")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: 6, height: 6)
+                    Text("Strategy · Business Model -> Competition · SWOT · 근거: SPEC / ICP / VALUES")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            Button(action: showMatrix) {
+                Label("Matrix 보기", systemImage: "chart.xyaxis.line")
+            }
+            .buttonStyle(OpenDesignStrategyHeaderButtonStyle(isPrimary: false))
+            .accessibilityIdentifier("strategy.action.show-matrix")
+
+            Button {
+                copyPositioning()
+            } label: {
+                Text(didCopyPositioning ? "복사됨" : "포지셔닝 복사")
+            }
+            .buttonStyle(OpenDesignStrategyHeaderButtonStyle(isPrimary: true))
+            .accessibilityIdentifier("strategy.action.copy-positioning")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("strategy.header")
+    }
+
+    private func stepper(selectStep: @escaping (OpenDesignStrategyStep) -> Void) -> some View {
+        HStack(spacing: 8) {
+            ForEach(OpenDesignStrategyStep.allCases) { step in
+                Button {
+                    selectStep(step)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(step.index)
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .frame(width: 20, height: 20)
+                            .background(Circle().fill(selectedStep == step ? OpenDesignDayColor.accent : OpenDesignDayColor.surface))
+                            .foregroundStyle(selectedStep == step ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.muted)
+                        Text(step.title)
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(selectedStep == step ? OpenDesignDayColor.accent : OpenDesignDayColor.fgSecondary)
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(selectedStep == step ? OpenDesignDayColor.accentDim : OpenDesignDayColor.surface2)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(selectedStep == step ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .accessibilityIdentifier("strategy.step.\(step.rawValue)")
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var commandLine: some View {
+        Text(OpenDesignStrategyCanvasReference.commandLine)
+            .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .padding(.vertical, 8)
+            .accessibilityIdentifier("strategy.command")
+    }
+
+    private var diagnosisSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(OpenDesignStrategyCanvasReference.diagnosisKicker.uppercased())
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.accent)
+            Text(OpenDesignStrategyCanvasReference.diagnosisTitle)
+                .font(.system(size: 23, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(OpenDesignStrategyCanvasReference.diagnosisLead)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12, alignment: .top)], spacing: 12) {
+                ForEach(OpenDesignStrategyCanvasReference.summaryTiles) { tile in
+                    StrategySummaryTileView(tile: tile)
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("strategy.diagnosis")
+    }
+
+    private var criteriaSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            StrategySectionHeader(title: "분석 기준", meta: "SPEC.md + ICP.md + VALUES.md")
+            VStack(spacing: 0) {
+                ForEach(OpenDesignStrategyCanvasReference.criteriaRows) { row in
+                    StrategyCriterionRowView(row: row)
+                    if row.id != OpenDesignStrategyCanvasReference.criteriaRows.last?.id {
+                        Divider().background(OpenDesignDayColor.borderSoft)
+                    }
+                }
+            }
+            .background(StrategyPanelBackground(cornerRadius: 10, fill: OpenDesignDayColor.surface))
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("strategy.criteria")
+    }
+
+    private var businessCanvasSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            StrategySectionHeader(title: "비즈니스 캔버스", meta: "9 blocks · 현재 가설")
+            StrategyBusinessCanvasMatrixView()
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("strategy.canvas")
+    }
+
+    private var matrixSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            StrategySectionHeader(title: "2x2 경쟁자 Matrix", meta: "positioning · click points")
+            VStack(spacing: 0) {
+                HStack {
+                    Text("경쟁은 코딩 생산성 축이 아니라 PMF 증거 축에서 갈립니다.")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Spacer()
+                    Text("가로: 정적 -> Adaptive · 세로: Build -> Evidence")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                }
+                .padding(14)
+                .background(OpenDesignDayColor.surface2)
+
+                Divider().background(OpenDesignDayColor.borderSoft)
+
+                HStack(alignment: .top, spacing: 0) {
+                    ZStack(alignment: .topLeading) {
+                        StrategyPositioningMatrixView(selectedCompetitorID: $selectedCompetitorID)
+                        strategyAccessibilityMarker(
+                            identifier: "strategy.matrix",
+                            label: "Strategy competitor matrix"
+                        )
+                        strategyAccessibilityMarker(
+                            identifier: "strategy.matrix.board",
+                            label: "Strategy competitor matrix board"
+                        )
+                        .offset(x: 2)
+                    }
+                        .frame(maxWidth: .infinity)
+                        .accessibilityElement(children: .contain)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("SELECTED COMPETITOR")
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                        Text(selectedCompetitor.title)
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(OpenDesignDayColor.fg)
+                        Text(selectedCompetitor.body)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(selectedCompetitor.gap)
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(OpenDesignDayColor.accentDim, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(OpenDesignDayColor.accentLine, lineWidth: 1)
+                            )
+                    }
+                    .padding(16)
+                    .background(OpenDesignDayColor.bg)
+                    .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
+                    .frame(width: 292, alignment: .topLeading)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("strategy.matrix.detail")
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(StrategyPanelBackground(cornerRadius: 14, fill: OpenDesignDayColor.surface))
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("strategy.matrix.section")
+    }
+
+    private func strategyAccessibilityMarker(identifier: String, label: String) -> some View {
+        Rectangle()
+            .fill(OpenDesignDayColor.surface.opacity(0.001))
+            .frame(width: 1, height: 1)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityIdentifier(identifier)
+    }
+
+    private var swotSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            StrategySectionHeader(title: "SWOT 분석", meta: "internal / external")
+            LazyVGrid(columns: swotMatrixColumns, spacing: 12) {
+                ForEach(OpenDesignStrategyCanvasReference.swotGroups) { group in
+                    StrategySWOTCardView(group: group)
+                }
+            }
+            .accessibilityIdentifier("strategy.swot.matrix")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("strategy.swot")
+    }
+
+    private var swotMatrixColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(minimum: 0), spacing: 12),
+            count: OpenDesignStrategyCanvasReference.swotMatrixColumnCount
+        )
+    }
+
+    private var judgementSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("전략 판단")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text(OpenDesignStrategyCanvasReference.judgement)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .background(StrategyAccentCalloutBackground(cornerRadius: 14))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("strategy.judgement")
+    }
+
+    private func copyPositioning() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(OpenDesignStrategyCanvasReference.positioningStatement, forType: .string)
+        didCopyPositioning = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+            didCopyPositioning = false
+        }
+    }
+}
+
+private struct OpenDesignStrategyHeaderButtonStyle: ButtonStyle {
+    let isPrimary: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(isPrimary ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.fgSecondary)
+            .lineLimit(1)
+        .padding(.horizontal, 14)
+        .frame(height: 30)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isPrimary ? OpenDesignDayColor.accent : OpenDesignDayColor.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(isPrimary ? Color.clear : OpenDesignDayColor.borderSoft, lineWidth: 1)
+            )
+            .opacity(configuration.isPressed ? 0.82 : 1)
+    }
+}
+
+private struct StrategyBackdropView: View {
+    var body: some View {
+        ZStack {
+            OpenDesignDayColor.bgDarker
+            LinearGradient(
+                colors: [
+                    OpenDesignDayColor.bg.opacity(0.96),
+                    OpenDesignDayColor.bgDeep.opacity(0.94),
+                    OpenDesignDayColor.bgDarker,
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            RadialGradient(
+                colors: [
+                    OpenDesignDayColor.accentDim.opacity(0.64),
+                    OpenDesignDayColor.accentDim.opacity(0.14),
+                    Color.clear,
+                ],
+                center: UnitPoint(x: 0.74, y: 0.18),
+                startRadius: 12,
+                endRadius: 420
+            )
+            RadialGradient(
+                colors: [
+                    OpenDesignDayColor.sky.opacity(Agentic30Theme.current == .white ? 0.08 : 0.10),
+                    Color.clear,
+                ],
+                center: UnitPoint(x: 0.08, y: 0.72),
+                startRadius: 18,
+                endRadius: 360
+            )
+        }
+    }
+}
+
+private struct StrategyPanelBackground: View {
+    let cornerRadius: CGFloat
+    let fill: Color
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        fill.opacity(0.98),
+                        OpenDesignDayColor.surface2.opacity(0.72),
+                        fill.opacity(0.96),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(Agentic30Theme.current == .white ? 0.05 : 0.20), radius: 18, x: 0, y: 10)
+    }
+}
+
+private struct StrategyCanvasCardBackground: View {
+    let tone: Color
+    let isPrimary: Bool
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: isPrimary
+                        ? [
+                            tone.opacity(0.18),
+                            OpenDesignDayColor.surface.opacity(0.98),
+                            OpenDesignDayColor.bgDeep.opacity(0.90),
+                        ]
+                        : [
+                            OpenDesignDayColor.surface.opacity(0.98),
+                            OpenDesignDayColor.surface2.opacity(0.62),
+                            OpenDesignDayColor.surface.opacity(0.96),
+                        ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(tone)
+                    .frame(width: 2)
+                    .shadow(color: isPrimary ? tone.opacity(0.48) : Color.clear, radius: 8)
+                    .padding(.vertical, 1)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(isPrimary ? tone.opacity(0.42) : OpenDesignDayColor.borderSoft, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(Agentic30Theme.current == .white ? 0.04 : 0.18), radius: isPrimary ? 18 : 12, x: 0, y: 8)
+    }
+}
+
+private struct StrategyAccentCalloutBackground: View {
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        OpenDesignDayColor.accentDim.opacity(0.74),
+                        OpenDesignDayColor.surface.opacity(0.98),
+                        OpenDesignDayColor.bgDeep.opacity(0.92),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(OpenDesignDayColor.accentLine, lineWidth: 1)
+            )
+            .shadow(color: OpenDesignDayColor.accentDim.opacity(0.44), radius: 20, x: 0, y: 10)
+    }
+}
+
+private struct StrategyMatrixBoardBackground: View {
+    var body: some View {
+        ZStack {
+            OpenDesignDayColor.bgDeep
+            RadialGradient(
+                colors: [
+                    OpenDesignDayColor.accentDim.opacity(0.76),
+                    OpenDesignDayColor.accentDim.opacity(0.20),
+                    Color.clear,
+                ],
+                center: UnitPoint(x: 0.82, y: 0.22),
+                startRadius: 18,
+                endRadius: 260
+            )
+            LinearGradient(
+                colors: [
+                    Color.clear,
+                    OpenDesignDayColor.surface.opacity(0.30),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+}
+
+private struct StrategySectionHeader: View {
+    let title: String
+    let meta: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(OpenDesignDayColor.accent)
+                .frame(width: 4, height: 16)
+            Text(title)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+            Text(meta)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+            Rectangle()
+                .fill(OpenDesignDayColor.borderSoft)
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct StrategySummaryTileView: View {
+    let tile: OpenDesignStrategySummaryTile
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(tile.label.uppercased())
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+            Text(tile.title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text(tile.detail)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
+        .background(StrategyPanelBackground(cornerRadius: 12, fill: OpenDesignDayColor.surface))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("strategy.summary.\(tile.id)")
+    }
+}
+
+private struct StrategyCriterionRowView: View {
+    let row: OpenDesignStrategyCriterionRow
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            Text(row.label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .frame(width: 98, alignment: .leading)
+            Text(row.value)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("strategy.criteria.row.\(row.id)")
+    }
+}
+
+private struct StrategyBusinessCanvasMatrixView: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(spacing: 0) {
+                    StrategyCanvasBlockView(block: canvasBlock("partners"), layout: .tall)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("strategy.canvas.column.partners")
+
+                VStack(spacing: 10) {
+                    StrategyCanvasBlockView(block: canvasBlock("activities"), layout: .stacked)
+                    StrategyCanvasBlockView(block: canvasBlock("resources"), layout: .stacked)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("strategy.canvas.stack.activities-resources")
+
+                VStack(spacing: 0) {
+                    StrategyCanvasBlockView(block: canvasBlock("value-proposition"), layout: .hero)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("strategy.canvas.column.value-proposition")
+
+                VStack(spacing: 10) {
+                    StrategyCanvasBlockView(block: canvasBlock("relationships"), layout: .stacked)
+                    StrategyCanvasBlockView(block: canvasBlock("channels"), layout: .stacked)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("strategy.canvas.stack.relationships-channels")
+
+                VStack(spacing: 0) {
+                    StrategyCanvasBlockView(block: canvasBlock("customer-segments"), layout: .tall)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("strategy.canvas.column.customer-segments")
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("strategy.canvas.top-row")
+
+            HStack(alignment: .top, spacing: 10) {
+                StrategyCanvasBlockView(block: canvasBlock("cost-structure"), layout: .wide)
+                StrategyCanvasBlockView(block: canvasBlock("revenue-streams"), layout: .wide)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("strategy.canvas.bottom-row")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("strategy.canvas.matrix")
+    }
+
+    private func canvasBlock(_ id: String) -> OpenDesignStrategyCanvasBlock {
+        OpenDesignStrategyCanvasReference.canvasBlock(id: id)
+    }
+}
+
+private enum StrategyCanvasBlockLayout {
+    case stacked
+    case tall
+    case hero
+    case wide
+
+    var minHeight: CGFloat {
+        switch self {
+        case .stacked:
+            return 300
+        case .tall, .hero:
+            return 610
+        case .wide:
+            return 230
+        }
+    }
+}
+
+private struct StrategyCanvasBlockView: View {
+    let block: OpenDesignStrategyCanvasBlock
+    var layout: StrategyCanvasBlockLayout = .stacked
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(block.number)
+                Spacer()
+                Text(block.eyebrow.uppercased())
+            }
+            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+
+            Text(block.title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(block.bullets, id: \.self) { bullet in
+                    StrategyBulletRow(text: bullet, color: strategyToneColor(block.tone))
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: layout.minHeight, alignment: .topLeading)
+        .background(
+            StrategyCanvasCardBackground(
+                tone: strategyToneColor(block.tone),
+                isPrimary: block.id == "value-proposition",
+                cornerRadius: 12
+            )
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("strategy.canvas.block.\(block.id)")
+    }
+}
+
+private struct StrategyBulletRow: View {
+    let text: String
+    let color: Color
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("-")
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(color)
+            Text(text)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct StrategySWOTCardView: View {
+    let group: OpenDesignStrategySWOTGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(group.title)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Spacer()
+                Text(group.tag)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(strategyToneColor(group.tone))
+                    .padding(.horizontal, 10)
+                    .frame(height: 24)
+                    .background(strategyToneColor(group.tone).opacity(0.13), in: Capsule())
+                    .overlay(Capsule().stroke(strategyToneColor(group.tone).opacity(0.42), lineWidth: 1))
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(group.bullets, id: \.self) { bullet in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Circle()
+                            .fill(strategyToneColor(group.tone))
+                            .frame(width: 11, height: 11)
+                        Text(bullet)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
+        .background(
+            StrategyCanvasCardBackground(
+                tone: strategyToneColor(group.tone),
+                isPrimary: false,
+                cornerRadius: 12
+            )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("strategy.swot.\(group.id)")
+    }
+}
+
+private struct StrategyPositioningMatrixView: View {
+    @Binding var selectedCompetitorID: String
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                StrategyMatrixBoardBackground()
+
+                Path { path in
+                    let midX = proxy.size.width * 0.5
+                    let midY = proxy.size.height * 0.5
+                    path.move(to: CGPoint(x: 0, y: midY))
+                    path.addLine(to: CGPoint(x: proxy.size.width, y: midY))
+                    path.move(to: CGPoint(x: midX, y: 0))
+                    path.addLine(to: CGPoint(x: midX, y: proxy.size.height))
+                }
+                .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
+
+                matrixAxisLabel("PMF evidence / 고객 행동", alignment: .leading, width: 170)
+                    .position(x: 108, y: 28)
+                matrixAxisLabel("Build speed / 코드 생산", alignment: .leading, width: 160)
+                    .position(x: 100, y: proxy.size.height - 30)
+                matrixAxisLabel("정적 커리큘럼 / 범용 조언", alignment: .leading, width: 170)
+                    .position(x: 114, y: proxy.size.height - 58)
+                matrixAxisLabel("프로젝트 기록 기반 adaptive", alignment: .trailing, width: 190)
+                    .position(x: proxy.size.width - 120, y: proxy.size.height - 58)
+
+                matrixQuadrantLabel("교육/커뮤니티", isAccent: false)
+                    .position(x: 80, y: 64)
+                matrixQuadrantLabel("Agentic30 wedge", isAccent: true)
+                    .position(x: proxy.size.width - 92, y: 64)
+                matrixQuadrantLabel("콘텐츠", isAccent: false)
+                    .position(x: 62, y: proxy.size.height - 88)
+                matrixQuadrantLabel("코딩 도구", isAccent: false)
+                    .position(x: proxy.size.width - 76, y: proxy.size.height - 88)
+
+                ForEach(OpenDesignStrategyCanvasReference.competitors) { competitor in
+                    StrategyMatrixCompetitorButton(
+                        competitor: competitor,
+                        isSelected: selectedCompetitorID == competitor.id,
+                        select: { selectedCompetitorID = competitor.id }
+                    )
+                    .position(
+                        x: proxy.size.width * competitor.x,
+                        y: proxy.size.height * competitor.y
+                    )
+                }
+            }
+        }
+        .frame(height: 430)
+    }
+
+    private func matrixAxisLabel(_ text: String, alignment: Alignment, width: CGFloat) -> some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+            .foregroundStyle(text.contains("PMF") || text.contains("adaptive") ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+            .frame(width: width, alignment: alignment)
+    }
+
+    private func matrixQuadrantLabel(_ text: String, isAccent: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(isAccent ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(isAccent ? OpenDesignDayColor.accentDim : OpenDesignDayColor.bg.opacity(0.72), in: Capsule())
+            .overlay(Capsule().stroke(isAccent ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+    }
+}
+
+private struct StrategyMatrixCompetitorButton: View {
+    let competitor: OpenDesignStrategyCompetitor
+    let isSelected: Bool
+    let select: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(isSelected || competitor.isAgentic30 ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+                    .frame(width: 9, height: 9)
+                    .shadow(color: competitor.isAgentic30 ? OpenDesignDayColor.accentDim : Color.clear, radius: 4)
+                Text(competitor.title)
+                    .font(.system(size: 11.5, weight: competitor.isAgentic30 ? .bold : .semibold))
+                    .foregroundStyle(isSelected || competitor.isAgentic30 ? OpenDesignDayColor.accent : OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .frame(width: 156, height: 32, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(isSelected ? OpenDesignDayColor.accentDim : isHovered ? OpenDesignDayColor.hover : OpenDesignDayColor.bgDeep)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(isSelected || competitor.isAgentic30 ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1)
+            )
+            .shadow(color: isSelected || competitor.isAgentic30 ? OpenDesignDayColor.accentDim.opacity(0.8) : Color.clear, radius: 10)
+        }
+        .buttonStyle(OpenDesignInteractiveButtonStyle())
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(competitor.title)
+        .accessibilityValue(isSelected ? "selected" : "not selected")
+        .accessibilityIdentifier("strategy.matrix.node.\(competitor.id)")
+    }
+}
+
+private func strategyToneColor(_ tone: OpenDesignStrategyTone) -> Color {
+    switch tone {
+    case .accent: return OpenDesignDayColor.accent
+    case .sky: return OpenDesignDayColor.sky
+    case .amber: return OpenDesignDayColor.amber
+    case .rose: return OpenDesignDayColor.rose
+    }
+}
+
 private struct OpenDesignOfficeHoursUnavailableView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -4476,13 +5986,18 @@ private struct OpenDesignRailView: View {
     let content: OpenDesignDayContent
     let isOfficeHoursPresented: Bool
     let isMorningBriefingPresented: Bool
+    let isStrategyPresented: Bool
     let railWidth: CGFloat
     let selectedReferencePage: OpenDesignReferencePageKind?
+    let itemStatuses: [String: OpenDesignRailItemStatus]
     let activate: (OpenDesignDayContent.RailItem) -> Void
 
     private var activeItemID: String {
         if isMorningBriefingPresented {
             return "briefing"
+        }
+        if isStrategyPresented {
+            return "strategy"
         }
         if isOfficeHoursPresented {
             return "today"
@@ -4496,11 +6011,14 @@ private struct OpenDesignRailView: View {
     var body: some View {
         VStack(spacing: 2) {
             ForEach(content.railItems) { item in
+                let isActive = item.id == activeItemID
+                let itemStatus = itemStatuses[item.id]
                 OpenDesignRailButton(
                     item: item,
                     railWidth: railWidth,
-                    isActive: item.id == activeItemID,
-                    usesOfficeHoursPalette: isOfficeHoursPresented
+                    isActive: isActive,
+                    usesOfficeHoursPalette: isOfficeHoursPresented,
+                    itemStatus: itemStatus
                 ) {
                     activate(item)
                 }
@@ -4529,6 +6047,7 @@ private struct OpenDesignRailButton: View {
     let railWidth: CGFloat
     let isActive: Bool
     let usesOfficeHoursPalette: Bool
+    let itemStatus: OpenDesignRailItemStatus?
     let action: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -4552,6 +6071,23 @@ private struct OpenDesignRailButton: View {
 
     private var accentColor: Color {
         usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.accent : OpenDesignDayColor.accent
+    }
+
+    private var effectiveBadgeTone: OpenDesignRailBadgeTone? {
+        itemStatus?.badgeTone ?? (item.hasNewDot ? .accent : nil)
+    }
+
+    private var badgeColor: Color {
+        switch effectiveBadgeTone {
+        case .accent:
+            return accentColor
+        case .amber:
+            return usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.amber : OpenDesignDayColor.amber
+        case .sky:
+            return OpenDesignDayColor.sky
+        case nil:
+            return accentColor
+        }
     }
 
     private var railGutter: CGFloat {
@@ -4583,9 +6119,9 @@ private struct OpenDesignRailButton: View {
                             }
                         }
 
-                    if item.hasNewDot {
+                    if effectiveBadgeTone != nil {
                         Circle()
-                            .fill(accentColor)
+                            .fill(badgeColor)
                             .frame(width: 6, height: 6)
                             .overlay(Circle().stroke(bgColor, lineWidth: 2))
                             .offset(x: -4, y: 5)
@@ -4597,7 +6133,7 @@ private struct OpenDesignRailButton: View {
             .help(item.title)
             .accessibilityLabel(item.title)
             .accessibilityIdentifier("opendesign.day.rail.item.\(item.id)")
-            .accessibilityValue(isActive ? "active" : "inactive")
+            .accessibilityValue(openDesignRailAccessibilityValue(isActive: isActive, status: itemStatus))
 
             if isHovered {
                 OpenDesignRailTooltip(title: item.title, id: item.id, usesOfficeHoursPalette: usesOfficeHoursPalette)
@@ -6697,6 +8233,7 @@ private struct OpenDesignDayMainView: View {
     let day1HandoffPromptCard: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
+    let isDay1HandoffAwaitingFollowupPrompt: Bool
     let day1HandoffError: String?
     let day1SituationSummary: Day1SituationSummary?
     let requiresDay1Goal: Bool
@@ -6766,6 +8303,7 @@ private struct OpenDesignDayMainView: View {
                                     day1HandoffPromptCard: day1HandoffPromptCard,
                                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
+                                    isDay1HandoffAwaitingFollowupPrompt: isDay1HandoffAwaitingFollowupPrompt,
                                     day1HandoffError: day1HandoffError,
                                     startDay1DocHandoff: startDay1DocHandoff,
                                     activateFreeformAnswer: activateFreeformAnswer,
@@ -7284,6 +8822,7 @@ private struct OpenDesignDayStepWorkspaceView: View {
     let day1HandoffPromptCard: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
+    let isDay1HandoffAwaitingFollowupPrompt: Bool
     let day1HandoffError: String?
     let startDay1DocHandoff: (String, [String: Any]) -> Void
     let activateFreeformAnswer: (Int) -> Void
@@ -7345,6 +8884,7 @@ private struct OpenDesignDayStepWorkspaceView: View {
                     day1HandoffPromptCard: day1HandoffPromptCard,
                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
+                    isDay1HandoffAwaitingFollowupPrompt: isDay1HandoffAwaitingFollowupPrompt,
                     day1HandoffError: day1HandoffError,
                     startDay1DocHandoff: startDay1DocHandoff
                 )
@@ -8418,6 +9958,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     let day1HandoffPromptCard: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
+    let isDay1HandoffAwaitingFollowupPrompt: Bool
     let day1HandoffError: String?
     let startDay1DocHandoff: (String, [String: Any]) -> Void
 
@@ -8501,11 +10042,19 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private var isBulkWritingDocuments: Bool {
-        pendingDay1HandoffDocType == "all" || isBulkSaveVisualActive
+        (pendingDay1HandoffDocType == "all" && !isDay1HandoffPromptActive && !isDay1HandoffAwaitingFollowupPrompt) || isBulkSaveVisualActive
     }
 
     private var isDocumentHandoffBusy: Bool {
-        pendingDay1HandoffDocType != nil || activeDay1HandoffDocType != nil || isBulkSaveVisualActive
+        pendingDay1HandoffDocType != nil || isDay1HandoffPromptActive || isDay1HandoffAwaitingFollowupPrompt || isBulkSaveVisualActive
+    }
+
+    private var isDay1HandoffPromptActive: Bool {
+        activeDay1HandoffDocType?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    private var isDay1HandoffJudgePromptActive: Bool {
+        activeDay1HandoffDocType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "day1_doc_handoff_judge"
     }
 
     private var day1HandoffDocumentOrder: [String] {
@@ -8572,20 +10121,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 documentHandoff
 
                 Button(action: confirmAndAdvance) {
-                    Text(confirmButtonTitle)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(confirmButtonDisabled ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.bgDeep)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 48)
-                        .openDesignHoverRow(
-                            isHovered: isConfirmHovered,
-                            isDisabled: confirmButtonDisabled,
-                            cornerRadius: 9,
-                            fill: confirmButtonDisabled ? OpenDesignDayColor.surface2 : OpenDesignDayColor.accent,
-                            hoverFill: confirmButtonDisabled ? OpenDesignDayColor.surface2 : OpenDesignDayColor.accentStrong,
-                            border: confirmButtonDisabled ? OpenDesignDayColor.borderSoft : Color.clear,
-                            hoverBorder: confirmButtonDisabled ? OpenDesignDayColor.borderSoft : Color.clear
-                        )
+                    confirmButtonLabel
                 }
                 .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: confirmButtonDisabled))
                 .modifier(OpenDesignReturnShortcutModifier(isEnabled: !confirmButtonDisabled))
@@ -8686,7 +10222,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     private var documentHandoff: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("문서 작성")
+                Text("문서 리뷰")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.mutedDeep)
                     .textCase(.uppercase)
@@ -8700,7 +10236,9 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 ForEach(documentSteps) { step in
                     VStack(alignment: .leading, spacing: 8) {
                         documentStepRow(step)
-                        if activeDay1HandoffDocType == step.type, let day1HandoffPromptCard {
+                        if !isDay1HandoffJudgePromptActive,
+                           activeDay1HandoffDocType == step.type,
+                           let day1HandoffPromptCard {
                             VStack(alignment: .leading, spacing: 0) {
                                 day1HandoffPromptCard
                             }
@@ -8711,6 +10249,21 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                         }
                     }
                 }
+            }
+
+            if isDay1HandoffJudgePromptActive, let day1HandoffPromptCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("보완 질문")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.accent)
+                        .tracking(1.1)
+                        .textCase(.uppercase)
+                    day1HandoffPromptCard
+                }
+                .padding(.top, 4)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("opendesign.day.final.doc.review.prompt")
             }
 
             if let day1HandoffError, !day1HandoffError.isEmpty {
@@ -8741,7 +10294,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private func documentStepRow(_ step: OpenDesignDayDocumentStep) -> some View {
-        let isPromptActive = activeDay1HandoffDocType == step.type
+        let isPromptActive = documentStepHasPromptActive(step)
         let isPreparing = (pendingDay1HandoffDocType == step.type || isBulkWritingDocuments) && !isPromptActive && !documentStepVisuallyWritten(step)
         let accessibilityLabel = "\(step.title) \(documentStepDetail(step, isPreparing: isPreparing, isPromptActive: isPromptActive))"
         return HStack(spacing: 10) {
@@ -8793,12 +10346,13 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         isPreparing: Bool,
         isPromptActive: Bool
     ) -> String {
-        if isPromptActive { return "\(step.path) 질문 카드 준비됨" }
+        if isPromptActive { return "\(step.path) 보완 질문 대기" }
         if documentStepVisuallyWritten(step) { return "\(step.path) 저장됨" }
-        if documentStepIsSaving(step) { return "\(step.path) 저장 중" }
-        if isBulkWritingDocuments { return "\(step.path) 저장 대기" }
-        if isPreparing { return "\(step.path) 질문 준비 중" }
-        return "\(step.path) 저장 대기"
+        if documentStepIsSaving(step) { return "\(step.path) 리뷰 중" }
+        if isDay1HandoffAwaitingFollowupPrompt { return "\(step.path) 보완 질문 대기" }
+        if isBulkWritingDocuments { return "\(step.path) 검토 대기" }
+        if isPreparing { return "\(step.path) 보완 질문 대기" }
+        return "\(step.path) 검토 대기"
     }
 
     private func documentStepIsSaving(_ step: OpenDesignDayDocumentStep) -> Bool {
@@ -8814,8 +10368,15 @@ private struct OpenDesignHypothesisConfirmationCard: View {
 
     private func documentStepAccessibilityValue(_ step: OpenDesignDayDocumentStep) -> String {
         if documentStepVisuallyWritten(step) { return "written" }
-        if documentStepIsSaving(step) { return "saving" }
-        return "waiting"
+        if documentStepHasPromptActive(step) || pendingDay1HandoffDocType == step.type || isDay1HandoffAwaitingFollowupPrompt {
+            return "needs_followup"
+        }
+        if documentStepIsSaving(step) { return "reviewing" }
+        return "waiting_review"
+    }
+
+    private func documentStepHasPromptActive(_ step: OpenDesignDayDocumentStep) -> Bool {
+        isDay1HandoffJudgePromptActive || activeDay1HandoffDocType == step.type
     }
 
     private func isBackendDocumentWritten(_ type: String) -> Bool {
@@ -8864,13 +10425,14 @@ private struct OpenDesignHypothesisConfirmationCard: View {
 
     private var confirmButtonTitle: String {
         if isBulkSaveVisualActive {
-            return "문서 저장 중"
+            return "문서 리뷰 중..."
         }
         if !areDay1DocumentsWritten {
-            if isBulkWritingDocuments { return "문서 저장 중" }
-            if activeDay1HandoffDocType != nil { return "문서 답변 대기 중" }
-            if pendingDay1HandoffDocType != nil { return "문서 준비 중" }
-            return "4개 문서 저장"
+            if isDay1HandoffPromptActive { return "보완 질문 답변 필요" }
+            if isDay1HandoffAwaitingFollowupPrompt { return "보완 질문 준비 중..." }
+            if isBulkWritingDocuments { return "문서 리뷰 중..." }
+            if pendingDay1HandoffDocType != nil { return "문서 리뷰 중..." }
+            return "문서 검토하기"
         }
         if interaction.dayCompleted {
             return "Day 2로 이동 ↵"
@@ -8885,6 +10447,37 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             return "Day 1 완료 → Day 2 ↵"
         }
         return "가설 확정 → Day 2 ↵"
+    }
+
+    private var confirmButtonLabel: some View {
+        HStack(spacing: 8) {
+            if confirmButtonShowsSpinner {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .controlSize(.mini)
+                    .tint(OpenDesignDayColor.accent)
+                    .frame(width: 14, height: 14)
+                    .accessibilityHidden(true)
+            }
+            Text(confirmButtonTitle)
+                .font(.system(size: 14, weight: .semibold))
+        }
+        .foregroundStyle(confirmButtonDisabled ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.bgDeep)
+        .frame(maxWidth: .infinity)
+        .frame(height: 48)
+        .openDesignHoverRow(
+            isHovered: isConfirmHovered,
+            isDisabled: confirmButtonDisabled,
+            cornerRadius: 9,
+            fill: confirmButtonDisabled ? OpenDesignDayColor.surface2 : OpenDesignDayColor.accent,
+            hoverFill: confirmButtonDisabled ? OpenDesignDayColor.surface2 : OpenDesignDayColor.accentStrong,
+            border: confirmButtonDisabled ? OpenDesignDayColor.borderSoft : Color.clear,
+            hoverBorder: confirmButtonDisabled ? OpenDesignDayColor.borderSoft : Color.clear
+        )
+    }
+
+    private var confirmButtonShowsSpinner: Bool {
+        isBulkSaveVisualActive || (!areDay1DocumentsWritten && (isBulkWritingDocuments || isDay1HandoffAwaitingFollowupPrompt))
     }
 
     private var confirmButtonDisabled: Bool {

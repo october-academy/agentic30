@@ -8,6 +8,7 @@ import {
   collectIntegrationStatus,
   mergeMcpOauthConnectResultIntoIntegrationStatus,
   probeCloudflareIntegration,
+  probeExaIntegration,
   probeGithubIntegration,
   probePosthogIntegration,
   probeVercelIntegration,
@@ -176,6 +177,64 @@ test("probeVercelIntegration reports OAuth delegated when not yet verified", asy
   assert.match(oauthDelegated.detail, /OAuth/);
 });
 
+test("probeExaIntegration reports missing without a key or discovered route", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "integration-exa-missing-"));
+  try {
+    const result = await probeExaIntegration({
+      env: {},
+      homeDir: home,
+      provider: "codex",
+    });
+    assert.equal(result.state, "missing");
+    assert.match(result.detail, /Exa MCP/);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+test("probeExaIntegration reports ready from EXA_API_KEY without leaking the key", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "integration-exa-env-"));
+  try {
+    const result = await probeExaIntegration({
+      env: { EXA_API_KEY: "exa_secret" },
+      homeDir: home,
+      provider: "codex",
+    });
+    assert.equal(result.state, "ready");
+    assert.match(result.detail, /Exa MCP/);
+    assert.equal(result.route.hasHeaders, true);
+    assert.equal(JSON.stringify(result).includes("exa_secret"), false);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+test("probeExaIntegration reports ready from discovered Codex MCP without live validation", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "integration-exa-codex-"));
+  try {
+    await fs.mkdir(path.join(home, ".codex"), { recursive: true });
+    await fs.writeFile(path.join(home, ".codex", "config.toml"), [
+      "[mcp_servers.exa]",
+      "url = \"https://mcp.exa.ai/mcp\"",
+      "",
+      "[mcp_servers.exa.headers]",
+      "\"x-api-key\" = \"codex-secret\"",
+    ].join("\n"));
+
+    const result = await probeExaIntegration({
+      env: {},
+      homeDir: home,
+      provider: "codex",
+    });
+    assert.equal(result.state, "ready");
+    assert.match(result.detail, /Codex/);
+    assert.equal(result.route.provider, "codex");
+    assert.equal(JSON.stringify(result).includes("codex-secret"), false);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
 test("probeCloudflareIntegration verifies token against /zones", async () => {
   const oauthDelegated = await probeCloudflareIntegration({
     env: {},
@@ -207,20 +266,33 @@ test("probeCloudflareIntegration verifies token against /zones", async () => {
 });
 
 test("collectIntegrationStatus aggregates all probes with a timestamp", async () => {
-  const result = await collectIntegrationStatus({
-    env: { POSTHOG_MCP_API_KEY: "phx_good", CLOUDFLARE_API_TOKEN: "ok", GITHUB_MCP_TOKEN: "gho_x" },
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "integration-status-home-"));
+  try {
+    const result = await collectIntegrationStatus({
+      env: {
+        POSTHOG_MCP_API_KEY: "phx_good",
+        CLOUDFLARE_API_TOKEN: "ok",
+        GITHUB_MCP_TOKEN: "gho_x",
+        EXA_API_KEY: "exa_secret",
+      },
+      homeDir: home,
     execImpl: async () => ({ ok: true, stdout: "Logged in", stderr: "" }),
     fetchImpl: async (url) => url.includes("cloudflare")
       ? jsonResponse({ result: [{ name: "agentic30.dev" }] })
       : jsonResponse({ uuid: "u" }),
     now: new Date("2026-06-10T09:00:00.000Z"),
-  });
-  assert.equal(result.github.state, "ready");
-  assert.equal(result.githubMcp.state, "ready");
-  assert.equal(result.posthog.state, "ready");
-  assert.equal(result.cloudflare.state, "ready");
-  assert.equal(result.vercel.state, "oauth");
-  assert.equal(result.checkedAt, "2026-06-10T09:00:00.000Z");
+    });
+    assert.equal(result.github.state, "ready");
+    assert.equal(result.githubMcp.state, "ready");
+    assert.equal(result.posthog.state, "ready");
+    assert.equal(result.cloudflare.state, "ready");
+    assert.equal(result.vercel.state, "oauth");
+    assert.equal(result.exa.state, "ready");
+    assert.equal(JSON.stringify(result.exa).includes("exa_secret"), false);
+    assert.equal(result.checkedAt, "2026-06-10T09:00:00.000Z");
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
 });
 
 test("mergeMcpOauthConnectResultIntoIntegrationStatus updates only the connected server", () => {

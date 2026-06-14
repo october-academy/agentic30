@@ -5,6 +5,11 @@ import { providerDisplayLabel } from "./mcp-oauth-prewarm.mjs";
 import { isMcpOauthServerReady, mcpOauthReadyProviders, readMcpOauthState } from "./mcp-oauth-state.mjs";
 import { resolvePostHogMcpSettings } from "./posthog-mcp-config.mjs";
 import { resolveGithubMcpSettings } from "./github-mcp-config.mjs";
+import {
+  discoverExaMcpRoutes,
+  redactExaResearchRoute,
+  resolveExaResearchRoutes,
+} from "./exa-mcp-discovery.mjs";
 
 // Live integration checks for Settings > 연동. Each probe verifies the stored
 // credential against the real service (gh auth status, PostHog /users/@me,
@@ -13,8 +18,21 @@ import { resolveGithubMcpSettings } from "./github-mcp-config.mjs";
 
 const PROBE_TIMEOUT_MS = 10_000;
 
-function status(state, detail) {
-  return { state, detail: String(detail || "").slice(0, 200) };
+function exaProviderDisplayLabel(provider = "") {
+  const normalized = String(provider || "").trim().toLowerCase();
+  if (normalized === "claude") return "Claude";
+  if (normalized === "codex") return "Codex";
+  if (normalized === "gemini") return "Gemini";
+  if (normalized === "cursor") return "Cursor";
+  return normalized || "—";
+}
+
+function status(state, detail, extra = null) {
+  return {
+    state,
+    detail: String(detail || "").slice(0, 200),
+    ...(extra && typeof extra === "object" ? extra : {}),
+  };
 }
 
 function statusFromMcpOauthResult(result = {}) {
@@ -186,15 +204,48 @@ export async function probeVercelIntegration({
   return status("oauth", "MCP는 OAuth로 동작 — Settings의 'MCP 연결'로 Vercel 브라우저 로그인을 완료해 주세요.");
 }
 
+export async function probeExaIntegration({
+  env = process.env,
+  homeDir,
+  exaApiKey = "",
+  provider = "",
+} = {}) {
+  try {
+    const key = String(exaApiKey || env.EXA_API_KEY || "").trim();
+    const discoveredRoutes = discoverExaMcpRoutes({ homeDir });
+    const routes = resolveExaResearchRoutes({
+      discoveredRoutes,
+      apiKey: key,
+      preferredProvider: provider,
+    });
+    const route = routes[0];
+    if (!route) {
+      return status("missing", "Exa MCP route is not configured. Save an Exa API key or add an Exa MCP provider config.");
+    }
+
+    const redactedRoute = redactExaResearchRoute(route);
+    const providerLabel = exaProviderDisplayLabel(redactedRoute?.provider || route.provider || "");
+    const detail = route.source === "api_key"
+      ? `Exa MCP route configured from saved/env key (${providerLabel})`
+      : `Exa MCP route discovered in ${providerLabel} config`;
+    return status("ready", detail, { route: redactedRoute });
+  } catch (error) {
+    return status("failed", `Exa MCP config check failed: ${String(error?.message || error)}`);
+  }
+}
+
 export async function collectIntegrationStatus({
   appSupportPath = "",
   env = process.env,
   execImpl = defaultExec,
   fetchImpl = fetch,
+  homeDir,
+  exaApiKey = "",
+  exaProvider = "",
   now = new Date(),
   provider = "",
 } = {}) {
-  const [github, posthog, cloudflare, vercel] = await Promise.all([
+  const [github, posthog, cloudflare, vercel, exa] = await Promise.all([
     probeGithubIntegration({ execImpl, env }).catch((error) => ({
       cli: status("failed", String(error?.message || error)),
       mcp: status("failed", String(error?.message || error)),
@@ -205,6 +256,8 @@ export async function collectIntegrationStatus({
       status("failed", String(error?.message || error))),
     probeVercelIntegration({ appSupportPath, provider }).catch((error) =>
       status("failed", String(error?.message || error))),
+    probeExaIntegration({ env, homeDir, exaApiKey, provider: exaProvider || provider }).catch((error) =>
+      status("failed", String(error?.message || error))),
   ]);
   return {
     github: github.cli,
@@ -212,6 +265,7 @@ export async function collectIntegrationStatus({
     posthog,
     cloudflare,
     vercel,
+    exa,
     provider: String(provider || ""),
     checkedAt: (now instanceof Date ? now : new Date(now)).toISOString(),
   };

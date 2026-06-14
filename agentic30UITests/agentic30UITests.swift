@@ -985,16 +985,140 @@ final class agentic30UITests: XCTestCase {
         }
         XCTAssertTrue(openDesignShell.exists)
 
-        for railID in ["today", "settings"] {
+        for railID in ["today", "briefing", "strategy", "news", "settings"] {
             let railItemID = "opendesign.day.rail.item.\(railID)"
             XCTAssertTrue(elementWithIdentifier(in: app, railItemID).waitForExistence(timeout: 3))
         }
 
-        for hiddenRailID in ["office-hours", "search", "projects", "interviews", "bip", "news", "history"] {
+        for hiddenRailID in ["office-hours", "search", "projects", "interviews", "bip", "history"] {
             XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.day.rail.item.\(hiddenRailID)").exists)
         }
 
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.today", containing: "active", timeout: 3))
+    }
+
+    @MainActor
+    func testStrategyRailOpensStrategyBusinessCanvasScreenWithMatrixAndSections() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-strategy-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-strategy-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+
+        let railItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.strategy")
+        XCTAssertTrue(railItem.waitForExistence(timeout: 5))
+        railItem.click()
+
+        let screen = elementWithIdentifier(in: app, "strategy.screen")
+        if !screen.waitForExistence(timeout: 5) {
+            attachScreenshot(from: app, named: "Strategy Screen Missing")
+            attachText(app.debugDescription, named: "Strategy Screen Missing Tree")
+        }
+        XCTAssertTrue(screen.exists)
+        let strategyScrollIdentifier = "strategy.scroll"
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.diagnosis").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.criteria").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.input.url").exists)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.strategy", containing: "active", timeout: 3))
+        let primarySummary = elementWithIdentifier(in: app, "strategy.summary.primary-icp")
+        let wedgeSummary = elementWithIdentifier(in: app, "strategy.summary.wedge")
+        let proofTargetSummary = elementWithIdentifier(in: app, "strategy.summary.proof-target")
+        XCTAssertTrue(primarySummary.waitForExistence(timeout: 3))
+        XCTAssertTrue(wedgeSummary.exists)
+        XCTAssertTrue(proofTargetSummary.exists)
+        XCTAssertEqual(primarySummary.frame.minY, wedgeSummary.frame.minY, accuracy: 2)
+        XCTAssertEqual(primarySummary.frame.minY, proofTargetSummary.frame.minY, accuracy: 2)
+
+        XCTAssertTrue(scrollElementToVisible(
+            elementWithIdentifier(in: app, "strategy.canvas"),
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: strategyScrollIdentifier
+        ))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.canvas.matrix").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.canvas.top-row").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.canvas.bottom-row").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.canvas.block.value-proposition").exists)
+        for canvasBlockID in ["partners", "activities", "resources", "relationships", "channels", "customer-segments", "cost-structure", "revenue-streams"] {
+            XCTAssertTrue(elementWithIdentifier(in: app, "strategy.canvas.block.\(canvasBlockID)").exists)
+        }
+
+        let showMatrixButton = elementWithIdentifier(in: app, "strategy.action.show-matrix")
+        XCTAssertTrue(scrollElementToHittable(
+            showMatrixButton,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: strategyScrollIdentifier
+        ))
+        showMatrixButton.click()
+
+        let matrix = elementWithIdentifier(in: app, "strategy.matrix")
+        XCTAssertTrue(matrix.waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.board").waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.agentic30").waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.detail").waitForExistence(timeout: 3))
+
+        let ycNode = elementWithIdentifier(in: app, "strategy.matrix.node.yc")
+        XCTAssertTrue(scrollElementToHittable(
+            ycNode,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: strategyScrollIdentifier
+        ))
+        clickCenter(of: ycNode)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.matrix.detail", containing: "YC Startup School", timeout: 3))
+
+        XCTAssertTrue(scrollElementToVisible(
+            elementWithIdentifier(in: app, "strategy.swot"),
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: strategyScrollIdentifier
+        ))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.swot.matrix").exists)
+        for swotGroupID in ["strengths", "weaknesses", "opportunities", "threats"] {
+            XCTAssertTrue(scrollElementToVisible(
+                elementWithIdentifier(in: app, "strategy.swot.\(swotGroupID)"),
+                in: app,
+                timeout: 5,
+                scrollViewIdentifier: strategyScrollIdentifier
+            ), "\(swotGroupID) SWOT card should be visible in the 2x2 matrix")
+        }
+        XCTAssertTrue(scrollElementToVisible(
+            elementWithIdentifier(in: app, "strategy.judgement"),
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: strategyScrollIdentifier
+        ))
+        attachScreenshot(from: app, named: "Strategy Screen")
+
+        elementWithIdentifier(in: app, "opendesign.day.rail.item.today").click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 10))
+        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.screen").exists)
     }
 
     @MainActor
@@ -1733,12 +1857,12 @@ final class agentic30UITests: XCTestCase {
         for docType in ["goal", "icp", "values", "spec"] {
             let row = elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff.doc.\(docType)")
             XCTAssertTrue(row.exists, "\(docType) document row should exist before save")
-            XCTAssertLessThan(row.frame.minY, docConfirm.frame.minY, "\(docType) document row should appear above the save button")
+            XCTAssertLessThan(row.frame.minY, docConfirm.frame.minY, "\(docType) document row should appear above the review button")
         }
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "4개 문서 저장", timeout: 3))
-        attachWindowScreenshot(from: app, named: "Office Hours Document Save Card Before Commitments")
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 검토하기", timeout: 3))
+        attachWindowScreenshot(from: app, named: "Office Hours Document Review Card Before Commitments")
         tapRequired(docConfirm, in: app, named: "Office Hours document handoff confirm")
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 저장 중", timeout: 3))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 리뷰 중", timeout: 3))
         for docType in ["goal", "icp", "values", "spec"] {
             let didSave = waitForElementLabel(
                 in: app,
@@ -1817,6 +1941,98 @@ final class agentic30UITests: XCTestCase {
         tapRequired(day2MetaToggle, in: app, named: "OpenDesign Day 2 meta close")
         XCTAssertTrue(waitForElementToDisappear(day2Meta, timeout: 3))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day2.meta.toggle", containing: "열기", timeout: 2))
+    }
+
+    @MainActor
+    func testOfficeHoursDocReviewBlockedShowsStructuredFollowupLoop() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-office-hours-doc-review-block-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-office-hours-doc-review-block-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-office-hours-doc-ready",
+            "--ui-testing-seed-day1-handoff-judge-block",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 8))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.docReady").waitForExistence(timeout: 5))
+        let docConfirm = app.buttons["opendesign.officeHours.docHandoff.confirm"]
+        XCTAssertTrue(scrollElementToVisible(
+            docConfirm,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 검토하기", timeout: 3))
+        tapRequired(docConfirm, in: app, named: "Office Hours blocked document review")
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 리뷰 중", timeout: 3))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "보완 질문 답변 필요", timeout: 8))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff.followup").waitForExistence(timeout: 5))
+        for docType in ["goal", "icp", "values", "spec"] {
+            XCTAssertTrue(waitForElementLabel(
+                in: app,
+                identifier: "opendesign.officeHours.docHandoff.doc.\(docType)",
+                containing: "보완 질문 대기",
+                timeout: 3
+            ))
+        }
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "GOAL/ICP/VALUES/SPEC 저장을 보류했습니다.")).element.exists)
+
+        let weakChoice = app.buttons["assistant.structuredChoice.day1_doc_handoff_judge_blocked.증거 없음으로 보류"]
+        XCTAssertTrue(scrollElementToVisible(
+            weakChoice,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        tapRequired(weakChoice, in: app, named: "Office Hours weak doc review answer")
+        let continueButton = app.buttons["assistant.structuredContinueButton"]
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
+        tapRequired(continueButton, in: app, named: "Office Hours weak doc review submit")
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 리뷰 중", timeout: 3))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "보완 질문 답변 필요", timeout: 8))
+
+        let hardChoice = app.buttons["assistant.structuredChoice.day1_doc_handoff_judge_blocked.실명 고객 3명에게 결제 요청 발송 완료"]
+        XCTAssertTrue(scrollElementToVisible(
+            hardChoice,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        tapRequired(hardChoice, in: app, named: "Office Hours hard doc review answer")
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
+        tapRequired(continueButton, in: app, named: "Office Hours hard doc review submit")
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 리뷰 중", timeout: 3))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 저장 완료", timeout: 8))
+        for docType in ["goal", "icp", "values", "spec"] {
+            XCTAssertTrue(waitForElementLabel(
+                in: app,
+                identifier: "opendesign.officeHours.docHandoff.doc.\(docType)",
+                containing: "저장됨",
+                timeout: 3
+            ))
+        }
     }
 
     @MainActor
@@ -2532,9 +2748,13 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(openSettingsSection(in: app, "integrations"))
 
         XCTAssertTrue(app.staticTexts["Vercel"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Exa"].exists)
         XCTAssertTrue(app.staticTexts["Cloudflare"].exists)
         XCTAssertTrue(app.staticTexts["PostHog"].exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "settings.vercel.mcpConnectButton").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "settings.exa.refreshStatusButton").exists)
+        let exaConnectButton = elementWithIdentifier(in: app, "settings.exa.mcpConnectButton")
+        XCTAssertTrue(exaConnectButton.exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "settings.cloudflare.mcpConnectButton").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "settings.posthog.mcpConnectButton").exists)
 
@@ -2557,6 +2777,12 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Exa Research"].exists)
         XCTAssertFalse(app.staticTexts["Codemode"].exists)
         XCTAssertFalse(app.staticTexts["Readonly"].exists)
+
+        exaConnectButton.click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "settings.exa.apiKeyModal").waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "settings.exa.apiKeyField").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "settings.exa.validateButton").exists)
+        elementWithIdentifier(in: app, "settings.exa.cancelButton").click()
 
         attachScreenshot(from: app, named: "Settings MCP Integrations Compact")
     }
@@ -2732,6 +2958,48 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testNewsRailShowsPreparingProgressBeforeFirstStatus() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-news-loading-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-news-loading-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+            "--ui-testing-stub-news-market-radar-preparing",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 10))
+        let railItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.news")
+        XCTAssertTrue(railItem.waitForExistence(timeout: 5))
+        railItem.click()
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.news", containing: "loading", timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.reference.news.progress").waitForExistence(timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.reference.news.empty").exists)
+        attachScreenshot(from: app, named: "OpenDesign News Preparing Progress")
+    }
+
+    @MainActor
     func testMorningBriefingRailOpensBriefingScreenWithAllSections() throws {
         // The rail gains an "아침 브리핑" item between today and settings. Clicking it
         // swaps the main column for the briefing screen (summary, source cards,
@@ -2781,8 +3049,11 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.card.posthog").exists)
         let githubSparkline = elementWithIdentifier(in: app, "morningBriefing.sparkline.github")
         XCTAssertTrue(githubSparkline.exists)
-        hoverCenter(of: githubSparkline)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.sparkline.github", containing: "3개 포인트", timeout: 3))
+        XCTAssertTrue(element(githubSparkline, contains: "오늘 09:00"))
+        XCTAssertTrue(element(githubSparkline, contains: "커밋 9"))
         let githubSparklineTooltip = elementWithIdentifier(in: app, "morningBriefing.sparkline.tooltip.github")
+        hoverCenter(of: githubSparkline)
         if githubSparklineTooltip.waitForExistence(timeout: 1) {
             XCTAssertTrue(element(githubSparklineTooltip, contains: "오늘 09:00"))
             XCTAssertTrue(element(githubSparklineTooltip, contains: "커밋"))
@@ -2792,8 +3063,9 @@ final class agentic30UITests: XCTestCase {
         }
         XCTAssertTrue(evidenceFunnel.exists)
         XCTAssertTrue(timeline.exists)
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.timeline.badge.0", containing: "어제", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.timeline.badge.0", containing: "오늘", timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.timeline.badge.1", containing: "오늘", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.timeline.badge.2", containing: "어제", timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.anomaly").exists)
         XCTAssertTrue(actions.exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.syncbar").exists)
@@ -2827,6 +3099,39 @@ final class agentic30UITests: XCTestCase {
         elementWithIdentifier(in: app, "opendesign.day.rail.item.today").click()
         XCTAssertTrue(app.descendants(matching: .any)["opendesign.officeHours.main"].waitForExistence(timeout: 10))
         XCTAssertFalse(elementWithIdentifier(in: app, "morningBriefing.screen").exists)
+    }
+
+    @MainActor
+    func testMorningBriefingRailShowsInteractiveLoadingBeforeResult() throws {
+        let workspacePath = "/tmp/agentic30-ui-morning-briefing-loading-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-stub-morning-briefing-loading",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+        }
+
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 10))
+        let railItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.briefing")
+        XCTAssertTrue(railItem.waitForExistence(timeout: 5))
+        railItem.click()
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.briefing", containing: "loading", timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.loading").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.loading.card.github").waitForExistence(timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "morningBriefing.verdict").exists)
+        attachScreenshot(from: app, named: "Morning Briefing Loading Progress")
     }
 
     @MainActor

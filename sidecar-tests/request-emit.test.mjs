@@ -1152,6 +1152,60 @@ test("office_hours_start skips Day 2+ source gate in local dev fast-days mode", 
   }
 });
 
+test("day_progress_patch skips milestone gates in local dev fast-days mode", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: { AGENTIC30_LOCAL_DEV_FAST_DAYS: "1" },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "day_progress_patch",
+      workspaceRoot: harness.workspacePath,
+      day: 4,
+      stepId: "goal",
+      status: "done",
+      goalText: "Day 4 local dev goal",
+    }));
+    await waitForEvent(ws.events, (event) =>
+      event.type === "day_progress_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.dayProgress?.days?.["4"]?.steps?.goal === "done",
+    );
+
+    ws.send(JSON.stringify({
+      type: "day_progress_patch",
+      workspaceRoot: harness.workspacePath,
+      day: 4,
+      stepId: "interview",
+      status: "active",
+    }));
+    const progress = await waitForEvent(ws.events, (event) =>
+      event.type === "day_progress_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.dayProgress?.days?.["4"]?.steps?.interview === "active",
+    );
+
+    const day4 = progress.dayProgress.days["4"];
+    assert.equal(day4.kind, "standard");
+    assert.equal(day4.steps.goal, "done");
+    assert.equal(day4.steps.interview, "active");
+    assert.equal(day4.goalText, "Day 4 local dev goal");
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "day_progress_state"
+          && event.workspaceRoot === harness.workspacePath
+          && event.gateBlocked?.gateId === "G1",
+      ),
+      false,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("day_progress_get emits Office Hours day close policy without changing proof sink contract", async () => {
   const harness = await spawnSidecar();
   let ws;

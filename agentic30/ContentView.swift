@@ -2067,6 +2067,7 @@ struct ContentView: View {
     @State private var showsAppUpdateStatusPanel = false
     @State private var isOpenDesignOfficeHoursPresented = false
     @State private var isOpenDesignMorningBriefingPresented = false
+    @State private var isOpenDesignStrategyPresented = false
     @State private var isBipMissionRoutePresented = false
     @State private var pendingOpenDesignScrollRequest: OpenDesignScrollRequest?
     @State private var pendingMorningBriefingScrollRequest: MorningBriefingScrollRequest?
@@ -2530,9 +2531,15 @@ struct ContentView: View {
         let officeHoursDay1Content = (personalizedDay1Content ?? OpenDesignDayContent.day1)
             .applyingFoundationProgress(viewModel.foundationProgressState, selectedDay: 1)
             .lockingDays(after: openDesignUnlockedDayLimit)
-        let baseContent: OpenDesignDayContent? = (day.day == 2 || (LocalDevelopmentDayFastForward.isEnabled && day.day == 3))
-            ? OpenDesignDayContent.day2
-            : day1Content
+        let baseContent: OpenDesignDayContent? = {
+            if day.day == 2 {
+                return OpenDesignDayContent.day2
+            }
+            if LocalDevelopmentDayFastForward.isFastForwardOfficeHoursDay(day.day) {
+                return OpenDesignDayContent.localDevelopmentHarnessDay(day)
+            }
+            return day1Content
+        }()
         let resolvedContent: OpenDesignDayContent? = baseContent?
             .applyingFoundationProgress(viewModel.foundationProgressState, selectedDay: day.day)
             .lockingDays(after: openDesignUnlockedDayLimit)
@@ -2540,7 +2547,7 @@ struct ContentView: View {
         let bipResearchDay = AgenticCurriculumDay.days.first(where: { $0.day == bipResearchDayNumber })
             ?? AgenticCurriculumDay.days[0]
         let bipResearchCurriculum = curriculumPayload(for: bipResearchDay)
-        let day1HandoffPrompt = viewModel.activeDay1HandoffPrompt
+        let day1HandoffPrompt = viewModel.activeDay1DocumentReviewPrompt
         let day1HandoffPromptCard = day1HandoffPrompt.map { prompt in
             AnyView(inlineStructuredPrompt(prompt, submissionState: submissionState(for: prompt)))
         }
@@ -2548,7 +2555,7 @@ struct ContentView: View {
         let officeHoursActiveDay = activeOfficeHoursDay(fallback: day.day)
         let officeHoursRoutedDayNumbers: Set<Int> = day.day == 1
             ? Set([1])
-            : (LocalDevelopmentDayFastForward.isEnabled && (2...3).contains(day.day) ? Set([day.day]) : [])
+            : (LocalDevelopmentDayFastForward.isFastForwardOfficeHoursDay(day.day) ? Set([day.day]) : [])
         let officeHoursSession = viewModel.officeHoursSession(forDay: officeHoursActiveDay)
             ?? session.flatMap { candidate in
                 viewModel.canUseSessionForOfficeHours(candidate, day: officeHoursActiveDay) ? candidate : nil
@@ -2580,6 +2587,7 @@ struct ContentView: View {
                     selectedReferencePage: $selectedOpenDesignReferencePage,
                     isOfficeHoursPresented: $isOpenDesignOfficeHoursPresented,
                     isMorningBriefingPresented: $isOpenDesignMorningBriefingPresented,
+                    isStrategyPresented: $isOpenDesignStrategyPresented,
                     pendingScrollRequest: $pendingOpenDesignScrollRequest,
                     openSettings: {
                         openOpenDesignSettingsRoute()
@@ -2604,6 +2612,7 @@ struct ContentView: View {
                         submitOpenDesignDayChoice(choice, day: day, session: session)
                     },
                     newsMarketRadar: viewModel.newsMarketRadar,
+                    newsMarketRadarPreparingForDisplay: viewModel.newsMarketRadarPreparingForDisplay,
                     refreshNewsMarketRadar: {
                         viewModel.refreshNewsMarketRadar(reason: "manual", force: true)
                     },
@@ -2663,8 +2672,12 @@ struct ContentView: View {
                             routeScrollRequest: $pendingMorningBriefingScrollRequest
                         )
                     ),
+                    morningBriefing: viewModel.morningBriefing,
+                    morningBriefingCollecting: viewModel.morningBriefingCollecting,
+                    morningBriefingSourceProgress: viewModel.morningBriefingSourceProgress,
                     activeDay1HandoffDocType: day1HandoffPrompt?.generation?.docType?.lowercased(),
                     pendingDay1HandoffDocType: viewModel.day1DocHandoffPendingDocType,
+                    isDay1HandoffAwaitingFollowupPrompt: viewModel.day1DocHandoffAwaitingFollowupPrompt,
                     day1HandoffError: viewModel.day1DocHandoffError,
                     day1SituationSummary: situationSummary,
                     onChooseDay1SituationGoal: { goal in
@@ -2690,7 +2703,7 @@ struct ContentView: View {
                         }
                     },
                     routesTodayToOfficeHours: day.day == 1
-                        || (LocalDevelopmentDayFastForward.isEnabled && (2...3).contains(day.day)),
+                        || LocalDevelopmentDayFastForward.isFastForwardOfficeHoursDay(day.day),
                     officeHoursRoutedDayNumbers: officeHoursRoutedDayNumbers
                 )
             } else {
@@ -3909,7 +3922,7 @@ struct ContentView: View {
 
     @discardableResult
     private func primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: Int) -> Bool {
-        guard LocalDevelopmentDayFastForward.isEnabled, (2...3).contains(day) else { return false }
+        guard LocalDevelopmentDayProgressPrimer.supports(day: day) else { return false }
         var sentAny = false
         for patch in LocalDevelopmentDayProgressPrimer.patchRequests(
             day: day,
@@ -5765,6 +5778,7 @@ struct ContentView: View {
                 )
 
                 if let prompt = session.pendingUserInput,
+                   !officeHoursIsDocumentHandoffPanelPrompt(prompt),
                    !officeHoursRevisionInFlightSessionIDs.contains(session.id),
                    pendingPresentation.shouldRender {
                     let currentPromptWasSubmitted = snapshots.contains(where: { $0.requestId == prompt.requestId })
@@ -5824,6 +5838,7 @@ struct ContentView: View {
                 }
 
                 if let pendingPrompt = session.pendingUserInput,
+                   !officeHoursIsDocumentHandoffPanelPrompt(pendingPrompt),
                    pendingPresentation.shouldRender {
                     let currentPromptWasSubmitted = snapshots.contains(where: { $0.requestId == pendingPrompt.requestId })
                     Color.clear
@@ -6449,7 +6464,40 @@ struct ContentView: View {
     }
 
     private var officeHoursDocumentHandoffBusy: Bool {
-        viewModel.day1DocHandoffPendingDocType != nil || viewModel.activeDay1HandoffPrompt != nil
+        viewModel.day1DocHandoffPendingDocType != nil
+    }
+
+    private var officeHoursDocumentHandoffAwaitingFollowup: Bool {
+        viewModel.day1DocHandoffAwaitingFollowupPrompt
+    }
+
+    private func officeHoursDocumentHandoffPrompt(session: ChatSession?) -> StructuredPromptRequest? {
+        viewModel.activeDay1DocumentReviewPrompt ?? officeHoursDocumentJudgePrompt(session: session)
+    }
+
+    private func officeHoursDocumentHandoffPromptActive(session: ChatSession?) -> Bool {
+        officeHoursDocumentHandoffPrompt(session: session) != nil
+    }
+
+    private func officeHoursDocumentJudgePrompt(session: ChatSession?) -> StructuredPromptRequest? {
+        guard let prompt = session?.pendingUserInput,
+              officeHoursIsDocumentJudgePrompt(prompt) else {
+            return nil
+        }
+        return prompt
+    }
+
+    private func officeHoursIsDocumentJudgePrompt(_ prompt: StructuredPromptRequest?) -> Bool {
+        guard let prompt else { return false }
+        let mode = prompt.generation?.mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let docType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return mode == "office_hours" && docType == "day1_doc_handoff_judge"
+    }
+
+    private func officeHoursIsDocumentHandoffPanelPrompt(_ prompt: StructuredPromptRequest?) -> Bool {
+        guard let prompt else { return false }
+        return officeHoursIsDocumentJudgePrompt(prompt)
+            || prompt.generation?.mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "day1_handoff"
     }
 
     private var officeHoursDay1DocumentsWritten: Bool {
@@ -6457,9 +6505,9 @@ struct ContentView: View {
     }
 
     private var officeHoursMetaDocSaveTitle: String {
-        if officeHoursDocumentHandoffBusy { return "저장 중" }
+        if officeHoursDocumentHandoffBusy || officeHoursDocumentHandoffAwaitingFollowup { return "리뷰 중" }
         if officeHoursDay1DocumentsWritten { return "저장됨" }
-        return "저장"
+        return "검토"
     }
 
     private func officeHoursDocumentWritten(type: String) -> Bool {
@@ -6470,29 +6518,52 @@ struct ContentView: View {
         return status.hasPrefix("written") || status.hasPrefix("approved")
     }
 
-    private func officeHoursDocumentDetail(type: String, path: String) -> String {
+    private func officeHoursDocumentDetail(type: String, path: String, session: ChatSession?) -> String {
         if officeHoursDocumentWritten(type: type) {
             return "\(path) 저장됨"
         }
+        if officeHoursDocumentNeedsFollowup(type: type, session: session) {
+            return "\(path) 보완 질문 대기"
+        }
+        if officeHoursDocumentHandoffAwaitingFollowup {
+            return "\(path) 보완 질문 대기"
+        }
         if viewModel.day1DocHandoffPendingDocType == "all" || viewModel.day1DocHandoffPendingDocType == type {
-            return "\(path) 저장 중"
+            return "\(path) 리뷰 중"
         }
-        if viewModel.activeDay1HandoffPrompt?.generation?.docType?.lowercased() == type {
-            return "\(path) 질문 대기"
-        }
-        return "\(path) 저장 대기"
+        return "\(path) 검토 대기"
     }
 
-    private func officeHoursDocumentAccessibilityValue(type: String) -> String {
+    private func officeHoursDocumentAccessibilityValue(type: String, session: ChatSession?) -> String {
         if officeHoursDocumentWritten(type: type) { return "written" }
-        if viewModel.day1DocHandoffPendingDocType != nil { return "saving" }
-        return "waiting"
+        if officeHoursDocumentNeedsFollowup(type: type, session: session) {
+            return "needs_followup"
+        }
+        if officeHoursDocumentHandoffAwaitingFollowup {
+            return "needs_followup"
+        }
+        if viewModel.day1DocHandoffPendingDocType != nil { return "reviewing" }
+        return "waiting_review"
+    }
+
+    private func officeHoursDocumentNeedsFollowup(type: String, session: ChatSession?) -> Bool {
+        guard let prompt = officeHoursDocumentHandoffPrompt(session: session) else {
+            return false
+        }
+        if officeHoursIsDocumentJudgePrompt(prompt) {
+            return true
+        }
+        let promptDocType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return promptDocType == type || promptDocType == "all"
     }
 
     private func officeHoursDocumentHandoffBlock(session: ChatSession) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let handoffPrompt = officeHoursDocumentHandoffPrompt(session: session)
+        let promptActive = handoffPrompt != nil
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("문서 저장")
+                Text("문서 리뷰")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
                     .textCase(.uppercase)
@@ -6504,30 +6575,33 @@ struct ContentView: View {
 
             VStack(spacing: 7) {
                 ForEach(Array(officeHoursDocumentSpecs.enumerated()), id: \.offset) { _, doc in
-                    officeHoursDocumentRow(type: doc.type, title: doc.title, path: doc.path)
+                    officeHoursDocumentRow(type: doc.type, title: doc.title, path: doc.path, session: session)
                 }
+            }
+
+            if let prompt = handoffPrompt {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("보완 질문")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                        .tracking(1.1)
+                        .textCase(.uppercase)
+                    officeHoursStructuredPrompt(prompt, submissionState: submissionState(for: prompt))
+                }
+                .padding(.top, 4)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("opendesign.officeHours.docHandoff.followup")
             }
 
             Button {
                 guard !officeHoursDay1DocumentsWritten else { return }
                 startOfficeHoursDocumentHandoff(session: session)
             } label: {
-                Text(officeHoursDocumentHandoffButtonTitle)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(officeHoursDocumentHandoffButtonDisabled ? OpenDesignOfficeHoursColor.mutedDeep : OpenDesignOfficeHoursColor.bgDeep)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 40)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(officeHoursDocumentHandoffButtonDisabled ? OpenDesignOfficeHoursColor.surface2 : OpenDesignOfficeHoursColor.accent)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(officeHoursDocumentHandoffButtonDisabled ? OpenDesignOfficeHoursColor.borderSoft : Color.clear, lineWidth: 1)
-                            )
-                    )
+                officeHoursDocumentHandoffButtonLabel(promptActive: promptActive)
             }
             .buttonStyle(.plain)
-            .disabled(officeHoursDocumentHandoffButtonDisabled)
+            .disabled(officeHoursDocumentHandoffButtonDisabled(promptActive: promptActive))
             .accessibilityIdentifier("opendesign.officeHours.docHandoff.confirm")
 
             if let error = viewModel.day1DocHandoffError?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -6548,11 +6622,11 @@ struct ContentView: View {
         .accessibilityIdentifier("opendesign.officeHours.docHandoff")
     }
 
-    private func officeHoursDocumentRow(type: String, title: String, path: String) -> some View {
+    private func officeHoursDocumentRow(type: String, title: String, path: String, session: ChatSession?) -> some View {
         let isWritten = officeHoursDocumentWritten(type: type)
-        let detail = officeHoursDocumentDetail(type: type, path: path)
+        let detail = officeHoursDocumentDetail(type: type, path: path, session: session)
         return HStack(spacing: 10) {
-            Text(isWritten ? "✓" : officeHoursDocumentHandoffBusy ? "…" : "•")
+            Text(isWritten ? "✓" : (officeHoursDocumentHandoffBusy || officeHoursDocumentHandoffAwaitingFollowup) ? "…" : "•")
                 .font(.system(size: isWritten ? 11 : 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(isWritten ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.mutedDeep)
                 .frame(width: 22, height: 22)
@@ -6575,22 +6649,50 @@ struct ContentView: View {
         .padding(.vertical, 1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title) \(detail)")
-        .accessibilityValue(officeHoursDocumentAccessibilityValue(type: type))
+        .accessibilityValue(officeHoursDocumentAccessibilityValue(type: type, session: session))
         .accessibilityIdentifier("opendesign.officeHours.docHandoff.doc.\(type)")
     }
 
-    private var officeHoursDocumentHandoffButtonTitle: String {
-        if officeHoursDocumentHandoffBusy { return "문서 저장 중" }
+    private func officeHoursDocumentHandoffButtonTitle(promptActive: Bool) -> String {
+        if promptActive { return "보완 질문 답변 필요" }
+        if officeHoursDocumentHandoffAwaitingFollowup { return "보완 질문 준비 중..." }
+        if officeHoursDocumentHandoffBusy { return "문서 리뷰 중..." }
         if officeHoursDay1DocumentsWritten { return "문서 저장 완료" }
-        return "4개 문서 저장"
+        return "문서 검토하기"
     }
 
-    private var officeHoursDocumentHandoffButtonDisabled: Bool {
-        officeHoursDocumentHandoffBusy || officeHoursDay1DocumentsWritten
+    private func officeHoursDocumentHandoffButtonLabel(promptActive: Bool) -> some View {
+        HStack(spacing: 8) {
+            if (officeHoursDocumentHandoffBusy || officeHoursDocumentHandoffAwaitingFollowup) && !promptActive {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .controlSize(.mini)
+                    .tint(OpenDesignOfficeHoursColor.accent)
+                    .frame(width: 14, height: 14)
+                    .accessibilityHidden(true)
+            }
+            Text(officeHoursDocumentHandoffButtonTitle(promptActive: promptActive))
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .foregroundStyle(officeHoursDocumentHandoffButtonDisabled(promptActive: promptActive) ? OpenDesignOfficeHoursColor.mutedDeep : OpenDesignOfficeHoursColor.bgDeep)
+        .frame(maxWidth: .infinity)
+        .frame(height: 40)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(officeHoursDocumentHandoffButtonDisabled(promptActive: promptActive) ? OpenDesignOfficeHoursColor.surface2 : OpenDesignOfficeHoursColor.accent)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(officeHoursDocumentHandoffButtonDisabled(promptActive: promptActive) ? OpenDesignOfficeHoursColor.borderSoft : Color.clear, lineWidth: 1)
+                )
+        )
+    }
+
+    private func officeHoursDocumentHandoffButtonDisabled(promptActive: Bool) -> Bool {
+        officeHoursDocumentHandoffBusy || officeHoursDocumentHandoffAwaitingFollowup || promptActive || officeHoursDay1DocumentsWritten
     }
 
     private func startOfficeHoursDocumentHandoff(session: ChatSession) {
-        guard !officeHoursDocumentHandoffBusy else { return }
+        guard !officeHoursDocumentHandoffBusy && !officeHoursDocumentHandoffAwaitingFollowup else { return }
         viewModel.startDay1DocHandoff(
             docType: "all",
             day1Handoff: officeHoursDay1HandoffPayload(session: session)
@@ -6787,7 +6889,7 @@ struct ContentView: View {
         }
 
         viewModel.selectFoundationDay(nextDay)
-        if LocalDevelopmentDayFastForward.isEnabled, (2...3).contains(nextDay) {
+        if LocalDevelopmentDayProgressPrimer.supports(day: nextDay) {
             primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: nextDay)
             viewModel.ensureOfficeHoursSession(forDay: nextDay)
         }
@@ -8822,6 +8924,10 @@ struct ContentView: View {
             return (Self.officeHoursTranscriptBottomID, .bottom)
         }
         if let prompt = session.pendingUserInput {
+            if officeHoursIsDocumentHandoffPanelPrompt(prompt),
+               officeHoursIsDocReady(session: session, activeDay: activeDay) {
+                return (Self.officeHoursDocReadyHeaderID, .top)
+            }
             let snapshots = officeHoursSubmittedPromptSnapshots(for: session)
             if !snapshots.contains(where: { $0.requestId == prompt.requestId }) {
                 let latestSubmittedID = snapshots.sorted { lhs, rhs in
@@ -10266,6 +10372,7 @@ struct ContentView: View {
         selectedOpenDesignReferencePage = nil
         isOpenDesignOfficeHoursPresented = false
         isOpenDesignMorningBriefingPresented = false
+        isOpenDesignStrategyPresented = false
         isBipMissionRoutePresented = false
     }
 
@@ -10275,6 +10382,7 @@ struct ContentView: View {
             selectedOpenDesignReferencePage = nil
             isOpenDesignOfficeHoursPresented = false
             isOpenDesignMorningBriefingPresented = false
+            isOpenDesignStrategyPresented = false
             isBipMissionRoutePresented = true
         }
         updateBipCompletionRouteFieldsIfNeeded()
@@ -10290,6 +10398,7 @@ struct ContentView: View {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
             isOpenDesignOfficeHoursPresented = false
             isOpenDesignMorningBriefingPresented = false
+            isOpenDesignStrategyPresented = false
             isBipMissionRoutePresented = false
             selectedOpenDesignReferencePage = .settings
         }
@@ -10338,6 +10447,7 @@ struct ContentView: View {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
             selectedOpenDesignReferencePage = nil
             isOpenDesignMorningBriefingPresented = false
+            isOpenDesignStrategyPresented = false
             isBipMissionRoutePresented = false
             isOpenDesignOfficeHoursPresented = true
         }
@@ -10367,6 +10477,7 @@ struct ContentView: View {
                 selectedOpenDesignReferencePage = nil
                 isOpenDesignOfficeHoursPresented = false
                 isBipMissionRoutePresented = false
+                isOpenDesignStrategyPresented = false
                 isOpenDesignMorningBriefingPresented = true
             }
             if let anchor {
@@ -10384,6 +10495,7 @@ struct ContentView: View {
                 selectedOpenDesignReferencePage = nil
                 isOpenDesignOfficeHoursPresented = false
                 isOpenDesignMorningBriefingPresented = false
+                isOpenDesignStrategyPresented = false
                 isBipMissionRoutePresented = false
             }
             requestOpenDesignScroll(anchor: anchor, placement: placement)
@@ -10392,6 +10504,7 @@ struct ContentView: View {
                 selectedOpenDesignReferencePage = .history
                 isOpenDesignOfficeHoursPresented = false
                 isOpenDesignMorningBriefingPresented = false
+                isOpenDesignStrategyPresented = false
                 isBipMissionRoutePresented = false
             }
         case .bipResearch:
@@ -10399,6 +10512,7 @@ struct ContentView: View {
                 selectedOpenDesignReferencePage = .bipLog
                 isOpenDesignOfficeHoursPresented = false
                 isOpenDesignMorningBriefingPresented = false
+                isOpenDesignStrategyPresented = false
                 isBipMissionRoutePresented = false
             }
         case .newsMarketRadar:
@@ -10406,6 +10520,7 @@ struct ContentView: View {
                 selectedOpenDesignReferencePage = .news
                 isOpenDesignOfficeHoursPresented = false
                 isOpenDesignMorningBriefingPresented = false
+                isOpenDesignStrategyPresented = false
                 isBipMissionRoutePresented = false
             }
         case .bipMission:
@@ -10415,6 +10530,7 @@ struct ContentView: View {
                 selectedOpenDesignReferencePage = nil
                 isOpenDesignOfficeHoursPresented = false
                 isOpenDesignMorningBriefingPresented = false
+                isOpenDesignStrategyPresented = false
                 isBipMissionRoutePresented = false
             }
         }
@@ -10467,7 +10583,7 @@ struct ContentView: View {
             selectedTimelineDay = nil
             viewModel.selectFoundationDay(nextDay)
         }
-        if LocalDevelopmentDayFastForward.isEnabled, (2...3).contains(nextDay) {
+        if LocalDevelopmentDayProgressPrimer.supports(day: nextDay) {
             primeLocalDevFastForwardOfficeHoursProgressIfNeeded(day: nextDay)
             viewModel.ensureOfficeHoursSession(forDay: nextDay)
         }
@@ -10483,6 +10599,7 @@ struct ContentView: View {
         selectedOpenDesignReferencePage = nil
         isOpenDesignOfficeHoursPresented = false
         isOpenDesignMorningBriefingPresented = false
+        isOpenDesignStrategyPresented = false
         isBipMissionRoutePresented = false
         selectedPastReviewDay = nil
         selectedTimelineDay = nil
@@ -13188,7 +13305,11 @@ struct OpenDesignReferenceRoutePolicy {
         dayNumber: Int,
         localDevelopmentFastForwardEnabled: Bool = LocalDevelopmentDayFastForward.isEnabled
     ) -> Bool {
-        dayNumber == 1 || dayNumber == 2 || (localDevelopmentFastForwardEnabled && dayNumber == 3)
+        guard dayNumber >= 1 else { return false }
+        let maxDay = localDevelopmentFastForwardEnabled
+            ? LocalDevelopmentDayFastForward.localDevelopmentMaxOpenDesignDay
+            : LocalDevelopmentDayFastForward.productionMaxOpenDesignDay
+        return dayNumber <= maxDay
     }
 }
 
@@ -13198,8 +13319,12 @@ enum LocalDevelopmentDayProgressPrimer {
         let status: DayStepStatus
     }
 
+    static func supports(day: Int) -> Bool {
+        LocalDevelopmentDayFastForward.isFastForwardOfficeHoursDay(day)
+    }
+
     static func patchRequests(day: Int, record: DayRecord?) -> [PatchRequest] {
-        guard (2...3).contains(day) else { return [] }
+        guard supports(day: day) else { return [] }
         return [
             PatchRequest(stepId: "scan", status: .done),
             PatchRequest(stepId: "retro", status: .done),

@@ -311,7 +311,7 @@ struct StructuredPromptSubmissionStateTests {
 
     private static func makeSession(
         id: String = "structured-session",
-        pendingUserInput: StructuredPromptRequest?,
+        pendingUserInput: StructuredPromptRequest? = nil,
         status: SessionStatus = .awaitingInput,
         runtime: ChatSessionRuntime? = nil,
         messages: [ChatMessage] = []
@@ -687,6 +687,129 @@ struct StructuredPromptSubmissionStateTests {
         #expect(viewModel.activeDay1HandoffPrompt == nil)
     }
 
+    @MainActor @Test func activeDay1DocumentReviewPromptFindsJudgePrompt() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makeIddPrompt(docType: "day1_doc_handoff_judge", mode: "office_hours")
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+
+        #expect(viewModel.activeDay1DocHandoffJudgePrompt?.requestId == prompt.requestId)
+        #expect(viewModel.activeDay1DocumentReviewPrompt?.requestId == prompt.requestId)
+    }
+
+    @MainActor @Test func activeDay1DocumentReviewPromptFindsNewReviewSessionWhenNotSelected() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makeIddPrompt(
+            sessionId: "day1-review-session",
+            docType: "day1_doc_handoff_judge",
+            mode: "office_hours"
+        )
+        viewModel.replaceSessionsForTesting(
+            [
+                Self.makeSession(id: "selected-session"),
+                Self.makeSession(id: prompt.sessionId, pendingUserInput: prompt),
+            ],
+            selectedSessionID: "selected-session"
+        )
+
+        #expect(viewModel.activeDay1DocHandoffJudgePrompt?.requestId == prompt.requestId)
+        #expect(viewModel.activeDay1DocumentReviewPrompt?.requestId == prompt.requestId)
+    }
+
+    @MainActor @Test func day1BulkHandoffJudgeBlockWaitsForStructuredPrompt() throws {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        viewModel.setDay1DocHandoffPendingDocTypeForTesting("all")
+
+        viewModel.applyIddSetupProgressForTesting(
+            sessionId: "day1-review-session",
+            requestId: "day1-handoff-write-all",
+            stage: "judge_blocked",
+            progressText: "Office Hours 증거 judge가 문서 리뷰를 보류했습니다.",
+            docType: "all",
+            elapsedMs: 120
+        )
+
+        #expect(viewModel.day1DocHandoffPendingDocType == nil)
+        #expect(viewModel.day1DocHandoffAwaitingFollowupPrompt == true)
+        #expect(viewModel.activeDay1DocumentReviewPrompt == nil)
+
+        let event = try JSONDecoder().decode(SidecarEvent.self, from: """
+        {
+          "type": "idd_setup_state",
+          "iddSetupStatus": "error",
+          "iddSetupError": {
+            "provider": "codex",
+            "docType": "goal",
+            "message": "Office Hours 문서 judge가 5/10으로 문서 리뷰를 보류했습니다. 기준은 8/10입니다.",
+            "recoverable": true
+          }
+        }
+        """.data(using: .utf8)!)
+        viewModel.applySidecarEventForTesting(event)
+
+        #expect(viewModel.day1DocHandoffAwaitingFollowupPrompt == true)
+        #expect(viewModel.day1DocHandoffError == "Office Hours 문서 judge가 5/10으로 문서 리뷰를 보류했습니다. 기준은 8/10입니다.")
+
+        let prompt = Self.makeIddPrompt(
+            sessionId: "day1-review-session",
+            docType: "day1_doc_handoff_judge",
+            mode: "office_hours"
+        )
+        viewModel.applySessionCreatedForTesting(Self.makeSession(id: prompt.sessionId, pendingUserInput: prompt))
+
+        #expect(viewModel.day1DocHandoffAwaitingFollowupPrompt == false)
+        #expect(viewModel.day1DocHandoffPendingDocType == nil)
+        #expect(viewModel.activeDay1DocumentReviewPrompt?.requestId == prompt.requestId)
+    }
+
+    @MainActor @Test func day1BulkHandoffJudgePromptClearsBusyAndKeepsErrorSecondary() throws {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        viewModel.setDay1DocHandoffPendingDocTypeForTesting("all")
+        let prompt = Self.makeIddPrompt(docType: "day1_doc_handoff_judge", mode: "office_hours")
+
+        viewModel.applySessionUpdatedForTesting(Self.makeSession(pendingUserInput: prompt))
+
+        #expect(viewModel.day1DocHandoffPendingDocType == nil)
+        #expect(viewModel.day1DocHandoffAwaitingFollowupPrompt == false)
+        #expect(viewModel.activeDay1DocumentReviewPrompt?.requestId == prompt.requestId)
+
+        let event = try JSONDecoder().decode(SidecarEvent.self, from: """
+        {
+          "type": "idd_setup_state",
+          "iddSetupStatus": "error",
+          "iddSetupError": {
+            "provider": "codex",
+            "docType": "goal",
+            "message": "Office Hours 증거 judge가 문서 리뷰를 보류했습니다.",
+            "recoverable": true
+          }
+        }
+        """.data(using: .utf8)!)
+        viewModel.applySidecarEventForTesting(event)
+
+        #expect(viewModel.day1DocHandoffPendingDocType == nil)
+        #expect(viewModel.day1DocHandoffError == "Office Hours 증거 judge가 문서 리뷰를 보류했습니다.")
+        #expect(viewModel.activeDay1DocumentReviewPrompt?.requestId == prompt.requestId)
+    }
+
+    @MainActor @Test func day1HandoffReviewRetryProgressRestoresBulkBusyState() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+
+        viewModel.applyIddSetupProgressForTesting(
+            sessionId: "structured-session",
+            requestId: "judge-request",
+            stage: "review_retry",
+            progressText: "보완 답변을 반영해 문서 리뷰를 다시 실행 중",
+            docType: "all",
+            elapsedMs: 20
+        )
+
+        #expect(viewModel.day1DocHandoffPendingDocType == "all")
+        #expect(viewModel.day1DocHandoffError == nil)
+    }
+
     @MainActor @Test func day1HandoffDisconnectedSurfacesVisibleError() {
         let viewModel = AgenticViewModel(activateAppForAuth: {})
 
@@ -694,6 +817,28 @@ struct StructuredPromptSubmissionStateTests {
 
         #expect(viewModel.day1DocHandoffPendingDocType == nil)
         #expect(viewModel.day1DocHandoffError?.contains("실행 보조 앱 연결") == true)
+    }
+
+    @MainActor @Test func day1BulkHandoffJudgeErrorClearsAllPending() throws {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        viewModel.setDay1DocHandoffPendingDocTypeForTesting("all")
+
+        let event = try JSONDecoder().decode(SidecarEvent.self, from: """
+        {
+          "type": "idd_setup_state",
+          "iddSetupStatus": "error",
+          "iddSetupError": {
+            "provider": "codex",
+            "docType": "goal",
+            "message": "Office Hours 증거 judge가 문서 리뷰를 보류했습니다.",
+            "recoverable": true
+          }
+        }
+        """.data(using: .utf8)!)
+        viewModel.applySidecarEventForTesting(event)
+
+        #expect(viewModel.day1DocHandoffPendingDocType == nil)
+        #expect(viewModel.day1DocHandoffError == "Office Hours 증거 judge가 문서 리뷰를 보류했습니다.")
     }
 
     @MainActor @Test func day1HandoffSessionReadyDoesNotLeaveWorkspaceSurface() throws {

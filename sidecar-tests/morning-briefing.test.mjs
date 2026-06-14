@@ -18,12 +18,20 @@ import {
   extractMorningBriefingMetrics,
   labelMorningBriefingAnomaly,
   loadMorningBriefingStore,
+  appendMorningBriefingRunLog,
   persistMorningBriefing,
+  resolveMorningBriefingRunLogPath,
   resolveMorningBriefingPath,
+  sanitizeMorningBriefingRunLogRecord,
   updatePersistedMorningBriefing,
 } from "../sidecar/morning-briefing.mjs";
 
 const NOW = new Date("2026-06-10T09:00:00+09:00");
+const PREVIOUS_METRICS = Object.freeze({ cloudflare: 41, github: 6, posthog: 25 });
+
+function previousHistory(metrics = PREVIOUS_METRICS) {
+  return [{ date: "2026-06-09", generatedAt: "2026-06-09T09:00:00", metrics }];
+}
 
 function digestFixture({
   posthogActive = 11,
@@ -116,10 +124,10 @@ test("extractMorningBriefingMetrics maps digest counts to card metrics", () => {
 test("buildMorningBriefingCards computes deltas against previous metrics", () => {
   const cards = buildMorningBriefingCards({
     digest: digestFixture(),
-    previousMetrics: { cloudflare: 41, github: 6, posthog: 25 },
+    previousMetrics: PREVIOUS_METRICS,
     history: [
       { date: "2026-06-08", generatedAt: "2026-06-08T09:30:00", metrics: { cloudflare: 38 } },
-      { date: "2026-06-09", metrics: { cloudflare: 41 } },
+      { date: "2026-06-09", metrics: PREVIOUS_METRICS },
     ],
     generatedAt: "2026-06-10T09:00:00",
   });
@@ -155,6 +163,34 @@ test("buildMorningBriefingCards computes deltas against previous metrics", () =>
   assert.equal(posthog.metric.direction, "down");
   assert.equal(posthog.metric.deltaLabel, "▼ 56%");
   assert.equal(posthog.noteTone, "warn");
+});
+
+test("buildMorningBriefingCards fails when previous metrics lack sparkline history", () => {
+  assert.throws(
+    () => buildMorningBriefingCards({
+      digest: digestFixture({ cloudflareVisits: 289, gitCommits: 78, posthogActive: 1 }),
+      previousMetrics: { cloudflare: 289, github: 78, posthog: 1 },
+      history: [],
+      generatedAt: "2026-06-10T09:00:00",
+    }),
+    /Morning briefing sparkline history missing for cloudflare/,
+  );
+});
+
+test("buildMorningBriefingCards uses explicit history without duplicate previous metric", () => {
+  const cards = buildMorningBriefingCards({
+    digest: digestFixture(),
+    previousMetrics: { cloudflare: 41 },
+    history: [{ date: "2026-06-09", generatedAt: "2026-06-09T09:00:00", metrics: { cloudflare: 41 } }],
+    generatedAt: "2026-06-10T09:00:00",
+  });
+  const cloudflare = cards.find((card) => card.id === "cloudflare");
+
+  assert.deepEqual(cloudflare.spark, [41, 64]);
+  assert.deepEqual(
+    cloudflare.sparkPoints.map((point) => point.value),
+    [41, 64],
+  );
 });
 
 test("buildMorningBriefingCards rejects legacy Cloudflare pageViews counts", () => {
@@ -210,8 +246,8 @@ test("buildMorningBriefingSummary leads with the biggest drop", () => {
   const digest = digestFixture();
   const cards = buildMorningBriefingCards({
     digest,
-    previousMetrics: { cloudflare: 41, github: 6, posthog: 25 },
-    history: [],
+    previousMetrics: PREVIOUS_METRICS,
+    history: previousHistory(),
   });
   const summary = buildMorningBriefingSummary({ digest, cards, window: digest.window });
   assert.ok(summary.statement.startsWith("밤사이 가장 큰 변화는 PostHog"));
@@ -242,8 +278,8 @@ test("detectMorningBriefingAnomaly flags a >=25% metric drop with labeling optio
   const digest = digestFixture();
   const cards = buildMorningBriefingCards({
     digest,
-    previousMetrics: { cloudflare: 41, github: 6, posthog: 25 },
-    history: [],
+    previousMetrics: PREVIOUS_METRICS,
+    history: previousHistory(),
   });
   const anomaly = detectMorningBriefingAnomaly({ digest, cards });
   assert.equal(anomaly.kind, "metric_drop");
@@ -257,7 +293,7 @@ test("detectMorningBriefingAnomaly flags build-without-evidence when no metric d
   const cards = buildMorningBriefingCards({
     digest,
     previousMetrics: { cloudflare: 41, github: 6, posthog: 10 },
-    history: [],
+    history: previousHistory({ cloudflare: 41, github: 6, posthog: 10 }),
   });
   const anomaly = detectMorningBriefingAnomaly({ digest, cards });
   assert.equal(anomaly.kind, "build_without_evidence");
@@ -269,7 +305,7 @@ test("detectMorningBriefingAnomaly returns null on calm mornings", () => {
   const cards = buildMorningBriefingCards({
     digest,
     previousMetrics: { cloudflare: 41, github: 6, posthog: 11 },
-    history: [],
+    history: previousHistory({ cloudflare: 41, github: 6, posthog: 11 }),
   });
   assert.equal(detectMorningBriefingAnomaly({ digest, cards }), null);
 });
@@ -313,8 +349,8 @@ test("buildMorningBriefing assembles the full payload", () => {
   const briefing = buildMorningBriefing({
     digest,
     day: 12,
-    previous: { metrics: { cloudflare: 41, github: 6, posthog: 25 } },
-    history: [{ date: "2026-06-09", metrics: { cloudflare: 41 } }],
+    previous: { metrics: PREVIOUS_METRICS },
+    history: previousHistory(),
     now: NOW,
   });
   assert.equal(briefing.schemaVersion, MORNING_BRIEFING_SCHEMA_VERSION);
@@ -350,6 +386,7 @@ test("labelMorningBriefingAnomaly stamps the label and time", () => {
     digest,
     day: 12,
     previous: { metrics: { posthog: 25 } },
+    history: previousHistory({ posthog: 25 }),
     now: NOW,
   });
   const labeled = labelMorningBriefingAnomaly(briefing, "실제 이탈이다", { now: NOW });
@@ -369,6 +406,7 @@ test("persistMorningBriefing keeps one history entry per local date and round-tr
       day: 12,
       // posthog 25 → 11 drop keeps an anomaly present for the labeling round-trip below.
       previous: { metrics: { ...first.metrics, posthog: 25 } },
+      history: previousHistory({ ...first.metrics, posthog: 25 }),
       now: NOW,
     });
     await persistMorningBriefing({ workspaceRoot: dir, briefing: second });
@@ -391,6 +429,82 @@ test("persistMorningBriefing keeps one history entry per local date and round-tr
     assert.equal(updated.anomaly.label, "추적 누락이다");
     const reloaded = await loadMorningBriefingStore({ workspaceRoot: dir });
     assert.equal(reloaded.current.anomaly.label, "추적 누락이다");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("same-day refresh can persist a newer snapshot from fresh git data when external sources fail", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mb-refresh-"));
+  try {
+    const oldBriefing = buildMorningBriefing({
+      digest: digestFixture({ gitCommits: 4, posthogActive: 2, cloudflareVisits: 10 }),
+      day: 1,
+      now: new Date("2026-06-14T10:21:41.000Z"),
+    });
+    await persistMorningBriefing({ workspaceRoot: dir, briefing: oldBriefing });
+    const store = await loadMorningBriefingStore({ workspaceRoot: dir });
+    const nextBriefing = buildMorningBriefing({
+      digest: digestFixture({
+        gitCommits: 12,
+        posthogState: "failed",
+        cloudflareState: "failed",
+      }),
+      day: 1,
+      now: new Date("2026-06-14T12:30:00.000Z"),
+      previous: {
+        metrics: store.current.metrics,
+        generatedAt: store.current.generatedAt,
+      },
+      history: store.history,
+    });
+    await persistMorningBriefing({ workspaceRoot: dir, briefing: nextBriefing });
+    const reloaded = await loadMorningBriefingStore({ workspaceRoot: dir });
+
+    assert.equal(reloaded.current.generatedAt, "2026-06-14T12:30:00.000Z");
+    assert.equal(reloaded.current.sync.syncedAt, reloaded.current.generatedAt);
+    assert.notEqual(reloaded.current.sync.syncedAtLabel, oldBriefing.sync.syncedAtLabel);
+    assert.equal(reloaded.current.metrics.github, nextBriefing.metrics.github);
+    assert.equal(reloaded.current.status.state, "ready");
+    assert.equal(reloaded.current.sync.readyCount, 1);
+    assert.equal(reloaded.current.historyDates.includes("2026-06-14"), false);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("morning briefing run logs are JSONL and redact sensitive fields", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mb-runs-"));
+  try {
+    const runId = "refresh/test";
+    const githubToken = ["ghp", "123456789012345678901234567890123456"].join("_");
+    const openAiToken = ["sk", "proj", "12345678901234567890"].join("-");
+    await appendMorningBriefingRunLog({
+      workspaceRoot: dir,
+      runId,
+      record: {
+        stage: "external_digest",
+        outcome: "failed",
+        selectedSources: ["posthog"],
+        token: githubToken,
+        error: `failed for user@example.com from 127.0.0.1 with ${openAiToken}`,
+        rawRows: [{ email: "person@example.com", value: 1 }],
+      },
+    });
+    const logPath = resolveMorningBriefingRunLogPath(dir, runId);
+    const raw = await fs.readFile(logPath, "utf8");
+    const lines = raw.trim().split(/\n/);
+    assert.equal(lines.length, 1);
+    const record = JSON.parse(lines[0]);
+    assert.equal(record.stage, "external_digest");
+    assert.equal(record.outcome, "failed");
+    assert.equal(record.token, "[redacted]");
+    assert.equal(record.rawRows, "[redacted]");
+    assert.match(record.error, /\[redacted\]/);
+    assert.doesNotMatch(raw, /user@example\.com|127\.0\.0\.1|sk-proj-|ghp_/);
+
+    const sanitized = sanitizeMorningBriefingRunLogRecord({ authorization: "Bearer secret", count: 3 });
+    assert.deepEqual(sanitized, { authorization: "[redacted]", count: 3 });
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

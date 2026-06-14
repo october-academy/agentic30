@@ -155,6 +155,9 @@ struct SettingsView: View {
     @State private var geminiEnvironment = ""
     @State private var cursorEnvironment = ""
     @State private var exaApiKey = ""
+    @State private var exaMcpModalPresented = false
+    @State private var exaMcpApiKeyDraft = ""
+    @State private var exaMcpModalMessage = ""
     @State private var cloudflareApiToken = ""
     @State private var cloudflareMcpURL = KeychainHelper.Settings.defaultCloudflareMcpURL
     @State private var cloudflareMcpCodemode = KeychainHelper.Settings.defaultCloudflareMcpCodemode
@@ -301,6 +304,12 @@ struct SettingsView: View {
                 // different provider in the segment — i.e. pending was tracking the
                 // previous value. Otherwise the user's explicit choice is preserved.
                 if pendingProvider == oldValue { pendingProvider = newValue }
+            }
+            .onChange(of: viewModel.exaMcpConnectResult) { _, result in
+                handleExaMcpConnectResult(result)
+            }
+            .sheet(isPresented: $exaMcpModalPresented) {
+                exaMcpApiKeySheet
             }
             .overlay {
                 ZStack {
@@ -1058,6 +1067,9 @@ struct SettingsView: View {
                         }
                     }
                 }
+                odSettingsRow(title: "Exa", detail: "Exa MCP로 공개 웹 검색과 원문 fetch 도구를 AI 실행과 Market Radar에 연결합니다.", iconName: "BrandExa") {
+                    exaMcpControls()
+                }
                 odSettingsRow(title: "Vercel", detail: "브라우저 OAuth 로그인으로 프로젝트, 배포, 로그 MCP 도구를 AI 실행에 연결합니다.", iconName: "BrandVercel") {
                     mcpIntegrationControls(
                         server: "vercel",
@@ -1131,6 +1143,169 @@ struct SettingsView: View {
         return detail.isEmpty
             ? "gh auth 로그인 하나로 세 경로가 켜집니다 — git/gh CLI 신호 수집(History·아침 브리핑 GitHub 드릴다운)과 AI 실행의 GitHub MCP 도구."
             : detail
+    }
+
+    private var exaMcpStatusLabel: String {
+        if viewModel.exaMcpConnecting { return "검증 중" }
+        if viewModel.integrationStatusChecking { return "확인 중…" }
+        if let result = viewModel.exaMcpConnectResult, result.isFailed || result.isMissing {
+            return "검증 실패"
+        }
+        if let live = viewModel.integrationStatus?.exa, !live.isMissing {
+            return live.isReady ? "MCP 연결됨" : "설정 실패"
+        }
+        return "설정 필요"
+    }
+
+    private var exaMcpStatusColor: Color {
+        if viewModel.exaMcpConnecting || viewModel.integrationStatusChecking {
+            return settingsSubtleText
+        }
+        if let result = viewModel.exaMcpConnectResult, result.isFailed || result.isMissing {
+            return OpenDesignDayColor.rose
+        }
+        if let live = viewModel.integrationStatus?.exa, !live.isMissing {
+            return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
+        }
+        return OpenDesignDayColor.amber
+    }
+
+    private var exaMcpCaption: (text: String, color: Color) {
+        if viewModel.exaMcpConnecting {
+            return ("Exa MCP 도구 호출로 API Key를 검증하는 중입니다.", settingsSubtleText)
+        }
+        if let result = viewModel.exaMcpConnectResult, result.isFailed || result.isMissing {
+            return (result.detail ?? "Exa MCP 연결을 확인하세요.", OpenDesignDayColor.rose)
+        }
+        if let live = viewModel.integrationStatus?.exa, !live.isMissing {
+            if live.isReady {
+                return ("Exa MCP 경로 확인됨.", settingsAccentColor)
+            }
+            return ("Exa MCP 설정을 확인하세요.", OpenDesignDayColor.rose)
+        }
+        return ("MCP 연결로 Exa API Key를 검증하고 provider 설정을 추가하세요.", OpenDesignDayColor.amber)
+    }
+
+    private func exaMcpControls() -> some View {
+        let actionLocked = viewModel.integrationStatusChecking || viewModel.exaMcpConnecting || !viewModel.isConnected
+        let caption = exaMcpCaption
+        return VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 8) {
+                odSettingsStatus(
+                    exaMcpStatusLabel,
+                    color: exaMcpStatusColor,
+                    isLoading: viewModel.integrationStatusChecking || viewModel.exaMcpConnecting
+                )
+                odSettingsGhostButton(
+                    title: "상태 확인",
+                    systemImage: "arrow.clockwise",
+                    width: 88,
+                    identifier: "settings.exa.refreshStatusButton",
+                    isDisabled: actionLocked
+                ) {
+                    viewModel.refreshIntegrationStatus()
+                }
+                odSettingsGhostButton(
+                    title: "MCP 연결",
+                    systemImage: "link",
+                    width: 96,
+                    identifier: "settings.exa.mcpConnectButton",
+                    isDisabled: actionLocked,
+                    isLoading: viewModel.exaMcpConnecting
+                ) {
+                    presentExaMcpModal()
+                }
+            }
+
+            Text(caption.text)
+                .font(.system(size: 10.8, weight: .regular, design: .monospaced))
+                .foregroundStyle(caption.color)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 320, alignment: .trailing)
+                .accessibilityIdentifier("settings.exa.mcpCaption")
+        }
+        .frame(maxWidth: 420, alignment: .trailing)
+    }
+
+    private var exaMcpApiKeySheet: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Image("BrandExa")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 26, height: 26)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Exa MCP")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(settingsText)
+                    Text("API Key 검증 후 \(viewModel.selectedProvider.title) MCP 설정에 저장합니다.")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(settingsSubtleText)
+                }
+            }
+
+            if !exaApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("저장된 키 있음. 새 키를 입력하면 검증 성공 후 교체됩니다.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(settingsAccentColor)
+            }
+
+            SecureField("Exa API Key", text: $exaMcpApiKeyDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                .foregroundStyle(settingsText)
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .background(fieldBackground)
+                .disabled(viewModel.exaMcpConnecting)
+                .accessibilityIdentifier("settings.exa.apiKeyField")
+
+            if !exaMcpModalMessage.isEmpty || viewModel.exaMcpConnecting {
+                HStack(spacing: 8) {
+                    if viewModel.exaMcpConnecting {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                    }
+                    Text(viewModel.exaMcpConnecting ? "Exa MCP web_search_exa 도구로 검증 중입니다." : exaMcpModalMessage)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(viewModel.exaMcpConnecting ? settingsSubtleText : exaMcpModalMessageColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(spacing: 10) {
+                Spacer()
+                Button("취소") {
+                    exaMcpModalPresented = false
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(viewModel.exaMcpConnecting)
+                .accessibilityIdentifier("settings.exa.cancelButton")
+
+                Button {
+                    submitExaMcpApiKey()
+                } label: {
+                    Text(viewModel.exaMcpConnecting ? "검증 중" : "검증 후 연결")
+                        .frame(minWidth: 92)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(viewModel.exaMcpConnecting)
+                .accessibilityIdentifier("settings.exa.validateButton")
+            }
+        }
+        .padding(24)
+        .frame(width: 430)
+        .background(settingsBackground)
+        .accessibilityIdentifier("settings.exa.apiKeyModal")
+    }
+
+    private var exaMcpModalMessageColor: Color {
+        if viewModel.exaMcpConnectResult?.isReady == true {
+            return settingsAccentColor
+        }
+        return OpenDesignDayColor.rose
     }
 
     private var vercelMcpStatusLabel: String {
@@ -2976,6 +3151,42 @@ struct SettingsView: View {
     private func refreshDiagnostics() {
         viewModel.requestDiagnostics()
         showMessage($settingsSaveMessage, text: "진단 요청됨")
+    }
+
+    private func presentExaMcpModal() {
+        exaMcpApiKeyDraft = ""
+        exaMcpModalMessage = exaApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? ""
+            : "저장된 키 있음. 새 키 입력 시 검증 성공 후 교체됩니다."
+        exaMcpModalPresented = true
+    }
+
+    private func submitExaMcpApiKey() {
+        let trimmed = exaMcpApiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            exaMcpModalMessage = "Exa API Key를 입력하세요."
+            return
+        }
+        exaMcpModalMessage = ""
+        viewModel.connectExaMcp(apiKey: trimmed)
+    }
+
+    private func handleExaMcpConnectResult(_ result: ExaMcpConnectResult?) {
+        guard let result else { return }
+        if result.isReady {
+            let settings = KeychainHelper.loadSettings()
+            exaApiKey = settings.exaApiKey
+            savedSettingsBaseline.exaApiKey = settings.exaApiKey
+            exaMcpApiKeyDraft = ""
+            exaMcpModalMessage = result.detail ?? "Exa MCP 연결됨."
+            exaMcpModalPresented = false
+            showMessage($settingsSaveMessage, text: "Exa MCP 저장됨")
+            return
+        }
+        exaMcpModalMessage = result.detail ?? "Exa MCP 검증에 실패했습니다."
+        if !exaMcpModalPresented {
+            exaMcpModalPresented = true
+        }
     }
 
     private func copyDiagnostics() {

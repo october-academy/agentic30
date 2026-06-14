@@ -2596,6 +2596,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var iddProviderRecovery: IddProviderRecovery?
     @Published private(set) var iddSetupError: IddSetupError?
     @Published private(set) var day1DocHandoffPendingDocType: String?
+    @Published private(set) var day1DocHandoffAwaitingFollowupPrompt = false
     @Published private(set) var day1DocHandoffError: String?
     @Published private(set) var bipTokenExpired: String?
     @Published private(set) var bipMissionProgress: BipMissionProgress?
@@ -2620,6 +2621,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var startupSessionAppearElapsedMs: Int?
     @Published private(set) var reviewDayDashboardViewModel: ReviewDayDashboardViewModel?
     @Published private(set) var newsMarketRadar: NewsMarketRadarSnapshot = .empty
+    @Published private(set) var newsMarketRadarPreparingForDisplay = false
     @Published private(set) var bipResearch: BipResearchSnapshot = .empty
     @Published private(set) var workHistory: WorkHistorySnapshot = .empty
     @Published private(set) var githubCliAuthStatus: GitHubCLIAuthStatus = .unknown
@@ -2627,6 +2629,9 @@ final class AgenticViewModel: ObservableObject {
     // services: gh auth / PostHog /users/@me / Cloudflare /zones).
     @Published private(set) var integrationStatus: IntegrationStatusSnapshot?
     @Published private(set) var integrationStatusChecking = false
+    @Published private(set) var exaMcpConnecting = false
+    @Published private(set) var exaMcpConnectResult: ExaMcpConnectResult?
+    private var pendingExaMcpApiKeyForStorage: String?
     /// Settings > 연동 "MCP 연결" prewarm — in-flight servers + last results.
     /// In-memory only: the proof is a live tool call, so it's re-earned per run.
     @Published private(set) var mcpOauthConnecting: Set<String> = []
@@ -3196,6 +3201,30 @@ final class AgenticViewModel: ObservableObject {
         return prompt
     }
 
+    var activeDay1DocumentReviewPrompt: StructuredPromptRequest? {
+        activeDay1DocHandoffJudgePrompt ?? activeDay1HandoffPrompt
+    }
+
+    var activeDay1DocHandoffJudgePrompt: StructuredPromptRequest? {
+        if let prompt = selectedSession?.pendingUserInput,
+           isDay1DocHandoffJudgePrompt(prompt) {
+            return prompt
+        }
+        return sessions.first { session in
+            session.archivedAt == nil && isDay1DocHandoffJudgePrompt(session.pendingUserInput)
+        }?.pendingUserInput
+    }
+
+    private func isDay1DocHandoffJudgePrompt(_ prompt: StructuredPromptRequest?) -> Bool {
+        guard let prompt,
+              prompt.isAgentic30StructuredInput else {
+            return false
+        }
+        let mode = prompt.generation?.mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let docType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return mode == "office_hours" && docType == "day1_doc_handoff_judge"
+    }
+
     private func isDay1HandoffSession(_ session: ChatSession?) -> Bool {
         guard let session else { return false }
         if session.runtime?.iddMode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "day1_handoff" {
@@ -3669,6 +3698,7 @@ final class AgenticViewModel: ObservableObject {
         authSession?.cancel()
         authSession = nil
         finishMcpOauthInFlightAfterSidecarInterruption(markFailedResult: false)
+        finishExaMcpConnectAfterSidecarInterruption()
         sidecar.stop()
         started = false
         officeHoursSessionCreateInFlight = false
@@ -3685,6 +3715,7 @@ final class AgenticViewModel: ObservableObject {
         isBipCoachCompleting = false
         bipMissionProgress = nil
         finishMcpOauthInFlightAfterSidecarInterruption(markFailedResult: false)
+        finishExaMcpConnectAfterSidecarInterruption()
         sidecar.stop()
         started = false
         requestedInitialBipGate = false
@@ -3757,6 +3788,9 @@ final class AgenticViewModel: ObservableObject {
             return true
         }
         if installUITestingOfficeHoursCommitmentGateSessionIfNeeded() {
+            return true
+        }
+        if installUITestingOfficeHoursDay1DocReadySessionIfNeeded() {
             return true
         }
         if installUITestingOfficeHoursRunningSessionIfNeeded() {
@@ -4715,6 +4749,14 @@ final class AgenticViewModel: ObservableObject {
             responses: responses
         )
         #if DEBUG
+        if completeUITestingDay1HandoffJudgeSubmissionIfNeeded(
+            sessionId: session.id,
+            requestId: requestId,
+            responses: responses,
+            promptBeforeLocalSubmission: promptBeforeLocalSubmission
+        ) {
+            return
+        }
         if completeUITestingDay1DocHandoffSubmissionIfNeeded(
             sessionId: session.id,
             requestId: requestId,
@@ -5325,6 +5367,30 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    func connectExaMcp(apiKey: String) {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isConnected, !trimmedKey.isEmpty, !integrationStatusChecking, !exaMcpConnecting else { return }
+        exaMcpConnecting = true
+        exaMcpConnectResult = nil
+        pendingExaMcpApiKeyForStorage = trimmedKey
+        PostHogTelemetry.capture(
+            "mac_exa_mcp_connect_validate_started",
+            properties: [
+                "provider": selectedProvider.rawValue,
+            ],
+            authSession: macAuthSession
+        )
+        sidecar.send(payload: [
+            "type": "exa_mcp_connect_validate",
+            "apiKey": trimmedKey,
+            "preferredProvider": selectedProvider.rawValue,
+        ])
+    }
+
+    func assureExaCodexMcpConfig() {
+        connectExaMcp(apiKey: KeychainHelper.loadSettings().exaApiKey)
+    }
+
     /// Settings > 연동 "MCP 연결": OAuth-first MCP(PostHog/Cloudflare)는 설정에서
     /// 검증 불가(토큰이 프로바이더 캐시에 있음) — 사이드카가 대상 MCP 도구를 1회
     /// 호출하는 최소 쿼리를 돌려 브라우저 OAuth를 트리거하고 연결을 실증한다.
@@ -5387,6 +5453,24 @@ final class AgenticViewModel: ObservableObject {
         mcpOauthOpenedLoginUrls.removeAll()
     }
 
+    private func finishExaMcpConnectAfterSidecarInterruption() {
+        guard exaMcpConnecting || pendingExaMcpApiKeyForStorage != nil else { return }
+        let checkedAt = ISO8601DateFormatter().string(from: Date())
+        exaMcpConnecting = false
+        pendingExaMcpApiKeyForStorage = nil
+        exaMcpConnectResult = ExaMcpConnectResult(
+            provider: selectedProvider.rawValue,
+            state: "failed",
+            detail: "실행 보조 앱이 중단되어 Exa MCP 연결 확인이 끝나지 않았어요. 다시 시도하세요.",
+            changed: false,
+            configPath: nil,
+            backupPath: nil,
+            route: nil,
+            validationTool: "web_search_exa",
+            checkedAt: checkedAt
+        )
+    }
+
     private func reportIntegrationStatusTelemetry(_ snapshot: IntegrationStatusSnapshot?) {
         guard let snapshot else { return }
         let probes: [(String, IntegrationProbeStatus?)] = [
@@ -5395,6 +5479,7 @@ final class AgenticViewModel: ObservableObject {
             ("posthog", snapshot.posthog),
             ("cloudflare", snapshot.cloudflare),
             ("vercel", snapshot.vercel),
+            ("exa", snapshot.exa),
         ]
         for (integration, probe) in probes {
             guard let state = probe?.state,
@@ -5661,6 +5746,61 @@ final class AgenticViewModel: ObservableObject {
         )
     }
 
+    private func reportExaMcpConnectTelemetry(_ result: ExaMcpConnectResult?) {
+        guard let result,
+              let state = result.state,
+              state != "ready"
+        else { return }
+
+        let properties: [String: Any] = [
+            "provider": result.provider ?? selectedProvider.rawValue,
+            "state": state,
+            "failure_detail": result.detail ?? "",
+            "checked_at": result.checkedAt ?? "",
+            "validation_tool": result.validationTool ?? "",
+        ]
+        PostHogTelemetry.capture(
+            "mac_exa_mcp_connect_unhealthy",
+            properties: properties,
+            authSession: macAuthSession
+        )
+        PostHogTelemetry.captureLog(
+            "exa mcp connect did not complete",
+            level: state == "failed" ? .error : .warn,
+            properties: properties,
+            authSession: macAuthSession
+        )
+    }
+
+    private func persistValidatedExaApiKeyIfNeeded(_ result: ExaMcpConnectResult) {
+        defer {
+            pendingExaMcpApiKeyForStorage = nil
+        }
+        guard result.isReady,
+              let key = pendingExaMcpApiKeyForStorage,
+              !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+        var settings = KeychainHelper.loadSettings()
+        settings.exaApiKey = key
+        do {
+            try KeychainHelper.saveSettings(settings)
+            syncProviderSettingsToSidecar(settings)
+        } catch {
+            exaMcpConnectResult = ExaMcpConnectResult(
+                provider: result.provider,
+                state: "failed",
+                detail: "Exa API key 저장 실패: \(error.localizedDescription)",
+                changed: false,
+                configPath: result.configPath,
+                backupPath: result.backupPath,
+                route: result.route,
+                validationTool: result.validationTool,
+                checkedAt: result.checkedAt
+            )
+        }
+    }
+
     nonisolated private static func runLoginShellCommand(_ command: String) -> (exitCode: Int32, output: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -5783,6 +5923,11 @@ final class AgenticViewModel: ObservableObject {
         #if DEBUG
         if emitUITestingNewsMarketRadarEventsIfRequested() { return }
         #endif
+        guard isConnected else {
+            newsMarketRadarPreparingForDisplay = false
+            return
+        }
+        newsMarketRadarPreparingForDisplay = true
         markLongRunningCompletionDisplayInterest(.newsMarketRadar)
         requestNewsMarketRadar()
         guard shouldRefreshNewsMarketRadarForDisplay else { return }
@@ -5882,15 +6027,44 @@ final class AgenticViewModel: ObservableObject {
 
     #if DEBUG
     private func emitUITestingMorningBriefingEventsIfRequested() -> Bool {
-        guard CommandLine.arguments.contains("--ui-testing-stub-morning-briefing-events") else {
+        let arguments = CommandLine.arguments
+        let wantsLoadingFixture = arguments.contains("--ui-testing-stub-morning-briefing-loading")
+        guard wantsLoadingFixture || arguments.contains("--ui-testing-stub-morning-briefing-events") else {
             return false
         }
         guard !didEmitUITestingMorningBriefingEvents else {
             return true
         }
         didEmitUITestingMorningBriefingEvents = true
+        if wantsLoadingFixture {
+            morningBriefing = nil
+            morningBriefingPrevious = nil
+            morningBriefingCollecting = true
+            morningBriefingSourceProgress = [
+                "cloudflare": MorningBriefingSourceProgress(
+                    id: "cloudflare",
+                    state: "waiting",
+                    detail: "방문 증거 연결 상태를 확인하고 있어요.",
+                    logLines: ["Cloudflare route queued"]
+                ),
+                "github": MorningBriefingSourceProgress(
+                    id: "github",
+                    state: "collecting",
+                    detail: "커밋과 배포 근거를 읽는 중이에요.",
+                    logLines: ["git log --since yesterday", "gh pr list --state merged"]
+                ),
+                "posthog": MorningBriefingSourceProgress(
+                    id: "posthog",
+                    state: "done",
+                    detail: "활성 사용자 이벤트 확인이 끝났어요.",
+                    logLines: ["events grouped by workspace"]
+                ),
+            ]
+            return true
+        }
         morningBriefing = .uiTestingSample
         morningBriefingCollecting = false
+        morningBriefingSourceProgress = [:]
         return true
     }
     #endif
@@ -6172,13 +6346,21 @@ final class AgenticViewModel: ObservableObject {
 
     #if DEBUG
     private func emitUITestingNewsMarketRadarEventsIfRequested() -> Bool {
-        guard CommandLine.arguments.contains("--ui-testing-stub-news-market-radar-events") else {
+        let arguments = CommandLine.arguments
+        let wantsPreparingFixture = arguments.contains("--ui-testing-stub-news-market-radar-preparing")
+        guard wantsPreparingFixture || arguments.contains("--ui-testing-stub-news-market-radar-events") else {
             return false
         }
         guard !didEmitUITestingNewsMarketRadarEvents else {
             return true
         }
         didEmitUITestingNewsMarketRadarEvents = true
+        if wantsPreparingFixture {
+            newsMarketRadar = .empty
+            newsMarketRadarPreparingForDisplay = true
+            return true
+        }
+        newsMarketRadarPreparingForDisplay = false
         let now = Date(timeIntervalSince1970: 1_779_238_800)
         let later = now.addingTimeInterval(24 * 60 * 60)
         let status = NewsMarketRadarStatus(
@@ -6674,6 +6856,7 @@ final class AgenticViewModel: ObservableObject {
         let normalizedDocType = docType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedDocType.isEmpty else { return }
         day1DocHandoffPendingDocType = normalizedDocType
+        day1DocHandoffAwaitingFollowupPrompt = false
         day1DocHandoffError = nil
         #if DEBUG
         if seedUITestingDay1BulkDocHandoffIfNeeded(docType: normalizedDocType) {
@@ -6684,6 +6867,7 @@ final class AgenticViewModel: ObservableObject {
             let docLabel = normalizedDocType == "all" ? "foundation" : normalizedDocType.uppercased()
             let message = "실행 보조 앱 연결 후 \(docLabel) 문서를 작성할 수 있습니다."
             day1DocHandoffPendingDocType = nil
+            day1DocHandoffAwaitingFollowupPrompt = false
             day1DocHandoffError = message
             lastError = message
             PostHogTelemetry.capture("mac_day1_doc_handoff_rejected", properties: [
@@ -6725,6 +6909,7 @@ final class AgenticViewModel: ObservableObject {
                 ? "초기 검증 문서 저장을 요청하지 못했습니다. 실행 보조 앱 연결을 확인해 주세요."
                 : "\(normalizedDocType.uppercased()) 문서 질문 카드를 요청하지 못했습니다. 실행 보조 앱 연결을 확인해 주세요."
             day1DocHandoffPendingDocType = nil
+            day1DocHandoffAwaitingFollowupPrompt = false
             day1DocHandoffError = message
             lastError = message
             PostHogTelemetry.capture("mac_day1_doc_handoff_rejected", properties: [
@@ -7417,6 +7602,7 @@ final class AgenticViewModel: ObservableObject {
             connectionLabel = message
             isConnected = false
             officeHoursSessionCreateInFlight = false
+            finishExaMcpConnectAfterSidecarInterruption()
             finishMcpOauthInFlightAfterSidecarInterruption(
                 detail: "실행 보조 앱이 중단되어 MCP 연결 확인이 끝나지 않았어요 — 다시 시도해 주세요.",
                 markFailedResult: true
@@ -7507,6 +7693,7 @@ final class AgenticViewModel: ObservableObject {
             applyCurriculumQuestionReframe(event)
             refreshPresentationState()
         case "idd_setup_progress":
+            reconcileDay1DocHandoffProgress(from: event)
             updateStructuredPromptSubmissionProgress(from: event)
             refreshPresentationState()
         case "session_deleted":
@@ -7917,6 +8104,7 @@ final class AgenticViewModel: ObservableObject {
             }
         case "news_market_radar_result":
             if let snapshot = event.newsMarketRadar {
+                newsMarketRadarPreparingForDisplay = false
                 newsMarketRadar = snapshot
                 if let outcome = longRunningCompletionOutcome(
                     for: snapshot.status.state,
@@ -7931,6 +8119,7 @@ final class AgenticViewModel: ObservableObject {
             }
         case "news_market_radar_status":
             if let status = event.newsMarketRadarStatus {
+                newsMarketRadarPreparingForDisplay = false
                 if longRunningCompletionStateIsRunning(status.state) {
                     beginLongRunningCompletionAttemptFromDisplayInterestIfNeeded(
                         .newsMarketRadar,
@@ -7998,8 +8187,19 @@ final class AgenticViewModel: ObservableObject {
                 }
             }
         case "morning_briefing_result":
+            let topLevelStatus = event.morningBriefingStatus
+            let topLevelFailed = topLevelStatus?.state == "failed"
             if let briefing = event.morningBriefing {
-                morningBriefing = briefing
+                if topLevelFailed {
+                    var staleBriefing = briefing
+                    staleBriefing.status = MorningBriefingStatus(
+                        state: "failed",
+                        detail: topLevelStatus?.detail ?? briefing.status?.detail ?? "브리핑 갱신에 실패해 이전 결과를 표시 중입니다."
+                    )
+                    morningBriefing = staleBriefing
+                } else {
+                    morningBriefing = briefing
+                }
             }
             if let previous = event.morningBriefingPrevious {
                 morningBriefingPrevious = previous
@@ -8007,8 +8207,8 @@ final class AgenticViewModel: ObservableObject {
             morningBriefingCollecting = false
             // 수집 종료: 카드별 진행 잔상을 지운다 — 완성 데이터가 자리를 대체.
             morningBriefingSourceProgress.removeAll()
-            let briefingState = event.morningBriefing?.status?.state
-            let briefingDetail = event.morningBriefing?.status?.detail
+            let briefingState = topLevelStatus?.state ?? event.morningBriefing?.status?.state
+            let briefingDetail = topLevelStatus?.detail ?? event.morningBriefing?.status?.detail
             completeLongRunningCompletionAttempt(
                 .morningBriefing,
                 outcome: briefingState == "failed" ? .failed : .success,
@@ -8016,6 +8216,21 @@ final class AgenticViewModel: ObservableObject {
             )
         case "morning_briefing_status":
             morningBriefingCollecting = event.morningBriefingStatus?.state == "collecting"
+            if event.morningBriefingStatus?.state == "failed" {
+                morningBriefingSourceProgress.removeAll()
+                if var staleBriefing = morningBriefing {
+                    staleBriefing.status = MorningBriefingStatus(
+                        state: "failed",
+                        detail: event.morningBriefingStatus?.detail ?? "브리핑 갱신에 실패해 이전 결과를 표시 중입니다."
+                    )
+                    morningBriefing = staleBriefing
+                }
+                completeLongRunningCompletionAttempt(
+                    .morningBriefing,
+                    outcome: .failed,
+                    detail: event.morningBriefingStatus?.detail
+                )
+            }
             if longRunningCompletionStateIsRunning(event.morningBriefingStatus?.state) {
                 beginLongRunningCompletionAttemptFromDisplayInterestIfNeeded(
                     .morningBriefing,
@@ -8033,6 +8248,18 @@ final class AgenticViewModel: ObservableObject {
             integrationStatus = event.integrationStatus
             integrationStatusChecking = false
             reportIntegrationStatusTelemetry(event.integrationStatus)
+        case "exa_mcp_connect_result":
+            exaMcpConnecting = false
+            if let result = event.exaMcpConnect {
+                exaMcpConnectResult = result
+                persistValidatedExaApiKeyIfNeeded(result)
+                reportExaMcpConnectTelemetry(exaMcpConnectResult)
+            } else {
+                pendingExaMcpApiKeyForStorage = nil
+            }
+            if let snapshot = event.integrationStatus {
+                integrationStatus = snapshot
+            }
         case "mcp_oauth_connect_status":
             // Live prewarm progress: caption text + auto-open the OAuth login
             // URL once when the sidecar asks the app to present it.
@@ -8332,8 +8559,10 @@ final class AgenticViewModel: ObservableObject {
                     detail: event.message
                 )
             }
-            if day1DocHandoffPendingDocType != nil {
+            if day1DocHandoffPendingDocType != nil || day1DocHandoffAwaitingFollowupPrompt,
+               activeDay1DocumentReviewPrompt == nil {
                 day1DocHandoffPendingDocType = nil
+                day1DocHandoffAwaitingFollowupPrompt = false
                 day1DocHandoffError = event.message ?? "문서 질문 카드를 준비하지 못했습니다."
             }
             isBipCoachRefreshing = false
@@ -8344,6 +8573,7 @@ final class AgenticViewModel: ObservableObject {
                 connectionLabel = event.message ?? connectionLabel
                 isConnected = false
                 officeHoursSessionCreateInFlight = false
+                finishExaMcpConnectAfterSidecarInterruption()
                 finishMcpOauthInFlightAfterSidecarInterruption(
                     detail: "실행 보조 앱 오류로 MCP 연결 확인이 끝나지 않았어요 — 다시 시도해 주세요.",
                     markFailedResult: true
@@ -8455,11 +8685,14 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private func reconcileDay1DocHandoffState(from event: SidecarEvent) {
-        if let setupError = event.iddSetupError,
-           setupError.docType == day1DocHandoffPendingDocType {
-            day1DocHandoffPendingDocType = nil
-            day1DocHandoffError = setupError.message
-            return
+        if let setupError = event.iddSetupError {
+            let matchesPendingHandoff = setupError.docType == day1DocHandoffPendingDocType
+                || day1DocHandoffPendingDocType == "all"
+            if matchesPendingHandoff || day1DocHandoffAwaitingFollowupPrompt || activeDay1DocHandoffJudgePrompt != nil {
+                day1DocHandoffPendingDocType = nil
+                day1DocHandoffError = setupError.message
+                return
+            }
         }
 
         guard let pendingDocType = day1DocHandoffPendingDocType else { return }
@@ -8470,13 +8703,39 @@ final class AgenticViewModel: ObservableObject {
                 previews.first(where: { $0.type == docType })?.isWritten == true
             }) {
                 day1DocHandoffPendingDocType = nil
+                day1DocHandoffAwaitingFollowupPrompt = false
                 day1DocHandoffError = nil
             }
             return
         }
         if event.iddDocPreviews?.first(where: { $0.type == pendingDocType })?.isWritten == true {
             day1DocHandoffPendingDocType = nil
+            day1DocHandoffAwaitingFollowupPrompt = false
             day1DocHandoffError = nil
+        }
+    }
+
+    private func reconcileDay1DocHandoffProgress(from event: SidecarEvent) {
+        let docType = event.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let stage = event.stage?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard docType == "all" || event.requestId == "day1-handoff-write-all" else { return }
+
+        switch stage {
+        case "bulk_started", "review_retry", "recording_response", "file_written":
+            day1DocHandoffAwaitingFollowupPrompt = false
+            if activeDay1DocumentReviewPrompt == nil {
+                day1DocHandoffPendingDocType = "all"
+                day1DocHandoffError = nil
+            }
+        case "judge_blocked":
+            day1DocHandoffPendingDocType = nil
+            day1DocHandoffAwaitingFollowupPrompt = activeDay1DocumentReviewPrompt == nil
+        case "bulk_written":
+            day1DocHandoffPendingDocType = nil
+            day1DocHandoffAwaitingFollowupPrompt = false
+            day1DocHandoffError = nil
+        default:
+            break
         }
     }
 
@@ -9107,6 +9366,109 @@ final class AgenticViewModel: ObservableObject {
     }
 
     @discardableResult
+    fileprivate func installUITestingOfficeHoursDay1DocReadySessionIfNeeded() -> Bool {
+        #if DEBUG
+        guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-doc-ready") else {
+            return false
+        }
+        if let selectedSession,
+           selectedSession.title.range(of: "Office Hours", options: [.caseInsensitive, .diacriticInsensitive]) != nil,
+           selectedSession.runtime?.officeHours?.day == 1,
+           selectedSession.pendingUserInput == nil,
+           selectedSession.status == .idle {
+            return true
+        }
+
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let now = Date()
+        let today = formatter.string(from: now)
+        day1GoalSelection = Day1GoalSelection(
+            goalType: .getUsers,
+            goalText: "이번 주 유료 진입점을 보여줄 실명 고객 1명을 고정한다",
+            customer: "macOS에서 AI 코딩 도구를 매일 쓰는 전업 1인 개발자",
+            problem: "AI로 제품은 만들지만 고객 행동 증거가 남지 않는다",
+            validationAction: "가장 적합한 사용자 1명에게 이번 주 유료 진입점 보여주기",
+            evidenceRefs: [".agentic30/docs/GOAL.md", ".agentic30/docs/ICP.md"],
+            proofSink: .local,
+            sourcePlanFingerprint: "ui-test-day1-doc-ready",
+            selectedAt: ISO8601DateFormatter().string(from: now)
+        )
+        dayProgress = DayProgress(
+            challengeStartedAt: today,
+            days: [
+                "1": DayRecord(
+                    day: 1,
+                    kind: .day1,
+                    steps: ["onboarding": .done, "scan": .done, "goal": .done, "first_interview": .done],
+                    goalText: "이번 주 유료 진입점을 보여줄 실명 고객 1명을 고정한다",
+                    updatedAt: today
+                )
+            ]
+        )
+
+        let sessionID = "ui-test-office-hours-doc-ready-\(UUID().uuidString)"
+        func answer(_ index: Int, _ content: String) -> ChatMessage {
+            ChatMessage(
+                id: "ui-test-office-hours-doc-ready-answer-\(index)",
+                role: .user,
+                provider: selectedProvider,
+                content: content,
+                state: .final,
+                createdAt: now.addingTimeInterval(TimeInterval(index)),
+                error: nil,
+                bipMissionChoices: nil,
+                providerAuthActions: nil
+            )
+        }
+        let session = ChatSession(
+            id: sessionID,
+            title: "Office Hours",
+            provider: selectedProvider,
+            model: preferredModel(for: selectedProvider),
+            status: .idle,
+            createdAt: now,
+            updatedAt: now,
+            error: nil,
+            messages: [
+                answer(1, "돈을 냈거나 제안한 후보가 있어 유료 진입점부터 검증한다"),
+                answer(2, "지금은 Notion과 DM으로 인터뷰 기록을 수동 정리한다"),
+                answer(3, "실명 후보 3명에게 이번 주 결제 요청을 보낼 수 있다"),
+                answer(4, "가장 작은 유료 작업은 30분 설정 세션이다"),
+                answer(5, "직접 관찰한 행동은 고객 검증을 미루고 코드만 더 쓰는 패턴이다"),
+                answer(6, "앞으로 AI 빌드 속도보다 고객 증거가 더 큰 병목이 된다"),
+            ],
+            pendingUserInput: nil,
+            runtime: ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: "day1_step",
+                iddMode: "office_hours",
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "ui_testing_day1_doc_ready",
+                    startedAt: ISO8601DateFormatter().string(from: now),
+                    context: "UI test completed Day 1 Office Hours",
+                    day: 1
+                )
+            )
+        )
+        sessions = [session]
+        selectedSessionID = sessionID
+        officeHoursSessionCreateInFlight = false
+        refreshPresentationState()
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    @discardableResult
     fileprivate func installUITestingOfficeHoursDay2CompletedSessionIfNeeded() -> Bool {
         #if DEBUG
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-day2-completed") else {
@@ -9527,10 +9889,146 @@ final class AgenticViewModel: ObservableObject {
             return false
         }
 
+        if arguments.contains("--ui-testing-seed-day1-handoff-judge-block") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.installUITestingDay1HandoffJudgeBlock(attempt: 1)
+            }
+            return true
+        }
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.installUITestingDay1BulkDocPreviews()
         }
         return true
+    }
+
+    private static func makeUITestingDay1HandoffJudgePrompt(
+        sessionID: String,
+        requestId: String,
+        createdAt: Date,
+        attempt: Int
+    ) -> StructuredPromptRequest {
+        StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: sessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours 문서 리뷰 보완",
+            createdAt: createdAt,
+            intro: StructuredPromptIntro(
+                title: "문서 리뷰 보류",
+                body: "문서 judge 점수는 \(attempt == 1 ? "5" : "6")/10이고 기준은 8/10입니다. 자유 입력 대신 하나를 골라 다음 리뷰 인터뷰를 이어갑니다.",
+                bullets: ["다음 office-hours에서 추적할 열린 약속이 부족합니다.", "유료 진입점 증거가 더 구체적이어야 합니다."]
+            ),
+            questions: [
+                StructuredPromptQuestion(
+                    header: "보완 질문",
+                    question: attempt == 1
+                        ? "이번 주 유료 진입점을 보여줄 실명 고객 행동 증거는 무엇인가요?"
+                        : "문서 기준을 넘기려면 지금 확보한 hard evidence는 무엇인가요?",
+                    helperText: "지금 답할 수 있는 가장 구체적인 보완 방향 하나를 선택하세요.",
+                    options: [
+                        StructuredPromptOption(
+                            label: "실명 고객 3명에게 결제 요청 발송 완료",
+                            description: "실명 후보 3명에게 가격/계약 조건을 포함한 결제 요청을 보냈고 캡처와 보낸 시각으로 확인할 수 있습니다.",
+                            preview: nil,
+                            nextIntent: "actual_payment_or_contract",
+                            risk: nil,
+                            evidenceTarget: "결제 요청 캡처와 보낸 시각",
+                            mapsTo: "GOAL.activation_action",
+                            failureMode: "오늘 3명에게 가격/계약 조건이 담긴 결제 요청을 못 보내면 이번 cycle은 실패입니다."
+                        ),
+                        StructuredPromptOption(
+                            label: "열린 약속부터 추적",
+                            description: "실명 후보, 날짜, 완료 조건이 있는 약속을 다음 Office Hours 근거로 삼습니다.",
+                            preview: nil,
+                            nextIntent: "track_open_commitment"
+                        ),
+                        StructuredPromptOption(
+                            label: "증거 없음으로 보류",
+                            description: "아직 정식 문서로 저장하지 않고, 먼저 실제 고객 행동 증거를 모읍니다.",
+                            preview: nil,
+                            nextIntent: "defer_until_hard_evidence"
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: false,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: nil,
+                    textMode: .short
+                )
+            ],
+            generation: StructuredPromptGeneration(
+                mode: "office_hours",
+                docType: "day1_doc_handoff_judge",
+                signalId: "day1_doc_handoff_judge_blocked",
+                signalLabel: "문서 리뷰 보완",
+                dimensionStepIndex: attempt,
+                dimensionTotal: 6
+            )
+        )
+    }
+
+    private func installUITestingDay1HandoffJudgeBlock(attempt: Int) {
+        day1DocHandoffPendingDocType = nil
+        day1DocHandoffAwaitingFollowupPrompt = true
+        iddSetupStatus = "error"
+        day1DocHandoffError = "Office Hours 문서 judge가 \(attempt == 1 ? "5" : "6")/10으로 문서 리뷰를 보류했습니다. 기준은 8/10입니다."
+        refreshPresentationState()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.installUITestingDay1HandoffJudgePrompt(attempt: attempt)
+        }
+    }
+
+    private func installUITestingDay1HandoffJudgePrompt(attempt: Int) {
+        let sessionID = "ui-test-day1-handoff-review-session"
+        let now = Date()
+        let prompt = Self.makeUITestingDay1HandoffJudgePrompt(
+            sessionID: sessionID,
+            requestId: "ui-test-day1-handoff-judge-request-\(attempt)",
+            createdAt: now,
+            attempt: attempt
+        )
+        let runtime = ChatSessionRuntime(
+            codexThreadId: nil,
+            codexThreadMeta: nil,
+            codexWarm: nil,
+            startupTiming: nil,
+            iddDocumentType: nil,
+            iddMode: nil,
+            officeHours: OfficeHoursRuntime(
+                active: true,
+                source: "ui_testing_day1_doc_review",
+                startedAt: ISO8601DateFormatter().string(from: now),
+                context: "UI test Day 1 document review",
+                day: 1
+            )
+        )
+        if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+            sessions[index].title = "Day 1 문서 리뷰"
+            sessions[index].status = .awaitingInput
+            sessions[index].pendingUserInput = prompt
+            sessions[index].runtime = runtime
+            sessions[index].error = nil
+            sessions[index].updatedAt = now
+        } else {
+            upsert(ChatSession(
+                id: sessionID,
+                title: "Day 1 문서 리뷰",
+                provider: selectedProvider,
+                model: preferredModel(for: selectedProvider),
+                status: .awaitingInput,
+                createdAt: now,
+                updatedAt: now,
+                error: nil,
+                messages: [],
+                pendingUserInput: prompt,
+                runtime: runtime
+            ))
+        }
+        day1DocHandoffAwaitingFollowupPrompt = false
+        day1DocHandoffPendingDocType = nil
+        refreshPresentationState()
     }
 
     private func installUITestingDay1BulkDocPreviews() {
@@ -9550,6 +10048,7 @@ final class AgenticViewModel: ObservableObject {
         iddSetupComplete = true
         iddSetupStatus = "approved"
         iddCurrentDocType = nil
+        day1DocHandoffAwaitingFollowupPrompt = false
         day1DocHandoffPendingDocType = nil
         day1DocHandoffError = nil
         refreshPresentationState()
@@ -9636,6 +10135,7 @@ final class AgenticViewModel: ObservableObject {
         iddSetupStatus = "interviewing"
         iddCurrentDocType = docType
         day1DocHandoffPendingDocType = docType
+        day1DocHandoffAwaitingFollowupPrompt = false
         day1DocHandoffError = nil
         refreshPresentationState()
         return true
@@ -9696,9 +10196,52 @@ final class AgenticViewModel: ObservableObject {
         submittedStructuredPromptBySession.removeValue(forKey: sessionId)
         structuredPromptDraftBySession.removeValue(forKey: sessionId)
         day1DocHandoffPendingDocType = nil
+        day1DocHandoffAwaitingFollowupPrompt = false
         day1DocHandoffError = nil
         iddCurrentDocType = order.drop(while: { $0 != docType }).dropFirst().first
         refreshPresentationState()
+        return true
+    }
+
+    private func completeUITestingDay1HandoffJudgeSubmissionIfNeeded(
+        sessionId: String,
+        requestId: String,
+        responses: [StructuredPromptSubmission],
+        promptBeforeLocalSubmission: StructuredPromptRequest?
+    ) -> Bool {
+        let arguments = CommandLine.arguments
+        guard arguments.contains("--ui-testing-seed-day1-handoff-judge-block"),
+              let sessionIndex = sessions.firstIndex(where: { $0.id == sessionId }),
+              let prompt = promptBeforeLocalSubmission ?? sessions[sessionIndex].pendingUserInput,
+              prompt.requestId == requestId,
+              prompt.generation?.mode == "office_hours",
+              prompt.generation?.docType == "day1_doc_handoff_judge" else {
+            return false
+        }
+
+        let selectedOptions = responses.flatMap(\.selectedOptions)
+        let hasHardEvidence = selectedOptions.contains("실명 고객 3명에게 결제 요청 발송 완료")
+        let currentAttempt = prompt.generation?.dimensionStepIndex ?? 1
+
+        sessions[sessionIndex].pendingUserInput = nil
+        sessions[sessionIndex].status = .running
+        sessions[sessionIndex].error = nil
+        sessions[sessionIndex].updatedAt = .now
+        submittedStructuredPromptBySession.removeValue(forKey: sessionId)
+        structuredPromptDraftBySession.removeValue(forKey: sessionId)
+        day1DocHandoffPendingDocType = "all"
+        day1DocHandoffAwaitingFollowupPrompt = false
+        day1DocHandoffError = nil
+        refreshPresentationState()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+            guard let self else { return }
+            if hasHardEvidence {
+                self.installUITestingDay1BulkDocPreviews()
+            } else {
+                self.installUITestingDay1HandoffJudgeBlock(attempt: currentAttempt + 1)
+            }
+        }
         return true
     }
 
@@ -10170,6 +10713,19 @@ final class AgenticViewModel: ObservableObject {
         flushPendingProjectContextRefreshIfNeeded()
     }
 
+    func setDay1DocHandoffPendingDocTypeForTesting(_ docType: String?) {
+        day1DocHandoffPendingDocType = docType
+        day1DocHandoffAwaitingFollowupPrompt = false
+        day1DocHandoffError = nil
+    }
+
+    func setDay1DocHandoffAwaitingFollowupPromptForTesting(_ isAwaiting: Bool) {
+        day1DocHandoffAwaitingFollowupPrompt = isAwaiting
+        if isAwaiting {
+            day1DocHandoffPendingDocType = nil
+        }
+    }
+
     func applySessionUpdatedForTesting(_ session: ChatSession) {
         upsert(session)
     }
@@ -10275,6 +10831,7 @@ final class AgenticViewModel: ObservableObject {
         requestId: String,
         stage: String,
         progressText: String,
+        docType: String? = nil,
         elapsedMs: Int? = nil
     ) {
         let event = SidecarEvent(
@@ -10310,7 +10867,7 @@ final class AgenticViewModel: ObservableObject {
             sheet: nil,
             onboardingHypothesis: nil,
             error: nil,
-            docType: nil,
+            docType: docType,
             docPath: nil,
             progressText: progressText,
             notionConnected: nil,
@@ -10336,6 +10893,7 @@ final class AgenticViewModel: ObservableObject {
             weeklyRitualPrompt: nil,
             requestEmit: nil
         )
+        reconcileDay1DocHandoffProgress(from: event)
         updateStructuredPromptSubmissionProgress(from: event)
     }
 
@@ -10368,6 +10926,7 @@ final class AgenticViewModel: ObservableObject {
 
     private func upsert(_ session: ChatSession) {
         let session = sessionByApplyingCurriculumQuestionReframeGuards(to: sanitizedSessionSnapshot(session))
+        reconcileDay1DocHandoffPromptState(with: session)
         reconcileStructuredPromptSubmissionState(with: session)
         reconcileStructuredPromptDraftState(with: session)
         reconcileOfficeHoursLiveStatus(with: session)
@@ -10379,6 +10938,13 @@ final class AgenticViewModel: ObservableObject {
         sessions.sort(by: { $0.updatedAt > $1.updatedAt })
         if selectedSessionID == nil {
             selectedSessionID = session.id
+        }
+    }
+
+    private func reconcileDay1DocHandoffPromptState(with session: ChatSession) {
+        if isDay1DocHandoffJudgePrompt(session.pendingUserInput) {
+            day1DocHandoffPendingDocType = nil
+            day1DocHandoffAwaitingFollowupPrompt = false
         }
     }
 
@@ -12029,7 +12595,7 @@ struct FoundationProgressStore {
             .appendingPathComponent("Library/Application Support/agentic30", isDirectory: true)
     }
 
-    static func stableWorkspaceID(_ workspaceRoot: String) -> String {
+    nonisolated static func stableWorkspaceID(_ workspaceRoot: String) -> String {
         let normalized = URL(fileURLWithPath: workspaceRoot, isDirectory: true).standardizedFileURL.path
         var hash: UInt64 = 14_695_981_039_346_656_037
         for byte in normalized.utf8 {
@@ -12219,6 +12785,7 @@ private extension AgenticViewModel {
         startupSessionAppearElapsedMs = nil
         reviewDayDashboardViewModel = nil
         newsMarketRadar = .empty
+        newsMarketRadarPreparingForDisplay = false
         githubCliAuthStatus = .unknown
         foundationStartedAt = nil
         foundationProgressState = FoundationProgressSnapshot(workspaceRoot: WorkspaceSettings.resolvedURL().path)
@@ -12689,6 +13256,7 @@ struct SidecarEvent: Decodable {
     let morningBriefingStatus: MorningBriefingStatus?
     let morningBriefingProgress: MorningBriefingProgress?
     let integrationStatus: IntegrationStatusSnapshot?
+    let exaMcpConnect: ExaMcpConnectResult?
     let mcpOauthConnect: McpOauthConnectResult?
     // office_hours_commitment_candidates: context-aware commitment-close proposals
     // generated from this interview's own answers. Proposals only — the stored
@@ -12805,6 +13373,7 @@ struct SidecarEvent: Decodable {
         morningBriefingStatus: MorningBriefingStatus? = nil,
         morningBriefingProgress: MorningBriefingProgress? = nil,
         integrationStatus: IntegrationStatusSnapshot? = nil,
+        exaMcpConnect: ExaMcpConnectResult? = nil,
         mcpOauthConnect: McpOauthConnectResult? = nil,
         commitmentCandidates: [String]? = nil
     ) {
@@ -12917,6 +13486,7 @@ struct SidecarEvent: Decodable {
         self.morningBriefingStatus = morningBriefingStatus
         self.morningBriefingProgress = morningBriefingProgress
         self.integrationStatus = integrationStatus
+        self.exaMcpConnect = exaMcpConnect
         self.mcpOauthConnect = mcpOauthConnect
         self.commitmentCandidates = commitmentCandidates
     }
@@ -13323,6 +13893,7 @@ extension SidecarEvent {
         case morningBriefingProgress
         case candidates
         case integrationStatus
+        case exaMcpConnect
         case mcpOauthConnect
     }
 
@@ -13452,6 +14023,7 @@ extension SidecarEvent {
         morningBriefingProgress = Self.decodeIfPresent(MorningBriefingProgress.self, from: container, forKey: .morningBriefingProgress)
         commitmentCandidates = Self.decodeIfPresent([String].self, from: container, forKey: .candidates)
         integrationStatus = Self.decodeIfPresent(IntegrationStatusSnapshot.self, from: container, forKey: .integrationStatus)
+        exaMcpConnect = Self.decodeIfPresent(ExaMcpConnectResult.self, from: container, forKey: .exaMcpConnect)
         mcpOauthConnect = Self.decodeIfPresent(McpOauthConnectResult.self, from: container, forKey: .mcpOauthConnect)
     }
 

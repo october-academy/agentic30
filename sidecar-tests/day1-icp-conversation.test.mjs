@@ -964,6 +964,177 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
   assert.equal(stderr.trim(), "");
 });
 
+test("Day 1 bulk document handoff without session creates structured review and loops until hard evidence passes", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-blocked-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-blocked-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
+      AGENTIC30_TEST_STUB_PROVIDER: "1",
+      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
+
+    const writeCommandEventStart = events.length;
+    ws.send(JSON.stringify({
+      type: "day1_doc_handoff_write_all",
+      provider: "codex",
+      day1Handoff: {
+        northStarGoal: "첫 고객 반응 검증",
+        weeklyProof: "이번 주 3명 인터뷰 완료",
+        targetUser: "macOS에서 AI 코딩 도구를 쓰는 전업 1인 개발자",
+        problem: "무엇을 팔아야 할지 모른다",
+        currentAlternative: "노션과 스프레드시트로 인터뷰 메모를 복사함",
+        entryPoint: "첫 인터뷰 카드",
+        nextAction: "이번 주 3명 인터뷰 완료",
+        nonGoals: ["넓은 고객 후보", "자동화 확장"],
+        qualityScore: "5.0/10",
+        markdown: "# 핵심 가설",
+      },
+    }));
+
+    const reviewSessionCreated = await waitForEvent(events, (event) =>
+      event.type === "session_created"
+      && event.session?.title === "Day 1 문서 리뷰"
+    );
+    const blocked = await waitForEvent(events, (event) =>
+      event.type === "session_updated"
+      && event.session?.pendingUserInput?.generation?.docType === "day1_doc_handoff_judge"
+    );
+    const blockedSetupState = await waitForEvent(events, (event) =>
+      event.type === "idd_setup_state"
+      && String(event.iddSetupError?.message || "").includes("문서 리뷰를 보류")
+    );
+    const blockedIndex = events.findIndex((event, index) =>
+      index >= writeCommandEventStart && event === blocked
+    );
+    const blockedSetupIndex = events.findIndex((event, index) =>
+      index >= writeCommandEventStart && event === blockedSetupState
+    );
+    assert.equal(blocked.session.id, reviewSessionCreated.session.id);
+    assert.ok(blockedIndex >= 0, "expected blocked session snapshot after write command");
+    assert.ok(blockedSetupIndex >= 0, "expected blocked setup state after write command");
+    assert.ok(
+      blockedIndex < blockedSetupIndex,
+      "blocked session snapshot with structured prompt must precede amber setup error",
+    );
+    const pending = blocked.session.pendingUserInput;
+
+    assert.equal(blocked.session.status, "awaiting_input");
+    assert.equal(pending.title, "Office Hours 문서 리뷰 보완");
+    assert.equal(pending.intro?.title, "문서 리뷰 보류");
+    assert.equal(pending.generation?.mode, "office_hours");
+    assert.equal(pending.generation?.signalLabel, "문서 리뷰 보완");
+    assert.equal(pending.toolName, "agentic30_request_user_input");
+    assert.equal(pending.questions?.[0]?.allowFreeText, false);
+    assert.equal(pending.questions?.[0]?.requiresFreeText, false);
+    assert.ok((pending.questions?.[0]?.options || []).length >= 3);
+    assert.ok(pending.questions[0].options.some((option) => option.nextIntent === "actual_payment_or_contract"));
+    assert.equal(Object.hasOwn(pending.questions[0], "freeTextPlaceholder"), false);
+    assert.equal(
+      blocked.session.messages.some((message) =>
+        String(message.content || "").includes("GOAL/ICP/VALUES/SPEC 저장을 보류했습니다.")
+      ),
+      false,
+    );
+    assert.equal(
+      blocked.session.messages.some((message) =>
+        String(message.content || "").includes("문서 리뷰를 보류했습니다.")
+      ),
+      false,
+    );
+
+    const weakOption = pending.questions[0].options.find((option) => option.nextIntent === "defer_until_hard_evidence");
+    assert.ok(weakOption, "expected weak defer option");
+    ws.send(JSON.stringify({
+      type: "submit_user_input",
+      sessionId: blocked.session.id,
+      requestId: pending.requestId,
+      responses: [{
+        question: pending.questions[0].question,
+        selectedOptions: [weakOption.label],
+        freeText: "",
+      }],
+    }));
+    await waitForEvent(events, (event) =>
+      event.type === "idd_setup_progress"
+      && event.sessionId === blocked.session.id
+      && event.requestId === pending.requestId
+      && event.stage === "review_retry"
+    );
+    const secondBlocked = await waitForEvent(events, (event) =>
+      event.type === "session_updated"
+      && event.session?.id === blocked.session.id
+      && event.session?.pendingUserInput?.generation?.docType === "day1_doc_handoff_judge"
+      && event.session.pendingUserInput.requestId !== pending.requestId
+    );
+    const secondPending = secondBlocked.session.pendingUserInput;
+    assert.equal(secondBlocked.session.status, "awaiting_input");
+    assert.equal(secondPending.questions?.[0]?.allowFreeText, false);
+    assert.notEqual(secondPending.requestId, pending.requestId);
+    assert.equal(
+      secondBlocked.session.messages.some((message) =>
+        String(message.content || "").includes(weakOption.label)
+      ),
+      false,
+    );
+    await assert.rejects(
+      fs.stat(path.join(root, ".agentic30", "docs", "GOAL.md")),
+      { code: "ENOENT" },
+    );
+
+    const hardOption = secondPending.questions[0].options.find((option) => option.nextIntent === "actual_payment_or_contract");
+    assert.ok(hardOption, "expected hard evidence option");
+    ws.send(JSON.stringify({
+      type: "submit_user_input",
+      sessionId: blocked.session.id,
+      requestId: secondPending.requestId,
+      responses: [{
+        question: secondPending.questions[0].question,
+        selectedOptions: [hardOption.label],
+        freeText: "",
+      }],
+    }));
+    const completed = await waitForEvent(events, (event) =>
+      event.type === "idd_setup_state"
+      && event.iddSetupComplete === true
+      && event.iddDocPreviews?.every((preview) => /^(written|approved)/.test(preview.status))
+    );
+    assert.equal(completed.iddDocPreviews.length, 4);
+    for (const rel of [".agentic30/docs/GOAL.md", ".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/SPEC.md"]) {
+      const content = await fs.readFile(path.join(root, rel), "utf8");
+      assert.match(content, /agentic30:day1-handoff:start/);
+    }
+
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
 test("IDD follow-up uses sidecar agent synthesis instead of host template when available", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-followup-synth-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-followup-synth-app-"));

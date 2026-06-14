@@ -815,6 +815,7 @@ nonisolated struct IntegrationStatusSnapshot: Codable, Hashable {
     var posthog: IntegrationProbeStatus?
     var cloudflare: IntegrationProbeStatus?
     var vercel: IntegrationProbeStatus?
+    var exa: IntegrationProbeStatus?
     var checkedAt: String?
 }
 
@@ -826,6 +827,35 @@ nonisolated struct IntegrationProbeStatus: Codable, Hashable {
     var isMissing: Bool { state == "missing" }
     /// MCP auth is delegated to the provider's native OAuth (no stored key).
     var isOauthDelegated: Bool { state == "oauth" }
+}
+
+nonisolated struct ExaMcpRouteSummary: Codable, Hashable {
+    var provider: String?
+    var source: String?
+    var label: String?
+    var serverName: String?
+    var configPath: String?
+    var transport: String?
+    var urlHost: String?
+    var command: String?
+    var hasHeaders: Bool?
+    var hasEnv: Bool?
+}
+
+nonisolated struct ExaMcpConnectResult: Codable, Hashable {
+    var provider: String?
+    var state: String?
+    var detail: String?
+    var changed: Bool?
+    var configPath: String?
+    var backupPath: String?
+    var route: ExaMcpRouteSummary?
+    var validationTool: String?
+    var checkedAt: String?
+
+    var isReady: Bool { state == "ready" }
+    var isFailed: Bool { state == "failed" }
+    var isMissing: Bool { state == "missing" }
 }
 
 /// Result/progress of the Settings > 연동 "MCP 연결" prewarm: the sidecar runs a
@@ -2954,6 +2984,118 @@ struct NewsMarketRadarSourceRef: Codable, Hashable, Identifiable {
 
     var stableID: String {
         url ?? path ?? id ?? title
+    }
+}
+
+nonisolated struct NewsMarketRadarUserState: Codable, Hashable {
+    static let defaultStreamID = "all"
+    static let defaultValueFilter = "all"
+
+    var selectedStreamID: String
+    var selectedValueFilter: String
+    var readCardIDs: Set<String>
+    var savedCardIDs: Set<String>
+
+    init(
+        selectedStreamID: String = Self.defaultStreamID,
+        selectedValueFilter: String = Self.defaultValueFilter,
+        readCardIDs: Set<String> = [],
+        savedCardIDs: Set<String> = []
+    ) {
+        self.selectedStreamID = selectedStreamID
+        self.selectedValueFilter = selectedValueFilter
+        self.readCardIDs = readCardIDs
+        self.savedCardIDs = savedCardIDs
+    }
+
+    func isRead(cardID: String) -> Bool {
+        readCardIDs.contains(cardID)
+    }
+
+    func isSaved(cardID: String) -> Bool {
+        savedCardIDs.contains(cardID)
+    }
+
+    mutating func markRead(cardID: String) {
+        readCardIDs.insert(cardID)
+    }
+
+    mutating func markUnread(cardID: String) {
+        readCardIDs.remove(cardID)
+    }
+
+    mutating func toggleSaved(cardID: String) {
+        if savedCardIDs.contains(cardID) {
+            savedCardIDs.remove(cardID)
+        } else {
+            savedCardIDs.insert(cardID)
+        }
+    }
+
+    func unreadCount(in snapshot: NewsMarketRadarSnapshot) -> Int {
+        snapshot.cardIDs.subtracting(readCardIDs).count
+    }
+
+    func savedCount(in snapshot: NewsMarketRadarSnapshot) -> Int {
+        snapshot.cardIDs.intersection(savedCardIDs).count
+    }
+}
+
+nonisolated struct NewsMarketRadarUserStateStore {
+    private static let keyPrefix = "agentic30.newsMarketRadar.userState.v1"
+
+    let workspaceRoot: String
+    let defaults: UserDefaults
+
+    init(
+        workspaceRoot: String,
+        defaults: UserDefaults = .standard
+    ) {
+        self.workspaceRoot = workspaceRoot
+        self.defaults = defaults
+    }
+
+    var defaultsKey: String {
+        "\(Self.keyPrefix).\(FoundationProgressStore.stableWorkspaceID(workspaceRoot))"
+    }
+
+    func load() -> NewsMarketRadarUserState {
+        guard let data = defaults.data(forKey: defaultsKey),
+              let state = try? JSONDecoder().decode(NewsMarketRadarUserState.self, from: data)
+        else {
+            return NewsMarketRadarUserState()
+        }
+        return state.normalized()
+    }
+
+    func save(_ state: NewsMarketRadarUserState) {
+        guard let data = try? JSONEncoder().encode(state.normalized()) else { return }
+        defaults.set(data, forKey: defaultsKey)
+    }
+
+    func clear() {
+        defaults.removeObject(forKey: defaultsKey)
+    }
+}
+
+extension NewsMarketRadarSnapshot {
+    nonisolated var cardIDs: Set<String> {
+        Set(lanes.flatMap { lane in lane.cards.map(\.id) })
+    }
+}
+
+private extension NewsMarketRadarUserState {
+    nonisolated func normalized() -> NewsMarketRadarUserState {
+        NewsMarketRadarUserState(
+            selectedStreamID: selectedStreamID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? Self.defaultStreamID
+                : selectedStreamID,
+            selectedValueFilter: selectedValueFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? Self.defaultValueFilter
+                : selectedValueFilter,
+            readCardIDs: Set(readCardIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }),
+            savedCardIDs: Set(savedCardIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        )
     }
 }
 

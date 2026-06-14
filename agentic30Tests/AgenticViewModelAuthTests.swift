@@ -73,9 +73,12 @@ private final class FakeSidecarTransport: SidecarTransport {
 
     @MainActor
     func emit(_ json: String) throws {
+        onEvent?(try decodeEvent(json))
+    }
+
+    func decodeEvent(_ json: String) throws -> SidecarEvent {
         let data = try #require(json.data(using: .utf8))
-        let event = try Self.decoder.decode(SidecarEvent.self, from: data)
-        onEvent?(event)
+        return try Self.decoder.decode(SidecarEvent.self, from: data)
     }
 }
 
@@ -1154,6 +1157,76 @@ final class AgenticViewModelAuthTests {
         #expect(payload["preferredProvider"] as? String == "codex")
         #expect(viewModel.mcpOauthProgress["vercel"] == "중지 중…")
         #expect(viewModel.mcpOauthConnecting.contains("vercel"))
+    }
+
+    @Test @MainActor func exaMcpConnectPersistsApiKeyOnlyAfterReadyResult() throws {
+        KeychainHelper.deleteSettings()
+        defer { KeychainHelper.deleteSettings() }
+
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.selectedProvider = .cursor
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+
+        viewModel.connectExaMcp(apiKey: " exa_secret ")
+
+        let firstPayload = try #require(sidecar.sentPayloads.last)
+        #expect(firstPayload["type"] as? String == "exa_mcp_connect_validate")
+        #expect(firstPayload["apiKey"] as? String == "exa_secret")
+        #expect(firstPayload["preferredProvider"] as? String == "cursor")
+        #expect(viewModel.exaMcpConnecting == true)
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "exa_mcp_connect_result",
+              "exaMcpConnect": {
+                "provider": "cursor",
+                "state": "failed",
+                "detail": "Exa MCP validation failed: unauthorized",
+                "changed": false,
+                "validationTool": "web_search_exa",
+                "checkedAt": "2026-06-14T00:00:00.000Z"
+              }
+            }
+            """
+        ))
+
+        #expect(viewModel.exaMcpConnecting == false)
+        #expect(viewModel.exaMcpConnectResult?.isFailed == true)
+        #expect(KeychainHelper.loadSettings().exaApiKey.isEmpty)
+
+        sidecar.resetSentPayloads()
+        viewModel.connectExaMcp(apiKey: "exa_secret")
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "exa_mcp_connect_result",
+              "exaMcpConnect": {
+                "provider": "cursor",
+                "state": "ready",
+                "detail": "Cursor Exa MCP config saved.",
+                "changed": true,
+                "configPath": "/Users/test/.cursor/mcp.json",
+                "validationTool": "web_search_exa",
+                "checkedAt": "2026-06-14T00:01:00.000Z"
+              },
+              "integrationStatus": {
+                "exa": { "state": "ready", "detail": "Exa MCP route configured" },
+                "checkedAt": "2026-06-14T00:01:00.000Z"
+              }
+            }
+            """
+        ))
+
+        #expect(viewModel.exaMcpConnecting == false)
+        #expect(viewModel.exaMcpConnectResult?.isReady == true)
+        #expect(KeychainHelper.loadSettings().exaApiKey == "exa_secret")
+        let syncPayload = try #require(sidecar.sentPayloads.last)
+        #expect(syncPayload["type"] as? String == "provider_settings_update")
+        let integrations = try #require(syncPayload["integrations"] as? [String: Any])
+        let exa = try #require(integrations["exa"] as? [String: Any])
+        #expect(exa["apiKey"] as? String == "exa_secret")
     }
 
     @Test @MainActor func selectingWorkspaceAfterIntakeOnlyCompletionEnablesSidecarStart() throws {

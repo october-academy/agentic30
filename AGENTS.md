@@ -85,3 +85,8 @@ AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full
 - Public-safety and secret scans are part of the normal contribution surface: `npm run check:public-safety`, optional `npm run scan:secrets:gh`.
 
 <!-- MANUAL: Custom project notes can be added below -->
+
+## USER CONTEXT
+- User-designated competitors to remember for future strategy/product/market work:
+  - https://indiefounders.net/
+  - https://www.threads.com/@classbinu
