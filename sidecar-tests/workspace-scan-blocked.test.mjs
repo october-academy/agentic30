@@ -195,6 +195,19 @@ test("scan with no available provider broadcasts blocked and never passes on loc
       blocked.providerReadiness.find((item) => item.provider === "cursor").authAction,
       "cursor_api_key",
     );
+    const failed = await waitForEvent(ws.events, (event) =>
+      event.type === "request_emit"
+        && event.event === "workspace_setup_failed"
+        && event.properties?.workspace_basename === path.basename(harness.workspacePath),
+    );
+    assert.equal(failed.properties.error_name, "workspace_scan_blocked");
+    assert.equal(failed.properties.scan_block_reason, "unavailable");
+    assert.equal(failed.properties.provider, "codex");
+    assert.equal(failed.properties.failed_provider, "codex");
+    assert.equal(failed.properties.next_provider, "none");
+    assert.equal(failed.properties.available_provider_count, 0);
+    assert.equal(failed.properties.error_kind, "provider_auth_required");
+    assert.equal(failed.properties.model, blocked.model);
 
     // Fail closed: no successful workspace_scan_result may follow the block.
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -317,6 +330,19 @@ test("scan blocked on selected claude usage limit recommends the next scan-ready
     const cursorReadiness = blocked.providerReadiness.find((item) => item.provider === "cursor");
     assert.equal(cursorReadiness.scanSupported, false);
     assert.equal(cursorReadiness.scanReady, false);
+    const failed = await waitForEvent(ws.events, (event) =>
+      event.type === "request_emit"
+        && event.event === "workspace_setup_failed"
+        && event.properties?.workspace_basename === path.basename(harness.workspacePath),
+    );
+    assert.equal(failed.properties.error_name, "workspace_scan_blocked");
+    assert.equal(failed.properties.scan_block_reason, "usage_limit");
+    assert.equal(failed.properties.provider, "claude");
+    assert.equal(failed.properties.failed_provider, "claude");
+    assert.equal(failed.properties.next_provider, "gemini");
+    assert.equal(failed.properties.available_provider_count, 1);
+    assert.equal(failed.properties.error_kind, "provider_usage_limit");
+    assert.equal(failed.properties.model, "claude-sonnet-4-6");
 
     await new Promise((resolve) => setTimeout(resolve, 500));
     const passed = ws.events.some((event) =>

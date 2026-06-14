@@ -11857,6 +11857,20 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     Object.assign(new Error(`workspace scan blocked: ${provider} ${reason}`), {
       code: "workspace_scan_blocked",
     }),
+    {
+      scan_block_reason: reason,
+      selected_provider: provider,
+      failed_provider: provider,
+      provider,
+      model,
+      next_provider: nextProvider || "none",
+      available_provider_count: availableProviders.length,
+      error_kind: reason === "usage_limit"
+        ? PROVIDER_USAGE_LIMIT_ERROR_KIND
+        : reason === "unavailable"
+          ? PROVIDER_AUTH_REQUIRED_ERROR_KIND
+          : "workspace_scan_error",
+    },
   );
   const providerLabel = workspaceScanProviderLabel(provider, model);
   broadcastWorkspaceScanProgress(
@@ -14860,7 +14874,7 @@ function markWorkspaceSetupScanSucceeded(root, properties = {}) {
   maybeEmitWorkspaceSetupCompleted(properties);
 }
 
-function markWorkspaceSetupFailed(root, error) {
+function markWorkspaceSetupFailed(root, error, properties = {}) {
   const resolvedRoot = path.resolve(String(root || workspaceRoot));
   if (state.workspaceSetupTelemetry.root !== resolvedRoot) {
     resetWorkspaceSetupTelemetry(resolvedRoot);
@@ -14870,6 +14884,7 @@ function markWorkspaceSetupFailed(root, error) {
   state.workspaceSetupTelemetry.failed = true;
   requestHostTelemetry("workspace_setup_failed", {
     ...workspaceSetupBaseProperties(resolvedRoot),
+    ...properties,
     error_name: error?.code || error?.name || "Error",
   });
 }
