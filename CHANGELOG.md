@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-06-14
+
+### 추가
+- **Office Hours 증거 마감 정책**: Day를 advice·계획·자기보고가 아니라 하드 고객 증거, posted URL, blocked, carry 중 하나로만 닫도록 day-close 정책 게이트를 추가했습니다. mandatory BIP는 target behavior로 표시하고, BIP Research Radar 후보는 ready 캐시가 있을 때만 사용합니다.
+- **Morning Briefing 증거 퍼널·스파크라인**: 방문→설치→워크스페이스→검증 행동 evidence funnel, 고객 증거 verdict, 카드별 추세 스파크라인을 추가했습니다.
+
+### 변경
+- **Office Hours specialist 재정의**: Garry Tan식 강제질문에서 "증거 마감 운영자"로 재구성해 오늘의 가장 좁은 외부 검증 행동과 Day close 조건(고객 증거/posted URL/blocked/carry)으로 좁힙니다.
+- **PostHog 내부 트래픽 필터**: october-academy.com 계정을 내부 테스터로 태깅하고, daily office-hours digest의 product-signal 필터가 내부 트래픽을 제외하도록 강화했습니다.
+- **크래시 심볼리케이션**: 릴리즈 빌드가 dSYM을 PostHog에 업로드하도록 했습니다(opt-in).
+
+### 수정
+- **Provider 중단 처리**: provider abort를 로컬 stop_session 취소와 구분되는 복구 가능한 provider_aborted 엔벨로프로 전달합니다.
+
 ## [1.0.22] - 2026-06-13
 
 ### 수정
