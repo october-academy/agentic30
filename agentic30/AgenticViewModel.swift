@@ -6478,7 +6478,7 @@ final class AgenticViewModel: ObservableObject {
             includeReport: false
         )
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 700_000_000)
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
             self.strategyReport = self.makeUITestingStrategyReportSnapshot(
                 status: StrategyReportStatus(
                     state: "ready",
