@@ -556,6 +556,8 @@ nonisolated struct OfficeHoursSourceStatus: Codable, Hashable, Identifiable {
     var id: String
     var label: String
     var state: String
+    var connectionState: String?
+    var collectionState: String?
     var available: Bool?
     var selected: Bool?
     var required: Bool?
@@ -2856,6 +2858,179 @@ struct ReviewDayDashboardMetric: Codable, Hashable, Identifiable {
 
     var id: String {
         [label, value, trend, intent, status].joined(separator: "|")
+    }
+}
+
+struct StrategyReportSnapshot: Codable, Hashable {
+    let schemaVersion: Int
+    let promptProfile: String?
+    let contentLocale: String?
+    let generatedAt: Date?
+    let nextRefreshAfter: Date?
+    let contextFingerprint: String?
+    let status: StrategyReportStatus
+    let workspaceEvidenceRefs: [StrategyReportSourceRef]?
+    let report: StrategyReportContent?
+
+    static let empty = StrategyReportSnapshot(
+        schemaVersion: 1,
+        promptProfile: nil,
+        contentLocale: "ko-KR",
+        generatedAt: nil,
+        nextRefreshAfter: nil,
+        contextFingerprint: nil,
+        status: StrategyReportStatus(
+            state: "idle",
+            lastSuccessAt: nil,
+            stale: false,
+            error: nil,
+            reason: nil,
+            researchSource: nil,
+            stage: nil,
+            progressText: nil,
+            elapsedMs: nil,
+            stepIndex: nil,
+            stepCount: nil,
+            partialFailures: nil,
+            startedAt: nil,
+            completedAt: nil,
+            durationMs: nil
+        ),
+        workspaceEvidenceRefs: [],
+        report: nil
+    )
+
+    var hasReport: Bool {
+        report != nil
+    }
+
+    var statusLabel: String {
+        switch status.state {
+        case "refreshing": return "리서치 중"
+        case "ready": return status.stale == true ? "캐시됨" : "생성됨"
+        case "failed": return "오류"
+        case "stale": return "오래됨"
+        default: return "대기"
+        }
+    }
+}
+
+struct StrategyReportStatus: Codable, Hashable {
+    let state: String
+    let lastSuccessAt: Date?
+    let stale: Bool?
+    let error: String?
+    let reason: String?
+    let researchSource: String?
+    let stage: String?
+    let progressText: String?
+    let elapsedMs: Int?
+    let stepIndex: Int?
+    let stepCount: Int?
+    let partialFailures: [StrategyReportPartialFailure]?
+    let startedAt: Date?
+    let completedAt: Date?
+    let durationMs: Int?
+}
+
+struct StrategyReportPartialFailure: Codable, Hashable, Identifiable {
+    let laneId: String
+    let laneTitle: String
+    let error: String
+
+    var id: String {
+        laneId
+    }
+}
+
+struct StrategyReportContent: Codable, Hashable {
+    let commandLine: String
+    let diagnosisKicker: String
+    let diagnosisTitle: String
+    let diagnosisLead: String
+    let positioningStatement: String
+    let judgement: String
+    let generatedBadge: String?
+    let analysisBasisLabel: String?
+    let canvasMeta: String?
+    let matrixMeta: String?
+    let swotMeta: String?
+    let summaryTiles: [StrategyReportSummaryTile]
+    let criteriaRows: [StrategyReportCriterionRow]
+    let canvasBlocks: [StrategyReportCanvasBlock]
+    let businessCanvasTopRows: [[String]]?
+    let businessCanvasBottomRow: [String]?
+    let competitors: [StrategyReportCompetitor]
+    let swotGroups: [StrategyReportSWOTGroup]
+    let swotMatrixColumnCount: Int?
+    let swotMatrixRows: [[String]]?
+    let sourceRefs: [StrategyReportSourceRef]?
+    let searchableCopy: [String]?
+    let generatedAt: Date?
+}
+
+struct StrategyReportSummaryTile: Codable, Hashable, Identifiable {
+    let id: String
+    let label: String
+    let title: String
+    let detail: String
+}
+
+struct StrategyReportCriterionRow: Codable, Hashable, Identifiable {
+    let id: String
+    let label: String
+    let value: String
+}
+
+struct StrategyReportCanvasBlock: Codable, Hashable, Identifiable {
+    let id: String
+    let number: String
+    let eyebrow: String
+    let title: String
+    let bullets: [String]
+    let tone: String
+}
+
+struct StrategyReportCompetitor: Codable, Hashable, Identifiable {
+    let id: String
+    let title: String
+    let tag: String
+    let body: String
+    let gap: String
+    let x: Double
+    let y: Double
+    let adaptiveScore: Int
+    let evidenceScore: Int
+    let sourceLabel: String
+    let sourceURL: String
+    let sourceDisplay: String
+    let verifiedAt: String
+    let scoreRationale: String
+    let category: String
+    let isAgentic30: Bool
+    let labelPlacement: String
+}
+
+struct StrategyReportSWOTGroup: Codable, Hashable, Identifiable {
+    let id: String
+    let title: String
+    let tag: String
+    let tone: String
+    let bullets: [String]
+}
+
+struct StrategyReportSourceRef: Codable, Hashable, Identifiable {
+    let id: String?
+    let sourceType: String
+    let title: String
+    let url: String?
+    let domain: String?
+    let path: String?
+    let publishedAt: String?
+    let excerpt: String?
+
+    var stableID: String {
+        url ?? path ?? id ?? title
     }
 }
 

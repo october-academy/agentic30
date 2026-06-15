@@ -235,6 +235,7 @@ struct AgenticAppRoute: nonisolated Equatable {
             .history,
             .bipResearch,
             .newsMarketRadar,
+            .strategy,
             .bipMission,
         ].first { $0.rawValue.lowercased() == normalized }
     }

@@ -279,6 +279,7 @@ enum LongRunningCompletionNotificationKind: String, CaseIterable, Hashable, Send
     case workHistory
     case bipResearch
     case newsMarketRadar
+    case strategyReport
     case bipMission
 
     var route: LongRunningCompletionRoute {
@@ -295,6 +296,8 @@ enum LongRunningCompletionNotificationKind: String, CaseIterable, Hashable, Send
             return .bipResearch
         case .newsMarketRadar:
             return .newsMarketRadar
+        case .strategyReport:
+            return .strategy
         case .bipMission:
             return .bipMission
         }
@@ -314,6 +317,7 @@ enum LongRunningCompletionRoute: String, Hashable, Sendable {
     case history
     case bipResearch
     case newsMarketRadar
+    case strategy
     case bipMission
 }
 
@@ -434,6 +438,10 @@ struct LongRunningCompletionNotification: Hashable, Sendable {
             return "시장 신호 업데이트 완료"
         case (.newsMarketRadar, _):
             return "시장 신호 업데이트 확인 필요"
+        case (.strategyReport, .success):
+            return "전략 리포트 업데이트 완료"
+        case (.strategyReport, _):
+            return "전략 리포트 확인 필요"
         case (.bipMission, .success):
             return "오늘 미션 준비 완료"
         case (.bipMission, _):
@@ -476,6 +484,10 @@ struct LongRunningCompletionNotification: Hashable, Sendable {
             return "새 시장 신호 카드를 확인할 수 있어요."
         case (.newsMarketRadar, _):
             return "시장 신호 업데이트를 완료하지 못했어요."
+        case (.strategyReport, .success):
+            return "새 전략 리포트를 확인할 수 있어요."
+        case (.strategyReport, _):
+            return "전략 리포트 생성을 완료하지 못했어요."
         case (.bipMission, .success):
             return "근거 기반 실행 미션을 확인할 수 있어요."
         case (.bipMission, _):
@@ -565,6 +577,28 @@ struct ScanProviderLimitNotice: Equatable {
     let provider: AgentProvider
     /// "scan_agent" (workspace scan) or "day1_synthesis" (Day 1 question synthesis).
     let stage: String
+}
+
+struct Agentic30GitignoreState: Codable, Equatable, Hashable {
+    let status: String
+    let scanRoot: String?
+    let path: String?
+    let entry: String?
+    let error: String?
+
+    var needsConsent: Bool {
+        status == "needs-consent"
+    }
+
+    func withScanRoot(_ root: String?) -> Agentic30GitignoreState {
+        Agentic30GitignoreState(
+            status: status,
+            scanRoot: scanRoot ?? root,
+            path: path,
+            entry: entry,
+            error: error
+        )
+    }
 }
 
 struct WorkspaceScanProviderReadiness: Codable, Hashable, Identifiable {
@@ -2515,6 +2549,7 @@ final class AgenticViewModel: ObservableObject {
     /// "switch provider and re-scan" button. Cleared on the next scan start.
     @Published private(set) var scanProviderLimitNotice: ScanProviderLimitNotice?
     @Published private(set) var scanBlockedNotice: WorkspaceScanBlockedNotice?
+    @Published private(set) var pendingAgentic30GitignoreConsent: Agentic30GitignoreState?
     @Published private(set) var isCreatingDoc: String?
     @Published private(set) var docCreationLogs: [String] = []
     @Published var lastDocCreated: (type: String, path: String)?
@@ -2622,6 +2657,9 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var reviewDayDashboardViewModel: ReviewDayDashboardViewModel?
     @Published private(set) var newsMarketRadar: NewsMarketRadarSnapshot = .empty
     @Published private(set) var newsMarketRadarPreparingForDisplay = false
+    @Published private(set) var strategyReport: StrategyReportSnapshot = .empty
+    @Published private(set) var strategyReportPreparingForDisplay = false
+    @Published private(set) var strategyReportDynamicActivated = false
     @Published private(set) var bipResearch: BipResearchSnapshot = .empty
     @Published private(set) var workHistory: WorkHistorySnapshot = .empty
     @Published private(set) var githubCliAuthStatus: GitHubCLIAuthStatus = .unknown
@@ -2675,6 +2713,7 @@ final class AgenticViewModel: ObservableObject {
         let day1IcpPlan: Day1IcpPlan?
         let day1SituationSummary: Day1SituationSummary?
         let day1GoalSelection: Day1GoalSelection?
+        let agentic30Gitignore: Agentic30GitignoreState?
         let error: String?
 
         var foundArtifactPaths: [String] {
@@ -2706,6 +2745,7 @@ final class AgenticViewModel: ObservableObject {
                 day1IcpPlan: day1IcpPlan ?? self.day1IcpPlan,
                 day1SituationSummary: day1SituationSummary ?? self.day1SituationSummary,
                 day1GoalSelection: day1GoalSelection ?? self.day1GoalSelection,
+                agentic30Gitignore: agentic30Gitignore,
                 error: error
             )
         }
@@ -2725,6 +2765,7 @@ final class AgenticViewModel: ObservableObject {
                 day1IcpPlan: day1IcpPlan,
                 day1SituationSummary: day1SituationSummary,
                 day1GoalSelection: selection,
+                agentic30Gitignore: agentic30Gitignore,
                 error: error
             )
         }
@@ -2762,6 +2803,7 @@ final class AgenticViewModel: ObservableObject {
     private var lastBipResearchViewedAt: Date?
     #if DEBUG
     private var didEmitUITestingNewsMarketRadarEvents = false
+    private var didEmitUITestingStrategyReportEvents = false
     private var didEmitUITestingWorkHistoryEvents = false
     private var didEmitUITestingMorningBriefingEvents = false
     private var didEmitUITestingBipResearchEvents = false
@@ -3697,6 +3739,7 @@ final class AgenticViewModel: ObservableObject {
         PostHogTelemetry.capture("mac_view_model_stopped", authSession: macAuthSession)
         authSession?.cancel()
         authSession = nil
+        integrationStatusChecking = false
         finishMcpOauthInFlightAfterSidecarInterruption(markFailedResult: false)
         finishExaMcpConnectAfterSidecarInterruption()
         sidecar.stop()
@@ -3710,6 +3753,7 @@ final class AgenticViewModel: ObservableObject {
         connectionLabel = "실행 보조 앱 다시 연결 중..."
         lastError = nil
         isConnected = false
+        integrationStatusChecking = false
         isBipCoachRefreshing = false
         isBipCoachGenerating = false
         isBipCoachCompleting = false
@@ -4891,6 +4935,7 @@ final class AgenticViewModel: ObservableObject {
         scanResult = nil
         scanProviderLimitNotice = nil
         scanBlockedNotice = nil
+        pendingAgentic30GitignoreConsent = nil
         PostHogTelemetry.capture("mac_workspace_scan_requested", properties: [
             "workspace_basename": (root as NSString).lastPathComponent,
             "provider_override": providerOverride?.rawValue ?? "",
@@ -4911,6 +4956,20 @@ final class AgenticViewModel: ObservableObject {
     func rescanWorkspace(root: String, provider: AgentProvider) {
         setActiveProvider(provider)
         scanWorkspace(root: root, providerOverride: provider)
+    }
+
+    func submitAgentic30GitignoreConsent(consented: Bool) {
+        let root = pendingAgentic30GitignoreConsent?.scanRoot
+            ?? scanResult?.agentic30Gitignore?.scanRoot
+            ?? workspaceRoot
+        let trimmedRoot = root.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRoot.isEmpty else { return }
+        sidecar.send(payload: [
+            "type": "workspace_gitignore_consent",
+            "root": trimmedRoot,
+            "consented": consented,
+        ])
+        pendingAgentic30GitignoreConsent = nil
     }
 
     private func sendWorkspaceScan(root: String, providerOverride: AgentProvider? = nil) {
@@ -5202,6 +5261,9 @@ final class AgenticViewModel: ObservableObject {
         workspaceRoot = root
         clearWorkspaceScanTiming()
         scanResult = cached
+        pendingAgentic30GitignoreConsent = cached.agentic30Gitignore?.needsConsent == true
+            ? cached.agentic30Gitignore
+            : nil
         day1GoalSelection = cached.day1GoalSelection
     }
 
@@ -5918,6 +5980,39 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    func requestStrategyReport() {
+        guard isConnected else { return }
+        sidecar.send(payload: [
+            "type": "strategy_report_get",
+            "preferredProvider": selectedProvider.rawValue,
+        ])
+    }
+
+    func refreshStrategyReport(reason: String = "manual", force: Bool = true) {
+        #if DEBUG
+        if emitUITestingStrategyReportEventsIfRequested() { return }
+        #endif
+        guard isConnected else {
+            strategyReportPreparingForDisplay = false
+            return
+        }
+        strategyReportPreparingForDisplay = true
+        strategyReportDynamicActivated = true
+        if longRunningCompletionReasonIsUserVisible(reason) || force {
+            beginLongRunningCompletionAttempt(.strategyReport, source: reason, isUserVisible: true)
+        }
+        PostHogTelemetry.capture("mac_strategy_report_refresh_requested", properties: [
+            "reason": reason,
+            "force": force,
+        ], authSession: macAuthSession)
+        sidecar.send(payload: [
+            "type": "strategy_report_refresh",
+            "reason": reason,
+            "force": force,
+            "preferredProvider": selectedProvider.rawValue,
+        ])
+    }
+
     func prepareNewsMarketRadarForDisplay() {
         lastNewsMarketRadarViewedAt = Date()
         #if DEBUG
@@ -6345,6 +6440,142 @@ final class AgenticViewModel: ObservableObject {
     }
 
     #if DEBUG
+    private func emitUITestingStrategyReportEventsIfRequested() -> Bool {
+        let arguments = CommandLine.arguments
+        let wantsPreparingFixture = arguments.contains("--ui-testing-stub-strategy-report-preparing")
+        guard wantsPreparingFixture || arguments.contains("--ui-testing-stub-strategy-report-events") else {
+            return false
+        }
+        guard !didEmitUITestingStrategyReportEvents else {
+            return true
+        }
+        didEmitUITestingStrategyReportEvents = true
+        strategyReportDynamicActivated = true
+        if wantsPreparingFixture {
+            strategyReport = .empty
+            strategyReportPreparingForDisplay = true
+            return true
+        }
+        strategyReportPreparingForDisplay = false
+        strategyReport = makeUITestingStrategyReportSnapshot(
+            status: StrategyReportStatus(
+                state: "refreshing",
+                lastSuccessAt: nil,
+                stale: false,
+                error: nil,
+                reason: "manual",
+                researchSource: "Codex Exa MCP",
+                stage: "running_exa_research",
+                progressText: "UI 테스트 전략 리서치 중",
+                elapsedMs: 120,
+                stepIndex: 3,
+                stepCount: 6,
+                partialFailures: nil,
+                startedAt: nil,
+                completedAt: nil,
+                durationMs: nil
+            ),
+            includeReport: false
+        )
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            self.strategyReport = self.makeUITestingStrategyReportSnapshot(
+                status: StrategyReportStatus(
+                    state: "ready",
+                    lastSuccessAt: Date(timeIntervalSince1970: 1_779_238_800),
+                    stale: false,
+                    error: nil,
+                    reason: "manual",
+                    researchSource: "Codex Exa MCP",
+                    stage: "saving_results",
+                    progressText: nil,
+                    elapsedMs: 880,
+                    stepIndex: 6,
+                    stepCount: 6,
+                    partialFailures: nil,
+                    startedAt: nil,
+                    completedAt: Date(timeIntervalSince1970: 1_779_238_801),
+                    durationMs: 880
+                ),
+                includeReport: true
+            )
+        }
+        return true
+    }
+
+    private func makeUITestingStrategyReportSnapshot(
+        status: StrategyReportStatus,
+        includeReport: Bool
+    ) -> StrategyReportSnapshot {
+        StrategyReportSnapshot(
+            schemaVersion: 1,
+            promptProfile: "ui_test_strategy_report_v1",
+            contentLocale: "ko-KR",
+            generatedAt: includeReport ? Date(timeIntervalSince1970: 1_779_238_800) : nil,
+            nextRefreshAfter: includeReport ? Date(timeIntervalSince1970: 1_779_325_200) : nil,
+            contextFingerprint: includeReport ? "ui-test-strategy-report" : nil,
+            status: status,
+            workspaceEvidenceRefs: [],
+            report: includeReport ? makeUITestingStrategyReportContent() : nil
+        )
+    }
+
+    private func makeUITestingStrategyReportContent() -> StrategyReportContent {
+        StrategyReportContent(
+            commandLine: "strategy@agentic30 ~/code/agentic30 $ synthesize dynamic-strategy --from exa SPEC ICP VALUES",
+            diagnosisKicker: "Verified business diagnosis",
+            diagnosisTitle: "Agentic30은 동적 리서치로 paid ask와 first_value 증거 루프를 갱신하는 macOS evidence assistant입니다.",
+            diagnosisLead: "Exa 공개 근거, 적대적 리뷰, 다차원 검증을 거쳐 정적 캔버스와 같은 섹션 품질로 다시 작성된 전략 리포트입니다.",
+            positioningStatement: "Agentic30은 혼자 일하는 개발자가 매일 프로젝트 기록을 paid ask와 first_value 실험으로 바꾸는 macOS evidence assistant입니다.",
+            judgement: "전략 판단은 코딩 생산성이 아니라 첫 고객 행동 증거를 매일 닫는 루프에 계속 집중하는 것입니다.",
+            generatedBadge: "동적 리서치",
+            analysisBasisLabel: "SPEC.md + ICP.md + VALUES.md + Exa public evidence",
+            canvasMeta: "9 blocks · 동적 리포트",
+            matrixMeta: "positioning · Exa verified",
+            swotMeta: "internal / external · verified",
+            summaryTiles: [
+                StrategyReportSummaryTile(id: "primary-icp", label: "Primary ICP", title: "전업 1인 개발자", detail: "첫 매출 전, macOS와 AI 코딩 도구를 쓰며 기록 제출 의향이 있습니다."),
+                StrategyReportSummaryTile(id: "wedge", label: "Wedge", title: "Local evidence loop", detail: "업무 기록에서 오늘의 paid ask와 first_value 목표를 만듭니다."),
+                StrategyReportSummaryTile(id: "proof-target", label: "Proof target", title: "고객 행동 증거", detail: "인터뷰 원문, 유료 ask, activation, Go/No-Go 결정을 연결합니다."),
+            ],
+            criteriaRows: [
+                StrategyReportCriterionRow(id: "product-shape", label: "제품 형태", value: "SwiftUI macOS 메뉴바 앱 + 로컬 Node sidecar + 선택적 Exa 공개 근거 리서치입니다."),
+                StrategyReportCriterionRow(id: "core-pain", label: "핵심 고통", value: "AI 코딩으로 만들 수는 있지만 누구에게 얼마로 팔지 모릅니다."),
+                StrategyReportCriterionRow(id: "differentiator", label: "차별 기준", value: "정적 강의가 아니라 로컬 실행 기록에서 adaptive Day 과제와 evidence gate를 생성합니다."),
+                StrategyReportCriterionRow(id: "stage", label: "현재 단계", value: "private pilot evidence와 외부 ICP 반응을 추적하는 단계입니다."),
+            ],
+            canvasBlocks: [
+                StrategyReportCanvasBlock(id: "partners", number: "08", eyebrow: "Partners", title: "핵심 파트너", bullets: ["Claude / Codex / Cursor / Gemini AI coding provider 생태계", "PostHog, GitHub, Cloudflare activation evidence"], tone: "blue"),
+                StrategyReportCanvasBlock(id: "activities", number: "07", eyebrow: "Activities", title: "핵심 활동", bullets: ["Foundation Day 0-3 dogfood와 private pilot 반복", "프로젝트/업무/인터뷰/BIP/PostHog 기록에서 다음 과제 생성"], tone: "accent"),
+                StrategyReportCanvasBlock(id: "resources", number: "06", eyebrow: "Resources", title: "핵심 자원", bullets: ["로컬 실행 로그와 proof-ledger", "SPEC / ICP / VALUES 전략 문서"], tone: "sky"),
+                StrategyReportCanvasBlock(id: "value-proposition", number: "02", eyebrow: "Value proposition", title: "가치 제안", bullets: ["오늘 보낼 paid ask와 측정할 first_value를 좁힙니다.", "혼자 판단하는 편향을 transcript, BIP, PostHog 숫자로 교정합니다."], tone: "accent"),
+                StrategyReportCanvasBlock(id: "relationships", number: "04", eyebrow: "Relationships", title: "고객 관계", bullets: ["메뉴바 상주 assistant의 매일 체크인", "private pilot에서 맞춤 작업과 강한 피드백 루프"], tone: "accent"),
+                StrategyReportCanvasBlock(id: "channels", number: "03", eyebrow: "Channels", title: "채널", bullets: ["Threads / Discord / indie founder 커뮤니티", "직접 사이드프로젝트를 가진 1인 개발자 referral"], tone: "blue"),
+                StrategyReportCanvasBlock(id: "customer-segments", number: "01", eyebrow: "Customer segments", title: "고객 세그먼트", bullets: ["전업 1인 개발자, 첫 매출 전, macOS 사용자", "AI 코딩 도구 사용 경험이 있는 builder"], tone: "accent"),
+                StrategyReportCanvasBlock(id: "cost-structure", number: "09", eyebrow: "Cost structure", title: "비용 구조", bullets: ["provider execution 비용과 macOS 배포/지원 비용", "리서치/검증 패스의 시간 비용"], tone: "magenta"),
+                StrategyReportCanvasBlock(id: "revenue-streams", number: "05", eyebrow: "Revenue streams", title: "수익원", bullets: ["pilot 유료 ask", "월 구독형 개인 evidence assistant"], tone: "accent"),
+            ],
+            businessCanvasTopRows: nil,
+            businessCanvasBottomRow: nil,
+            competitors: [
+                StrategyReportCompetitor(id: "agentic30", title: "Agentic30", tag: "Adaptive PMF evidence loop", body: "내 프로젝트 기록을 읽어 오늘의 유료 ask와 증거 gate를 만듭니다.", gap: "검증 과제: 유료 pilot에서 first_value를 반복 입증해야 합니다.", x: 0.78, y: 0.22, adaptiveScore: 92, evidenceScore: 84, sourceLabel: "SPEC / ICP / Exa", sourceURL: "https://agentic30.com", sourceDisplay: "agentic30.com", verifiedAt: "2026-06", scoreRationale: "로컬 기록 기반 adaptive 과제와 evidence gate가 함께 있습니다.", category: "agentic30", isAgentic30: true, labelPlacement: "leading"),
+                StrategyReportCompetitor(id: "cursor", title: "Cursor", tag: "AI coding workspace", body: "빌드 속도는 높지만 PMF 증거 루프는 제품 밖에 있습니다.", gap: "Agentic30은 코딩 생산성 대신 고객 행동 증거를 닫습니다.", x: 0.72, y: 0.72, adaptiveScore: 80, evidenceScore: 35, sourceLabel: "Public docs", sourceURL: "https://cursor.com", sourceDisplay: "cursor.com", verifiedAt: "2026-06", scoreRationale: "코딩 적응성은 강하지만 paid ask 추적은 핵심 제품이 아닙니다.", category: "aiBuild", isAgentic30: false, labelPlacement: "trailing"),
+                StrategyReportCompetitor(id: "indiefounders", title: "IndieFounders", tag: "Founder community", body: "창업자 네트워크와 학습 콘텐츠는 있으나 로컬 evidence loop는 약합니다.", gap: "Agentic30은 커뮤니티가 아니라 매일 실행 기록에 붙습니다.", x: 0.32, y: 0.38, adaptiveScore: 42, evidenceScore: 58, sourceLabel: "Public site", sourceURL: "https://indiefounders.net", sourceDisplay: "indiefounders.net", verifiedAt: "2026-06", scoreRationale: "커뮤니티 증거는 있으나 제품 실행 자동화는 제한적입니다.", category: "community", isAgentic30: false, labelPlacement: "leading"),
+            ],
+            swotGroups: [
+                StrategyReportSWOTGroup(id: "strengths", title: "Strengths", tag: "내부 강점", tone: "accent", bullets: ["로컬 기록 기반 맥락", "매일 evidence gate로 이어지는 루프"]),
+                StrategyReportSWOTGroup(id: "weaknesses", title: "Weaknesses", tag: "내부 약점", tone: "magenta", bullets: ["초기 데이터 밀도가 낮음", "macOS 한정 배포"]),
+                StrategyReportSWOTGroup(id: "opportunities", title: "Opportunities", tag: "외부 기회", tone: "sky", bullets: ["AI coding tool 보급", "1인 개발자 monetization 니즈"]),
+                StrategyReportSWOTGroup(id: "threats", title: "Threats", tag: "외부 위협", tone: "blue", bullets: ["대형 coding IDE의 workflow 흡수", "전략 리포트만으로 보이는 위험"]),
+            ],
+            swotMatrixColumnCount: 2,
+            swotMatrixRows: [["strengths", "weaknesses"], ["opportunities", "threats"]],
+            sourceRefs: [],
+            searchableCopy: ["동적 리서치", "Adaptive PMF evidence loop", "paid ask", "first_value"],
+            generatedAt: Date(timeIntervalSince1970: 1_779_238_800)
+        )
+    }
+
     private func emitUITestingNewsMarketRadarEventsIfRequested() -> Bool {
         let arguments = CommandLine.arguments
         let wantsPreparingFixture = arguments.contains("--ui-testing-stub-news-market-radar-preparing")
@@ -7154,6 +7385,7 @@ final class AgenticViewModel: ObservableObject {
         pendingWorkspaceScanProvider = nil
         attemptedStartupWorkspaceScanRecoveryRoots.removeAll()
         scanResult = nil
+        pendingAgentic30GitignoreConsent = nil
         clearWorkspaceScanTiming()
         lastError = nil
 
@@ -7190,6 +7422,7 @@ final class AgenticViewModel: ObservableObject {
         pendingWorkspaceScanProvider = nil
         attemptedStartupWorkspaceScanRecoveryRoots.removeAll()
         scanResult = nil
+        pendingAgentic30GitignoreConsent = nil
         scanProgressMessage = ""
         scanProgressLogs = []
         scanProgressSnapshots = []
@@ -7593,6 +7826,7 @@ final class AgenticViewModel: ObservableObject {
         case "sidecar_status":
             connectionLabel = event.message ?? connectionLabel
             isConnected = false
+            integrationStatusChecking = false
             officeHoursSessionCreateInFlight = false
             PostHogTelemetry.capture("mac_sidecar_status", properties: [
                 "message": event.message ?? "",
@@ -7601,6 +7835,7 @@ final class AgenticViewModel: ObservableObject {
             let message = event.message ?? "실행 보조 앱이 예기치 않게 중단됐습니다."
             connectionLabel = message
             isConnected = false
+            integrationStatusChecking = false
             officeHoursSessionCreateInFlight = false
             finishExaMcpConnectAfterSidecarInterruption()
             finishMcpOauthInFlightAfterSidecarInterruption(
@@ -7649,6 +7884,7 @@ final class AgenticViewModel: ObservableObject {
             sendAuthContextToSidecar()
             sendOnboardingMemoryToSidecarIfAvailable()
             syncProviderSettingsToSidecar()
+            refreshIntegrationStatus()
             flushPendingProjectContextRefreshIfNeeded()
             prepareNewsMarketRadarForDisplay()
             refreshPresentationState()
@@ -7794,6 +8030,7 @@ final class AgenticViewModel: ObservableObject {
             scanResult = nil
             scanProviderLimitNotice = nil
             scanBlockedNotice = nil
+            pendingAgentic30GitignoreConsent = nil
         case "workspace_scan_provider_limited":
             if let raw = event.provider,
                let provider = AgentProvider(rawValue: raw) {
@@ -7809,6 +8046,7 @@ final class AgenticViewModel: ObservableObject {
             scanResult = nil
             clearWorkspaceScanResultCache(root: event.scanRoot)
             scanProviderLimitNotice = nil
+            pendingAgentic30GitignoreConsent = nil
             let provider = event.provider.flatMap(AgentProvider.init(rawValue:)) ?? selectedProvider
             let nextProvider = event.nextProvider.flatMap(AgentProvider.init(rawValue:))
             let availableProviders = (event.availableProviders ?? [])
@@ -7914,10 +8152,14 @@ final class AgenticViewModel: ObservableObject {
                 day1IcpPlan: event.day1IcpPlan,
                 day1SituationSummary: event.day1SituationSummary,
                 day1GoalSelection: event.day1GoalSelection,
+                agentic30Gitignore: event.agentic30Gitignore,
                 error: event.error
             )
             scanResult = result
             scanBlockedNotice = nil
+            pendingAgentic30GitignoreConsent = event.agentic30Gitignore?.needsConsent == true
+                ? event.agentic30Gitignore
+                : nil
             day1GoalSelection = event.day1GoalSelection
             if let dp = event.dayProgress { dayProgress = dp }
             if let reviews = event.dayReviews { dayReviews = reviews }
@@ -7984,6 +8226,29 @@ final class AgenticViewModel: ObservableObject {
                 scanResult = updated
                 persistWorkspaceScanResultCache(updated, root: event.workspaceRoot ?? event.scanRoot)
             }
+        case "workspace_gitignore_result":
+            pendingAgentic30GitignoreConsent = nil
+            guard let gitignore = event.agentic30Gitignore,
+                  let current = scanResult else { return }
+            let updated = WorkspaceScanResult(
+                icp: current.icp,
+                spec: current.spec,
+                values: current.values,
+                designSystem: current.designSystem,
+                adr: current.adr,
+                goal: current.goal,
+                docs: current.docs,
+                sheet: current.sheet,
+                onboardingHypothesis: current.onboardingHypothesis,
+                day1AlignmentPlan: current.day1AlignmentPlan,
+                day1IcpPlan: current.day1IcpPlan,
+                day1SituationSummary: current.day1SituationSummary,
+                day1GoalSelection: current.day1GoalSelection,
+                agentic30Gitignore: gitignore,
+                error: current.error
+            )
+            scanResult = updated
+            persistWorkspaceScanResultCache(updated, root: gitignore.scanRoot ?? event.scanRoot)
         case "day_progress_state":
             if event.success == false { return }
             if let dp = event.dayProgress { dayProgress = dp }
@@ -8096,6 +8361,7 @@ final class AgenticViewModel: ObservableObject {
                         day1IcpPlan: event.day1IcpPlan,
                         day1SituationSummary: event.day1SituationSummary,
                         day1GoalSelection: event.day1GoalSelection,
+                        agentic30Gitignore: event.agentic30Gitignore,
                         error: nil
                     )
                 }
@@ -8152,6 +8418,67 @@ final class AgenticViewModel: ObservableObject {
                         .newsMarketRadar,
                         outcome: outcome,
                         detail: outcome == .success ? newsMarketRadarNotificationDetail(newsMarketRadar) : status.error
+                    )
+                }
+            }
+        case "strategy_report_result":
+            if let snapshot = event.strategyReport {
+                strategyReportPreparingForDisplay = false
+                strategyReportDynamicActivated = snapshot.hasReport || strategyReportDynamicActivated
+                strategyReport = snapshot
+                if let outcome = longRunningCompletionOutcome(
+                    for: snapshot.status.state,
+                    error: snapshot.status.error
+                ) {
+                    completeLongRunningCompletionAttempt(
+                        .strategyReport,
+                        outcome: outcome,
+                        detail: outcome == .success ? strategyReportNotificationDetail(snapshot) : snapshot.status.error
+                    )
+                }
+            }
+        case "strategy_report_status":
+            if let status = event.strategyReportStatus {
+                strategyReportPreparingForDisplay = false
+                strategyReportDynamicActivated = true
+                if longRunningCompletionStateIsRunning(status.state) {
+                    beginLongRunningCompletionAttemptFromDisplayInterestIfNeeded(
+                        .strategyReport,
+                        source: status.reason ?? "display"
+                    )
+                }
+                strategyReport = StrategyReportSnapshot(
+                    schemaVersion: strategyReport.schemaVersion,
+                    promptProfile: strategyReport.promptProfile,
+                    contentLocale: strategyReport.contentLocale,
+                    generatedAt: strategyReport.generatedAt,
+                    nextRefreshAfter: strategyReport.nextRefreshAfter,
+                    contextFingerprint: strategyReport.contextFingerprint,
+                    status: StrategyReportStatus(
+                        state: status.state,
+                        lastSuccessAt: status.lastSuccessAt ?? strategyReport.status.lastSuccessAt,
+                        stale: status.stale ?? strategyReport.status.stale,
+                        error: status.error ?? strategyReport.status.error,
+                        reason: status.reason,
+                        researchSource: status.researchSource ?? strategyReport.status.researchSource,
+                        stage: status.stage ?? strategyReport.status.stage,
+                        progressText: status.progressText ?? strategyReport.status.progressText,
+                        elapsedMs: status.elapsedMs ?? strategyReport.status.elapsedMs,
+                        stepIndex: status.stepIndex ?? strategyReport.status.stepIndex,
+                        stepCount: status.stepCount ?? strategyReport.status.stepCount,
+                        partialFailures: status.partialFailures ?? strategyReport.status.partialFailures,
+                        startedAt: status.startedAt ?? strategyReport.status.startedAt,
+                        completedAt: status.completedAt ?? strategyReport.status.completedAt,
+                        durationMs: status.durationMs ?? strategyReport.status.durationMs
+                    ),
+                    workspaceEvidenceRefs: strategyReport.workspaceEvidenceRefs,
+                    report: strategyReport.report
+                )
+                if let outcome = longRunningCompletionOutcome(for: status.state, error: status.error) {
+                    completeLongRunningCompletionAttempt(
+                        .strategyReport,
+                        outcome: outcome,
+                        detail: outcome == .success ? strategyReportNotificationDetail(strategyReport) : status.error
                     )
                 }
             }
@@ -8572,6 +8899,7 @@ final class AgenticViewModel: ObservableObject {
             if event.sessionId == nil {
                 connectionLabel = event.message ?? connectionLabel
                 isConnected = false
+                integrationStatusChecking = false
                 officeHoursSessionCreateInFlight = false
                 finishExaMcpConnectAfterSidecarInterruption()
                 finishMcpOauthInFlightAfterSidecarInterruption(
@@ -11604,6 +11932,14 @@ final class AgenticViewModel: ObservableObject {
         return "시장 신호 카드 \(count)개를 확인할 수 있어요."
     }
 
+    private func strategyReportNotificationDetail(_ snapshot: StrategyReportSnapshot) -> String {
+        let count = snapshot.report?.competitors.count ?? 0
+        guard count > 0 else {
+            return "새 전략 리포트를 확인할 수 있어요."
+        }
+        return "경쟁 구도 \(count)개와 전략 캔버스를 갱신했어요."
+    }
+
     private func bipMissionNotificationDetail(_ coach: BipCoachState?) -> String {
         if let title = coach?.currentMission?.title?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
             return title
@@ -12024,6 +12360,7 @@ final class AgenticViewModel: ObservableObject {
             day1IcpPlan: makeUITestingDay1IcpPlan(),
             day1SituationSummary: usesSituationSummary ? makeUITestingDay1SituationSummary() : nil,
             day1GoalSelection: nil,
+            agentic30Gitignore: nil,
             error: nil
         )
     }
@@ -12737,6 +13074,7 @@ private extension AgenticViewModel {
         scanProgressSnapshots = []
         clearWorkspaceScanTiming()
         scanResult = nil
+        pendingAgentic30GitignoreConsent = nil
         attemptedStartupWorkspaceScanRecoveryRoots = []
         isCreatingDoc = nil
         docCreationLogs = []
@@ -12786,6 +13124,9 @@ private extension AgenticViewModel {
         reviewDayDashboardViewModel = nil
         newsMarketRadar = .empty
         newsMarketRadarPreparingForDisplay = false
+        strategyReport = .empty
+        strategyReportPreparingForDisplay = false
+        strategyReportDynamicActivated = false
         githubCliAuthStatus = .unknown
         foundationStartedAt = nil
         foundationProgressState = FoundationProgressSnapshot(workspaceRoot: WorkspaceSettings.resolvedURL().path)
@@ -13107,6 +13448,7 @@ struct SidecarEvent: Decodable {
     let day1IcpPlan: Day1IcpPlan?
     let day1SituationSummary: Day1SituationSummary?
     let day1GoalSelection: Day1GoalSelection?
+    let agentic30Gitignore: Agentic30GitignoreState?
     let dayProgress: DayProgress?
     let dayReviews: [String: DayReview]?
     let officeHoursMemory: OfficeHoursMemorySummary?
@@ -13245,6 +13587,8 @@ struct SidecarEvent: Decodable {
     let reframedQuestion: String?
     let newsMarketRadar: NewsMarketRadarSnapshot?
     let newsMarketRadarStatus: NewsMarketRadarStatus?
+    let strategyReport: StrategyReportSnapshot?
+    let strategyReportStatus: StrategyReportStatus?
     let bipResearch: BipResearchSnapshot?
     let bipResearchStatus: BipResearchStatus?
     let workHistory: WorkHistorySnapshot?
@@ -13310,6 +13654,7 @@ struct SidecarEvent: Decodable {
         day1IcpPlan: Day1IcpPlan? = nil,
         day1SituationSummary: Day1SituationSummary? = nil,
         day1GoalSelection: Day1GoalSelection? = nil,
+        agentic30Gitignore: Agentic30GitignoreState? = nil,
         dayProgress: DayProgress? = nil,
         dayReviews: [String: DayReview]? = nil,
         officeHoursMemory: OfficeHoursMemorySummary? = nil,
@@ -13362,6 +13707,8 @@ struct SidecarEvent: Decodable {
         reframedQuestion: String? = nil,
         newsMarketRadar: NewsMarketRadarSnapshot? = nil,
         newsMarketRadarStatus: NewsMarketRadarStatus? = nil,
+        strategyReport: StrategyReportSnapshot? = nil,
+        strategyReportStatus: StrategyReportStatus? = nil,
         bipResearch: BipResearchSnapshot? = nil,
         bipResearchStatus: BipResearchStatus? = nil,
         workHistory: WorkHistorySnapshot? = nil,
@@ -13423,6 +13770,7 @@ struct SidecarEvent: Decodable {
         self.day1IcpPlan = day1IcpPlan
         self.day1SituationSummary = day1SituationSummary
         self.day1GoalSelection = day1GoalSelection
+        self.agentic30Gitignore = agentic30Gitignore
         self.dayProgress = dayProgress
         self.dayReviews = dayReviews
         self.officeHoursMemory = officeHoursMemory
@@ -13475,6 +13823,8 @@ struct SidecarEvent: Decodable {
         self.reframedQuestion = reframedQuestion
         self.newsMarketRadar = newsMarketRadar
         self.newsMarketRadarStatus = newsMarketRadarStatus
+        self.strategyReport = strategyReport
+        self.strategyReportStatus = strategyReportStatus
         self.bipResearch = bipResearch
         self.bipResearchStatus = bipResearchStatus
         self.workHistory = workHistory
@@ -13824,6 +14174,7 @@ extension SidecarEvent {
         case day1IcpPlan
         case day1SituationSummary
         case day1GoalSelection
+        case agentic30Gitignore
         case dayProgress
         case dayReviews
         case officeHoursMemory
@@ -13847,6 +14198,8 @@ extension SidecarEvent {
         case rowId
         case status
         case detail
+        case path
+        case entry
         case log
         case readinessError
         case bipTokenExpiredMessage
@@ -13884,6 +14237,7 @@ extension SidecarEvent {
         case reframedVariant
         case reframedVariantID = "reframed_variant"
         case newsMarketRadar
+        case strategyReport
         case bipResearch
         case workHistory
         case officeHoursSourceGate
@@ -13946,6 +14300,11 @@ extension SidecarEvent {
         day1IcpPlan = Self.decodeIfPresent(Day1IcpPlan.self, from: container, forKey: .day1IcpPlan)
         day1SituationSummary = Self.decodeIfPresent(Day1SituationSummary.self, from: container, forKey: .day1SituationSummary)
         day1GoalSelection = Self.decodeIfPresent(Day1GoalSelection.self, from: container, forKey: .day1GoalSelection)
+        let decodedAgentic30Gitignore = Self.decodeIfPresent(
+            Agentic30GitignoreState.self,
+            from: container,
+            forKey: .agentic30Gitignore
+        )
         dayProgress = Self.decodeIfPresent(DayProgress.self, from: container, forKey: .dayProgress)
         dayReviews = Self.decodeIfPresent([String: DayReview].self, from: container, forKey: .dayReviews)
         officeHoursMemory = Self.decodeIfPresent(OfficeHoursMemorySummary.self, from: container, forKey: .officeHoursMemory)
@@ -14011,6 +14370,8 @@ extension SidecarEvent {
             ?? Self.decodeIfPresent(String.self, from: container, forKey: .reframedVariantID)
         newsMarketRadar = Self.decodeIfPresent(NewsMarketRadarSnapshot.self, from: container, forKey: .newsMarketRadar)
         newsMarketRadarStatus = Self.decodeIfPresent(NewsMarketRadarStatus.self, from: container, forKey: .status)
+        strategyReport = Self.decodeIfPresent(StrategyReportSnapshot.self, from: container, forKey: .strategyReport)
+        strategyReportStatus = Self.decodeIfPresent(StrategyReportStatus.self, from: container, forKey: .status)
         bipResearch = Self.decodeIfPresent(BipResearchSnapshot.self, from: container, forKey: .bipResearch)
         bipResearchStatus = Self.decodeIfPresent(BipResearchStatus.self, from: container, forKey: .status)
         workHistory = Self.decodeIfPresent(WorkHistorySnapshot.self, from: container, forKey: .workHistory)
@@ -14025,6 +14386,18 @@ extension SidecarEvent {
         integrationStatus = Self.decodeIfPresent(IntegrationStatusSnapshot.self, from: container, forKey: .integrationStatus)
         exaMcpConnect = Self.decodeIfPresent(ExaMcpConnectResult.self, from: container, forKey: .exaMcpConnect)
         mcpOauthConnect = Self.decodeIfPresent(McpOauthConnectResult.self, from: container, forKey: .mcpOauthConnect)
+
+        if type == "workspace_gitignore_result" {
+            agentic30Gitignore = Agentic30GitignoreState(
+                status: status ?? "error",
+                scanRoot: scanRoot,
+                path: Self.decodeIfPresent(String.self, from: container, forKey: .path),
+                entry: Self.decodeIfPresent(String.self, from: container, forKey: .entry),
+                error: error
+            )
+        } else {
+            agentic30Gitignore = decodedAgentic30Gitignore?.withScanRoot(scanRoot)
+        }
     }
 
     private static func decodeIfPresent<T: Decodable>(

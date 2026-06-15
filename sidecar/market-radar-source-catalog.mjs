@@ -296,7 +296,10 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     lanes: ["channel", "icp"],
     allowedUse: "Korean-first product/startup community signal; not sufficient alone for strong confidence.",
   },
-]);
+].map((source) => ({
+  ...source,
+  roles: rolesForTrustedSource(source),
+})));
 
 export function trustedSourcesForLane(laneId = "", { localeProfile = null } = {}) {
   const sources = !laneId
@@ -312,6 +315,7 @@ export function trustedSourcesForMarketRadarPrompt(laneId = "", { localeProfile 
     domain: source.domain,
     pathPrefix: source.pathPrefix,
     category: source.category,
+    roles: source.roles,
     trustTier: source.trustTier,
     lanes: source.lanes,
     allowedUse: source.allowedUse,
@@ -322,9 +326,12 @@ export function buildTrustedSourceQueriesForLane({
   laneId = "",
   querySeeds = [],
   localeProfile = null,
+  sourceRoles = [],
   maxQueries = 12,
 } = {}) {
-  const sources = trustedSourcesForLane(laneId, { localeProfile });
+  const requestedRoles = new Set(normalizeSourceRoles(sourceRoles));
+  const sources = trustedSourcesForLane(laneId, { localeProfile })
+    .filter((source) => requestedRoles.size === 0 || source.roles.some((role) => requestedRoles.has(role)));
   const seeds = normalizeQuerySeeds(querySeeds).slice(0, 3);
   const queries = [];
   if (seeds.length === 0) return queries;
@@ -367,6 +374,7 @@ export function annotateMarketRadarSourceTrust(source = {}) {
       sourceKey: null,
       label: null,
       category: "unknown",
+      roles: [],
       trustTier: "unknown",
       score: 0,
     };
@@ -375,6 +383,7 @@ export function annotateMarketRadarSourceTrust(source = {}) {
     sourceKey: match.key,
     label: match.label,
     category: match.category,
+    roles: match.roles,
     trustTier: match.trustTier,
     score: TRUST_TIER_SCORES[match.trustTier] || 0,
   };
@@ -414,6 +423,52 @@ function normalizeQuerySeeds(querySeeds = []) {
     seeds.push(query);
   }
   return seeds;
+}
+
+function rolesForTrustedSource(source = {}) {
+  const roles = new Set();
+  const category = String(source.category || "");
+  if (category === "community") roles.add("community");
+  if (category === "launch_channel") {
+    roles.add("launch");
+    roles.add("community");
+    roles.add("review");
+  }
+  if (category === "korea_first_channel") {
+    roles.add("founder_local_ko");
+    roles.add("community");
+    roles.add("launch");
+  }
+  if ([
+    "metrics_benchmark",
+    "startup_operations",
+    "pmf_playbook",
+    "customer_discovery",
+  ].includes(category)) roles.add("pricing");
+  if ([
+    "company_handbook",
+    "product_process",
+    "ux_case_study",
+    "startup_operations",
+  ].includes(category)) roles.add("technical_platform");
+  if ([
+    "newsletter",
+    "operator_interview",
+    "builder_blog",
+    "positioning_growth",
+    "ux_case_study",
+  ].includes(category)) roles.add("review");
+  if (String(source.domain || "").includes("producthunt.com")) roles.add("pricing");
+  if (String(source.domain || "").includes("news.ycombinator.com")) roles.add("social_profile");
+  if (String(source.domain || "").includes("lennysnewsletter.com")) roles.add("pricing");
+  if (roles.size === 0) roles.add("review");
+  return [...roles].sort();
+}
+
+function normalizeSourceRoles(sourceRoles = []) {
+  return (Array.isArray(sourceRoles) ? sourceRoles : [sourceRoles])
+    .map((role) => normalizeQuery(role).replace(/[^a-z0-9_:-]/gi, "").toLowerCase())
+    .filter(Boolean);
 }
 
 function normalizeQuery(value = "") {

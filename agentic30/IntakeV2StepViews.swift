@@ -439,29 +439,21 @@ struct IntakeV2FolderPickView: View {
             "had_existing_folder": store.folderURL != nil,
         ])
 
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = false
-        panel.level = .modalPanel
-        panel.message = "agentic30이 읽을 폴더를 선택해주세요"
-        panel.directoryURL = store.folderURL ?? FileManager.default.homeDirectoryForCurrentUser
-
-        NSApp.activate(ignoringOtherApps: true)
-        let completion: (NSApplication.ModalResponse) -> Void = { response in
+        AgenticOpenPanelPresenter.present { panel in
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.canCreateDirectories = false
+            panel.level = .modalPanel
+            panel.message = "agentic30이 읽을 폴더를 선택해주세요"
+            panel.directoryURL = store.folderURL ?? FileManager.default.homeDirectoryForCurrentUser
+        } completion: { response, url in
             isPresentingFolderPicker = false
-            guard response == .OK, let url = panel.url else {
+            guard response == .OK, let url else {
                 PostHogTelemetry.capture("mac_onboarding_folder_picker_cancelled")
                 return
             }
             applySelectedFolder(url)
-        }
-
-        if let window = Self.folderPickerPresentationWindow() {
-            panel.beginSheetModal(for: window, completionHandler: completion)
-        } else {
-            panel.begin(completionHandler: completion)
         }
     }
 
@@ -479,18 +471,6 @@ struct IntakeV2FolderPickView: View {
             "workspace_root": url.path,
             "file_count": fileCount,
         ])
-    }
-
-    private static func folderPickerPresentationWindow() -> NSWindow? {
-        if let keyWindow = NSApp.keyWindow, keyWindow.isVisible {
-            return keyWindow
-        }
-        if let mainWindow = NSApp.mainWindow, mainWindow.isVisible {
-            return mainWindow
-        }
-        return NSApp.windows.first { window in
-            window.isVisible && !window.isMiniaturized
-        }
     }
 
     private func skipFolderSelection() {

@@ -59,6 +59,53 @@ async function insideGitRepo(root) {
 }
 
 /**
+ * Inspect whether the workspace `.gitignore` covers `.agentic30/` without
+ * mutating the user's files.
+ *
+ * - `.gitignore` has a `!.agentic30/` negation → `{ status: "user-opted-in" }`
+ * - `.gitignore` already lists it → `{ status: "already-ignored" }`
+ * - `.gitignore` exists without it → `{ status: "needs-consent" }`
+ * - no `.gitignore` but inside a git repo → `{ status: "needs-consent" }`
+ * - no git repo anywhere above → `{ status: "skipped-not-git" }`
+ * - `onlyIfAgentic30Exists: true` and no `.agentic30/` yet → `{ status: "skipped-no-agentic30" }`
+ * - any filesystem failure → `{ status: "error", error }`
+ */
+export async function inspectAgentic30Gitignore({ workspaceRoot, onlyIfAgentic30Exists = false } = {}) {
+  const root = path.resolve(String(workspaceRoot || ""));
+  const gitignorePath = path.join(root, ".gitignore");
+  try {
+    if (!workspaceRoot) {
+      return { status: "error", path: gitignorePath, entry: AGENTIC30_GITIGNORE_ENTRY, error: "workspaceRoot is required" };
+    }
+    if (onlyIfAgentic30Exists && !(await pathExists(path.join(root, ".agentic30")))) {
+      return { status: "skipped-no-agentic30", path: gitignorePath, entry: AGENTIC30_GITIGNORE_ENTRY };
+    }
+    let existing = null;
+    try {
+      existing = await fs.readFile(gitignorePath, "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (existing !== null) {
+      const lines = existing.split(/\r?\n/);
+      if (lines.some(lineOptsAgentic30In)) {
+        return { status: "user-opted-in", path: gitignorePath, entry: AGENTIC30_GITIGNORE_ENTRY };
+      }
+      if (lines.some(lineIgnoresAgentic30)) {
+        return { status: "already-ignored", path: gitignorePath, entry: AGENTIC30_GITIGNORE_ENTRY };
+      }
+      return { status: "needs-consent", path: gitignorePath, entry: AGENTIC30_GITIGNORE_ENTRY };
+    }
+    if (!(await insideGitRepo(root))) {
+      return { status: "skipped-not-git", path: gitignorePath, entry: AGENTIC30_GITIGNORE_ENTRY };
+    }
+    return { status: "needs-consent", path: gitignorePath, entry: AGENTIC30_GITIGNORE_ENTRY };
+  } catch (error) {
+    return { status: "error", path: gitignorePath, entry: AGENTIC30_GITIGNORE_ENTRY, error: error?.message || String(error) };
+  }
+}
+
+/**
  * Ensure the workspace `.gitignore` covers `.agentic30/`.
  *
  * - `.gitignore` has a `!.agentic30/` negation → `{ status: "user-opted-in" }` (never overridden)

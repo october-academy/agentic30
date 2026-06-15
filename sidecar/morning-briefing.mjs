@@ -109,7 +109,19 @@ function nowIso(now) {
 }
 
 function localDateKey(iso) {
-  return String(iso || "").slice(0, 10);
+  const text = String(iso || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const ts = Date.parse(text);
+  if (!Number.isFinite(ts)) return "";
+  const date = new Date(ts);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function historyEntryDateKey(entry = {}) {
+  return localDateKey(entry?.generatedAt) || String(entry?.date || "");
 }
 
 function timeLabel(iso) {
@@ -232,7 +244,7 @@ function previousDateKey(dateKey = "") {
 
 function sparkPointTimeLabel({ date = "", at = null, currentDate = "", generatedAt = null, current = false } = {}) {
   const safeAt = toIso(at);
-  const dateKey = date || localDateKey(safeAt);
+  const dateKey = localDateKey(safeAt) || date;
   const time = safeAt ? timeLabel(safeAt) : "";
   if (current) return time ? `오늘 ${time}` : "오늘";
   if (safeAt && dateKey === previousDateKey(currentDate)) return `어제 ${time}`;
@@ -282,7 +294,7 @@ function assertSparklineHistoryAvailable({ history = [], cardId = "", previousVa
 function metricHistoryForRefresh({ history = [], previous = null, generatedAt = "" } = {}) {
   const currentDate = localDateKey(generatedAt);
   const priorHistory = (Array.isArray(history) ? history : [])
-    .filter((entry) => entry?.date !== currentDate);
+    .filter((entry) => historyEntryDateKey(entry) !== currentDate);
   const previousMetrics = previous?.metrics || {};
   const previousMetricIds = Object.keys(previousMetrics)
     .filter((id) => finiteNumber(previousMetrics[id]) !== null);
@@ -674,6 +686,30 @@ export function buildMorningBriefingSummary({ digest = {}, cards = [], window = 
 
 // ── Timeline ─────────────────────────────────────────────────────────────────
 
+function timelineTagName(text = "") {
+  const cleaned = cleanString(text, 200);
+  const explicit = cleaned.match(/^(?:릴리즈|태그)\s+([^\s]+)/);
+  if (explicit?.[1]) return explicit[1];
+  const generic = cleaned.match(/\b(v\d{8}-\d{4}[^\s]*)\b/);
+  return generic?.[1] || "";
+}
+
+function dedupeTimelineEvents(events = []) {
+  const releaseTags = new Set(
+    events
+      .filter((event) => /^릴리즈\s+/.test(event.text))
+      .map((event) => timelineTagName(event.text))
+      .filter(Boolean),
+  );
+  return events.filter((event) => {
+    const tag = timelineTagName(event.text);
+    if (!tag || !releaseTags.has(tag)) return true;
+    if (/^태그\s+/.test(event.text)) return false;
+    if (/^배포\s+성공\s+/.test(event.text)) return false;
+    return true;
+  });
+}
+
 export function buildMorningBriefingTimeline({ digest = {} } = {}) {
   const events = [];
   for (const source of digest.sources || []) {
@@ -685,8 +721,9 @@ export function buildMorningBriefingTimeline({ digest = {} } = {}) {
       events.push({ at, timeLabel: timeLabel(at), source: cardId, text });
     }
   }
-  events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  if (events.length) return events.slice(-10);
+  const timelineEvents = dedupeTimelineEvents(events)
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  if (timelineEvents.length) return timelineEvents.slice(-10);
   // No timestamped events: fall back to highlight lines so the timeline section
   // still tells the overnight story instead of rendering empty.
   return (digest.briefing?.overnightChanges || []).slice(0, 4).map((text) => ({
@@ -936,7 +973,7 @@ export function buildMorningBriefing({
     // Most-recent-first list of previous briefing dates so the screen's
     // "지난 브리핑" group can render without shipping full historical payloads.
     historyDates: priorHistory
-      .map((entry) => String(entry?.date || ""))
+      .map((entry) => historyEntryDateKey(entry))
       .filter(Boolean)
       .sort()
       .slice(-7)
@@ -944,12 +981,12 @@ export function buildMorningBriefing({
     // Same list with the persisted headline/day so the rows can show what each
     // morning actually said (briefing.html "지난 브리핑" rows carry titles).
     historyEntries: priorHistory
-      .filter((entry) => entry?.date)
-      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      .filter((entry) => historyEntryDateKey(entry))
+      .sort((a, b) => historyEntryDateKey(a).localeCompare(historyEntryDateKey(b)))
       .slice(-7)
       .reverse()
       .map((entry) => ({
-        date: String(entry.date),
+        date: historyEntryDateKey(entry),
         day: finiteNumber(entry.day),
         title: cleanString(entry.title, 80) || null,
       })),
@@ -1135,7 +1172,7 @@ export async function persistMorningBriefing({ workspaceRoot, briefing, fsImpl =
     ? store.current
     : store.previous ?? null;
   const history = [
-    ...store.history.filter((entry) => entry?.date && entry.date !== date),
+    ...store.history.filter((entry) => historyEntryDateKey(entry) && historyEntryDateKey(entry) !== date),
     ...(date
       ? [{
           date,

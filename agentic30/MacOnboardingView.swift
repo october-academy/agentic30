@@ -26,6 +26,7 @@ struct MacOnboardingView: View {
 
     @State private var sceneIndex = 0
     @State private var selectedWorkspaceURL: URL?
+    @State private var isPresentingWorkspacePicker = false
 
     private let scenes = MacOnboardingScene.all
 
@@ -316,13 +317,17 @@ struct MacOnboardingView: View {
         }
         #endif
 
+        guard !isPresentingWorkspacePicker else { return }
+        isPresentingWorkspacePicker = true
         PostHogTelemetry.capture("mac_onboarding_workspace_picker_opened")
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.message = "Select your project workspace root"
-        if panel.runModal() == .OK, let url = panel.url {
+        AgenticOpenPanelPresenter.present { panel in
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.allowsMultipleSelection = false
+            panel.message = "Select your project workspace root"
+        } completion: { response, url in
+            isPresentingWorkspacePicker = false
+            guard response == .OK, let url else { return }
             selectedWorkspaceURL = url
         }
     }

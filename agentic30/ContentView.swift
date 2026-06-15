@@ -150,6 +150,24 @@ struct OfficeHoursLoaderCopy: Equatable {
     }
 }
 
+enum OfficeHoursDigestSourceDotTone: Equatable {
+    case ready
+    case warning
+    case unavailable
+}
+
+func officeHoursDigestSourceDotTone(_ source: OfficeHoursSourceStatus) -> OfficeHoursDigestSourceDotTone {
+    let connectionState = (source.connectionState ?? source.state)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    guard connectionState == "ready" else { return .unavailable }
+
+    let collectionState = (source.collectionState ?? source.state)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    return collectionState == "ready" ? .ready : .warning
+}
+
 enum OpenDesignOfficeHoursColor {
     static let bg = Color(red: 0.0801, green: 0.0874, blue: 0.0928)
     static let bgDeep = Color(red: 0.0379, green: 0.0446, blue: 0.0497)
@@ -2010,14 +2028,15 @@ enum WorkspaceChromeStyle: nonisolated Equatable {
     static func resolve(
         isWorkspaceWindow: Bool,
         dayNumber: Int,
-        selectedReferencePage: OpenDesignReferencePageKind?,
-        isOfficeHoursPresented: Bool
+        railDestination: OpenDesignRailDestination
     ) -> WorkspaceChromeStyle {
         guard isWorkspaceWindow, dayNumber == 1 else { return .standard }
-        if isOfficeHoursPresented || selectedReferencePage == nil || selectedReferencePage == .settings {
+        switch railDestination.surfaceKind(routesTodayToOfficeHours: true) {
+        case .reference(let page):
+            return page == .settings ? .day1OfficeHours : .standard
+        case .today, .officeHours, .morningBriefing, .strategy:
             return .day1OfficeHours
         }
-        return .standard
     }
 }
 
@@ -2062,12 +2081,9 @@ struct ContentView: View {
     @State private var showsBipReadinessPreview = false
     @State private var showsBipReadinessAdvanced = false
     @State private var showsInlineBipReadinessSetup = false
-    @State private var selectedOpenDesignReferencePage: OpenDesignReferencePageKind?
     @State private var selectedSettingsSection: SettingsSection = .workspace
     @State private var showsAppUpdateStatusPanel = false
-    @State private var isOpenDesignOfficeHoursPresented = false
-    @State private var isOpenDesignMorningBriefingPresented = false
-    @State private var isOpenDesignStrategyPresented = false
+    @State private var openDesignRailDestination: OpenDesignRailDestination
     @State private var isBipMissionRoutePresented = false
     @State private var pendingOpenDesignScrollRequest: OpenDesignScrollRequest?
     @State private var pendingMorningBriefingScrollRequest: MorningBriefingScrollRequest?
@@ -2137,7 +2153,8 @@ struct ContentView: View {
         self.zoomWorkspaceAction = zoomWorkspaceAction
         self.maximizeWorkspaceOnFirstAppear = maximizeWorkspaceOnFirstAppear
         self.markWorkspaceInitialMaximizeApplied = markWorkspaceInitialMaximizeApplied
-        _selectedOpenDesignReferencePage = State(initialValue: Self.initialOpenDesignReferencePageForUITesting())
+        let initialReferencePage = Self.initialOpenDesignReferencePageForUITesting()
+        _openDesignRailDestination = State(initialValue: initialReferencePage.map { .reference($0) } ?? .today)
         _selectedSettingsSection = State(initialValue: Self.initialSettingsSectionForUITesting())
     }
 
@@ -2407,6 +2424,10 @@ struct ContentView: View {
                     onScanBlockedAuthAction: { readiness in
                         handleWorkspaceScanBlockedAuthAction(readiness)
                     },
+                    agentic30GitignoreConsent: viewModel.pendingAgentic30GitignoreConsent,
+                    onAgentic30GitignoreConsent: { consented in
+                        viewModel.submitAgentic30GitignoreConsent(consented: consented)
+                    },
                     onWorkspacePrefetchRequested: { store, sources in
                         guard let context = intakeV2OnboardingContext(from: store) else { return }
                         guard let url = store.folderURL else {
@@ -2499,8 +2520,7 @@ struct ContentView: View {
         WorkspaceChromeStyle.resolve(
             isWorkspaceWindow: isWorkspaceWindow,
             dayNumber: workspaceOpenDesignDay.day,
-            selectedReferencePage: selectedOpenDesignReferencePage,
-            isOfficeHoursPresented: isOpenDesignOfficeHoursPresented
+            railDestination: openDesignRailDestination
         )
     }
 
@@ -2584,10 +2604,7 @@ struct ContentView: View {
                 OpenDesignDayPageView(
                     content: resolvedContent,
                     interaction: openDesignDayInteractionBinding(for: day, content: resolvedContent),
-                    selectedReferencePage: $selectedOpenDesignReferencePage,
-                    isOfficeHoursPresented: $isOpenDesignOfficeHoursPresented,
-                    isMorningBriefingPresented: $isOpenDesignMorningBriefingPresented,
-                    isStrategyPresented: $isOpenDesignStrategyPresented,
+                    railDestination: $openDesignRailDestination,
                     pendingScrollRequest: $pendingOpenDesignScrollRequest,
                     openSettings: {
                         openOpenDesignSettingsRoute()
@@ -2618,6 +2635,12 @@ struct ContentView: View {
                     },
                     prepareNewsMarketRadar: {
                         viewModel.prepareNewsMarketRadarForDisplay()
+                    },
+                    strategyReport: viewModel.strategyReport,
+                    strategyReportPreparingForDisplay: viewModel.strategyReportPreparingForDisplay,
+                    strategyReportDynamicActivated: viewModel.strategyReportDynamicActivated,
+                    refreshStrategyReport: {
+                        viewModel.refreshStrategyReport(reason: "manual", force: true)
                     },
                     bipResearch: viewModel.bipResearch,
                     refreshBipResearch: {
@@ -2666,7 +2689,7 @@ struct ContentView: View {
                             },
                             startToday: {
                                 withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                                    isOpenDesignMorningBriefingPresented = false
+                                    setOpenDesignRailDestination(.today)
                                 }
                             },
                             routeScrollRequest: $pendingMorningBriefingScrollRequest
@@ -2698,7 +2721,6 @@ struct ContentView: View {
                         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                             clearOpenDesignReferenceRoute()
                             selectedTimelineDay = nil
-                            isOpenDesignOfficeHoursPresented = false
                             viewModel.selectFoundationDay(selectedDay)
                         }
                     },
@@ -3099,18 +3121,16 @@ struct ContentView: View {
                             Spacer(minLength: 0)
                             HStack(spacing: 10) {
                                 ForEach(digest.sources.filter { $0.state != "ignored" }) { source in
+                                    let dotTone = officeHoursDigestSourceDotTone(source)
                                     HStack(spacing: 5) {
                                         Circle()
-                                            .fill(
-                                                source.state == "ready"
-                                                    ? OpenDesignOfficeHoursColor.accent
-                                                    : OpenDesignOfficeHoursColor.rose
-                                            )
+                                            .fill(officeHoursDigestSourceDotColor(dotTone))
                                             .frame(width: 5, height: 5)
                                         Text(source.label)
                                             .font(.system(size: 10.5, weight: .semibold))
                                             .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                                     }
+                                    .help(source.detail?.nonEmpty ?? officeHoursDigestSourceHelpText(source))
                                 }
                             }
                             .frame(height: 24)
@@ -3246,6 +3266,23 @@ struct ContentView: View {
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
             officeHoursDigestBannerCollapsed.toggle()
         }
+    }
+
+    private func officeHoursDigestSourceDotColor(_ tone: OfficeHoursDigestSourceDotTone) -> Color {
+        switch tone {
+        case .ready:
+            return OpenDesignOfficeHoursColor.accent
+        case .warning:
+            return OpenDesignOfficeHoursColor.amber
+        case .unavailable:
+            return OpenDesignOfficeHoursColor.rose
+        }
+    }
+
+    private func officeHoursDigestSourceHelpText(_ source: OfficeHoursSourceStatus) -> String {
+        let connectionState = source.connectionState?.nonEmpty ?? source.state
+        let collectionState = source.collectionState?.nonEmpty ?? source.state
+        return "\(source.label): connection \(connectionState), collection \(collectionState)"
     }
 
     private func officeHoursEvidenceActionButton(systemName: String, title: String, action: @escaping () -> Void) -> some View {
@@ -8893,7 +8930,7 @@ struct ContentView: View {
 
             Button {
                 withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                    isOpenDesignOfficeHoursPresented = false
+                    setOpenDesignRailDestination(.today)
                 }
             } label: {
                 HStack(spacing: 6) {
@@ -10368,21 +10405,19 @@ struct ContentView: View {
         }
     }
 
-    private func clearOpenDesignReferenceRoute() {
-        selectedOpenDesignReferencePage = nil
-        isOpenDesignOfficeHoursPresented = false
-        isOpenDesignMorningBriefingPresented = false
-        isOpenDesignStrategyPresented = false
+    private func setOpenDesignRailDestination(_ destination: OpenDesignRailDestination) {
+        openDesignRailDestination = destination
         isBipMissionRoutePresented = false
+    }
+
+    private func clearOpenDesignReferenceRoute() {
+        setOpenDesignRailDestination(.today)
     }
 
     private func routeToBipMissionCompletion() {
         viewModel.selectBipCoachSessionIfAvailable()
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-            selectedOpenDesignReferencePage = nil
-            isOpenDesignOfficeHoursPresented = false
-            isOpenDesignMorningBriefingPresented = false
-            isOpenDesignStrategyPresented = false
+            openDesignRailDestination = .today
             isBipMissionRoutePresented = true
         }
         updateBipCompletionRouteFieldsIfNeeded()
@@ -10396,11 +10431,7 @@ struct ContentView: View {
 
     private func openOpenDesignSettingsRoute() {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-            isOpenDesignOfficeHoursPresented = false
-            isOpenDesignMorningBriefingPresented = false
-            isOpenDesignStrategyPresented = false
-            isBipMissionRoutePresented = false
-            selectedOpenDesignReferencePage = .settings
+            setOpenDesignRailDestination(.reference(.settings))
         }
     }
 
@@ -10445,11 +10476,7 @@ struct ContentView: View {
         selectedPastReviewDay = nil
         selectedTimelineDay = activeDay
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-            selectedOpenDesignReferencePage = nil
-            isOpenDesignMorningBriefingPresented = false
-            isOpenDesignStrategyPresented = false
-            isBipMissionRoutePresented = false
-            isOpenDesignOfficeHoursPresented = true
+            setOpenDesignRailDestination(.officeHours)
         }
         pendingOfficeHoursRouteScrollRequest = OfficeHoursRouteScrollRequest(
             sessionId: sessionId,
@@ -10474,11 +10501,7 @@ struct ContentView: View {
         switch route {
         case .morningBriefing:
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                selectedOpenDesignReferencePage = nil
-                isOpenDesignOfficeHoursPresented = false
-                isBipMissionRoutePresented = false
-                isOpenDesignStrategyPresented = false
-                isOpenDesignMorningBriefingPresented = true
+                setOpenDesignRailDestination(.morningBriefing)
             }
             if let anchor {
                 pendingMorningBriefingScrollRequest = MorningBriefingScrollRequest(id: anchor)
@@ -10492,46 +10515,30 @@ struct ContentView: View {
             selectedPastReviewDay = nil
             selectedTimelineDay = day
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                selectedOpenDesignReferencePage = nil
-                isOpenDesignOfficeHoursPresented = false
-                isOpenDesignMorningBriefingPresented = false
-                isOpenDesignStrategyPresented = false
-                isBipMissionRoutePresented = false
+                setOpenDesignRailDestination(.today)
             }
             requestOpenDesignScroll(anchor: anchor, placement: placement)
         case .history:
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                selectedOpenDesignReferencePage = .history
-                isOpenDesignOfficeHoursPresented = false
-                isOpenDesignMorningBriefingPresented = false
-                isOpenDesignStrategyPresented = false
-                isBipMissionRoutePresented = false
+                setOpenDesignRailDestination(.reference(.history))
             }
         case .bipResearch:
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                selectedOpenDesignReferencePage = .bipLog
-                isOpenDesignOfficeHoursPresented = false
-                isOpenDesignMorningBriefingPresented = false
-                isOpenDesignStrategyPresented = false
-                isBipMissionRoutePresented = false
+                setOpenDesignRailDestination(.reference(.bipLog))
             }
         case .newsMarketRadar:
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                selectedOpenDesignReferencePage = .news
-                isOpenDesignOfficeHoursPresented = false
-                isOpenDesignMorningBriefingPresented = false
-                isOpenDesignStrategyPresented = false
-                isBipMissionRoutePresented = false
+                setOpenDesignRailDestination(.reference(.news))
+            }
+        case .strategy:
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                setOpenDesignRailDestination(.strategy)
             }
         case .bipMission:
             routeToBipMissionCompletion()
         case .document:
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                selectedOpenDesignReferencePage = nil
-                isOpenDesignOfficeHoursPresented = false
-                isOpenDesignMorningBriefingPresented = false
-                isOpenDesignStrategyPresented = false
-                isBipMissionRoutePresented = false
+                setOpenDesignRailDestination(.today)
             }
         }
     }
@@ -10596,10 +10603,7 @@ struct ContentView: View {
         showsBipReadinessPreview = false
         showsBipReadinessAdvanced = false
         showsInlineBipReadinessSetup = false
-        selectedOpenDesignReferencePage = nil
-        isOpenDesignOfficeHoursPresented = false
-        isOpenDesignMorningBriefingPresented = false
-        isOpenDesignStrategyPresented = false
+        openDesignRailDestination = .today
         isBipMissionRoutePresented = false
         selectedPastReviewDay = nil
         selectedTimelineDay = nil
@@ -14024,6 +14028,7 @@ private struct OfficeHoursEvidenceResolutionSheet: View {
     @State private var locator = ""
     @State private var note = ""
     @State private var abandonReason = ""
+    @State private var isPresentingFilePicker = false
 
     private let evidenceKinds = ["screenshot", "url", "commit", "payment"]
 
@@ -14050,12 +14055,16 @@ private struct OfficeHoursEvidenceResolutionSheet: View {
                     TextField("URL, 파일 경로, 커밋 SHA, 결제 기록 위치", text: $locator)
                         .textFieldStyle(.roundedBorder)
                     Button("파일 선택…") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = true
-                        panel.canChooseDirectories = false
-                        panel.allowsMultipleSelection = false
-                        panel.message = "증거 파일(스크린샷·녹취·캡처)을 선택해줘"
-                        if panel.runModal() == .OK, let url = panel.url {
+                        guard !isPresentingFilePicker else { return }
+                        isPresentingFilePicker = true
+                        AgenticOpenPanelPresenter.present { panel in
+                            panel.canChooseFiles = true
+                            panel.canChooseDirectories = false
+                            panel.allowsMultipleSelection = false
+                            panel.message = "증거 파일(스크린샷·녹취·캡처)을 선택해줘"
+                        } completion: { response, url in
+                            isPresentingFilePicker = false
+                            guard response == .OK, let url else { return }
                             locator = url.path
                             let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "webp"]
                             if imageExtensions.contains(url.pathExtension.lowercased()) {
@@ -14063,6 +14072,7 @@ private struct OfficeHoursEvidenceResolutionSheet: View {
                             }
                         }
                     }
+                    .disabled(isPresentingFilePicker)
                     .accessibilityIdentifier("officeHours.evidence.filePicker")
                 }
                 TextField("짧은 설명", text: $note)

@@ -13,6 +13,7 @@ export const OFFICE_HOURS_DAILY_DIGEST_FILE = "office-hours-daily-digest.json";
 export const OFFICE_HOURS_DIGEST_EXEC_TIMEOUT_MS = 12_000;
 
 const DAY_MS = 86_400_000;
+const DEPLOY_WORKFLOW_RE = /deploy|release|publish|ship|rollout|배포|릴리스|출시/i;
 const SOURCE_DEFS = Object.freeze({
   git: { id: "git", label: "git" },
   gh_cli: { id: "gh_cli", label: "gh CLI" },
@@ -56,6 +57,10 @@ export class OfficeHoursSourceGateError extends Error {
 
 function cleanString(value, max = 240) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function normalizeStatusState(value = "", fallback = "missing") {
+  return cleanString(value, 20).toLowerCase() || fallback;
 }
 
 function localDevFastDaysEnabled(env = process.env) {
@@ -140,6 +145,8 @@ export function officeHoursDigestWindow(now = new Date(), { tzOffsetMinutes = no
 function sourceStatus({
   id,
   state = "missing",
+  connectionState = "",
+  collectionState = "",
   detail = "",
   selected = false,
   required = false,
@@ -152,11 +159,16 @@ function sourceStatus({
   events = [],
 } = {}) {
   const def = SOURCE_DEFS[id] || { id, label: id };
+  const normalizedState = normalizeStatusState(state);
+  const resolvedConnectionState = normalizeStatusState(connectionState, normalizedState);
+  const resolvedCollectionState = normalizeStatusState(collectionState, normalizedState);
   return {
     id: def.id,
     label: def.label,
-    state,
-    available: state === "ready",
+    state: normalizedState,
+    available: resolvedConnectionState === "ready",
+    connectionState: resolvedConnectionState,
+    collectionState: resolvedCollectionState,
     selected: Boolean(selected),
     required: Boolean(required),
     detail: cleanString(detail, 300),
@@ -187,7 +199,7 @@ function normalizeEventList(values = [], limit = 8) {
     })
     .filter(Boolean)
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
-    .slice(0, limit);
+    .slice(-limit);
 }
 
 function normalizeStringList(values = [], limit = 6, max = 200) {
@@ -328,6 +340,65 @@ export async function evaluateOfficeHoursSourceGate({
   const checkedAt = new Date(now instanceof Date ? now.getTime() : now).toISOString();
   const window = officeHoursDigestWindow(now, { tzOffsetMinutes });
 
+  const buildStatuses = async ({ requiredSelected = true, probeExternalIds = selected } = {}) => {
+    const selectedSet = new Set(selected);
+    const externalProbeSet = new Set(probeExternalIds);
+    const [gitProbe, ghProbe] = await Promise.all([
+      probeGitSource({ workspaceRoot, execImpl }),
+      probeGhCliSource({ workspaceRoot, execImpl }),
+    ]);
+    return [
+      sourceStatus({
+        id: "git",
+        state: gitProbe.available ? "ready" : "missing",
+        selected: selectedSet.has("git"),
+        required: requiredSelected && selectedSet.has("git"),
+        checkedAt,
+        detail: gitProbe.detail,
+      }),
+      sourceStatus({
+        id: "gh_cli",
+        state: ghProbe.available ? "ready" : "missing",
+        selected: selectedSet.has("gh_cli"),
+        required: requiredSelected && selectedSet.has("gh_cli"),
+        checkedAt,
+        detail: ghProbe.detail,
+      }),
+      externalProbeSet.has("posthog")
+        ? externalSourceStatus("posthog", {
+            selected: selectedSet.has("posthog"),
+            required: requiredSelected && selectedSet.has("posthog"),
+            appSupportPath,
+            env,
+            provider,
+          })
+        : sourceStatus({
+            id: "posthog",
+            state: "ignored",
+            selected: false,
+            required: false,
+            checkedAt,
+            detail: "PostHog was not selected for this Office Hours run",
+          }),
+      externalProbeSet.has("cloudflare")
+        ? externalSourceStatus("cloudflare", {
+            selected: selectedSet.has("cloudflare"),
+            required: requiredSelected && selectedSet.has("cloudflare"),
+            appSupportPath,
+            env,
+            provider,
+          })
+        : sourceStatus({
+            id: "cloudflare",
+            state: "ignored",
+            selected: false,
+            required: false,
+            checkedAt,
+            detail: "Cloudflare was not selected for this Office Hours run",
+          }),
+    ];
+  };
+
   if (Number.isFinite(normalizedDay) && normalizedDay <= 1) {
     return {
       schemaVersion: OFFICE_HOURS_SOURCE_GATE_SCHEMA_VERSION,
@@ -352,6 +423,10 @@ export async function evaluateOfficeHoursSourceGate({
     && normalizedDay >= 2
     && localDevFastDaysEnabled(env)
   ) {
+    const statuses = await buildStatuses({
+      requiredSelected: false,
+      probeExternalIds: OFFICE_HOURS_SOURCE_ORDER,
+    });
     return {
       schemaVersion: OFFICE_HOURS_SOURCE_GATE_SCHEMA_VERSION,
       day: normalizedDay,
@@ -362,67 +437,14 @@ export async function evaluateOfficeHoursSourceGate({
       message: "Local development fast-days mode skips Day 2+ Office Hours source requirements.",
       checkedAt,
       window,
-      selectedSources: [],
-      sources: [],
+      selectedSources: selected,
+      sources: statuses,
       missingRequiredSources: [],
       connectActions: [],
     };
   }
 
-  const [gitProbe, ghProbe] = await Promise.all([
-    probeGitSource({ workspaceRoot, execImpl }),
-    probeGhCliSource({ workspaceRoot, execImpl }),
-  ]);
-  const statuses = [
-    sourceStatus({
-      id: "git",
-      state: gitProbe.available ? "ready" : "missing",
-      selected: selected.includes("git"),
-      required: selected.includes("git"),
-      checkedAt,
-      detail: gitProbe.detail,
-    }),
-    sourceStatus({
-      id: "gh_cli",
-      state: ghProbe.available ? "ready" : "missing",
-      selected: selected.includes("gh_cli"),
-      required: selected.includes("gh_cli"),
-      checkedAt,
-      detail: ghProbe.detail,
-    }),
-    selected.includes("posthog")
-      ? externalSourceStatus("posthog", {
-          selected: true,
-          required: true,
-          appSupportPath,
-          env,
-          provider,
-        })
-      : sourceStatus({
-          id: "posthog",
-          state: "ignored",
-          selected: false,
-          required: false,
-          checkedAt,
-          detail: "PostHog was not selected for this Office Hours run",
-        }),
-    selected.includes("cloudflare")
-      ? externalSourceStatus("cloudflare", {
-          selected: true,
-          required: true,
-          appSupportPath,
-          env,
-          provider,
-        })
-      : sourceStatus({
-          id: "cloudflare",
-          state: "ignored",
-          selected: false,
-          required: false,
-          checkedAt,
-          detail: "Cloudflare was not selected for this Office Hours run",
-        }),
-  ];
+  const statuses = await buildStatuses();
 
   const missingRequiredSources = statuses
     .filter((status) => status.required && status.state !== "ready")
@@ -496,6 +518,19 @@ function parseGitDigestLog(raw = "") {
   return commits.filter((commit) => Number.isFinite(commit.ts));
 }
 
+function parseGitTagList(raw = "") {
+  return String(raw || "")
+    .split(/\r?\n/)
+    .map((line) => {
+      const [createdAt, name] = line.split(/\t|\u001f/);
+      const ts = Date.parse(String(createdAt || ""));
+      const tag = cleanString(name, 80);
+      if (!Number.isFinite(ts) || !tag) return null;
+      return { ts, tag };
+    })
+    .filter(Boolean);
+}
+
 function topPathBuckets(commits = []) {
   const counts = new Map();
   for (const commit of commits) {
@@ -520,7 +555,7 @@ export async function collectGitDailySignals({
   if (!probe.available) {
     return sourceStatus({ id: "git", state: "missing", detail: probe.detail });
   }
-  const [log, email, status] = await Promise.all([
+  const [log, email, status, tagResult] = await Promise.all([
     execImpl(
       "git",
       [
@@ -537,8 +572,22 @@ export async function collectGitDailySignals({
     ),
     execImpl("git", ["config", "user.email"], { cwd }),
     execImpl("git", ["status", "--short"], { cwd }),
+    execImpl(
+      "git",
+      [
+        "for-each-ref",
+        "refs/tags",
+        "--sort=-creatordate",
+        `--format=%(creatordate:iso-strict)%09%(refname:short)`,
+      ],
+      { cwd },
+    ),
   ]);
   const commits = log.ok ? parseGitDigestLog(log.stdout) : [];
+  const tags = tagResult.ok
+    ? parseGitTagList(tagResult.stdout)
+      .filter((tag) => tag.ts >= window.startMs && tag.ts < window.untilMs)
+    : [];
   const userEmail = email.ok ? email.stdout.trim().toLowerCase() : "";
   const mine = userEmail ? commits.filter((commit) => commit.authorEmail === userEmail).length : 0;
   const fileSet = new Set(commits.flatMap((commit) => commit.files || []));
@@ -550,6 +599,7 @@ export async function collectGitDailySignals({
   const deletions = commits.reduce((sum, commit) => sum + Number(commit.deletions || 0), 0);
   const highlights = [];
   if (commits.length) highlights.push(`git 커밋 ${commits.length}건${mine ? ` · 내 커밋 ${mine}건` : ""}`);
+  if (tags.length) highlights.push(`태그 ${tags.length}개`);
   if (topPaths.length) highlights.push(`주요 변경 영역: ${topPaths.map((item) => item.path).join(", ")}`);
   if (uncommittedChanges) highlights.push(`미커밋 변경 ${uncommittedChanges}개`);
   if (!highlights.length) highlights.push("git repository는 연결됐지만 해당 기간 커밋은 없습니다.");
@@ -564,17 +614,20 @@ export async function collectGitDailySignals({
       additions,
       deletions,
       uncommittedChanges,
+      tags: tags.length,
     },
     highlights,
     summary: highlights.join(" / "),
-    events: commits
-      .slice()
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, 8)
-      .map((commit) => ({
+    events: [
+      ...commits.map((commit) => ({
         at: new Date(commit.ts).toISOString(),
         text: `커밋 · ${commit.subject}`,
       })),
+      ...tags.map((tag) => ({
+        at: new Date(tag.ts).toISOString(),
+        text: `태그 ${tag.tag} 생성`,
+      })),
+    ],
   });
 }
 
@@ -585,6 +638,31 @@ function parseJsonArray(stdout) {
   } catch {
     return [];
   }
+}
+
+function runStatusLabel(run = {}) {
+  const conclusion = cleanString(run?.conclusion, 30).toLowerCase();
+  if (conclusion === "success") return "성공";
+  if (conclusion === "failure") return "실패";
+  if (conclusion === "cancelled") return "취소";
+  if (conclusion === "timed_out") return "타임아웃";
+  if (conclusion === "action_required") return "조치 필요";
+  if (conclusion === "skipped") return "스킵";
+  const status = cleanString(run?.status, 30).toLowerCase();
+  if (status && status !== "completed") return "진행 중";
+  return conclusion || status || "상태 불명";
+}
+
+function runDisplayTarget(run = {}) {
+  return cleanString(run?.headBranch || run?.displayTitle || run?.workflowName, 80);
+}
+
+function shouldSurfaceRunEvent(run = {}) {
+  const workflowName = cleanString(run?.workflowName, 80);
+  const deploy = DEPLOY_WORKFLOW_RE.test(workflowName);
+  if (deploy) return true;
+  const conclusion = cleanString(run?.conclusion, 30).toLowerCase();
+  return ["failure", "cancelled", "timed_out", "action_required"].includes(conclusion);
 }
 
 export async function collectGhDailySignals({
@@ -601,7 +679,7 @@ export async function collectGhDailySignals({
     const ts = Date.parse(iso || "");
     return Number.isFinite(ts) && ts >= window.startMs && ts < window.untilMs;
   };
-  const [prResult, issueResult, releaseResult] = await Promise.all([
+  const [prResult, issueResult, releaseResult, runResult] = await Promise.all([
     execImpl(
       "gh",
       ["pr", "list", "--state", "all", "--limit", "50", "--json", "number,title,state,createdAt,updatedAt,author,isDraft"],
@@ -617,6 +695,11 @@ export async function collectGhDailySignals({
       ["release", "list", "--limit", "20", "--json", "tagName,name,publishedAt"],
       { cwd },
     ),
+    execImpl(
+      "gh",
+      ["run", "list", "--limit", "30", "--json", "workflowName,displayTitle,headBranch,conclusion,status,createdAt,updatedAt,event"],
+      { cwd },
+    ),
   ]);
   const prs = parseJsonArray(prResult.ok ? prResult.stdout : "")
     .filter((pr) => inWindow(pr.updatedAt || pr.createdAt));
@@ -624,12 +707,17 @@ export async function collectGhDailySignals({
     .filter((issue) => inWindow(issue.updatedAt || issue.createdAt));
   const releases = parseJsonArray(releaseResult.ok ? releaseResult.stdout : "")
     .filter((release) => inWindow(release.publishedAt));
+  const runs = parseJsonArray(runResult.ok ? runResult.stdout : "")
+    .filter((run) => inWindow(run.updatedAt || run.createdAt));
+  const surfacedRuns = runs.filter(shouldSurfaceRunEvent);
   const openPrs = prs.filter((pr) => String(pr.state || "").toUpperCase() === "OPEN").length;
   const mergedPrs = prs.filter((pr) => String(pr.state || "").toUpperCase() === "MERGED").length;
+  const failedRuns = surfacedRuns.filter((run) => runStatusLabel(run) !== "성공").length;
   const highlights = [];
   if (prs.length) highlights.push(`PR 업데이트 ${prs.length}건${openPrs ? ` · open ${openPrs}건` : ""}${mergedPrs ? ` · merged ${mergedPrs}건` : ""}`);
   if (issues.length) highlights.push(`이슈 업데이트 ${issues.length}건`);
   if (releases.length) highlights.push(`릴리즈 ${releases.length}건`);
+  if (failedRuns) highlights.push(`워크플로 실패 ${failedRuns}건`);
   if (!highlights.length) highlights.push("gh CLI는 연결됐지만 해당 기간 PR/이슈/릴리즈 변화는 없습니다.");
   const events = [
     ...prs.map((pr) => ({
@@ -640,6 +728,20 @@ export async function collectGhDailySignals({
       at: release.publishedAt,
       text: `릴리즈 ${cleanString(release.tagName || release.name, 60)} 배포`,
     })),
+    ...issues.map((issue) => ({
+      at: issue.updatedAt || issue.createdAt,
+      text: `이슈 #${issue.number} ${String(issue.state || "").toLowerCase()} · ${cleanString(issue.title, 80)}`,
+    })),
+    ...surfacedRuns.map((run) => {
+      const deploy = DEPLOY_WORKFLOW_RE.test(cleanString(run?.workflowName, 80));
+      const prefix = deploy ? "배포" : "체크";
+      const label = runStatusLabel(run);
+      const target = runDisplayTarget(run);
+      return {
+        at: run.updatedAt || run.createdAt,
+        text: `${prefix} ${label} · ${cleanString(run?.workflowName, 60)}${target ? ` · ${target}` : ""}`,
+      };
+    }),
   ];
   return sourceStatus({
     id: "gh_cli",
@@ -651,6 +753,9 @@ export async function collectGhDailySignals({
       mergedPrs,
       issues: issues.length,
       releases: releases.length,
+      workflowRuns: runs.length,
+      surfacedWorkflowRuns: surfacedRuns.length,
+      failedWorkflowRuns: failedRuns,
     },
     highlights,
     summary: highlights.join(" / "),
@@ -800,6 +905,7 @@ export function normalizeExternalOfficeHoursDigest(textOrObject = "", expectedSo
         return sourceStatus({
           id,
           state,
+          collectionState: state,
           detail: state === "ready"
             ? "external MCP digest succeeded"
             : (legacyCountsDetail || externalDigestFailureDetail(id, { summary, failureDetail: fallbackDetail })),
@@ -818,6 +924,7 @@ export function normalizeExternalOfficeHoursDigest(textOrObject = "", expectedSo
     .map((source) => byId.get(source) || sourceStatus({
       id: source,
       state: "failed",
+      collectionState: "failed",
       detail: externalDigestFailureDetail(source, { failureDetail: fallbackDetail }),
     }));
 }
@@ -861,18 +968,27 @@ export function finalizeDailyOfficeHoursDigest({
   const signalMap = sourceById([...localSignals, ...externalSignals]);
   const gateStatusMap = sourceById(gate?.sources || []);
   const sources = OFFICE_HOURS_SOURCE_ORDER.map((id) => {
+    const gateStatus = gateStatusMap.get(id);
     const merged = signalMap.get(id) || gateStatusMap.get(id) || sourceStatus({ id });
+    const state = normalizeStatusState(merged.state);
+    const connectionState = normalizeStatusState(
+      gateStatus?.connectionState ?? gateStatus?.state ?? merged.connectionState,
+      state,
+    );
+    const collectionState = normalizeStatusState(merged.collectionState ?? merged.state, state);
     return {
       id: merged.id,
       label: merged.label,
-      state: merged.state,
-      available: merged.available,
+      state,
+      available: connectionState === "ready",
+      connectionState,
+      collectionState,
       // The gate is the authority on selection: signal statuses (especially
       // normalized external digests) default selected/required to a concrete
-      // false, which would un-require a selected source whose digest failed and
-      // silently skip the failedRequired block below.
-      selected: Boolean(gateStatusMap.get(id)?.selected ?? merged.selected),
-      required: Boolean(gateStatusMap.get(id)?.required ?? merged.required),
+      // false, which would un-require a selected source and hide real connection
+      // failures from the failedRequired block below.
+      selected: Boolean(gateStatus?.selected ?? merged.selected),
+      required: Boolean(gateStatus?.required ?? merged.required),
       detail: merged.detail,
       checkedAt: merged.checkedAt,
       counts: merged.counts || {},
@@ -883,14 +999,14 @@ export function finalizeDailyOfficeHoursDigest({
       events: normalizeEventList(merged.events),
     };
   });
-  const failedRequired = sources.filter((source) => source.required && source.state !== "ready");
+  const failedRequired = sources.filter((source) => source.required && source.connectionState !== "ready");
   if (failedRequired.length) {
     const updatedGate = {
       ...gate,
       ok: false,
       blocking: true,
       reason: "selected_sources_failed",
-      message: `선택된 source digest가 실패했습니다: ${failedRequired.map((source) => source.id).join(", ")}.`,
+      message: `선택된 source 연결이 준비되지 않았습니다: ${failedRequired.map((source) => source.id).join(", ")}.`,
       sources,
       missingRequiredSources: failedRequired.map((source) => source.id),
       connectActions: connectActionsFor({ missingRequiredSources: failedRequired.map((source) => source.id) }),

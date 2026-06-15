@@ -21,9 +21,9 @@ export const NEWS_MARKET_RADAR_CACHE_SCHEMA_VERSION = 1;
 export const CURRICULUM_ANSWER_LOG_SCHEMA_VERSION = 1;
 export const NEWS_MARKET_RADAR_RETENTION_DAYS = 30;
 export const NEWS_MARKET_RADAR_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
-export const NEWS_MARKET_RADAR_DEFAULT_PROVIDER_TIMEOUT_MS = 240_000;
+export const NEWS_MARKET_RADAR_DEFAULT_PROVIDER_TIMEOUT_MS = 480_000;
 export const NEWS_MARKET_RADAR_CONTENT_LOCALE = "ko-KR";
-export const NEWS_MARKET_RADAR_PROMPT_PROFILE = "ko_market_radar_v6_adaptive_context_trusted_sources_no_self_sources";
+export const NEWS_MARKET_RADAR_PROMPT_PROFILE = "ko_market_radar_v7_market_surfaces_two_pass_exa";
 export const NEWS_MARKET_RADAR_LANE_CONCURRENCY = 2;
 export const NEWS_MARKET_RADAR_MAX_CARDS_PER_LANE = 4;
 export const NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
@@ -42,6 +42,30 @@ const MARKET_RADAR_LANE_TRUSTED_QUERY_LIMIT = 3;
 const MARKET_RADAR_LANE_SOURCE_HINT_LIMIT = 4;
 const MARKET_RADAR_LANE_BASE_QUERY_LIMIT = 8;
 const MARKET_RADAR_LANE_QUERY_SEED_LIMIT = 10;
+const MARKET_RADAR_EVIDENCE_TYPES = Object.freeze([
+  "pricing",
+  "review",
+  "launch",
+  "anti_signal",
+  "local_ko",
+  "competitor",
+  "platform",
+  "community",
+  "social_profile",
+  "reference",
+]);
+const MARKET_RADAR_DIVERSITY_ROLE_PRIORITY = Object.freeze([
+  "pricing",
+  "review",
+  "launch",
+  "anti_signal",
+  "local_ko",
+  "competitor",
+  "platform",
+  "community",
+  "social_profile",
+  "reference",
+]);
 const NEWS_LANE_IDS = Object.freeze([
   "icp",
   "problem",
@@ -69,6 +93,7 @@ const SELF_REFERENCE_STOP_TERMS = new Set([
 ]);
 
 const MARKET_RADAR_BUYING_SIGNAL_PATTERN = /(pricing|price|reviews?|alternatives?|compare|comparison|vs|plans?|lifetime|deal|checkout|purchase|buying|budget|결제|가격|리뷰|대안|구매|예산|요금)/i;
+const MARKET_RADAR_URL_PATTERN = /https?:\/\/[^\s<>"')\]]+/gi;
 
 export const NEWS_MARKET_RADAR_PROGRESS_STEPS = Object.freeze([
   {
@@ -198,7 +223,7 @@ const DENIED_PATH_SEGMENTS = new Set([
 
 const SECRETISH_FILENAME_PATTERN = /(^|[._-])(secret|token|credential|password|key)([._-]|$)/i;
 const SECRET_TOKEN_PATTERNS = Object.freeze([
-  /sk-[A-Za-z0-9_\-]{20,}/g,
+  /sk-[A-Za-z0-9_\-]{8,}/g,
   /AKIA[A-Z0-9]{16}/g,
   /xox[baprs]-[A-Za-z0-9_-]{10,}/g,
   /AIza[A-Za-z0-9_\-]{20,}/g,
@@ -1018,8 +1043,8 @@ export function buildMarketRadarResearchContext({
     id: answer.id,
     day: answer.day,
     dimension: answer.dimension,
-    question: answer.questionTitle || answer.questionPrompt,
-    answer: [answer.answerTitle, answer.freeformAnswer].filter(Boolean).join(" / "),
+    question: redactPrivateQueryText(answer.questionTitle || answer.questionPrompt),
+    answer: redactPrivateQueryText([answer.answerTitle, answer.freeformAnswer].filter(Boolean).join(" / ")),
     isAntiSignal: answer.isAntiSignal,
     weight: answer.marketRadarWeight,
     occurredAt: answer.occurredAt,
@@ -1046,6 +1071,11 @@ export function buildMarketRadarResearchContext({
     selfReferenceProfile,
     adaptiveProfile,
   });
+  const marketSurfaces = buildMarketRadarMarketSurfaces({
+    workspaceEvidence,
+    answers,
+    selfReferenceProfile,
+  });
   return truncateForPrompt({
     generatedAt: now.toISOString(),
     workspace: {
@@ -1060,6 +1090,7 @@ export function buildMarketRadarResearchContext({
     adaptiveProfile,
     marketLocale: adaptiveProfile.localeProfile.marketLocale,
     priority: "paid alternatives, pricing, reviews, buying behavior, public product/store pages",
+    marketSurfaces,
     trustedSourcePolicy: marketRadarTrustedSourcePolicy(),
     trustedSourceHints,
     evidence: (workspaceEvidence.evidence || []).map((item) => ({
@@ -1067,7 +1098,7 @@ export function buildMarketRadarResearchContext({
       role: item.role,
       path: item.path,
       title: item.title,
-      excerpt: item.excerpt,
+      excerpt: redactPrivateQueryText(item.excerpt),
     })),
     answers: answerSummaries,
     querySeeds,
@@ -1087,6 +1118,7 @@ function fingerprintMarketRadarResearchContext(context = {}) {
     selfReferenceProfile: context.selfReferenceProfile,
     querySeeds: context.querySeeds || [],
     searchExclusions: context.searchExclusions || {},
+    marketSurfaces: context.marketSurfaces || {},
     answers: (context.answers || []).map((answer) => ({
       id: answer.id,
       day: answer.day,
@@ -1249,6 +1281,7 @@ export function buildMarketRadarLaneResearchContext(context = {}, laneId = "") {
     lanes: [lane],
     answers,
     researchFocus: laneResearchFocus(laneId),
+    marketSurfaces: filterMarketSurfacesForLane(context.marketSurfaces, laneId),
     querySeeds,
     trustedSourceHints,
     searchExclusions: buildMarketRadarSearchExclusions({
@@ -1279,15 +1312,17 @@ export function buildMarketRadarLaneProviderPrompt(context) {
     "",
     "Adaptive source policy:",
     "- Build searches from Context.adaptiveProfile.querySeeds, Context.lane, and Context.answers. Do not add fixed persona, geography, tool-stack, or platform assumptions.",
+    "- Context.marketSurfaces contains user-provided market references and typed source surfaces. Treat those URLs as research targets, not as self-source exclusions unless they also match Context.selfReferenceProfile.",
     "- Context.adaptiveProfile.localeProfile describes inferred language/market priority. Prefer matching-language and matching-market sources first, then use global sources when evidence quality is stronger or local evidence is sparse.",
     "- When sources are outside the inferred locale, explain the market implication for the user's context rather than translating them as-is.",
     "",
     "Trusted source policy:",
     "- Context.trustedSourceHints lists preferred source seeds and site queries for this lane. Use them as priority starting points, not a mandatory citation list or hard whitelist.",
-    "- Use at most one web_search_advanced_exa call for this lane.",
-    "- For that search call use type:\"fast\", numResults <= 4, enableSummary:false, enableHighlights:true, highlightsMaxCharacters <= 600, and no more than 2 additionalQueries.",
+    "- Use at most two web_search_advanced_exa calls total.",
+    "- Pass A: trusted/reference/local evidence. Use type:\"fast\", numResults <= 6, enableSummary:false, enableHighlights:true, highlightsMaxCharacters <= 800, and no more than 2 additionalQueries.",
+    "- Pass B: competitor/recent-market/pricing/review evidence. Use type:\"fast\", numResults <= 8, enableSummary:false, enableHighlights:true, highlightsMaxCharacters <= 800, and no more than 2 additionalQueries.",
+    "- Fetch at most 4 URLs total across both passes. Fetch no more than 2 URLs from either pass unless the other pass has no useful result.",
     "- Search the strongest relevant trusted-source query when it is not self-referential, then use any remaining query budget for current pricing, reviews, product pages, and community evidence.",
-    "- Call web_fetch_exa for at most 3 URLs only when search snippets are insufficient for sourceRefs.",
     "- Strong confidence requires 2+ independent external domains, or a primary trusted source plus independent current market evidence.",
     "- Community-only sources such as launch/community forums can support a card but cannot make confidence strong by themselves.",
     "- Evergreen founder essays and company handbooks can support interpretation, but claims about live market trends need current evidence.",
@@ -1328,6 +1363,8 @@ export function buildMarketRadarSynthesisPrompt({
     "- Produce the final News Market Radar snapshot in Korean.",
     "- Preserve adaptive locale ordering: when evidence quality is similar, prefer cards grounded in Context.adaptiveProfile.localeProfile and querySeeds.",
     `- Keep at most ${NEWS_MARKET_RADAR_MAX_CARDS_PER_LANE} cards per lane.`,
+    "- Preserve distinct evidence roles when possible: pricing, review, launch, local_ko, competitor, and anti_signal cards should not be collapsed into one pricing-only view.",
+    "- Preserve optional card fields when known: marketEntity, offer, price, evidenceType, and actionHint.",
     "- Strong confidence requires at least 2 independent source domains pointing in the same direction.",
     "- Preserve product names, plan names, URLs, domains, currency symbols, and official source titles.",
     "- Keep partialFailures in status if present.",
@@ -1496,6 +1533,148 @@ function buildMarketRadarSearchExclusions({
   };
 }
 
+function buildMarketRadarMarketSurfaces({
+  workspaceEvidence = {},
+  answers = [],
+  selfReferenceProfile = null,
+} = {}) {
+  const profile = normalizeSelfReferenceProfile(selfReferenceProfile);
+  const buckets = emptyMarketSurfaces();
+  const addSurface = (rawUrl, source = {}) => {
+    const normalizedUrl = normalizeMarketSurfaceUrl(rawUrl);
+    if (!normalizedUrl) return;
+    const domain = normalizeDomain(domainFromUrl(normalizedUrl));
+    if (!domain) return;
+    const surface = {
+      url: normalizedUrl,
+      domain,
+      label: cleanString(source.label || source.title || domain, 160),
+      role: cleanString(source.role || "reference", 80),
+      sourcePath: cleanString(source.path || "", 500),
+      evidenceType: classifyMarketSurface({ url: normalizedUrl, domain, text: source.text || "" }),
+    };
+    if (isSelfReferenceSource({
+      url: surface.url,
+      domain: surface.domain,
+      title: surface.label,
+    }, profile)) {
+      addMarketSurfaceToBucket(buckets.excluded_self, surface);
+      return;
+    }
+    const trusted = annotateMarketRadarSourceTrust({ url: surface.url, domain: surface.domain });
+    if (trusted.sourceKey) {
+      addMarketSurfaceToBucket(buckets.trusted, {
+        ...surface,
+        sourceKey: trusted.sourceKey,
+        trustTier: trusted.trustTier,
+        roles: trusted.roles || [],
+      });
+    }
+    for (const bucket of bucketsForMarketSurface(surface)) {
+      addMarketSurfaceToBucket(buckets[bucket], surface);
+    }
+  };
+
+  for (const item of workspaceEvidence.evidence || []) {
+    const text = redactPrivateQueryText(item.excerpt || "");
+    for (const url of extractUrlsFromText(text)) {
+      addSurface(url, {
+        label: item.title,
+        role: item.role,
+        path: item.path,
+        text,
+      });
+    }
+  }
+  for (const answer of answers || []) {
+    const text = redactPrivateQueryText([
+      answer.dimension,
+      answer.questionTitle,
+      answer.questionPrompt,
+      answer.answerTitle,
+      answer.freeformAnswer,
+    ].filter(Boolean).join(" "));
+    for (const url of extractUrlsFromText(text)) {
+      addSurface(url, {
+        label: answer.questionTitle || answer.dimension || "answer",
+        role: "answer",
+        text,
+      });
+    }
+  }
+  return buckets;
+}
+
+function emptyMarketSurfaces() {
+  return {
+    trusted: [],
+    user_reference: [],
+    competitor: [],
+    launch: [],
+    social_profile: [],
+    pricing: [],
+    local_ko: [],
+    excluded_self: [],
+  };
+}
+
+function filterMarketSurfacesForLane(marketSurfaces = {}, laneId = "") {
+  const input = marketSurfaces && typeof marketSurfaces === "object" ? marketSurfaces : {};
+  const output = emptyMarketSurfaces();
+  for (const key of Object.keys(output)) {
+    output[key] = Array.isArray(input[key]) ? input[key] : [];
+  }
+  if (laneId === "platform") {
+    output.pricing = [];
+  }
+  if (laneId === "icp" || laneId === "problem") {
+    output.launch = output.launch.slice(0, 4);
+  }
+  return output;
+}
+
+function normalizeMarketSurfaceUrl(rawUrl = "") {
+  const trimmed = cleanString(rawUrl, 1_000).replace(/[.,;:!?]+$/, "");
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function classifyMarketSurface({ url = "", domain = "", text = "" } = {}) {
+  const urlContext = `${url} ${domain}`;
+  if (/threads\.com|twitter\.com|x\.com|linkedin\.com|instagram\.com/i.test(urlContext)) return "social_profile";
+  if (/producthunt\.com|news\.ycombinator\.com/i.test(urlContext)) return "launch";
+  if (/disquiet\.io|eopla\.net/i.test(urlContext)) return "local_ko";
+
+  const textContext = String(text || "");
+  if (/show hn|launch/i.test(textContext)) return "launch";
+  if (/한국|국내/i.test(textContext)) return "local_ko";
+  if (MARKET_RADAR_BUYING_SIGNAL_PATTERN.test(`${urlContext} ${textContext}`)) return "pricing";
+  if (/competitor|alternative|대안|경쟁/i.test(textContext)) return "competitor";
+  return "user_reference";
+}
+
+function bucketsForMarketSurface(surface = {}) {
+  const buckets = new Set(["user_reference"]);
+  if (surface.evidenceType === "social_profile") buckets.add("social_profile");
+  if (surface.evidenceType === "launch") buckets.add("launch");
+  if (surface.evidenceType === "local_ko") buckets.add("local_ko");
+  if (surface.evidenceType === "pricing") buckets.add("pricing");
+  if (surface.evidenceType === "competitor") buckets.add("competitor");
+  return [...buckets];
+}
+
+function addMarketSurfaceToBucket(bucket, surface) {
+  if (!Array.isArray(bucket) || !surface?.url) return;
+  if (bucket.some((item) => item.url === surface.url)) return;
+  bucket.push(surface);
+}
+
 function chooseSelfReferenceExcludeText(profile) {
   const candidates = [
     profile.productName,
@@ -1534,7 +1713,13 @@ function hasExternalWebSourceRef(sourceRefs = []) {
 }
 
 function extractUrlsFromText(text = "") {
-  return [...String(text || "").matchAll(/https?:\/\/[^\s)\]>"']+/g)].map((match) => match[0]);
+  const urls = [];
+  for (const match of String(text || "").matchAll(MARKET_RADAR_URL_PATTERN)) {
+    const cleaned = normalizeMarketSurfaceUrl(match[0]);
+    if (!cleaned || urls.includes(cleaned)) continue;
+    urls.push(cleaned);
+  }
+  return urls.slice(0, 40);
 }
 
 function selfReferenceTermsMatch(value = "", terms = new Set()) {
@@ -1789,6 +1974,17 @@ function normalizeCard(value = {}, {
     summary: cleanString(value.summary || value.body || "", 1_200),
     impact: normalizeImpact(value.impact),
     confidence,
+    marketEntity: normalizeMarketRadarCardText(
+      value.marketEntity || value.market_entity || value.entity || value.productName || value.product_name,
+      160,
+    ),
+    offer: normalizeMarketRadarCardText(value.offer || value.plan || value.package || value.packageName, 220),
+    price: normalizeMarketRadarCardText(value.price || value.pricing || value.pricePoint || value.price_point, 120),
+    evidenceType: normalizeMarketRadarEvidenceType(value.evidenceType || value.evidence_type, {
+      impact: value.impact,
+      sourceRefs,
+    }),
+    actionHint: normalizeMarketRadarCardText(value.actionHint || value.action_hint || value.nextAction, 500),
     whyItMatters: cleanString(value.whyItMatters || value.why_it_matters || "", 1_200),
     suggestedHypothesisUpdate: cleanString(
       value.suggestedHypothesisUpdate || value.suggested_hypothesis_update || "",
@@ -1837,6 +2033,36 @@ function normalizeSourceRefs(value, { selfReferenceProfile = null } = {}) {
     .filter((source) => source.url || source.path || source.excerpt)
     .filter((source) => !isSelfReferenceSource(source, normalizedSelfReferenceProfile));
   return dedupeSourceRefs(normalized).slice(0, 12);
+}
+
+function normalizeMarketRadarCardText(value = "", maxLength = 500) {
+  return cleanString(redactPrivateQueryText(value), maxLength);
+}
+
+function normalizeMarketRadarEvidenceType(value = "", {
+  impact = "",
+  sourceRefs = [],
+} = {}) {
+  const normalized = cleanString(value, 80).toLowerCase().replace(/[\s-]+/g, "_");
+  if (MARKET_RADAR_EVIDENCE_TYPES.includes(normalized)) return normalized;
+  if (normalized === "antisignal" || normalized === "anti-signal") return "anti_signal";
+  if (normalizeImpact(impact) === "weakens") return "anti_signal";
+  return inferMarketRadarEvidenceTypeFromSources(sourceRefs);
+}
+
+function inferMarketRadarEvidenceTypeFromSources(sourceRefs = []) {
+  const annotations = (sourceRefs || []).map((source) => annotateMarketRadarSourceTrust(source));
+  if (annotations.some((annotation) => (annotation.roles || []).includes("pricing"))) return "pricing";
+  if (annotations.some((annotation) => (annotation.roles || []).includes("launch"))) return "launch";
+  if (annotations.some((annotation) => (annotation.roles || []).includes("founder_local_ko"))) return "local_ko";
+  if ((sourceRefs || []).some(sourceHasBuyingSignal)) return "pricing";
+  if ((sourceRefs || []).some((source) => /review|rating|testimonial|비교|후기/i.test([
+    source.url,
+    source.title,
+    source.excerpt,
+  ].filter(Boolean).join(" ")))) return "review";
+  if (annotations.some((annotation) => annotation.trustTier === "community")) return "community";
+  return "reference";
 }
 
 function fallbackMarketRadarSourceRefId({
@@ -1998,11 +2224,12 @@ function dedupeAndLimitLaneCards(lane = {}, {
       selfReferenceProfile,
     });
   }
-  const cards = rankMarketRadarCards(merged, {
+  const ranked = rankMarketRadarCards(merged, {
     now,
     rankedAnswers,
     adaptiveProfile,
-  }).slice(0, NEWS_MARKET_RADAR_MAX_CARDS_PER_LANE);
+  });
+  const cards = selectDiverseMarketRadarCards(ranked, NEWS_MARKET_RADAR_MAX_CARDS_PER_LANE);
   return {
     ...lane,
     impact: aggregateImpact(cards),
@@ -2016,8 +2243,18 @@ function findDuplicateCardIndex(cards, card) {
   const titleDomainKey = cardTitleDomainKey(card);
   return cards.findIndex((existing) => {
     if (sourceKeys.size > 0 && sourceKeysForCard(existing).some((key) => sourceKeys.has(key))) return true;
+    if (hasDistinctMarketCardIdentity(existing, card)) return false;
     return titleDomainKey && titleDomainKey === cardTitleDomainKey(existing);
   });
+}
+
+function hasDistinctMarketCardIdentity(a = {}, b = {}) {
+  const entityA = normalizeDedupeText(a.marketEntity);
+  const entityB = normalizeDedupeText(b.marketEntity);
+  if (entityA && entityB && entityA !== entityB) return true;
+  const evidenceTypeA = normalizeMarketRadarEvidenceType(a.evidenceType, { impact: a.impact, sourceRefs: a.sourceRefs });
+  const evidenceTypeB = normalizeMarketRadarEvidenceType(b.evidenceType, { impact: b.impact, sourceRefs: b.sourceRefs });
+  return Boolean(evidenceTypeA && evidenceTypeB && evidenceTypeA !== evidenceTypeB);
 }
 
 function mergeMarketRadarCards(a, b, { selfReferenceProfile = null } = {}) {
@@ -2046,6 +2283,11 @@ function mergeMarketRadarCards(a, b, { selfReferenceProfile = null } = {}) {
     confidence: normalizeCardConfidence(maxConfidence(a.confidence, b.confidence), domains.size, sourceRefs),
     whyItMatters: chooseCardText(a.whyItMatters, b.whyItMatters, 1_200),
     suggestedHypothesisUpdate: chooseCardText(a.suggestedHypothesisUpdate, b.suggestedHypothesisUpdate, 1_500),
+    marketEntity: chooseCardText(a.marketEntity, b.marketEntity, 160),
+    offer: chooseCardText(a.offer, b.offer, 220),
+    price: chooseCardText(a.price, b.price, 120),
+    evidenceType: chooseMarketRadarEvidenceType(a, b, sourceRefs),
+    actionHint: chooseCardText(a.actionHint, b.actionHint, 500),
     suggestedDocTargets,
     relatedDays,
     relatedAnswerIds,
@@ -2072,6 +2314,54 @@ function rankMarketRadarCards(cards = [], {
     .map((item) => item.card);
 }
 
+function selectDiverseMarketRadarCards(cards = [], limit = NEWS_MARKET_RADAR_MAX_CARDS_PER_LANE) {
+  const ranked = Array.isArray(cards) ? cards.filter(Boolean) : [];
+  if (ranked.length <= limit) return ranked;
+  const selectedIndexes = new Set();
+  const selected = [];
+  const pick = (index) => {
+    if (index < 0 || selectedIndexes.has(index) || selected.length >= limit) return;
+    selectedIndexes.add(index);
+    selected.push({ card: ranked[index], index });
+  };
+
+  for (const role of MARKET_RADAR_DIVERSITY_ROLE_PRIORITY) {
+    const index = ranked.findIndex((card, candidateIndex) => (
+      !selectedIndexes.has(candidateIndex)
+      && marketRadarDiversityRolesForCard(card).includes(role)
+    ));
+    pick(index);
+    if (selected.length >= limit) break;
+  }
+
+  for (let index = 0; index < ranked.length && selected.length < limit; index += 1) {
+    pick(index);
+  }
+
+  return selected
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.card);
+}
+
+function marketRadarDiversityRolesForCard(card = {}) {
+  const roles = new Set();
+  const evidenceType = normalizeMarketRadarEvidenceType(card.evidenceType, {
+    impact: card.impact,
+    sourceRefs: card.sourceRefs,
+  });
+  if (evidenceType) roles.add(evidenceType);
+  if (normalizeImpact(card.impact) === "weakens") roles.add("anti_signal");
+  for (const source of card.sourceRefs || []) {
+    const annotation = annotateMarketRadarSourceTrust(source);
+    for (const role of annotation.roles || []) {
+      if (role === "founder_local_ko") roles.add("local_ko");
+      if (MARKET_RADAR_EVIDENCE_TYPES.includes(role)) roles.add(role);
+    }
+    if (sourceHasBuyingSignal(source)) roles.add("pricing");
+  }
+  return [...roles];
+}
+
 function scoreMarketRadarCard(card = {}, {
   now = new Date(),
   rankedAnswers = [],
@@ -2083,6 +2373,11 @@ function scoreMarketRadarCard(card = {}, {
   const relevanceText = [
     card.title,
     card.summary,
+    card.marketEntity,
+    card.offer,
+    card.price,
+    card.evidenceType,
+    card.actionHint,
     card.whyItMatters,
     card.suggestedHypothesisUpdate,
     ...(card.sourceRefs || []).flatMap((source) => [source.title, source.excerpt]),
@@ -2152,6 +2447,24 @@ function chooseCardText(a = "", b = "", maxLength = 500) {
   if (!first) return second;
   if (!second) return first;
   return second.length > first.length ? second : first;
+}
+
+function chooseMarketRadarEvidenceType(a = {}, b = {}, sourceRefs = []) {
+  const first = normalizeMarketRadarEvidenceType(a.evidenceType, {
+    impact: a.impact,
+    sourceRefs: a.sourceRefs,
+  });
+  const second = normalizeMarketRadarEvidenceType(b.evidenceType, {
+    impact: b.impact,
+    sourceRefs: b.sourceRefs,
+  });
+  if (first && first === second) return first;
+  if (second && second !== "reference") return second;
+  if (first && first !== "reference") return first;
+  return normalizeMarketRadarEvidenceType(first || second, {
+    impact: aggregateImpact([a, b]),
+    sourceRefs,
+  });
 }
 
 function maxConfidence(a = "", b = "") {
@@ -2317,6 +2630,7 @@ function compactTrustedSourceHints(sources = [], limit = MARKET_RADAR_LANE_SOURC
     label: cleanString(source.label || "", 120),
     domain: cleanString(source.domain || "", 120),
     pathPrefix: cleanString(source.pathPrefix || "", 120),
+    roles: normalizeStringArray(source.roles || [], 8, 40),
     trustTier: cleanString(source.trustTier || "", 40),
   }));
 }
@@ -2422,6 +2736,11 @@ function makeProviderSchemaExample() {
             summary: "1-3문장 한국어 종합. 숫자와 가격은 그대로 보존합니다.",
             impact: "strengthens|weakens|mixed|unknown",
             confidence: "weak|medium|strong",
+            marketEntity: "경쟁 제품/커뮤니티/시장 표면 이름",
+            offer: "플랜, 패키지, 런칭 제안, 또는 구매 맥락",
+            price: "$49/month 또는 공개 가격 문자열",
+            evidenceType: "pricing|review|launch|anti_signal|local_ko|competitor|platform|community|social_profile|reference",
+            actionHint: "이 근거를 바탕으로 사용자가 다음에 검증할 행동",
             whyItMatters: "이 근거가 사용자의 다음 행동을 어떻게 바꾸는지 한국어로 설명",
             suggestedHypothesisUpdate: "자동 수정이 아니라 한국어 문장으로 쓴 가설 갱신 제안",
             suggestedDocTargets: ["ICP.md", "SPEC.md"],
@@ -2459,6 +2778,11 @@ function makeLaneProviderSchemaExample() {
           summary: "1-3문장 한국어 종합. 숫자와 가격은 그대로 보존합니다.",
           impact: "strengthens|weakens|mixed|unknown",
           confidence: "weak|medium|strong",
+          marketEntity: "경쟁 제품/커뮤니티/시장 표면 이름",
+          offer: "플랜, 패키지, 런칭 제안, 또는 구매 맥락",
+          price: "$49/month 또는 공개 가격 문자열",
+          evidenceType: "pricing|review|launch|anti_signal|local_ko|competitor|platform|community|social_profile|reference",
+          actionHint: "이 근거를 바탕으로 사용자가 다음에 검증할 행동",
           whyItMatters: "이 근거가 사용자의 다음 행동을 어떻게 바꾸는지 한국어로 설명",
           suggestedHypothesisUpdate: "자동 수정이 아니라 한국어 문장으로 쓴 가설 갱신 제안",
           suggestedDocTargets: ["ICP.md", "SPEC.md"],

@@ -1650,6 +1650,8 @@ struct IntakeV2ReadyAnalyzeView: View {
     var scanBlockedNotice: WorkspaceScanBlockedNotice? = nil
     var onScanBlockedRescan: ((AgentProvider) -> Void)? = nil
     var onScanBlockedAuthAction: ((WorkspaceScanProviderReadiness) -> Void)? = nil
+    var agentic30GitignoreConsent: Agentic30GitignoreState? = nil
+    var onAgentic30GitignoreConsent: ((Bool) -> Void)? = nil
 
     @State private var decision: IntakeV2Decision?
     @State private var revealCard: Bool = false
@@ -1662,6 +1664,7 @@ struct IntakeV2ReadyAnalyzeView: View {
     @State private var didTrackScanWaitViewed: Bool = false
     @State private var didTrackMergeCompleted: Bool = false
     @State private var showBootLogDetails: Bool = false
+    @State private var showsAgentic30GitignoreConsent = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AccessibilityFocusState private var primaryCTAFocused: Bool
 
@@ -1705,6 +1708,22 @@ struct IntakeV2ReadyAnalyzeView: View {
         .onDisappear {
             todoGenerationTask?.cancel()
             todoGenerationTask = nil
+        }
+        .alert(
+            "Agentic30 로컬 메모리를 Git에서 제외할까요?",
+            isPresented: $showsAgentic30GitignoreConsent
+        ) {
+            Button("동의하고 시작") {
+                onAgentic30GitignoreConsent?(true)
+                openDay1()
+            }
+            Button("수정하지 않고 시작") {
+                onAgentic30GitignoreConsent?(false)
+                openDay1()
+            }
+            Button("돌아가기", role: .cancel) {}
+        } message: {
+            Text(".agentic30/에는 온보딩 메모리와 Day 진행 상태가 저장됩니다. 프로젝트와 고객 맥락이 포함될 수 있어 GitHub에 올라가지 않도록 .gitignore에 .agentic30/ 한 줄을 추가하려고 합니다.")
         }
     }
 
@@ -2362,6 +2381,14 @@ struct IntakeV2ReadyAnalyzeView: View {
     private func handleInboxCTA(_ presentation: Day1ScanWaitPresentation) {
         guard presentation.canOpenDay1 else { return }
         trackPresentationMilestonesIfNeeded(presentation)
+        if agentic30GitignoreConsent?.needsConsent == true {
+            showsAgentic30GitignoreConsent = true
+            return
+        }
+        openDay1()
+    }
+
+    private func openDay1() {
         onDone()
     }
 

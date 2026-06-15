@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### 추가
+- **전략 리포트 재리서치**: Strategy 화면에 정적 레퍼런스를 유지하면서도 수동 재리서치 버튼으로 Exa 기반 공개 근거, 경쟁 구도, SWOT, 캔버스 리포트를 다시 생성하는 sidecar/Swift 경로를 추가했습니다.
+- **`.agentic30/` gitignore 동의 게이트**: 워크스페이스 스캔이 `.agentic30/` ignore 항목을 자동으로 쓰기 전에 사용자 동의를 받도록 하고, 승인/거절 결과를 sidecar와 앱 상태에 반영합니다.
+
+### 변경
+- **뉴스·브리핑 근거 품질**: 시장 레이더 카드가 가격·리뷰·런칭·anti-signal 근거를 더 다양하게 보존하고, Morning Briefing/Office Hours 소스 상태가 연결 상태와 수집 상태를 분리해 보여줍니다.
+- **전략/뉴스 레퍼런스 UI**: Strategy와 News 화면에서 근거 링크, 발행 정보, 출처 설명을 더 길게 확인할 수 있도록 세부 카드와 rail 라우팅을 정리했습니다.
+
+### 수정
+- **macOS 폴더 선택 안정성**: Settings/온보딩의 workspace picker를 전용 presenter로 감싸 open panel XPC 중단과 중복 표시를 줄였습니다.
+- **전략 리서치 timeout**: 실제 sidecar run 로그에서 4분 hard timeout을 확인하고 provider 공개 검색 기본 예산을 8분으로 늘렸습니다.
+
 ## [1.0.23] - 2026-06-14
 
 ### 추가

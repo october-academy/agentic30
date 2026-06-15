@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agentic30 — Competitive Positioning Matrix</title>
+<style>
+  :root{
+    --bg:#060b0a;
+    --bg2:#081310;
+    --panel:#0a1714;
+    --line:rgba(94,234,212,.14);
+    --line-strong:rgba(94,234,212,.30);
+    --teal:#5eead4;
+    --teal-dim:#2dd4bf;
+    --magenta:#f472b6;
+    --txt:#cfe8e0;
+    --muted:#6f8a82;
+    --muted2:#4f6760;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Monaco,"Cascadia Code",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:radial-gradient(140% 120% at 75% -10%, #0a1a16 0%, var(--bg) 55%);color:var(--txt);font-family:var(--mono);-webkit-font-smoothing:antialiased}
+  a{color:var(--teal);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  .wrap{max-width:1280px;margin:0 auto;padding:22px 26px 40px}
+
+  /* header */
+  .top{display:flex;justify-content:space-between;align-items:baseline;gap:16px;border-bottom:1px solid var(--line);padding-bottom:12px;flex-wrap:wrap}
+  .brand{font-size:12px;letter-spacing:.22em;color:var(--muted)}
+  .brand b{color:var(--teal);letter-spacing:.28em}
+  .axhint{font-size:11px;letter-spacing:.08em;color:var(--muted2)}
+  .axhint b{color:var(--magenta);font-weight:600}
+
+  .title{margin:22px 0 4px;font-size:clamp(18px,2.4vw,27px);font-weight:700;letter-spacing:-.01em;line-height:1.3}
+  .title .hot{color:var(--magenta)}
+  .sub{font-size:12.5px;color:var(--muted);max-width:920px;line-height:1.6}
+  .sub .k{color:var(--teal-dim)}
+
+  .stage{display:flex;gap:22px;margin-top:24px;align-items:stretch}
+  @media (max-width:940px){.stage{flex-direction:column}}
+
+  /* plot */
+  .plotcol{flex:1 1 auto;min-width:0}
+  .plotbox{position:relative;width:100%;aspect-ratio:1.18/1;border:1px solid var(--line-strong);background:
+      linear-gradient(var(--bg2),var(--bg2)) padding-box;
+      border-radius:4px;overflow:hidden}
+  .grid-h,.grid-v{position:absolute;background:var(--line)}
+  .grid-h{left:0;right:0;height:1px}
+  .grid-v{top:0;bottom:0;width:1px}
+  .axis-mid-h{position:absolute;left:0;right:0;top:50%;height:0;border-top:1px dashed rgba(94,234,212,.22)}
+  .axis-mid-v{position:absolute;top:0;bottom:0;left:50%;width:0;border-left:1px dashed rgba(94,234,212,.22)}
+
+  /* wedge glow top-right */
+  .wedge{position:absolute;top:0;right:0;width:50%;height:50%;
+    background:radial-gradient(120% 120% at 100% 0%, rgba(94,234,212,.10), rgba(244,114,182,.05) 45%, transparent 70%);
+    pointer-events:none}
+
+  .quad{position:absolute;font-size:10px;letter-spacing:.05em;line-height:1.45;color:var(--muted2);max-width:34%;pointer-events:none}
+  .quad b{display:block;color:var(--muted);font-size:10px;letter-spacing:.12em;margin-bottom:3px;font-weight:600}
+  .quad.tr{top:12px;right:14px;text-align:right}
+  .quad.tr b{color:var(--magenta)}
+  .quad.tl{top:12px;left:14px}
+  .quad.br{bottom:34px;right:14px;text-align:right}
+  .quad.bl{bottom:34px;left:14px}
+
+  /* edge axis labels */
+  .edge{position:absolute;font-size:10px;letter-spacing:.08em;color:var(--teal-dim);opacity:.85;pointer-events:none;white-space:nowrap}
+  .edge.top{top:6px;left:50%;transform:translateX(-50%)}
+  .edge.bottom{bottom:8px;left:50%;transform:translateX(-50%)}
+  .edge.left{left:14px;top:calc(50% - 28px)}
+  .edge.right{right:14px;top:calc(50% - 28px);text-align:right}
+
+  /* nodes */
+  .node{position:absolute;transform:translate(-50%,-50%);cursor:pointer;z-index:3}
+  .dot{width:11px;height:11px;border-radius:50%;background:var(--c);box-shadow:0 0 0 3px rgba(0,0,0,.35),0 0 10px 1px var(--c);transition:transform .15s ease, box-shadow .15s ease;outline:1px solid rgba(255,255,255,.18)}
+  .node:hover .dot{transform:scale(1.45)}
+  .node.sel .dot{transform:scale(1.55);box-shadow:0 0 0 3px rgba(0,0,0,.4),0 0 16px 4px var(--c)}
+  .lab{position:absolute;top:50%;left:16px;transform:translateY(calc(-50% + var(--label-y, 0px)));font-size:10.5px;letter-spacing:.01em;color:var(--txt);white-space:nowrap;text-shadow:0 1px 3px #000,0 0 6px #000;opacity:.92;transition:opacity .15s, color .15s}
+  .node.left .lab{left:auto;right:16px;text-align:right}
+  .node:hover .lab,.node.sel .lab{opacity:1;color:#fff}
+  .node.dim{opacity:.32}
+  .node.historical .dot{background:transparent;border:1.5px dashed var(--c);box-shadow:0 0 0 3px rgba(0,0,0,.35)}
+  .node.historical .lab{opacity:.72}
+  .node.historical.sel .dot{background:rgba(251,146,60,.10)}
+
+  /* agentic30 special */
+  .node.star{z-index:6}
+  .node.star .dot{width:17px;height:17px;background:var(--teal);box-shadow:0 0 0 4px rgba(6,11,10,.6),0 0 22px 6px rgba(94,234,212,.7)}
+  .node.star .ring{position:absolute;top:50%;left:50%;width:17px;height:17px;border-radius:50%;border:1.5px solid var(--teal);transform:translate(-50%,-50%);animation:pulse 2.4s ease-out infinite}
+  .node.star .lab{font-size:12px;font-weight:700;color:var(--teal);letter-spacing:.02em}
+  @keyframes pulse{0%{width:17px;height:17px;opacity:.8}100%{width:62px;height:62px;opacity:0}}
+
+  /* detail panel */
+  .panel{flex:0 0 350px;border:1px solid var(--line);background:linear-gradient(180deg,var(--panel),#07110e);border-radius:4px;padding:18px 18px 16px;display:flex;flex-direction:column;min-height:100%}
+  @media (max-width:940px){.panel{flex:1 1 auto}}
+  .p-kicker{font-size:10px;letter-spacing:.22em;color:var(--muted2)}
+  .chip{display:inline-block;margin-top:10px;font-size:10px;letter-spacing:.1em;padding:3px 9px;border-radius:999px;border:1px solid var(--cc);color:var(--cc);background:color-mix(in srgb,var(--cc) 12%, transparent)}
+  .p-name{font-size:25px;font-weight:700;margin:11px 0 3px;letter-spacing:-.01em;line-height:1.15}
+  .p-tag{font-size:12.5px;color:var(--muted);line-height:1.5;min-height:34px}
+  .bars{margin:16px 0 4px;display:flex;flex-direction:column;gap:11px}
+  .bar .blab{display:flex;justify-content:space-between;font-size:10px;letter-spacing:.1em;color:var(--muted);margin-bottom:5px}
+  .bar .blab b{color:var(--txt);font-weight:600;font-variant-numeric:tabular-nums}
+  .track{height:6px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden}
+  .fill{height:100%;border-radius:3px;transition:width .4s cubic-bezier(.2,.7,.2,1)}
+  .fill.adapt{background:linear-gradient(90deg,#2dd4bf,#5eead4)}
+  .fill.evid{background:linear-gradient(90deg,#be4f93,#f472b6)}
+  .p-h{font-size:10px;letter-spacing:.2em;color:var(--muted2);margin:18px 0 7px;border-top:1px solid var(--line);padding-top:14px}
+  .p-body{font-size:12.5px;line-height:1.62;color:#aecabf}
+  .p-url{margin-top:12px;font-size:11px;color:var(--muted)}
+  .p-url a{word-break:break-all}
+
+  .gap{margin-top:14px;border:1px solid rgba(244,114,182,.32);background:rgba(244,114,182,.06);border-radius:4px;padding:11px 12px}
+  .gap[hidden]{display:none}
+  .gap .gh{font-size:10px;letter-spacing:.18em;color:var(--magenta);margin-bottom:6px;font-weight:600}
+  .gap .gb{font-size:11.5px;line-height:1.6;color:#e7c6da}
+
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:9px 20px;margin-top:22px;padding-top:14px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+  .li{display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none;transition:color .12s}
+  .li:hover{color:var(--txt)}
+  .li .sw{width:9px;height:9px;border-radius:50%;background:var(--c);box-shadow:0 0 7px var(--c)}
+  .li.off{opacity:.35}
+
+  .foot{margin-top:18px;font-size:10.5px;letter-spacing:.04em;color:var(--muted2);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  .foot b{color:var(--teal-dim);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand"><b>AGENTIC30</b> &nbsp;/&nbsp; COMPETITIVE POSITIONING MATRIX</div>
+    <div class="axhint">X: 정적 → <b>Adaptive</b> &nbsp;·&nbsp; Y: Build → <b>Evidence</b></div>
+  </div>
+
+  <h1 class="title">경쟁은 코딩 생산성이 아니라 <span class="hot">PMF·고객 증거</span> 축에서 갈린다.</h1>
+  <div class="sub">AI 빌드 도구는 코드에 적응하지만 <span class="k">PMF 증거</span>는 만들지 않고, 검증·교육 도구는 증거를 말하지만 <span class="k">내 프로젝트 기록</span>을 읽지 못한다. 노드를 클릭해 각 포지션 근거를 확인합니다.</div>
+
+  <div class="stage">
+    <div class="plotcol">
+      <div class="plotbox" id="plot">
+        <div class="wedge"></div>
+        <div class="axis-mid-h"></div>
+        <div class="axis-mid-v"></div>
+
+        <div class="quad tr"><b>AGENTIC30 WEDGE</b>기록 기반 PMF 루프</div>
+        <div class="quad tl"><b>검증/교육</b>증거는 있으나 정적</div>
+        <div class="quad br"><b>AI 빌드 도구</b>적응은 하나 PMF 밖</div>
+        <div class="quad bl"><b>콘텐츠/학습</b>빌드·소비 중심</div>
+
+        <div class="edge top">↑ PMF Evidence · 고객 행동 · 첫 매출</div>
+        <div class="edge bottom">Build Speed · 코드 생산 ↓</div>
+        <div class="edge left">← 정적 커리큘럼 · 범용 조언</div>
+        <div class="edge right">내 프로젝트 기록 기반 Adaptive →</div>
+      </div>
+    </div>
+
+    <aside class="panel" id="panel">
+      <div class="p-kicker">SELECTED POSITION</div>
+      <span class="chip" id="p-chip">—</span>
+      <div class="p-name" id="p-name">—</div>
+      <div class="p-tag" id="p-tag">—</div>
+
+      <div class="bars">
+        <div class="bar">
+          <div class="blab"><span>ADAPTIVE · 내 기록 기반</span><b id="b-adapt">0</b></div>
+          <div class="track"><div class="fill adapt" id="f-adapt" style="width:0"></div></div>
+        </div>
+        <div class="bar">
+          <div class="blab"><span>PMF EVIDENCE · 고객·매출</span><b id="b-evid">0</b></div>
+          <div class="track"><div class="fill evid" id="f-evid" style="width:0"></div></div>
+        </div>
+      </div>
+
+      <div class="p-h">WHY HERE</div>
+      <div class="p-body" id="p-body">—</div>
+      <div class="p-url" id="p-url"></div>
+
+      <div class="gap" id="wedge-card">
+        <div class="gh">빈자리 / THE WEDGE</div>
+        <div class="gb">전업 1인 개발자를 위해 <b style="color:#f9d4e7">macOS 로컬-퍼스트</b>로 내 프로젝트 경로·작업로그·고객대화·BIP 기록을 읽고, 30일간 매일 adaptive하게 다음 PMF·첫 매출 검증 액션을 생성하는 <b style="color:#f9d4e7">무게이트 소프트웨어</b>. 우상단의 액셀러레이터(Spark Claw·국내 AC)는 투자·심사·지분 게이트가 있는 사람 주도 프로그램이고, 코딩 도구는 코드만 본다.</div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="foot">
+    <div><b>18 positions</b> · anchor 1 + alternatives 17 · 2026-06-15</div>
+    <div>X=Adaptivity · Y=PMF Evidence</div>
+  </div>
+</div>
+
+<script>
+const CAT = {
+  agentic30:       {label:"Agentic30 (자사 anchor)",      c:"#5eead4"},
+  "korean-ac":     {label:"한국 AC · 1인창업",             c:"#f472b6"},
+  "korean-proof":  {label:"한국 수요검증",                 c:"#fb7185"},
+  "ai-validation": {label:"AI 검증 OS · 리포트",           c:"#fbbf24"},
+  "ai-cofounder":  {label:"AI 코파운더 · GTM",             c:"#818cf8"},
+  "ai-build":      {label:"AI 빌드 도구",                  c:"#38bdf8"},
+  cohort:          {label:"코호트 · 챌린지",               c:"#fb923c"},
+  school:          {label:"창업 교육 benchmark",           c:"#94a3b8"},
+};
+
+const NODES = [
+  {n:"Agentic30", l:"Agentic30", cat:"agentic30", x:82, y:80, star:true,
+   tag:"30일 adaptive PMF·첫 매출 검증 시스템 (macOS 로컬)",
+   url:"https://agentic30.app",
+   r:"자사 제품. macOS 로컬에서 프로젝트 경로·작업로그·고객 인터뷰·BIP 기록을 읽어, 30일간 매일 '오늘 누구에게 무엇을 보여 어떤 신호를 확인할지'를 생성한다. 코드 생산이 아니라 첫 매출·고객행동 증거를 목표로 하는 로컬-퍼스트 소프트웨어다."},
+
+  {n:"Spark Claw", l:"Spark Claw", cat:"korean-ac", x:67, y:73, dy:-7,
+   tag:"AI-native 1인·소규모팀 전용 액셀러레이터",
+   url:"https://www.sparkclaw.co.kr",
+   r:"SparkLabs의 AI-native 1인/소규모팀 프로그램. 투자, 크레딧, 오피스아워, 그룹세션, 커뮤니티를 제공하며 Agentic30의 ICP와 가장 크게 겹친다. 단, 투자·심사 게이트와 사람 주도 운영이 핵심이다."},
+
+  {n:"IndieFounders", l:"IndieFounders", cat:"korean-ac", x:25, y:70,
+   tag:"AI 시대 1인 창업 실전 학교",
+   url:"https://indiefounders.net",
+   r:"수익 우선 1인 창업을 전면에 둔 한국어 학교/커뮤니티. 고객을 먼저 찾고 첫 매출을 만들자는 메시지가 Agentic30과 직접 겹친다. classbinu 개인이 아니라 IndieFounders 브랜드가 경쟁자다."},
+
+  {n:"마켓테스트", l:"마켓테스트", cat:"korean-proof", x:34, y:78,
+   tag:"광고·구매클릭·설문 기반 수요검증",
+   url:"https://www.markettest.kr",
+   r:"광고 클릭부터 구매 클릭, 설문까지 퍼널을 추적해 수요를 정량화한다. 실제 고객 행동 증거가 강하지만, 프로젝트 기록을 매일 읽는 adaptive loop라기보다는 캠페인형 검증 리포트에 가깝다."},
+
+  {n:"Icanpreneur", l:"Icanpreneur", cat:"ai-validation", x:58, y:68,
+   tag:"AI co-founder platform for validation & GTM",
+   url:"https://www.icanpreneur.com",
+   r:"아이디어, 제품, 성장 기회를 검증하고 고객 인사이트를 buyer persona, GTM strategy, launch-ready asset으로 바꾸는 AI co-founder platform. 실제 customer insight를 다루지만 Agentic30처럼 로컬 프로젝트 기록과 Day별 실행 상태를 읽지는 않는다."},
+
+  {n:"SparkLaunch", l:"SparkLaunch", cat:"ai-validation", x:54, y:72, dy:8,
+   tag:"customer discovery + landing-page demand evidence workflow",
+   url:"https://sparklaun.ch/startup-validation",
+   r:"customer discovery, landing-page demand, outreach responses, objections, keep/build/fundraise decision threshold를 저장하는 startup validation workflow. evidence 축은 Icanpreneur보다 높지만, 여전히 캠페인/워크플로우 중심이다."},
+
+  {n:"Preuve AI", l:"Preuve AI", cat:"ai-validation", x:44, y:68,
+   tag:"50+ live source 기반 source-linked 검증 리포트",
+   url:"https://preuve.ai/idea-validation",
+   r:"50개 이상 live source를 스캔하고 claim마다 source를 붙이는 검증 리포트 도구. 일회성 idea verdict 영역에서는 강하지만, 사용자 프로젝트 경로와 업무 기록을 읽어 다음 행동을 갱신하진 않는다."},
+
+  {n:"Ship 30 for 30", l:"Ship 30 for 30", cat:"cohort", x:30, y:44,
+   tag:"30일 writing/audience challenge",
+   url:"https://www.ship30for30.com",
+   r:"30일 동안 Atomic Essay를 쓰고 온라인 writing habit과 audience를 만드는 self-paced curriculum/community. 실행 리듬과 공개 accountability는 경쟁하지만, PMF·첫 매출 검증 자체가 주 목적은 아니다."},
+
+  {n:"Buildspace (종료)", l:"Buildspace (종료)", cat:"cohort", x:42, y:54, dy:9, historical:true,
+   tag:"종료된 6주 Nights & Weekends 실행 커뮤니티",
+   url:"https://buildspace.so",
+   r:"Nights & Weekends로 6주 동안 각자 아이디어를 만들고 팬·매출·다운로드 같은 신호를 얻도록 밀어붙인 강력한 benchmark. 현재는 공식적으로 종료되어 active threat가 아니라 historical competitor다."},
+
+  {n:"AI 솔로프리너 클럽", l:"AI 솔로프리너 클럽", cat:"korean-ac", x:30, y:55, dy:12,
+   tag:"기획→제작→세일즈 실행형 멤버십",
+   url:"https://www.solopreneur.co.kr",
+   r:"비즈니스 전 단계(기획→제작→세일즈)를 실행하는 AI 1인창업 멤버십. Agentic30 ICP와 가깝지만 월별 트랙/커뮤니티 중심이라 로컬 기록 기반 adaptive engine은 아니다."},
+
+  {n:"CoFounder.im", l:"CoFounder.im", cat:"ai-cofounder", x:49, y:38,
+   tag:"AI co-founder for market research and business modeling",
+   url:"https://cofounder.im",
+   r:"스타트업 아이디어를 시장조사, 경쟁분석, business modeling, pitch deck 같은 사업 자산으로 바꾸는 AI assistant. 문서화와 리서치 자동화는 강하지만 실제 고객 행동 evidence를 누적하는 구조는 약하다."},
+
+  {n:"FounderPal", l:"FounderPal", cat:"ai-cofounder", x:41, y:36,
+   tag:"AI marketing tools for solo founders and indie makers",
+   url:"https://founderpal.ai",
+   r:"마케팅 전략, 페르소나, 캠페인 아이디어, 전환 개선 자산을 생성하는 AI marketing tool. GTM 자산 생성에는 가깝지만 PMF 검증 루프나 로컬 실행 기록 기반 adaptivity는 약하다."},
+
+  {n:"Cursor", l:"Cursor", cat:"ai-build", x:82, y:18,
+   tag:"developer-first AI coding IDE",
+   url:"https://cursor.com",
+   r:"개발자가 이미 쓰는 코드베이스 안에서 agent, multi-file edit, terminal/web 흐름으로 코드 생산성을 높이는 AI coding IDE. codebase adaptivity는 높지만 고객 인터뷰·ask·첫 매출 evidence는 제품 밖에 있다."},
+
+  {n:"Replit", l:"Replit", cat:"ai-build", x:76, y:24,
+   tag:"browser IDE + Agent for production-ready apps",
+   url:"https://replit.com/products/agent",
+   r:"브라우저 IDE와 Agent로 앱/웹사이트 아이디어를 production-ready app으로 자동 빌드하는 platform. 빌드와 배포는 빠르지만 무엇을 검증할지, 어떤 고객 신호가 충분한지는 별도 문제다."},
+
+  {n:"Lovable", l:"Lovable", cat:"ai-build", x:70, y:28,
+   tag:"AI app builder for non-technical founders",
+   url:"https://lovable.dev",
+   r:"비개발자 창업자가 자연어로 full-stack 앱과 웹사이트를 만들고 visual edit와 deploy까지 이어가는 AI app builder. 빠른 공개와 반복에는 강하지만 PMF evidence를 매일 요구하는 구조는 아니다."},
+
+  {n:"YC Startup School", l:"YC Startup School", cat:"school", x:18, y:58, dy:8,
+   tag:"free online startup course + weekly accountability",
+   url:"https://www.startupschool.org",
+   r:"YC의 무료 온라인 창업 과정. YC 지식, weekly progress accountability, co-founder matching을 제공한다. PMF 개념과 실행 압박은 있지만 한국어 1인 개발자의 로컬 기록 기반 loop는 아니다."},
+
+  {n:"오즈 1인 창업가 캠프", l:"오즈 1인 창업가 캠프", cat:"school", x:32, y:57, dy:-9,
+   tag:"선발형 1인 SaaS 창업 부트캠프",
+   url:"https://ozcodingschool.com/ozcoding/solofoundercamp",
+   r:"개발, AI production tool, 배포, 운영, 수익화, VC 데모데이를 묶는 오즈코딩스쿨의 선발형 1인 창업가 캠프. 교육/부트캠프 성격이 강해 PMF evidence보다 build-to-production에 무게가 있다."},
+
+  {n:"코배투 런칭챌린지", l:"코배투 런칭챌린지", cat:"cohort", x:28, y:62,
+   tag:"한 달에 하나씩 수익형 서비스를 출시하는 챌린지",
+   url:"https://www.cobaetoo.com/oneMonthChallenge",
+   r:"소수의 참여자가 함께 Zoom으로 모이고, 한 달에 하나씩 수익형 서비스를 런칭하는 한국 인디해커 챌린지. 빠르게 개발·검증·수익화 메시지는 강하지만 제품이 사용자의 로컬 기록을 읽지는 않는다."},
+];
+
+const plot = document.getElementById('plot');
+const off = new Set(); // hidden categories
+let sel = 0;
+
+// build nodes
+const els = NODES.map((nd,i)=>{
+  const a = CAT[nd.cat];
+  const el = document.createElement('div');
+  el.className = 'node' + (nd.star?' star':'') + (nd.historical?' historical':'') + (nd.x>=64?' left':'');
+  el.style.left = nd.x + '%';
+  el.style.top  = (100 - nd.y) + '%';
+  el.style.setProperty('--c', a.c);
+  if (nd.dy) el.style.setProperty('--label-y', nd.dy + 'px');
+  el.innerHTML = (nd.star?'<div class="ring"></div>':'') + '<div class="dot"></div><div class="lab">'+nd.l+'</div>';
+  el.addEventListener('click', ()=>select(i));
+  plot.appendChild(el);
+  return el;
+});
+
+function select(i){
+  sel = i;
+  const nd = NODES[i], a = CAT[nd.cat];
+  els.forEach((e,j)=>e.classList.toggle('sel', j===i));
+  const chip = document.getElementById('p-chip');
+  chip.textContent = a.label;
+  chip.style.setProperty('--cc', a.c);
+  document.getElementById('p-name').textContent = nd.n;
+  document.getElementById('p-name').style.color = nd.star? a.c : 'var(--txt)';
+  document.getElementById('p-tag').textContent = nd.tag;
+  document.getElementById('b-adapt').textContent = nd.x + ' / 100';
+  document.getElementById('b-evid').textContent  = nd.y + ' / 100';
+  document.getElementById('f-adapt').style.width = nd.x + '%';
+  document.getElementById('f-evid').style.width  = nd.y + '%';
+  document.getElementById('p-body').textContent = nd.r;
+  document.getElementById('p-url').innerHTML = '↗ <a href="'+nd.url+'" target="_blank" rel="noopener">'+nd.url.replace(/^https?:\/\//,'')+'</a>';
+  const wedge = document.getElementById('wedge-card');
+  wedge.hidden = !nd.star;
+  wedge.setAttribute('aria-hidden', nd.star ? 'false' : 'true');
+}
+
+// legend
+const leg = document.getElementById('legend');
+Object.entries(CAT).forEach(([k,v])=>{
+  const d = document.createElement('div');
+  d.className = 'li';
+  d.style.setProperty('--c', v.c);
+  d.innerHTML = '<span class="sw"></span>'+v.label;
+  d.addEventListener('click', ()=>{
+    if(off.has(k)){off.delete(k);d.classList.remove('off');}
+    else{off.add(k);d.classList.add('off');}
+    els.forEach((e,j)=>e.classList.toggle('dim', off.has(NODES[j].cat)));
+  });
+  leg.appendChild(d);
+});
+
+select(0);
+</script>
+</body>
+</html>

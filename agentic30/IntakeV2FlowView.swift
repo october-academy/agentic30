@@ -525,6 +525,8 @@ struct IntakeV2FlowView: View {
     var scanBlockedNotice: WorkspaceScanBlockedNotice? = nil
     var onScanBlockedRescan: ((AgentProvider) -> Void)? = nil
     var onScanBlockedAuthAction: ((WorkspaceScanProviderReadiness) -> Void)? = nil
+    var agentic30GitignoreConsent: Agentic30GitignoreState? = nil
+    var onAgentic30GitignoreConsent: ((Bool) -> Void)? = nil
     var onWorkspacePrefetchRequested: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
     var onComplete: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
 
@@ -633,7 +635,9 @@ struct IntakeV2FlowView: View {
                 onProviderLimitRescan: onProviderLimitRescan,
                 scanBlockedNotice: scanBlockedNotice,
                 onScanBlockedRescan: onScanBlockedRescan,
-                onScanBlockedAuthAction: onScanBlockedAuthAction
+                onScanBlockedAuthAction: onScanBlockedAuthAction,
+                agentic30GitignoreConsent: agentic30GitignoreConsent,
+                onAgentic30GitignoreConsent: onAgentic30GitignoreConsent
             )
         }
     }

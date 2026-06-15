@@ -137,7 +137,11 @@ import {
   summarizeWorkspaceScanLocalFindings,
 } from "./workspace-scan-evidence-bundle.mjs";
 import { isSecretPath, redactSecrets } from "./workspace-safety.mjs";
-import { ensureAgentic30Gitignored } from "./workspace-gitignore.mjs";
+import {
+  AGENTIC30_GITIGNORE_ENTRY,
+  ensureAgentic30Gitignored,
+  inspectAgentic30Gitignore,
+} from "./workspace-gitignore.mjs";
 import {
   formatProjectContextForPrompt,
   loadProjectContextCache,
@@ -333,6 +337,11 @@ import {
   normalizeNewsMarketRadarProviderTimeout,
   refreshNewsMarketRadar,
 } from "./news-market-radar.mjs";
+import {
+  buildStrategyReportProgressStatus,
+  loadStrategyReportSnapshot,
+  refreshStrategyReport,
+} from "./strategy-research-report.mjs";
 import {
   buildBipResearchProgressStatus,
   loadBipResearchSnapshot,
@@ -567,6 +576,9 @@ const state = {
   newsMarketRadarRefreshPromise: null,
   newsMarketRadarProgress: null,
   newsMarketRadarProgressStartedAt: null,
+  strategyReportRefreshPromise: null,
+  strategyReportProgress: null,
+  strategyReportProgressStartedAt: null,
   bipResearchRefreshPromise: null,
   bipResearchProgress: null,
   bipResearchProgressStartedAt: null,
@@ -908,22 +920,6 @@ const workHistoryPoll = setInterval(() => {
   );
 }, WORK_HISTORY_REFRESH_INTERVAL_MS);
 workHistoryPoll.unref?.();
-
-// Mid-challenge workspaces never re-scan, but day-progress/memory writers keep
-// touching `.agentic30/` — backfill the gitignore guard once per daemon start.
-// `onlyIfAgentic30Exists` keeps untouched workspaces' `.gitignore` unmodified.
-fireAndForget(
-  "workspace_gitignore_startup",
-  ensureAgentic30Gitignored({ workspaceRoot, onlyIfAgentic30Exists: true }).then((result) => {
-    if (result.status === "added") {
-      telemetry.captureEvent("mac_sidecar_workspace_gitignore_added", { scan_root: workspaceRoot });
-    } else if (result.status === "error") {
-      telemetry.captureException(new Error(result.error), {
-        operation: "workspace_gitignore_startup",
-      });
-    }
-  }),
-);
 
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
 let shutdownStarted = false;
@@ -2460,6 +2456,37 @@ async function handleClientMessage(socket, payload) {
       });
       return;
     }
+    case "strategy_report_get": {
+      const exaRoutes = resolveStrategyReportExaRoutes({
+        preferredProvider: payload.preferredProvider,
+      });
+      const snapshot = await loadStrategyReportSnapshot({
+        workspaceRoot,
+        exaApiKey: currentExaApiKey(),
+        exaConfigured: exaRoutes.length > 0,
+        exaResearchSource: exaRoutes[0]?.label || null,
+      });
+      send(socket, {
+        type: "strategy_report_result",
+        strategyReport: snapshot,
+      });
+      if (state.strategyReportRefreshPromise && state.strategyReportProgress) {
+        send(socket, {
+          type: "strategy_report_status",
+          status: state.strategyReportProgress,
+        });
+      }
+      return;
+    }
+    case "strategy_report_refresh": {
+      scheduleStrategyReportRefresh({
+        reason: payload.reason || "manual",
+        force: Boolean(payload.force),
+        preferredProvider: payload.preferredProvider,
+        targetSocket: socket,
+      });
+      return;
+    }
     case "work_history_get": {
       const snapshot = await loadWorkHistorySnapshot({ workspaceRoot });
       send(socket, { type: "work_history_result", workHistory: snapshot });
@@ -2926,6 +2953,48 @@ async function handleClientMessage(socket, payload) {
         curriculumDay: payload.curriculumDay,
         targetSocket: socket,
       });
+      return;
+    }
+    case "workspace_gitignore_consent": {
+      const root = normalizeWorkspaceRootInput(payload.root);
+      if (!root) {
+        send(socket, workspaceGitignoreResultPayload("", {
+          status: "error",
+          path: path.join(workspaceRoot, ".gitignore"),
+          entry: AGENTIC30_GITIGNORE_ENTRY,
+          error: "Workspace root is required for gitignore consent.",
+        }));
+        return;
+      }
+      if (payload.consented !== true) {
+        const inspection = await inspectAgentic30Gitignore({ workspaceRoot: root });
+        telemetry.captureEvent("mac_sidecar_workspace_gitignore_declined", { scan_root: root });
+        send(socket, workspaceGitignoreResultPayload(root, {
+          ...inspection,
+          status: "declined",
+        }));
+        return;
+      }
+      const rootStat = await fs.stat(root).catch(() => null);
+      if (!rootStat?.isDirectory()) {
+        send(socket, workspaceGitignoreResultPayload(root, {
+          status: "error",
+          path: path.join(root, ".gitignore"),
+          entry: AGENTIC30_GITIGNORE_ENTRY,
+          error: "Workspace root is not a directory.",
+        }));
+        return;
+      }
+      const result = await ensureAgentic30Gitignored({ workspaceRoot: root });
+      if (result.status === "added") {
+        telemetry.captureEvent("mac_sidecar_workspace_gitignore_added", { scan_root: root });
+      } else if (result.status === "error") {
+        telemetry.captureException(new Error(result.error), {
+          operation: "workspace_gitignore_consent",
+          scan_root: root,
+        });
+      }
+      send(socket, workspaceGitignoreResultPayload(root, result));
       return;
     }
     case "scan_workspace": {
@@ -7486,6 +7555,8 @@ async function runOfficeHours(session, {
         sources: digest.sources.map((source) => ({
           id: source.id,
           state: source.state,
+          connectionState: source.connectionState,
+          collectionState: source.collectionState,
           selected: Boolean(source.selected),
           required: Boolean(source.required),
           summary: source.summary,
@@ -11688,6 +11759,35 @@ async function startIddDocumentQueueOnce({
   return session;
 }
 
+function normalizeAgentic30GitignoreResult(scanRoot, result = {}) {
+  const root = String(scanRoot || "");
+  return {
+    scanRoot: root,
+    status: result.status || "error",
+    path: result.path || (root ? path.join(root, ".gitignore") : ""),
+    entry: result.entry || AGENTIC30_GITIGNORE_ENTRY,
+    error: result.error || null,
+  };
+}
+
+function workspaceGitignoreResultPayload(scanRoot, result = {}) {
+  const normalized = normalizeAgentic30GitignoreResult(scanRoot, result);
+  return {
+    type: "workspace_gitignore_result",
+    scanRoot: normalized.scanRoot,
+    status: normalized.status,
+    path: normalized.path,
+    entry: normalized.entry,
+    error: normalized.error,
+    agentic30Gitignore: normalized,
+  };
+}
+
+async function inspectAgentic30GitignoreForBridge(scanRoot) {
+  const result = await inspectAgentic30Gitignore({ workspaceRoot: scanRoot });
+  return normalizeAgentic30GitignoreResult(scanRoot, result);
+}
+
 async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferredProvider = "" } = {}) {
   try {
     broadcastWorkspaceScanProgress(scanRoot, "scan.local · 로컬 문서 후보를 읽는 중", {
@@ -11696,17 +11796,6 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       totalSteps: 3,
       etaSeconds: 45,
     });
-    // The scan seeds `<scanRoot>/.agentic30/` (memory, day progress) — make
-    // sure git never picks it up, even when a later scan stage fails.
-    const gitignoreResult = await ensureAgentic30Gitignored({ workspaceRoot: scanRoot });
-    if (gitignoreResult.status === "added") {
-      telemetry.captureEvent("mac_sidecar_workspace_gitignore_added", { scan_root: scanRoot });
-    } else if (gitignoreResult.status === "error") {
-      telemetry.captureException(new Error(gitignoreResult.error), {
-        operation: "workspace_gitignore",
-        scan_root: scanRoot,
-      });
-    }
     const localResult = await findWorkspaceDocsLocally(scanRoot);
     const workspaceScanEvidenceBundle = await buildWorkspaceScanEvidenceBundle({
       workspaceRoot: scanRoot,
@@ -11835,6 +11924,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         projectContext,
       });
       const scanCurrentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
+      const agentic30Gitignore = await inspectAgentic30GitignoreForBridge(scanRoot);
       broadcast({
         type: "workspace_scan_result",
         scanRoot,
@@ -11854,6 +11944,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         dayProgress,
         dayReviews: await loadOfficeHoursDayReviews(scanRoot, dayProgress, scanCurrentDay),
         evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
+        agentic30Gitignore,
       });
       triggerDay1AlignmentPlanBroadcast({
         scanRoot,
@@ -12011,6 +12102,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       projectContext,
     });
     const scanCurrentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
+    const agentic30Gitignore = await inspectAgentic30GitignoreForBridge(scanRoot);
     broadcast({
       type: "workspace_scan_result",
       scanRoot,
@@ -12030,6 +12122,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       dayProgress,
       dayReviews: await loadOfficeHoursDayReviews(scanRoot, dayProgress, scanCurrentDay),
       evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
+      agentic30Gitignore,
     });
     triggerDay1AlignmentPlanBroadcast({
       scanRoot,
@@ -12056,6 +12149,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       stepIndex: 3,
       totalSteps: 3,
       foundCount: 0,
+      agentic30Gitignore: await inspectAgentic30GitignoreForBridge(scanRoot),
     });
   }
 }
@@ -12966,6 +13060,12 @@ function resolveNewsMarketRadarExaRoutes({
   });
 }
 
+function resolveStrategyReportExaRoutes({
+  preferredProvider = "",
+} = {}) {
+  return resolveNewsMarketRadarExaRoutes({ preferredProvider });
+}
+
 function normalizeProviderName(value = "") {
   const provider = String(value || "").trim().toLowerCase();
   return ["claude", "codex", "gemini", "cursor"].includes(provider) ? provider : "";
@@ -13120,6 +13220,155 @@ async function runNewsMarketRadarRefresh({
     const payload = {
       type: "news_market_radar_result",
       newsMarketRadar: failed,
+    };
+    if (targetSocket) send(targetSocket, payload);
+    else broadcast(payload);
+    return failed;
+  } finally {
+    clearInterval(progressHeartbeat);
+  }
+}
+
+function scheduleStrategyReportRefresh({
+  reason = "manual",
+  force = false,
+  preferredProvider = "",
+  targetSocket = null,
+} = {}) {
+  const normalizedReason = ["manual", "workspace_scan", "strategy"].includes(reason)
+    ? reason
+    : "manual";
+  if (state.strategyReportRefreshPromise) {
+    const status = buildStrategyReportProgressStatus(
+      state.strategyReportProgress || { stale: true },
+      {
+        reason: normalizedReason,
+        stale: true,
+        startedAt: state.strategyReportProgressStartedAt,
+        researchSource: state.strategyReportProgress?.researchSource || null,
+      },
+    );
+    state.strategyReportProgress = status;
+    send(targetSocket, { type: "strategy_report_status", status });
+    return state.strategyReportRefreshPromise;
+  }
+  const promise = runStrategyReportRefresh({
+    reason: normalizedReason,
+    force,
+    preferredProvider,
+    targetSocket,
+  }).finally(() => {
+    state.strategyReportRefreshPromise = null;
+    state.strategyReportProgress = null;
+    state.strategyReportProgressStartedAt = null;
+  });
+  state.strategyReportRefreshPromise = promise;
+  return promise;
+}
+
+async function runStrategyReportRefresh({
+  reason = "manual",
+  force = false,
+  preferredProvider = "",
+  targetSocket = null,
+} = {}) {
+  const startedAt = Date.now();
+  state.strategyReportProgressStartedAt = startedAt;
+  const exaApiKey = currentExaApiKey();
+  const exaResearchRoutes = resolveStrategyReportExaRoutes({ preferredProvider });
+  const emitProgress = (progress = {}) => {
+    const status = buildStrategyReportProgressStatus(progress, {
+      reason,
+      startedAt,
+      researchSource: exaResearchRoutes[0]?.label || null,
+    });
+    state.strategyReportProgress = status;
+    broadcast({
+      type: "strategy_report_status",
+      status,
+    });
+    return status;
+  };
+  const progressHeartbeat = setInterval(() => {
+    if (!state.strategyReportProgress) return;
+    const status = buildStrategyReportProgressStatus(state.strategyReportProgress, {
+      reason,
+      startedAt,
+      researchSource: exaResearchRoutes[0]?.label || null,
+    });
+    state.strategyReportProgress = status;
+    broadcast({
+      type: "strategy_report_status",
+      status,
+    });
+  }, 1_000);
+  progressHeartbeat.unref?.();
+  try {
+    const primaryProvider = normalizeProviderName(exaResearchRoutes[0]?.provider || preferredProvider);
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot,
+      exaApiKey,
+      exaResearchRoutes,
+      reason,
+      force,
+      providerResearcher: (args) => runNewsMarketRadarProviderResearch(args),
+      adversarialReviewer: (args) => runNewsMarketRadarProviderSynthesis({
+        ...args,
+        provider: primaryProvider,
+        preferredProvider,
+      }),
+      multidimensionalVerifier: (args) => runNewsMarketRadarProviderSynthesis({
+        ...args,
+        provider: primaryProvider,
+        preferredProvider,
+      }),
+      onProgress: emitProgress,
+    });
+    broadcast({
+      type: "strategy_report_result",
+      strategyReport: snapshot,
+    });
+    telemetry.captureEvent("mac_sidecar_strategy_report_refresh_completed", {
+      reason,
+      duration_ms: Date.now() - startedAt,
+      exa_configured: exaResearchRoutes.length > 0,
+      exa_research_source: snapshot.status?.researchSource || exaResearchRoutes[0]?.label || "",
+      status: snapshot.status?.state || "",
+      competitor_count: snapshot.report?.competitors?.length || 0,
+    });
+    return snapshot;
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "strategy_report_refresh",
+      reason,
+      exa_configured: exaResearchRoutes.length > 0,
+    });
+    const cached = await loadStrategyReportSnapshot({
+      workspaceRoot,
+      exaApiKey,
+      exaConfigured: exaResearchRoutes.length > 0,
+      exaResearchSource: exaResearchRoutes[0]?.label || null,
+    });
+    const progress = state.strategyReportProgress || {};
+    const failed = {
+      ...cached,
+      status: {
+        state: "failed",
+        lastSuccessAt: cached.status?.lastSuccessAt || null,
+        stale: Boolean(cached.report),
+        error: formatError(error),
+        reason,
+        researchSource: cached.status?.researchSource || exaResearchRoutes[0]?.label || null,
+        stage: progress.stage || null,
+        progressText: progress.progressText || null,
+        elapsedMs: Math.max(progress.elapsedMs || 0, Date.now() - startedAt),
+        stepIndex: progress.stepIndex || null,
+        stepCount: progress.stepCount || null,
+      },
+    };
+    const payload = {
+      type: "strategy_report_result",
+      strategyReport: failed,
     };
     if (targetSocket) send(targetSocket, payload);
     else broadcast(payload);

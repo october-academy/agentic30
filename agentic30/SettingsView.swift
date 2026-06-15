@@ -177,6 +177,7 @@ struct SettingsView: View {
     @State private var localSelectedSection: SettingsSection = .workspace
     @State private var hoveredSettingsSection: SettingsSection?
     @State private var hoveredWorkspacePathChangeButton = false
+    @State private var isPresentingWorkspacePicker = false
     @State private var settingsSearchQuery = ""
     @State private var settingsSaveMessage = ""
     /// Visible height of the content scroll view, fed into the scroll-spy bottom-edge rule.
@@ -3137,12 +3138,16 @@ struct SettingsView: View {
     }
 
     private func pickFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Select your project workspace root"
-        if panel.runModal() == .OK, let url = panel.url {
+        guard !isPresentingWorkspacePicker else { return }
+        isPresentingWorkspacePicker = true
+        AgenticOpenPanelPresenter.present { panel in
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.message = "Select your project workspace root"
+        } completion: { response, url in
+            isPresentingWorkspacePicker = false
+            guard response == .OK, let url else { return }
             workspaceRootPath = url.path
             viewModel.setProjectWorkspace(url)
         }
