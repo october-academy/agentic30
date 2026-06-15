@@ -193,6 +193,35 @@ test("buildMorningBriefingCards uses explicit history without duplicate previous
   );
 });
 
+test("buildMorningBriefingCards labels spark points by local date across the UTC boundary", () => {
+  const originalTZ = process.env.TZ;
+  process.env.TZ = "Asia/Seoul";
+  try {
+    const cards = buildMorningBriefingCards({
+      digest: digestFixture({ cloudflareVisits: 288, gitCommits: 30, posthogActive: 0 }),
+      previousMetrics: { cloudflare: 303, github: 78, posthog: 1 },
+      history: [
+        {
+          date: "2026-06-14",
+          generatedAt: "2026-06-14T12:42:00.000Z",
+          metrics: { cloudflare: 303, github: 78, posthog: 1 },
+        },
+      ],
+      generatedAt: "2026-06-14T18:38:00.000Z",
+    });
+
+    const cloudflare = cards.find((card) => card.id === "cloudflare");
+    assert.equal(cloudflare.sparkPoints[0].timeLabel, "어제 21:42");
+    assert.equal(cloudflare.sparkPoints[1].timeLabel, "오늘 03:38");
+  } finally {
+    if (originalTZ === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = originalTZ;
+    }
+  }
+});
+
 test("buildMorningBriefingCards rejects legacy Cloudflare pageViews counts", () => {
   const digest = digestFixture();
   const cloudflareSource = digest.sources.find((source) => source.id === "cloudflare");
@@ -264,6 +293,39 @@ test("buildMorningBriefingTimeline merges timestamped source events in order", (
   );
   assert.ok(Date.parse(timeline[0].at) < Date.parse(timeline[2].at));
   assert.ok(timeline.every((event) => event.timeLabel.match(/^\d{2}:\d{2}$/)));
+});
+
+test("buildMorningBriefingTimeline keeps standalone tags and failed workflows while deduping release tags", () => {
+  const digest = digestFixture();
+  digest.sources = [
+    {
+      id: "git",
+      state: "ready",
+      events: [
+        { at: "2026-06-14T13:10:55.000Z", text: "태그 v20260614-2210 생성" },
+        { at: "2026-06-14T13:57:03.000Z", text: "태그 v20260614-2257 생성" },
+      ],
+    },
+    {
+      id: "gh_cli",
+      state: "ready",
+      events: [
+        { at: "2026-06-14T13:39:14.000Z", text: "배포 실패 · Release · v20260614-2210" },
+        { at: "2026-06-14T13:56:46.000Z", text: "체크 실패 · Secret Scanning · main" },
+        { at: "2026-06-14T14:11:36.000Z", text: "배포 성공 · Release · v20260614-2257" },
+        { at: "2026-06-14T14:11:36.000Z", text: "릴리즈 v20260614-2257 배포" },
+      ],
+    },
+  ];
+
+  const texts = buildMorningBriefingTimeline({ digest }).map((event) => event.text);
+
+  assert.ok(texts.includes("태그 v20260614-2210 생성"));
+  assert.ok(texts.includes("배포 실패 · Release · v20260614-2210"));
+  assert.ok(texts.includes("체크 실패 · Secret Scanning · main"));
+  assert.ok(texts.includes("릴리즈 v20260614-2257 배포"));
+  assert.ok(!texts.includes("태그 v20260614-2257 생성"));
+  assert.ok(!texts.includes("배포 성공 · Release · v20260614-2257"));
 });
 
 test("buildMorningBriefingTimeline falls back to overnight highlights without events", () => {

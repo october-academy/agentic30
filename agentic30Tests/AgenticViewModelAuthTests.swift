@@ -1159,6 +1159,79 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.mcpOauthConnecting.contains("vercel"))
     }
 
+    @Test @MainActor func readyRefreshesIntegrationStatusAfterProviderSettingsSync() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = AgenticViewModel(
+            onboardingContextOverride: Self.makeOnboardingContext(),
+            sidecar: sidecar,
+            activateAppForAuth: {}
+        )
+        viewModel.selectedProvider = .claude
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "ready",
+              "sessions": [],
+              "workspaceRoot": "\(workspace.path)",
+              "notionConnected": false
+            }
+            """
+        ))
+
+        let types = sidecar.sentPayloads.compactMap { $0["type"] as? String }
+        let settingsIndex = try #require(types.firstIndex(of: "provider_settings_update"))
+        let statusIndex = try #require(types.firstIndex(of: "integration_status_check"))
+        #expect(settingsIndex < statusIndex)
+
+        let statusPayload = try #require(sidecar.sentPayloads.first {
+            $0["type"] as? String == "integration_status_check"
+        })
+        #expect(statusPayload["preferredProvider"] as? String == "claude")
+        #expect(viewModel.integrationStatusChecking == true)
+    }
+
+    @Test @MainActor func sidecarInterruptionClearsIntegrationStatusCheckSpinner() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        viewModel.refreshIntegrationStatus()
+        #expect(viewModel.integrationStatusChecking == true)
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "sidecar_status",
+              "message": "실행 보조 앱 다시 연결 중..."
+            }
+            """
+        ))
+        #expect(viewModel.integrationStatusChecking == false)
+
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        viewModel.refreshIntegrationStatus()
+        #expect(viewModel.integrationStatusChecking == true)
+        viewModel.stop()
+        #expect(viewModel.integrationStatusChecking == false)
+
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        viewModel.refreshIntegrationStatus()
+        #expect(viewModel.integrationStatusChecking == true)
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "error",
+              "message": "sidecar connection closed"
+            }
+            """
+        ))
+        #expect(viewModel.integrationStatusChecking == false)
+    }
+
     @Test @MainActor func exaMcpConnectPersistsApiKeyOnlyAfterReadyResult() throws {
         KeychainHelper.deleteSettings()
         defer { KeychainHelper.deleteSettings() }
@@ -1749,6 +1822,52 @@ final class AgenticViewModelAuthTests {
         #expect(failedPresentation.headerTitle(questionCount: 3) == "Day 1 질문 3개가 준비됐어요")
         #expect(failedPresentation.primaryCTATitle(questionCount: 3) == "질문 3개 시작하기 →")
         #expect(failedPresentation.primaryCTAAccessibilityLabel(questionCount: 3) == "질문 3개 시작하기")
+    }
+
+    @Test @MainActor func workspaceScanGitignoreConsentSendsExplicitDecision() async throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(sidecar: sidecar, workspace: workspace, currentDay: 1)
+
+        try sidecar.emit(Self.workspaceScanResultWithGitignoreConsentPayload(workspaceRoot: workspace.path))
+        try await Task.sleep(nanoseconds: 10_000_000)
+        let pending = try #require(viewModel.pendingAgentic30GitignoreConsent)
+        #expect(pending.needsConsent == true)
+        #expect(pending.path == "\(workspace.path)/.gitignore")
+        #expect(viewModel.scanResult?.agentic30Gitignore?.status == "needs-consent")
+
+        sidecar.resetSentPayloads()
+        viewModel.submitAgentic30GitignoreConsent(consented: false)
+        let declinedPayload = try #require(sidecar.sentPayloads.first)
+        #expect(declinedPayload["type"] as? String == "workspace_gitignore_consent")
+        #expect(declinedPayload["root"] as? String == workspace.path)
+        #expect(declinedPayload["consented"] as? Bool == false)
+        #expect(viewModel.pendingAgentic30GitignoreConsent == nil)
+
+        try sidecar.emit(Self.workspaceScanResultWithGitignoreConsentPayload(workspaceRoot: workspace.path))
+        try await Task.sleep(nanoseconds: 10_000_000)
+        sidecar.resetSentPayloads()
+        viewModel.submitAgentic30GitignoreConsent(consented: true)
+        let acceptedPayload = try #require(sidecar.sentPayloads.first)
+        #expect(acceptedPayload["type"] as? String == "workspace_gitignore_consent")
+        #expect(acceptedPayload["root"] as? String == workspace.path)
+        #expect(acceptedPayload["consented"] as? Bool == true)
+
+        try sidecar.emit("""
+        {
+          "type": "workspace_gitignore_result",
+          "scanRoot": "\(workspace.path)",
+          "status": "added",
+          "path": "\(workspace.path)/.gitignore",
+          "entry": ".agentic30/",
+          "error": null
+        }
+        """)
+        try await Task.sleep(nanoseconds: 10_000_000)
+        #expect(viewModel.pendingAgentic30GitignoreConsent == nil)
+        #expect(viewModel.scanResult?.agentic30Gitignore?.status == "added")
     }
 
     @Test @MainActor func workspaceScanBlockedStopsScanAndKeepsDay1Closed() async throws {
@@ -2674,6 +2793,41 @@ final class AgenticViewModelAuthTests {
             "confidence": "high"
           },
           "day1IcpPlan": \(planJSON)
+        }
+        """
+    }
+
+    private static func workspaceScanResultWithGitignoreConsentPayload(workspaceRoot: String) throws -> String {
+        let encoder = JSONEncoder()
+        let planData = try encoder.encode(makeDay1IcpPlan())
+        let planJSON = try #require(String(data: planData, encoding: .utf8))
+        return """
+        {
+          "type": "workspace_scan_result",
+          "scanRoot": "\(workspaceRoot)",
+          "icp": ".agentic30/docs/ICP.md",
+          "spec": ".agentic30/docs/SPEC.md",
+          "docs": "README.md",
+          "onboardingHypothesis": {
+            "productName": "SupportLens",
+            "projectKind": "saas",
+            "targetUser": "B2B SaaS support lead",
+            "problem": "Slack escalation을 놓침",
+            "purpose": "Escalation triage",
+            "goal": "유료 후보 1명 검증",
+            "likelyUsers": ["support lead"],
+            "stage": "first_users",
+            "evidence": ["README.md"],
+            "confidence": "high"
+          },
+          "day1IcpPlan": \(planJSON),
+          "agentic30Gitignore": {
+            "scanRoot": "\(workspaceRoot)",
+            "status": "needs-consent",
+            "path": "\(workspaceRoot)/.gitignore",
+            "entry": ".agentic30/",
+            "error": null
+          }
         }
         """
     }

@@ -143,6 +143,62 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
   }
 });
 
+test("workspace gitignore consent gates .agentic30 ignore writes", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    await initGitRepo(harness.workspacePath);
+    await fs.mkdir(path.join(harness.workspacePath, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(harness.workspacePath, ".agentic30", "docs", "ICP.md"), "# ICP\n");
+    await fs.writeFile(path.join(harness.workspacePath, ".agentic30", "docs", "SPEC.md"), "# SPEC\n");
+
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "scan_workspace",
+      root: harness.workspacePath,
+      prompt: "where are the docs paths?",
+    }));
+
+    const scanResult = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_result"
+        && event.scanRoot === harness.workspacePath
+    );
+    assert.equal(scanResult.agentic30Gitignore?.status, "needs-consent");
+    await assert.rejects(fs.stat(path.join(harness.workspacePath, ".gitignore")), /ENOENT/);
+
+    ws.send(JSON.stringify({
+      type: "workspace_gitignore_consent",
+      root: harness.workspacePath,
+      consented: false,
+    }));
+    const declined = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_gitignore_result"
+        && event.scanRoot === harness.workspacePath
+        && event.status === "declined"
+    );
+    assert.equal(declined.agentic30Gitignore?.status, "declined");
+    await assert.rejects(fs.stat(path.join(harness.workspacePath, ".gitignore")), /ENOENT/);
+
+    ws.send(JSON.stringify({
+      type: "workspace_gitignore_consent",
+      root: harness.workspacePath,
+      consented: true,
+    }));
+    const added = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_gitignore_result"
+        && event.scanRoot === harness.workspacePath
+        && event.status === "added"
+    );
+    assert.equal(added.agentic30Gitignore?.entry, ".agentic30/");
+    const content = await fs.readFile(path.join(harness.workspacePath, ".gitignore"), "utf8");
+    assert.match(content, /\.agentic30\//);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("office_hours_start preserves custom source and ignores duplicate concurrent starts", async () => {
   const harness = await spawnSidecar({
     extraEnv: {
@@ -1118,7 +1174,11 @@ test("office_hours_start skips Day 2+ source gate in local dev fast-days mode", 
         && event.officeHoursSourceGate?.reason === "local_dev_fast_days",
     );
     assert.equal(gate.officeHoursSourceGate.skipped, true);
-    assert.deepEqual(gate.officeHoursSourceGate.selectedSources, []);
+    assert.deepEqual(gate.officeHoursSourceGate.selectedSources, ["posthog"]);
+    assert.equal(
+      gate.officeHoursSourceGate.sources.find((source) => source.id === "posthog")?.required,
+      false,
+    );
 
     const progress = await waitForEvent(ws.events, (event) =>
       event.type === "day_progress_state"

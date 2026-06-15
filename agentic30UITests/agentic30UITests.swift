@@ -1044,6 +1044,8 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(elementWithIdentifier(in: app, "strategy.diagnosis").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "strategy.criteria").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "strategy.input.url").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.action.research").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.generated.badge").exists)
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.strategy", containing: "active", timeout: 3))
         let primarySummary = elementWithIdentifier(in: app, "strategy.summary.primary-icp")
         let wedgeSummary = elementWithIdentifier(in: app, "strategy.summary.wedge")
@@ -1079,11 +1081,84 @@ final class agentic30UITests: XCTestCase {
 
         let matrix = elementWithIdentifier(in: app, "strategy.matrix")
         XCTAssertTrue(matrix.waitForExistence(timeout: 5))
-        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.board").waitForExistence(timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.agentic30").waitForExistence(timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.detail").waitForExistence(timeout: 3))
+        let matrixBoard = elementWithIdentifier(in: app, "strategy.matrix.board")
+        let matrixDetail = elementWithIdentifier(in: app, "strategy.matrix.detail")
+        XCTAssertTrue(matrixBoard.waitForExistence(timeout: 3))
+        XCTAssertTrue(matrixDetail.waitForExistence(timeout: 3))
 
-        let ycNode = elementWithIdentifier(in: app, "strategy.matrix.node.yc")
+        let agentic30Node = elementWithIdentifier(in: app, "strategy.matrix.node.agentic30")
+        let agentic30Label = elementWithIdentifier(in: app, "strategy.matrix.label.agentic30")
+        let sparkClawNode = elementWithIdentifier(in: app, "strategy.matrix.node.spark-claw")
+        let sparkClawLabel = elementWithIdentifier(in: app, "strategy.matrix.label.spark-claw")
+        let sparkLaunchNode = elementWithIdentifier(in: app, "strategy.matrix.node.sparklaunch")
+        let sparkLaunchLabel = elementWithIdentifier(in: app, "strategy.matrix.label.sparklaunch")
+        let icanpreneurNode = elementWithIdentifier(in: app, "strategy.matrix.node.icanpreneur")
+        let icanpreneurLabel = elementWithIdentifier(in: app, "strategy.matrix.label.icanpreneur")
+        let cursorNode = elementWithIdentifier(in: app, "strategy.matrix.node.cursor")
+        let cursorLabel = elementWithIdentifier(in: app, "strategy.matrix.label.cursor")
+        let founderPalNode = elementWithIdentifier(in: app, "strategy.matrix.node.founderpal")
+        let founderPalLabel = elementWithIdentifier(in: app, "strategy.matrix.label.founderpal")
+        let cofounderNode = elementWithIdentifier(in: app, "strategy.matrix.node.cofounder-im")
+        let cofounderLabel = elementWithIdentifier(in: app, "strategy.matrix.label.cofounder-im")
+        let buildspaceNode = elementWithIdentifier(in: app, "strategy.matrix.node.buildspace")
+        let buildspaceLabel = elementWithIdentifier(in: app, "strategy.matrix.label.buildspace")
+        let solopreneurNode = elementWithIdentifier(in: app, "strategy.matrix.node.solopreneur-club")
+        let solopreneurLabel = elementWithIdentifier(in: app, "strategy.matrix.label.solopreneur-club")
+        let ozFounderCampNode = elementWithIdentifier(in: app, "strategy.matrix.node.oz-founder-camp")
+        let ozFounderCampLabel = elementWithIdentifier(in: app, "strategy.matrix.label.oz-founder-camp")
+        let agentic30Quadrant = elementWithIdentifier(in: app, "strategy.matrix.quadrant.agentic30")
+        let aiBuildQuadrant = elementWithIdentifier(in: app, "strategy.matrix.quadrant.ai-build")
+        XCTAssertTrue(agentic30Node.waitForExistence(timeout: 3))
+        XCTAssertTrue(agentic30Label.waitForExistence(timeout: 3))
+        XCTAssertTrue(sparkClawNode.waitForExistence(timeout: 3))
+        XCTAssertTrue(sparkClawLabel.waitForExistence(timeout: 3))
+        XCTAssertTrue(sparkLaunchNode.waitForExistence(timeout: 3))
+        XCTAssertTrue(sparkLaunchLabel.waitForExistence(timeout: 3))
+        XCTAssertTrue(icanpreneurNode.waitForExistence(timeout: 3))
+        XCTAssertTrue(icanpreneurLabel.waitForExistence(timeout: 3))
+        XCTAssertTrue(cursorNode.waitForExistence(timeout: 3))
+        XCTAssertTrue(cursorLabel.waitForExistence(timeout: 3))
+        XCTAssertTrue(founderPalNode.waitForExistence(timeout: 3))
+        XCTAssertTrue(founderPalLabel.waitForExistence(timeout: 3))
+        XCTAssertTrue(cofounderNode.waitForExistence(timeout: 3))
+        XCTAssertTrue(cofounderLabel.waitForExistence(timeout: 3))
+        XCTAssertTrue(buildspaceNode.waitForExistence(timeout: 3))
+        XCTAssertTrue(buildspaceLabel.waitForExistence(timeout: 3))
+        XCTAssertTrue(solopreneurNode.waitForExistence(timeout: 3))
+        XCTAssertTrue(solopreneurLabel.waitForExistence(timeout: 3))
+        XCTAssertTrue(ozFounderCampNode.waitForExistence(timeout: 3))
+        XCTAssertTrue(ozFounderCampLabel.waitForExistence(timeout: 3))
+        XCTAssertTrue(agentic30Quadrant.waitForExistence(timeout: 3))
+        XCTAssertTrue(aiBuildQuadrant.waitForExistence(timeout: 3))
+        attachScreenshot(from: app, named: "Strategy Matrix Initial Visual QA")
+        assertNoVisualOverlap(agentic30Node, agentic30Quadrant, message: "Agentic30 node should not overlap wedge quadrant label")
+        assertNoVisualOverlap(cursorNode, aiBuildQuadrant, message: "Cursor node should not overlap AI build quadrant label")
+        assertNoVisualOverlap(cursorLabel, aiBuildQuadrant, message: "Cursor label should not overlap AI build quadrant label")
+        assertNoVisualOverlap(founderPalLabel, cofounderLabel, message: "FounderPal label should not overlap CoFounder.im label")
+        assertNoVisualOverlap(buildspaceLabel, solopreneurLabel, message: "Buildspace historical label should not overlap AI 솔로프리너 클럽 label")
+        assertNoVisualOverlap(sparkLaunchLabel, icanpreneurLabel, message: "SparkLaunch label should not overlap Icanpreneur label")
+        assertNoVisualOverlap(ozFounderCampLabel, solopreneurLabel, message: "오즈 1인 창업가 캠프 label should not overlap AI 솔로프리너 클럽 label")
+        assertInlineDotLabelAligned(sparkClawNode, sparkClawLabel, labelIsLeading: true, message: "Spark Claw dot and text should share a centerline")
+        assertLabelSitsBelowAndRight(sparkLaunchLabel, of: sparkLaunchNode, message: "SparkLaunch label should sit in the below-right slot")
+        assertLabelSitsAboveAndRight(icanpreneurLabel, of: icanpreneurNode, message: "Icanpreneur label should sit in the above-right slot")
+        assertLabelSitsBelowAndLeft(ozFounderCampLabel, of: ozFounderCampNode, message: "오즈 1인 창업가 캠프 label should sit in the below-left slot")
+        assertInlineDotLabelAligned(founderPalNode, founderPalLabel, labelIsLeading: true, message: "FounderPal dot and text should share a centerline")
+        assertInlineDotLabelAligned(cofounderNode, cofounderLabel, labelIsLeading: false, message: "CoFounder.im dot and text should share a centerline")
+        assertInlineDotLabelAligned(agentic30Node, agentic30Label, labelIsLeading: true, message: "Agentic30 dot and text should share a centerline")
+
+        clickCenter(of: cursorNode)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.matrix.detail", containing: "Cursor", timeout: 3))
+        attachScreenshot(from: app, named: "Strategy Matrix Cursor Visual QA")
+        assertNoVisualOverlap(cursorNode, aiBuildQuadrant, message: "Selected Cursor should remain clear of AI build quadrant label")
+        assertNoVisualOverlap(cursorLabel, aiBuildQuadrant, message: "Selected Cursor label should remain clear of AI build quadrant label")
+        assertInlineDotLabelAligned(cursorNode, cursorLabel, labelIsLeading: true, message: "Selected Cursor dot and text should share a centerline")
+
+        clickCenter(of: founderPalNode)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.matrix.detail", containing: "FounderPal", timeout: 3))
+        assertNoVisualOverlap(founderPalLabel, cofounderLabel, message: "Selected FounderPal label should remain clear of CoFounder.im label")
+        assertInlineDotLabelAligned(founderPalNode, founderPalLabel, labelIsLeading: true, message: "Selected FounderPal dot and text should share a centerline")
+
+        let ycNode = elementWithIdentifier(in: app, "strategy.matrix.node.yc-startup-school")
         XCTAssertTrue(scrollElementToHittable(
             ycNode,
             in: app,
@@ -1119,6 +1194,67 @@ final class agentic30UITests: XCTestCase {
         elementWithIdentifier(in: app, "opendesign.day.rail.item.today").click()
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 10))
         XCTAssertFalse(elementWithIdentifier(in: app, "strategy.screen").exists)
+    }
+
+    @MainActor
+    func testStrategyResearchButtonShowsProgressAndDynamicReport() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-strategy-dynamic-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-strategy-dynamic-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-stub-strategy-report-events",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        elementWithIdentifier(in: app, "opendesign.day.rail.item.strategy").click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.screen").waitForExistence(timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.generated.badge").exists)
+
+        let researchButton = elementWithIdentifier(in: app, "strategy.action.research")
+        XCTAssertTrue(researchButton.waitForExistence(timeout: 3))
+        researchButton.click()
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.research.progress").waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "strategy.action.research", containing: "리서치 중", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.research.progress", containing: "3/6", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.research.progress", containing: "UI 테스트 전략 리서치 중", timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.generated.badge").waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.generated.badge", containing: "동적 리서치", timeout: 3))
+
+        let showMatrixButton = elementWithIdentifier(in: app, "strategy.action.show-matrix")
+        XCTAssertTrue(scrollElementToHittable(
+            showMatrixButton,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "strategy.scroll"
+        ))
+        showMatrixButton.click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.indiefounders").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.cursor").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.matrix.node.spark-claw").exists)
     }
 
     @MainActor
@@ -2921,8 +3057,8 @@ final class agentic30UITests: XCTestCase {
     @MainActor
     func testWorkspaceStartupDay1RoutesToOfficeHours() throws {
         // Day 1 workspace startup routes to the Office Hours screen, NOT the
-        // 30-day task grid. This is the intended chrome: routesTodayToOfficeHours
-        // (day == 1) → effectiveOfficeHoursPresented in OpenDesignDayShell renders
+        // 30-day task grid. This is the intended chrome: .today resolves through
+        // OpenDesignRailDestination.surfaceKind(routesTodayToOfficeHours:) to render
         // the office-hours column instead of the task sidebar.
         //
         // NOTE: the former grid + future-Day lock-navigation coverage (day7 locked,
@@ -3605,6 +3741,88 @@ final class agentic30UITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(frame.minY, container.minY - tolerance, message, file: file, line: line)
         XCTAssertLessThanOrEqual(frame.maxX, container.maxX + tolerance, message, file: file, line: line)
         XCTAssertLessThanOrEqual(frame.maxY, container.maxY + tolerance, message, file: file, line: line)
+    }
+
+    @MainActor
+    private func assertNoVisualOverlap(
+        _ first: XCUIElement,
+        _ second: XCUIElement,
+        message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(first.exists, "\(message): first element missing", file: file, line: line)
+        XCTAssertTrue(second.exists, "\(message): second element missing", file: file, line: line)
+        let tolerance: CGFloat = 2.0
+        let firstFrame = first.frame.insetBy(dx: tolerance, dy: tolerance)
+        let secondFrame = second.frame.insetBy(dx: tolerance, dy: tolerance)
+        XCTAssertFalse(
+            firstFrame.intersects(secondFrame),
+            "\(message): first=\(first.frame.debugDescription) second=\(second.frame.debugDescription)",
+            file: file,
+            line: line
+        )
+    }
+
+    @MainActor
+    private func assertInlineDotLabelAligned(
+        _ dot: XCUIElement,
+        _ label: XCUIElement,
+        labelIsLeading: Bool,
+        message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(dot.exists, "\(message): dot missing", file: file, line: line)
+        XCTAssertTrue(label.exists, "\(message): label missing", file: file, line: line)
+        XCTAssertEqual(dot.frame.midY, label.frame.midY, accuracy: 4.0, message, file: file, line: line)
+        if labelIsLeading {
+            XCTAssertLessThanOrEqual(label.frame.maxX, dot.frame.minX + 4.0, message, file: file, line: line)
+        } else {
+            XCTAssertGreaterThanOrEqual(label.frame.minX, dot.frame.maxX - 4.0, message, file: file, line: line)
+        }
+    }
+
+    @MainActor
+    private func assertLabelSitsBelowAndRight(
+        _ label: XCUIElement,
+        of dot: XCUIElement,
+        message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(dot.exists, "\(message): dot missing", file: file, line: line)
+        XCTAssertTrue(label.exists, "\(message): label missing", file: file, line: line)
+        XCTAssertGreaterThan(label.frame.minX, dot.frame.midX, message, file: file, line: line)
+        XCTAssertGreaterThan(label.frame.midY, dot.frame.maxY, message, file: file, line: line)
+    }
+
+    @MainActor
+    private func assertLabelSitsBelowAndLeft(
+        _ label: XCUIElement,
+        of dot: XCUIElement,
+        message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(dot.exists, "\(message): dot missing", file: file, line: line)
+        XCTAssertTrue(label.exists, "\(message): label missing", file: file, line: line)
+        XCTAssertLessThan(label.frame.maxX, dot.frame.midX, message, file: file, line: line)
+        XCTAssertGreaterThan(label.frame.midY, dot.frame.maxY, message, file: file, line: line)
+    }
+
+    @MainActor
+    private func assertLabelSitsAboveAndRight(
+        _ label: XCUIElement,
+        of dot: XCUIElement,
+        message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(dot.exists, "\(message): dot missing", file: file, line: line)
+        XCTAssertTrue(label.exists, "\(message): label missing", file: file, line: line)
+        XCTAssertGreaterThan(label.frame.minX, dot.frame.midX, message, file: file, line: line)
+        XCTAssertLessThan(label.frame.midY, dot.frame.minY, message, file: file, line: line)
     }
 
     @MainActor

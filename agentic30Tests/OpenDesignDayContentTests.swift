@@ -4,37 +4,74 @@ import Testing
 @testable import agentic30
 
 struct OpenDesignDayContentTests {
+    @Test func officeHoursDailyDigestSourceDotToneSeparatesConnectionAndCollectionState() throws {
+        let decoder = JSONDecoder()
+
+        let ready = try decoder.decode(OfficeHoursSourceStatus.self, from: Data("""
+        { "id": "posthog", "label": "PostHog", "state": "ready", "connectionState": "ready", "collectionState": "ready" }
+        """.utf8))
+        let collectionFailed = try decoder.decode(OfficeHoursSourceStatus.self, from: Data("""
+        { "id": "posthog", "label": "PostHog", "state": "failed", "connectionState": "ready", "collectionState": "failed" }
+        """.utf8))
+        let unavailable = try decoder.decode(OfficeHoursSourceStatus.self, from: Data("""
+        { "id": "cloudflare", "label": "Cloudflare", "state": "missing", "connectionState": "missing", "collectionState": "missing" }
+        """.utf8))
+        let legacyFailed = try decoder.decode(OfficeHoursSourceStatus.self, from: Data("""
+        { "id": "gh_cli", "label": "gh CLI", "state": "failed" }
+        """.utf8))
+
+        #expect(officeHoursDigestSourceDotTone(ready) == .ready)
+        #expect(officeHoursDigestSourceDotTone(collectionFailed) == .warning)
+        #expect(officeHoursDigestSourceDotTone(unavailable) == .unavailable)
+        #expect(officeHoursDigestSourceDotTone(legacyFailed) == .unavailable)
+    }
+
     @Test func workspaceChromeStyleUsesDay1ChromeForOfficeHoursAndSettingsOnly() {
         #expect(WorkspaceChromeStyle.resolve(
             isWorkspaceWindow: true,
             dayNumber: 1,
-            selectedReferencePage: nil,
-            isOfficeHoursPresented: false
+            railDestination: .today
         ) == .day1OfficeHours)
         #expect(WorkspaceChromeStyle.resolve(
             isWorkspaceWindow: true,
             dayNumber: 1,
-            selectedReferencePage: .settings,
-            isOfficeHoursPresented: false
+            railDestination: .reference(.settings)
         ) == .day1OfficeHours)
         #expect(WorkspaceChromeStyle.resolve(
             isWorkspaceWindow: true,
             dayNumber: 1,
-            selectedReferencePage: .projects,
-            isOfficeHoursPresented: false
+            railDestination: .reference(.projects)
         ) == .standard)
         #expect(WorkspaceChromeStyle.resolve(
             isWorkspaceWindow: true,
             dayNumber: 2,
-            selectedReferencePage: .settings,
-            isOfficeHoursPresented: true
+            railDestination: .reference(.settings)
         ) == .standard)
         #expect(WorkspaceChromeStyle.resolve(
             isWorkspaceWindow: false,
             dayNumber: 1,
-            selectedReferencePage: .settings,
-            isOfficeHoursPresented: true
+            railDestination: .reference(.settings)
         ) == .standard)
+    }
+
+    @Test func railDestinationDerivesActiveItemAndSurfaceFromSingleState() throws {
+        #expect(OpenDesignRailDestination.strategy.activeRailItemID == "strategy")
+        #expect(OpenDesignRailDestination.officeHours.activeRailItemID == "today")
+        #expect(OpenDesignRailDestination.reference(.news).activeRailItemID == "news")
+        #expect(OpenDesignRailDestination.today.surfaceKind(routesTodayToOfficeHours: true) == .officeHours)
+        #expect(OpenDesignRailDestination.today.surfaceKind(routesTodayToOfficeHours: false) == .today)
+        #expect(OpenDesignRailDestination.reference(.news).referencePage == .news)
+    }
+
+    @Test func railDestinationActivationMovesNewsReferenceDirectlyToStrategy() throws {
+        let strategyRailItem = try #require(OpenDesignDayContent.makeRailItems(
+            todayTitle: "오늘 · Day 1",
+            showsDevelopmentOnlyReferencePages: false
+        ).first(where: { $0.id == "strategy" }))
+
+        let current = OpenDesignRailDestination.reference(.news)
+        #expect(openDesignRailDestinationAfterOpeningSearch(current: current) == current)
+        #expect(openDesignRailDestination(for: strategyRailItem, routesTodayToOfficeHours: true) == .strategy)
     }
 
     @Test func officeHoursTranscriptRowsHideSyntheticStartPrompt() {
@@ -1113,15 +1150,91 @@ struct OpenDesignDayContentTests {
 
         let copy = OpenDesignStrategyCanvasReference.searchableCopy.joined(separator: "\n")
         #expect(copy.contains("Business diagnosis"))
+        #expect(copy.contains("strategy-data"))
+        #expect(copy.contains("paid ask"))
+        #expect(copy.contains("first_value"))
+        #expect(copy.contains("PostHog activation"))
         #expect(copy.contains("분석 기준"))
         #expect(copy.contains("비즈니스 캔버스"))
-        #expect(copy.contains("2x2 경쟁자 Matrix"))
+        #expect(copy.contains("2x2 경쟁 구도 Matrix"))
         #expect(copy.contains("SWOT 분석"))
         #expect(copy.contains("전략 판단"))
         #expect(!copy.contains("/analyze-ads"))
     }
 
-    @Test func strategyCanvasReferenceContainsNineBlocksAndFiveCompetitors() {
+    @Test func strategyDisplayContentDefaultsToStaticReferenceAndMapsDynamicSnapshotSections() throws {
+        let staticContent = OpenDesignStrategyDisplayContent.staticReference
+        #expect(staticContent.isGenerated == false)
+        #expect(staticContent.commandLine == OpenDesignStrategyCanvasReference.commandLine)
+        #expect(staticContent.searchableCopy.contains("비즈니스 캔버스"))
+
+        let dynamic = try #require(OpenDesignStrategyDisplayContent(Self.makeStrategyReportContentForDisplayTest()))
+        #expect(dynamic.isGenerated == true)
+        #expect(dynamic.generatedBadge == "동적 리서치")
+        #expect(dynamic.commandLine.contains("dynamic-strategy"))
+        #expect(dynamic.canvasBlocks.map(\.id) == [
+            "partners",
+            "activities",
+            "resources",
+            "value-proposition",
+            "relationships",
+            "channels",
+            "customer-segments",
+            "cost-structure",
+            "revenue-streams",
+        ])
+        #expect(dynamic.competitors.first?.id == "agentic30")
+        #expect(dynamic.competitors.first?.isAgentic30 == true)
+        #expect(dynamic.competitors.first { $0.id == "cursor" }?.category == .aiBuild)
+        #expect(dynamic.swotGroups.map(\.id) == ["strengths", "weaknesses", "opportunities", "threats"])
+        #expect(dynamic.positioningStatement.contains("paid ask"))
+        #expect(dynamic.searchableCopy.contains("동적 리서치"))
+    }
+
+    @Test func strategyResearchStatusCopyUsesStreamingProgressTextAndStepCount() {
+        let refreshing = StrategyReportStatus(
+            state: "refreshing",
+            lastSuccessAt: nil,
+            stale: false,
+            error: nil,
+            reason: "manual",
+            researchSource: "Codex Exa MCP",
+            stage: "running_exa_research",
+            progressText: "Codex Exa MCP로 공개 근거를 검색하는 중",
+            elapsedMs: 1200,
+            stepIndex: 3,
+            stepCount: 6,
+            partialFailures: nil,
+            startedAt: nil,
+            completedAt: nil,
+            durationMs: nil
+        )
+        let failed = StrategyReportStatus(
+            state: "failed",
+            lastSuccessAt: nil,
+            stale: false,
+            error: "strategy report structured output contract violation: summaryTiles required",
+            reason: "manual",
+            researchSource: "Codex Exa MCP",
+            stage: "running_exa_research",
+            progressText: nil,
+            elapsedMs: 2400,
+            stepIndex: 3,
+            stepCount: 6,
+            partialFailures: nil,
+            startedAt: nil,
+            completedAt: nil,
+            durationMs: nil
+        )
+
+        #expect(strategyResearchStatusTitle(refreshing) == "전략 리서치 진행 중 3/6")
+        #expect(strategyResearchStatusMessage(refreshing, isPreparing: false) == "Codex Exa MCP로 공개 근거를 검색하는 중")
+        #expect(strategyResearchStatusMessage(refreshing, isPreparing: true) == "캐시와 진행 상태를 불러오는 중")
+        #expect(strategyResearchStatusTitle(failed) == "리서치 실패")
+        #expect(strategyResearchStatusMessage(failed, isPreparing: false).contains("summaryTiles"))
+    }
+
+    @Test func strategyCanvasReferenceContainsNineBlocksAndEighteenPositions() {
         #expect(OpenDesignStrategyCanvasReference.canvasBlocks.map(\.id) == [
             "partners",
             "activities",
@@ -1159,12 +1272,97 @@ struct OpenDesignDayContentTests {
         ])
         #expect(OpenDesignStrategyCanvasReference.competitors.map(\.id) == [
             "agentic30",
-            "coding",
-            "yc",
-            "content",
-            "chatbot",
+            "spark-claw",
+            "indiefounders",
+            "market-test",
+            "icanpreneur",
+            "sparklaunch",
+            "preuve",
+            "ship30",
+            "buildspace",
+            "solopreneur-club",
+            "cofounder-im",
+            "founderpal",
+            "cursor",
+            "replit",
+            "lovable",
+            "yc-startup-school",
+            "oz-founder-camp",
+            "cobaetoo-launch-challenge",
         ])
-        #expect(OpenDesignStrategyCanvasReference.competitors.contains { $0.title == "YC Startup School" })
+        #expect(OpenDesignStrategyCanvasReference.competitors.first?.isAgentic30 == true)
+        #expect(OpenDesignStrategyCanvasReference.competitors.contains { $0.title == "IndieFounders" })
+        #expect(OpenDesignStrategyCanvasReference.competitors.contains { $0.title == "Cursor" })
+        #expect(OpenDesignStrategyCanvasReference.competitors.contains { $0.title == "Replit" })
+        #expect(OpenDesignStrategyCanvasReference.competitors.contains { $0.title == "Lovable" })
+        #expect(OpenDesignStrategyCanvasReference.competitors.contains { $0.title == "SparkLaunch" })
+        #expect(OpenDesignStrategyCanvasReference.competitors.first { $0.id == "buildspace" }?.isHistorical == true)
+    }
+
+    @Test func strategyMatrixCompetitorsExposeCategoryScoresAndSources() throws {
+        let competitorsByID = Dictionary(uniqueKeysWithValues: OpenDesignStrategyCanvasReference.competitors.map { ($0.id, $0) })
+        let agentic30 = try #require(competitorsByID["agentic30"])
+        let sparkClaw = try #require(competitorsByID["spark-claw"])
+        let sparkLaunch = try #require(competitorsByID["sparklaunch"])
+        let icanpreneur = try #require(competitorsByID["icanpreneur"])
+        let cursor = try #require(competitorsByID["cursor"])
+        let lovable = try #require(competitorsByID["lovable"])
+        let indieFounders = try #require(competitorsByID["indiefounders"])
+        let buildspace = try #require(competitorsByID["buildspace"])
+        let ozFounderCamp = try #require(competitorsByID["oz-founder-camp"])
+        let cofounder = try #require(competitorsByID["cofounder-im"])
+        let founderPal = try #require(competitorsByID["founderpal"])
+
+        #expect(OpenDesignStrategyCanvasReference.competitors.filter(\.isAgentic30).map(\.id) == ["agentic30"])
+        #expect(OpenDesignStrategyCanvasReference.competitors.allSatisfy { (0...100).contains($0.adaptiveScore) })
+        #expect(OpenDesignStrategyCanvasReference.competitors.allSatisfy { (0...100).contains($0.evidenceScore) })
+        #expect(OpenDesignStrategyCanvasReference.competitors.allSatisfy { !$0.sourceLabel.isEmpty })
+        #expect(OpenDesignStrategyCanvasReference.competitors.allSatisfy { $0.verifiedAt == "2026-06-15" })
+        #expect(OpenDesignStrategyCanvasReference.competitors.allSatisfy { !$0.scoreRationale.isEmpty })
+        #expect(agentic30.category == .agentic30)
+        #expect(agentic30.adaptiveScore == 90)
+        #expect(agentic30.evidenceScore == 84)
+        #expect(abs(Double(agentic30.x) - 0.90) < 0.0001)
+        #expect(abs(Double(agentic30.y) - 0.16) < 0.0001)
+        #expect(agentic30.sourceURL == "https://agentic30.app")
+        #expect(agentic30.sourceLabel == "Agentic30 source docs")
+        #expect(agentic30.scoreRationale.contains("paid ask"))
+        #expect(agentic30.labelPlacement == .leading)
+
+        #expect(sparkClaw.labelPlacement == .leading)
+        #expect(sparkLaunch.category == .aiValidation)
+        #expect(sparkLaunch.adaptiveScore == 58)
+        #expect(sparkLaunch.evidenceScore == 76)
+        #expect(sparkLaunch.sourceURL == "https://sparklaun.ch/startup-validation")
+        #expect(sparkLaunch.sourceLabel == "SparkLaunch validation")
+        #expect(sparkLaunch.labelPlacement == .belowTrailing)
+        #expect(icanpreneur.labelPlacement == .aboveTrailing)
+
+        #expect(cursor.category == .aiBuild)
+        #expect(cursor.adaptiveScore == 86)
+        #expect(cursor.evidenceScore == 22)
+        #expect(cursor.sourceURL == "https://cursor.com")
+        #expect(cursor.scoreRationale.contains("codebase adaptivity"))
+        #expect(cursor.labelPlacement == .leading)
+
+        #expect(lovable.category == .aiBuild)
+        #expect(lovable.adaptiveScore == 74)
+        #expect(lovable.evidenceScore == 30)
+        #expect(lovable.labelPlacement == .leading)
+
+        #expect(indieFounders.category == .koreanAC)
+        #expect(indieFounders.sourceURL == "https://indiefounders.net")
+        #expect(indieFounders.body.contains("classbinu 개인은 별도 경쟁자가 아니라"))
+        #expect(!OpenDesignStrategyCanvasReference.competitors.contains { $0.title.contains("마켓테스트.kr") })
+        #expect(!OpenDesignStrategyCanvasReference.competitors.contains { $0.id == "classbinu" })
+
+        #expect(buildspace.category == .cohort)
+        #expect(buildspace.sourceLabel == "buildspace final letter")
+        #expect(buildspace.isHistorical)
+        #expect(buildspace.labelPlacement == .belowTrailing)
+        #expect(ozFounderCamp.labelPlacement == .belowLeading)
+        #expect(cofounder.labelPlacement == .trailing)
+        #expect(founderPal.labelPlacement == .leading)
     }
 
     @Test func strategyCanvasReferenceContainsSWOTAndStrategicJudgement() {
@@ -1184,6 +1382,8 @@ struct OpenDesignDayContentTests {
         #expect(OpenDesignStrategyCanvasReference.swotMatrixRows.flatMap { $0 } == OpenDesignStrategyCanvasReference.swotGroups.map(\.id))
         #expect(OpenDesignStrategyCanvasReference.judgement.contains("전업 1인 개발자"))
         #expect(OpenDesignStrategyCanvasReference.judgement.contains("macOS assistant"))
+        #expect(OpenDesignStrategyCanvasReference.judgement.contains("PostHog activation"))
+        #expect(OpenDesignStrategyCanvasReference.judgement.contains("public launch"))
     }
 
     @Test func newsRailItemRoutesToReferencePageAndPreparesDisplay() throws {
@@ -1438,6 +1638,93 @@ struct OpenDesignDayContentTests {
         userState.selectedStreamID = "lane:icp"
         userState.selectedValueFilter = "low"
         #expect(newsMarketRadarVisibleCards(snapshot: snapshot, userState: userState).map(\.id) == ["low-web"])
+    }
+
+    @Test func newsMarketRadarDisplayedGroupsKeepEveryVisibleCardInStream() {
+        let snapshot = makeNewsRadarSnapshot(
+            state: "ready",
+            cardIDs: ["first-web", "second-web", "local-only"],
+            sourceTypes: [
+                "first-web": ["web"],
+                "second-web": ["web"],
+                "local-only": ["workspace"],
+            ]
+        )
+        var userState = NewsMarketRadarUserState()
+
+        #expect(newsMarketRadarDisplayedGroups(
+            snapshot: snapshot,
+            userState: userState
+        ).flatMap { $0.cards.map(\.id) } == ["first-web", "second-web", "local-only"])
+
+        userState.selectedStreamID = "lane:icp"
+        #expect(newsMarketRadarDisplayedGroups(
+            snapshot: snapshot,
+            userState: userState
+        ).first?.cards.map(\.id) == ["first-web", "second-web", "local-only"])
+
+        userState.selectedStreamID = "source:web"
+        #expect(newsMarketRadarDisplayedGroups(
+            snapshot: snapshot,
+            userState: userState
+        ).flatMap { $0.cards.map(\.id) } == ["first-web", "second-web"])
+
+        userState.selectedStreamID = "saved"
+        userState.toggleSaved(cardID: "second-web")
+        #expect(newsMarketRadarDisplayedGroups(
+            snapshot: snapshot,
+            userState: userState
+        ).flatMap { $0.cards.map(\.id) } == ["second-web"])
+    }
+
+    @Test func newsMarketRadarCardDisplayPayloadKeepsAllUserFacingFields() {
+        let sourceRefs = (0..<6).map { index in
+            NewsMarketRadarSourceRef(
+                id: "src-\(index)",
+                sourceType: "web",
+                title: "Source \(index)",
+                url: "https://example.com/\(index)",
+                domain: "example.com",
+                path: nil,
+                publishedAt: "2026-06-\(10 + index)",
+                excerpt: "Excerpt \(index)"
+            )
+        }
+        let card = NewsMarketRadarCard(
+            id: "card-1",
+            title: "Full detail card",
+            summary: "Summary",
+            impact: "strengthens",
+            confidence: "strong",
+            whyItMatters: "Why it matters",
+            suggestedHypothesisUpdate: "Update the channel hypothesis",
+            suggestedDocTargets: ["ICP.md", "SPEC.md"],
+            relatedDays: [2, 5, 27],
+            relatedAnswerIds: ["answer-1", "answer-2"],
+            sourceRefs: sourceRefs,
+            evidenceStrength: "strong"
+        )
+
+        let payload = newsMarketRadarCardDisplayPayload(for: card)
+
+        #expect(payload.title == "Full detail card")
+        #expect(payload.summary == "Summary")
+        #expect(payload.impact == "strengthens")
+        #expect(payload.confidence == "strong")
+        #expect(payload.evidenceStrength == "strong")
+        #expect(payload.whyItMatters == "Why it matters")
+        #expect(payload.suggestedHypothesisUpdate == "Update the channel hypothesis")
+        #expect(payload.suggestedDocTargets == ["ICP.md", "SPEC.md"])
+        #expect(payload.relatedDays == [2, 5, 27])
+        #expect(payload.relatedAnswerIds == ["answer-1", "answer-2"])
+        #expect(newsMarketRadarDisplaySourceRefs(for: card).map(\.title) == [
+            "Source 0",
+            "Source 1",
+            "Source 2",
+            "Source 3",
+            "Source 4",
+            "Source 5",
+        ])
     }
 
     @Test func day2MarketFixtureMatchesOpenDesignDashboard() {
@@ -3457,6 +3744,62 @@ struct OpenDesignDayContentTests {
             "새 고객에게 가격 질문하기",
             evidenceOS: evidenceOS
         ))
+    }
+
+    private static func makeStrategyReportContentForDisplayTest() -> StrategyReportContent {
+        StrategyReportContent(
+            commandLine: "strategy@agentic30 $ synthesize dynamic-strategy",
+            diagnosisKicker: "Verified business diagnosis",
+            diagnosisTitle: "Agentic30은 paid ask와 first_value 증거를 닫는 assistant입니다.",
+            diagnosisLead: "동적 리서치와 검증 패스를 통과한 전략 리포트입니다.",
+            positioningStatement: "Agentic30은 프로젝트 기록을 paid ask 실험으로 바꾸는 macOS assistant입니다.",
+            judgement: "전략 판단은 고객 행동 증거 루프에 집중하는 것입니다.",
+            generatedBadge: "동적 리서치",
+            analysisBasisLabel: "SPEC.md + ICP.md + VALUES.md + Exa",
+            canvasMeta: "9 blocks · 동적 리포트",
+            matrixMeta: "positioning · Exa verified",
+            swotMeta: "internal / external · verified",
+            summaryTiles: [
+                StrategyReportSummaryTile(id: "primary-icp", label: "Primary ICP", title: "전업 1인 개발자", detail: "첫 매출 전"),
+                StrategyReportSummaryTile(id: "wedge", label: "Wedge", title: "Local evidence loop", detail: "오늘의 ask 생성"),
+                StrategyReportSummaryTile(id: "proof-target", label: "Proof", title: "고객 행동 증거", detail: "activation gate"),
+            ],
+            criteriaRows: [
+                StrategyReportCriterionRow(id: "product-shape", label: "제품 형태", value: "macOS + sidecar"),
+                StrategyReportCriterionRow(id: "core-pain", label: "핵심 고통", value: "누구에게 팔지 모름"),
+                StrategyReportCriterionRow(id: "differentiator", label: "차별 기준", value: "로컬 기록 기반"),
+                StrategyReportCriterionRow(id: "stage", label: "현재 단계", value: "private pilot"),
+            ],
+            canvasBlocks: [
+                StrategyReportCanvasBlock(id: "partners", number: "08", eyebrow: "Partners", title: "핵심 파트너", bullets: ["AI provider"], tone: "blue"),
+                StrategyReportCanvasBlock(id: "activities", number: "07", eyebrow: "Activities", title: "핵심 활동", bullets: ["pilot 반복"], tone: "accent"),
+                StrategyReportCanvasBlock(id: "resources", number: "06", eyebrow: "Resources", title: "핵심 자원", bullets: ["proof-ledger"], tone: "sky"),
+                StrategyReportCanvasBlock(id: "value-proposition", number: "02", eyebrow: "Value", title: "가치 제안", bullets: ["paid ask"], tone: "accent"),
+                StrategyReportCanvasBlock(id: "relationships", number: "04", eyebrow: "Relationships", title: "고객 관계", bullets: ["체크인"], tone: "accent"),
+                StrategyReportCanvasBlock(id: "channels", number: "03", eyebrow: "Channels", title: "채널", bullets: ["커뮤니티"], tone: "blue"),
+                StrategyReportCanvasBlock(id: "customer-segments", number: "01", eyebrow: "Segments", title: "고객 세그먼트", bullets: ["1인 개발자"], tone: "accent"),
+                StrategyReportCanvasBlock(id: "cost-structure", number: "09", eyebrow: "Cost", title: "비용 구조", bullets: ["provider 비용"], tone: "magenta"),
+                StrategyReportCanvasBlock(id: "revenue-streams", number: "05", eyebrow: "Revenue", title: "수익원", bullets: ["pilot ask"], tone: "accent"),
+            ],
+            businessCanvasTopRows: nil,
+            businessCanvasBottomRow: nil,
+            competitors: [
+                StrategyReportCompetitor(id: "agentic30", title: "Agentic30", tag: "Adaptive PMF evidence loop", body: "기록을 evidence gate로 바꿉니다.", gap: "paid pilot 반복", x: 0.78, y: 0.22, adaptiveScore: 92, evidenceScore: 84, sourceLabel: "SPEC / ICP / Exa", sourceURL: "https://agentic30.com", sourceDisplay: "agentic30.com", verifiedAt: "2026-06", scoreRationale: "로컬 기록 기반", category: "agentic30", isAgentic30: true, labelPlacement: "leading"),
+                StrategyReportCompetitor(id: "cursor", title: "Cursor", tag: "AI coding workspace", body: "빌드 속도 중심입니다.", gap: "PMF 증거 밖", x: 0.72, y: 0.72, adaptiveScore: 80, evidenceScore: 35, sourceLabel: "Public docs", sourceURL: "https://cursor.com", sourceDisplay: "cursor.com", verifiedAt: "2026-06", scoreRationale: "코딩 적응성", category: "aiBuild", isAgentic30: false, labelPlacement: "trailing"),
+                StrategyReportCompetitor(id: "indiefounders", title: "IndieFounders", tag: "Founder community", body: "커뮤니티 중심입니다.", gap: "로컬 loop 약함", x: 0.32, y: 0.38, adaptiveScore: 42, evidenceScore: 58, sourceLabel: "Public site", sourceURL: "https://indiefounders.net", sourceDisplay: "indiefounders.net", verifiedAt: "2026-06", scoreRationale: "커뮤니티 증거", category: "community", isAgentic30: false, labelPlacement: "leading"),
+            ],
+            swotGroups: [
+                StrategyReportSWOTGroup(id: "strengths", title: "Strengths", tag: "내부 강점", tone: "accent", bullets: ["로컬 기록"]),
+                StrategyReportSWOTGroup(id: "weaknesses", title: "Weaknesses", tag: "내부 약점", tone: "magenta", bullets: ["데이터 부족"]),
+                StrategyReportSWOTGroup(id: "opportunities", title: "Opportunities", tag: "외부 기회", tone: "sky", bullets: ["AI coding 보급"]),
+                StrategyReportSWOTGroup(id: "threats", title: "Threats", tag: "외부 위협", tone: "blue", bullets: ["IDE 흡수"]),
+            ],
+            swotMatrixColumnCount: 2,
+            swotMatrixRows: [["strengths", "weaknesses"], ["opportunities", "threats"]],
+            sourceRefs: [],
+            searchableCopy: ["동적 리서치", "paid ask"],
+            generatedAt: nil
+        )
     }
 
     private static func evidenceOS(

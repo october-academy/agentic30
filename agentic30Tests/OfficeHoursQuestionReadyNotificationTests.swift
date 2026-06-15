@@ -274,6 +274,7 @@ struct LongRunningCompletionNotificationTests {
             .workHistory: .history,
             .bipResearch: .bipResearch,
             .newsMarketRadar: .newsMarketRadar,
+            .strategyReport: .strategy,
             .bipMission: .bipMission,
         ]
 

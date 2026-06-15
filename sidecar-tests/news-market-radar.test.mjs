@@ -173,6 +173,40 @@ test("trusted source catalog includes required builder sources with lane fit and
   );
 });
 
+test("source catalog roles expose market surface taxonomy", () => {
+  assert.ok(MARKET_RADAR_TRUSTED_SOURCE_CATALOG.every((source) => (
+    Array.isArray(source.roles) && source.roles.length > 0
+  )));
+  const productHunt = MARKET_RADAR_TRUSTED_SOURCE_CATALOG.find((source) => source.domain === "producthunt.com");
+  assert.ok(productHunt.roles.includes("launch"));
+  assert.ok(productHunt.roles.includes("pricing"));
+  const eopla = MARKET_RADAR_TRUSTED_SOURCE_CATALOG.find((source) => source.domain === "eopla.net");
+  assert.ok(eopla.roles.includes("founder_local_ko"));
+
+  const promptSources = trustedSourcesForMarketRadarPrompt("channel", {
+    localeProfile: { primaryLanguage: "ko" },
+  });
+  assert.ok(promptSources.every((source) => Array.isArray(source.roles)));
+  assert.ok(promptSources.some((source) => source.roles.includes("founder_local_ko")));
+
+  const launchQueries = buildTrustedSourceQueriesForLane({
+    laneId: "alternatives_pricing",
+    querySeeds: ["AI idea validation pricing"],
+    sourceRoles: ["launch"],
+    maxQueries: 2,
+  });
+  assert.ok(launchQueries.every((query) => /^site:producthunt\.com\b/.test(query)));
+
+  const localQueries = buildTrustedSourceQueriesForLane({
+    laneId: "channel",
+    querySeeds: ["한국 1인 개발자 첫 유료 고객"],
+    localeProfile: { primaryLanguage: "ko" },
+    sourceRoles: ["founder_local_ko"],
+    maxQueries: 2,
+  });
+  assert.ok(localQueries.every((query) => /site:disquiet\.io|site:eopla\.net/.test(query)));
+});
+
 test("provider prompt requires Korean user-facing Market Radar copy", () => {
   const prompt = buildMarketRadarProviderPrompt({
     productName: "AcmePilot",
@@ -226,12 +260,42 @@ test("provider prompt requires Korean user-facing Market Radar copy", () => {
   assert.match(lanePrompt, /Context\.adaptiveProfile\.localeProfile/);
   assert.match(lanePrompt, /Self-source exclusion/);
   assert.match(lanePrompt, /Context\.trustedSourceHints/);
-  assert.match(lanePrompt, /Use at most one web_search_advanced_exa call/);
+  assert.match(lanePrompt, /Use at most two web_search_advanced_exa calls total/);
+  assert.match(lanePrompt, /Pass A: trusted\/reference\/local evidence/);
+  assert.match(lanePrompt, /Pass B: competitor\/recent-market\/pricing\/review evidence/);
   assert.match(lanePrompt, /type:"fast"/);
-  assert.match(lanePrompt, /numResults <= 4/);
+  assert.match(lanePrompt, /numResults <= 6/);
+  assert.match(lanePrompt, /numResults <= 8/);
   assert.match(lanePrompt, /enableSummary:false/);
-  assert.match(lanePrompt, /Call web_fetch_exa for at most 3 URLs/);
+  assert.match(lanePrompt, /highlightsMaxCharacters <= 800/);
+  assert.match(lanePrompt, /Fetch at most 4 URLs total across both passes/);
+  assert.doesNotMatch(lanePrompt, /Use at most one web_search_advanced_exa call/);
+  assert.doesNotMatch(lanePrompt, /numResults <= 4/);
+  assert.doesNotMatch(lanePrompt, /Call web_fetch_exa for at most 3 URLs/);
   assert.match(lanePrompt, /cannot make confidence strong/);
+});
+
+test("two-pass Exa lane prompt exposes bounded market-search budget", () => {
+  const prompt = buildMarketRadarLaneProviderPrompt({
+    lane: {
+      id: "alternatives_pricing",
+      title: "대안/가격",
+      hypothesis: "이미 돈을 쓰는 대안과 가격 기준은 무엇인가",
+    },
+  });
+
+  assert.match(prompt, /Use at most two web_search_advanced_exa calls total/);
+  assert.match(prompt, /Pass A: trusted\/reference\/local evidence/);
+  assert.match(prompt, /Pass B: competitor\/recent-market\/pricing\/review evidence/);
+  assert.match(prompt, /type:"fast"/);
+  assert.match(prompt, /numResults <= 6/);
+  assert.match(prompt, /numResults <= 8/);
+  assert.match(prompt, /enableSummary:false/);
+  assert.match(prompt, /highlightsMaxCharacters <= 800/);
+  assert.match(prompt, /Fetch at most 4 URLs total across both passes/);
+  assert.doesNotMatch(prompt, /Use at most one web_search_advanced_exa call/);
+  assert.doesNotMatch(prompt, /numResults <= 4/);
+  assert.doesNotMatch(prompt, /Call web_fetch_exa for at most 3 URLs/);
 });
 
 test("trusted source queries use adaptive seeds instead of catalog hardcoded hints", () => {
@@ -304,6 +368,62 @@ test("research context keeps the product name out of query seeds and records it 
   assert.doesNotMatch(context.searchExclusions.additionalQueries.join(" "), /AcmePilot/i);
 });
 
+test("market surface context keeps user references separate from self sources", () => {
+  const fakeSecret = ["sk", "test-market-radar-secret"].join("-");
+  const fakeSecretPattern = new RegExp(fakeSecret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const context = buildMarketRadarResearchContext({
+    workspaceRoot: "/tmp/acmepilot-public",
+    workspaceEvidence: {
+      onboardingHypothesis: {
+        productName: "AcmePilot",
+        targetUser: "한국 1인 개발자",
+      },
+      evidence: [{
+        id: "user-context:AGENTS.md",
+        role: "user_context",
+        path: "AGENTS.md",
+        title: "AGENTS.md",
+        excerpt: [
+          "Homepage: https://acmepilot.io",
+          "Repository: https://github.com/example/acmepilot",
+          "User-designated competitors:",
+          "- https://indiefounders.net/",
+          "- https://www.threads.com/@classbinu",
+          "- https://www.producthunt.com/products/demandproof",
+          "- https://eopla.net/magazines/41464",
+          `Token: ${fakeSecret}`,
+        ].join("\n"),
+      }],
+    },
+    answers: [{
+      id: "market",
+      day: 27,
+      dimension: "pricing",
+      answerTitle: "Agentfounder, DemandProof 같은 유료 대안을 본다",
+      freeformAnswer: "threads.com/@classbinu와 indiefounders.net은 참고 사례다.",
+      occurredAt: "2026-05-20T00:00:00.000Z",
+      marketRadarWeight: 4,
+    }],
+    now: new Date("2026-05-20T00:00:00.000Z"),
+  });
+
+  assert.ok(context.marketSurfaces);
+  assert.ok(context.marketSurfaces.excluded_self.some((surface) => surface.domain === "acmepilot.io"));
+  assert.ok(context.marketSurfaces.excluded_self.some((surface) => surface.domain === "github.com"));
+  assert.ok(context.marketSurfaces.user_reference.some((surface) => surface.domain === "indiefounders.net"));
+  assert.ok(context.marketSurfaces.social_profile.some((surface) => surface.domain === "threads.com"));
+  assert.ok(context.marketSurfaces.launch.some((surface) => surface.domain === "producthunt.com"));
+  assert.ok(context.marketSurfaces.local_ko.some((surface) => surface.domain === "eopla.net"));
+  assert.doesNotMatch(JSON.stringify(context.marketSurfaces), fakeSecretPattern);
+
+  const laneContext = buildMarketRadarLaneResearchContext(context, "channel");
+  assert.ok(laneContext.marketSurfaces.user_reference.some((surface) => surface.domain === "indiefounders.net"));
+  assert.ok(laneContext.marketSurfaces.social_profile.some((surface) => surface.domain === "threads.com"));
+  const prompt = buildMarketRadarLaneProviderPrompt(laneContext);
+  assert.match(prompt, /Context\.marketSurfaces/);
+  assert.doesNotMatch(prompt, fakeSecretPattern);
+});
+
 test("trusted source hints are lane-specific and still respect self-source exclusion", () => {
   const context = buildMarketRadarResearchContext({
     workspaceRoot: "/tmp/acmepilot-public",
@@ -338,7 +458,7 @@ test("trusted source hints are lane-specific and still respect self-source exclu
   for (const source of laneContext.trustedSourceHints.sources) {
     assert.deepEqual(
       Object.keys(source).sort(),
-      ["domain", "key", "label", "pathPrefix", "trustTier"].sort(),
+      ["domain", "key", "label", "pathPrefix", "roles", "trustTier"].sort(),
     );
   }
   assert.ok(laneContext.trustedSourceHints.queries.length > 0);
@@ -361,10 +481,10 @@ test("news market radar self-source logic does not hard-code dogfood product lit
 });
 
 test("provider timeout is long enough for Exa research and has a user-readable label", () => {
-  assert.equal(normalizeNewsMarketRadarProviderTimeout(""), 240_000);
+  assert.equal(normalizeNewsMarketRadarProviderTimeout(""), 480_000);
   assert.equal(normalizeNewsMarketRadarProviderTimeout("1000"), 30_000);
   assert.equal(normalizeNewsMarketRadarProviderTimeout("900000"), 600_000);
-  assert.equal(formatNewsMarketRadarProviderTimeout(240_000), "4m");
+  assert.equal(formatNewsMarketRadarProviderTimeout(480_000), "8m");
   assert.equal(formatNewsMarketRadarProviderTimeout(45_000), "45s");
 });
 
@@ -699,7 +819,7 @@ test("legacy EXA_API_KEY missing cache is non-blocking when provider Exa MCP exi
 
 test("old Market Radar prompt profile cache is marked stale when Exa is configured", async () => {
   await withTmpWorkspace(async (root) => {
-    assert.equal(NEWS_MARKET_RADAR_PROMPT_PROFILE, "ko_market_radar_v6_adaptive_context_trusted_sources_no_self_sources");
+    assert.equal(NEWS_MARKET_RADAR_PROMPT_PROFILE, "ko_market_radar_v7_market_surfaces_two_pass_exa");
     await fs.mkdir(path.dirname(resolveNewsMarketRadarCachePath(root)), { recursive: true });
     await fs.writeFile(resolveNewsMarketRadarCachePath(root), JSON.stringify({
       schemaVersion: 1,
@@ -923,12 +1043,12 @@ test("refresh groups duplicate all-lane timeout failures and persists diagnostic
         },
       }],
       providerResearcher: async () => {
-        throw new Error("공개 근거 검색이 4m 안에 끝나지 않았습니다");
+        throw new Error("공개 근거 검색이 8m 안에 끝나지 않았습니다");
       },
     });
 
     assert.equal(snapshot.status.state, "failed");
-    assert.match(snapshot.status.error, /공개 근거 검색이 4m 안에 끝나지 않았습니다 \(5개 가설 모두 실패\)/);
+    assert.match(snapshot.status.error, /공개 근거 검색이 8m 안에 끝나지 않았습니다 \(5개 가설 모두 실패\)/);
     assert.doesNotMatch(snapshot.status.error, /\|/);
     assert.equal(snapshot.status.partialFailures.length, 5);
     assert.equal(snapshot.status.researchSource, "Codex Exa MCP");
@@ -962,7 +1082,7 @@ test("refresh reuses recent failed daily snapshot during failed auto-refresh coo
       exaResearchRoutes: [route],
       providerResearcher: async () => {
         calls += 1;
-        throw new Error("공개 근거 검색이 4m 안에 끝나지 않았습니다");
+        throw new Error("공개 근거 검색이 8m 안에 끝나지 않았습니다");
       },
     });
     const second = await refreshNewsMarketRadar({
@@ -1066,6 +1186,132 @@ test("snapshot normalization dedupes cards by canonical source URL", () => {
   assert.equal(cards.length, 1);
   assert.match(cards[0].summary, /두 번째/);
   assert.equal(cards[0].sourceRefs.length, 1);
+});
+
+test("competitor pricing anti-signal normalization preserves market card fields", () => {
+  const snapshot = normalizeNewsMarketRadarSnapshot({
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    lanes: [{
+      id: "alternatives_pricing",
+      cards: [{
+        id: "demandproof-pricing",
+        title: "DemandProof 가격 신호",
+        summary: "DemandProof는 공개 가격 기준을 제공합니다.",
+        impact: "strengthens",
+        confidence: "strong",
+        marketEntity: "DemandProof",
+        offer: "AI validation workspace",
+        price: "$49 lifetime",
+        evidenceType: "pricing",
+        actionHint: "가격 앵커를 온보딩 가설에 반영합니다.",
+        sourceRefs: [
+          { url: "https://www.producthunt.com/products/demandproof", title: "DemandProof Product Hunt" },
+          { url: "https://demandproof.example/pricing", title: "DemandProof pricing" },
+        ],
+      }],
+    }],
+  }, { now: new Date("2026-05-20T00:00:00.000Z") });
+
+  const card = snapshot.lanes.find((lane) => lane.id === "alternatives_pricing").cards[0];
+  assert.equal(card.marketEntity, "DemandProof");
+  assert.equal(card.offer, "AI validation workspace");
+  assert.equal(card.price, "$49 lifetime");
+  assert.equal(card.evidenceType, "pricing");
+  assert.equal(card.actionHint, "가격 앵커를 온보딩 가설에 반영합니다.");
+});
+
+test("synthesis preserves market evidence diversity", () => {
+  const snapshot = normalizeNewsMarketRadarSnapshot({
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    lanes: [{
+      id: "alternatives_pricing",
+      cards: [
+        {
+          id: "pricing-demandproof",
+          title: "DemandProof 가격 기준",
+          summary: "가격 기준이 있는 대안입니다.",
+          impact: "strengthens",
+          confidence: "strong",
+          evidenceType: "pricing",
+          marketEntity: "DemandProof",
+          sourceRefs: [
+            { url: "https://demandproof.example/pricing", title: "DemandProof pricing" },
+            { url: "https://example.com/demandproof-review", title: "DemandProof review" },
+          ],
+        },
+        {
+          id: "pricing-agentfounder",
+          title: "Agentfounder 가격 기준",
+          summary: "월 구독 가격 기준이 있는 대안입니다.",
+          impact: "strengthens",
+          confidence: "strong",
+          evidenceType: "pricing",
+          marketEntity: "Agentfounder",
+          sourceRefs: [
+            { url: "https://agentfounder.ai/pricing", title: "Agentfounder pricing" },
+            { url: "https://example.org/agentfounder-review", title: "Agentfounder review" },
+          ],
+        },
+        {
+          id: "pricing-shipfast",
+          title: "ShipFast 가격 기준",
+          summary: "라이프타임 가격 기준이 있는 대안입니다.",
+          impact: "strengthens",
+          confidence: "strong",
+          evidenceType: "pricing",
+          marketEntity: "ShipFast",
+          sourceRefs: [
+            { url: "https://shipfa.st/pricing", title: "ShipFast pricing" },
+            { url: "https://example.net/shipfast-review", title: "ShipFast review" },
+          ],
+        },
+        {
+          id: "review-ideascanner",
+          title: "IdeaScanner 리뷰",
+          summary: "리뷰 근거가 있는 대안입니다.",
+          impact: "mixed",
+          confidence: "strong",
+          evidenceType: "review",
+          marketEntity: "IdeaScanner",
+          sourceRefs: [
+            { url: "https://g2.example/reviews/ideascanner", title: "IdeaScanner reviews" },
+            { url: "https://example.edu/ideascanner", title: "IdeaScanner roundup" },
+          ],
+        },
+        {
+          id: "launch-producthunt",
+          title: "Product Hunt 런칭 신호",
+          summary: "런칭 표면의 반응을 보여줍니다.",
+          impact: "strengthens",
+          confidence: "medium",
+          evidenceType: "launch",
+          marketEntity: "DemandProof",
+          sourceRefs: [
+            { url: "https://www.producthunt.com/products/demandproof", title: "DemandProof Product Hunt" },
+          ],
+        },
+        {
+          id: "local-anti-signal",
+          title: "EO Planet 약한 반응",
+          summary: "국내 커뮤니티에서 약한 반응을 보인 anti-signal입니다.",
+          impact: "weakens",
+          confidence: "medium",
+          evidenceType: "anti_signal",
+          marketEntity: "Agentfounder",
+          sourceRefs: [
+            { url: "https://eopla.net/magazines/41464", title: "EO Planet" },
+          ],
+        },
+      ],
+    }],
+  }, { now: new Date("2026-05-20T00:00:00.000Z") });
+
+  const ids = snapshot.lanes.find((lane) => lane.id === "alternatives_pricing").cards.map((card) => card.id);
+  assert.equal(ids.length, 4);
+  assert.ok(ids.includes("pricing-demandproof"));
+  assert.ok(ids.includes("review-ideascanner"));
+  assert.ok(ids.includes("launch-producthunt"));
+  assert.ok(ids.includes("local-anti-signal"));
 });
 
 test("snapshot normalization generates unique source ids for same-domain URLs", () => {

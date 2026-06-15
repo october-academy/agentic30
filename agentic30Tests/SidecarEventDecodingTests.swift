@@ -429,6 +429,8 @@ struct SidecarEventDecodingTests {
                 "id": "posthog",
                 "label": "PostHog",
                 "state": "ready",
+                "connectionState": "ready",
+                "collectionState": "ready",
                 "available": true,
                 "selected": true,
                 "required": true,
@@ -460,6 +462,8 @@ struct SidecarEventDecodingTests {
         #expect(digest.day == 2)
         #expect(digest.buildWithoutCustomerEvidence == true)
         #expect(digest.window?.localStartDate == "2026-06-08")
+        #expect(digest.sources.first?.connectionState == "ready")
+        #expect(digest.sources.first?.collectionState == "ready")
         #expect(digest.sources.first?.goalSignals == ["가입은 늘지만 결제 0"])
         #expect(digest.briefing?.biggestEvidenceGap == ["PostHog: pricing 이탈 원인 미관측"])
         #expect(digest.applies(to: 2))
@@ -1448,6 +1452,13 @@ struct SidecarEventDecodingTests {
           "designSystem": null,
           "adr": "docs/adr",
           "goal": ".agentic30/docs/GOAL.md",
+          "agentic30Gitignore": {
+            "scanRoot": "/Users/october/prj/myapp",
+            "status": "needs-consent",
+            "path": "/Users/october/prj/myapp/.gitignore",
+            "entry": ".agentic30/",
+            "error": null
+          },
           "day1GoalSelection": {
             "schemaVersion": 1,
             "schema": "agentic30.day1_goal.v1",
@@ -1486,6 +1497,9 @@ struct SidecarEventDecodingTests {
         #expect(event.designSystem == nil)
         #expect(event.adr == "docs/adr")
         #expect(event.goal == ".agentic30/docs/GOAL.md")
+        #expect(event.agentic30Gitignore?.needsConsent == true)
+        #expect(event.agentic30Gitignore?.path == "/Users/october/prj/myapp/.gitignore")
+        #expect(event.agentic30Gitignore?.entry == ".agentic30/")
         #expect(event.day1GoalSelection?.goalType == .makeMoney)
         #expect(event.day1GoalSelection?.proofSink == .bipOptional)
         #expect(event.day1GoalSelection?.customer == "B2B SaaS support lead")
@@ -1495,6 +1509,27 @@ struct SidecarEventDecodingTests {
         #expect(event.onboardingHypothesis?.targetUser?.contains("전업 1인 개발자") == true)
         #expect(event.onboardingHypothesis?.likelyUsers?.first == "AI 코딩 도구를 쓰는 개발자")
         #expect(event.error == nil)
+    }
+
+    @MainActor @Test func decodesWorkspaceGitignoreResult() throws {
+        let payload = """
+        {
+          "type": "workspace_gitignore_result",
+          "scanRoot": "/Users/october/prj/myapp",
+          "status": "declined",
+          "path": "/Users/october/prj/myapp/.gitignore",
+          "entry": ".agentic30/",
+          "error": null
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "workspace_gitignore_result")
+        #expect(event.agentic30Gitignore?.status == "declined")
+        #expect(event.agentic30Gitignore?.scanRoot == "/Users/october/prj/myapp")
+        #expect(event.agentic30Gitignore?.path == "/Users/october/prj/myapp/.gitignore")
+        #expect(event.agentic30Gitignore?.entry == ".agentic30/")
     }
 
     @MainActor @Test func decodesDayProgressState() throws {
@@ -3083,6 +3118,124 @@ struct SidecarEventDecodingTests {
         #expect(event.newsMarketRadarStatus?.stepIndex == 4)
         #expect(event.newsMarketRadarStatus?.stepCount == 6)
         #expect(event.newsMarketRadarStatus?.partialFailures?.first?.laneId == "problem")
+    }
+
+    @MainActor @Test func decodesStrategyReportResult() throws {
+        let payload = """
+        {
+          "type": "strategy_report_result",
+          "strategyReport": {
+            "schemaVersion": 1,
+            "promptProfile": "ko_strategy_report_v1_three_pass_exa",
+            "contentLocale": "ko-KR",
+            "generatedAt": "2026-06-14T00:00:00.000Z",
+            "nextRefreshAfter": "2026-06-15T00:00:00.000Z",
+            "contextFingerprint": "abc123",
+            "status": {
+              "state": "ready",
+              "lastSuccessAt": "2026-06-14T00:00:00.000Z",
+              "stale": false,
+              "error": null,
+              "reason": "manual",
+              "researchSource": "Codex Exa MCP"
+            },
+            "workspaceEvidenceRefs": [],
+            "report": {
+              "commandLine": "strategy@agentic30 $ synthesize dynamic-strategy",
+              "diagnosisKicker": "Verified business diagnosis",
+              "diagnosisTitle": "Agentic30은 paid ask와 first_value 증거를 닫는 assistant입니다.",
+              "diagnosisLead": "동적 리서치와 검증 패스를 통과한 전략 리포트입니다.",
+              "positioningStatement": "Agentic30은 프로젝트 기록을 paid ask 실험으로 바꾸는 macOS assistant입니다.",
+              "judgement": "전략 판단은 고객 행동 증거 루프에 집중하는 것입니다.",
+              "generatedBadge": "동적 리서치",
+              "analysisBasisLabel": "SPEC.md + ICP.md + VALUES.md + Exa",
+              "summaryTiles": [
+                { "id": "primary-icp", "label": "Primary ICP", "title": "전업 1인 개발자", "detail": "첫 매출 전" },
+                { "id": "wedge", "label": "Wedge", "title": "Local evidence loop", "detail": "오늘의 ask 생성" },
+                { "id": "proof-target", "label": "Proof", "title": "고객 행동 증거", "detail": "activation gate" }
+              ],
+              "criteriaRows": [
+                { "id": "product-shape", "label": "제품 형태", "value": "macOS + sidecar" },
+                { "id": "core-pain", "label": "핵심 고통", "value": "누구에게 팔지 모름" },
+                { "id": "differentiator", "label": "차별 기준", "value": "로컬 기록 기반" },
+                { "id": "stage", "label": "현재 단계", "value": "private pilot" }
+              ],
+              "canvasBlocks": [
+                { "id": "partners", "number": "08", "eyebrow": "Partners", "title": "핵심 파트너", "tone": "blue", "bullets": ["AI provider"] },
+                { "id": "activities", "number": "07", "eyebrow": "Activities", "title": "핵심 활동", "tone": "accent", "bullets": ["pilot 반복"] },
+                { "id": "resources", "number": "06", "eyebrow": "Resources", "title": "핵심 자원", "tone": "sky", "bullets": ["proof-ledger"] },
+                { "id": "value-proposition", "number": "02", "eyebrow": "Value", "title": "가치 제안", "tone": "accent", "bullets": ["paid ask"] },
+                { "id": "relationships", "number": "04", "eyebrow": "Relationships", "title": "고객 관계", "tone": "accent", "bullets": ["체크인"] },
+                { "id": "channels", "number": "03", "eyebrow": "Channels", "title": "채널", "tone": "blue", "bullets": ["커뮤니티"] },
+                { "id": "customer-segments", "number": "01", "eyebrow": "Segments", "title": "고객 세그먼트", "tone": "accent", "bullets": ["1인 개발자"] },
+                { "id": "cost-structure", "number": "09", "eyebrow": "Cost", "title": "비용 구조", "tone": "magenta", "bullets": ["provider 비용"] },
+                { "id": "revenue-streams", "number": "05", "eyebrow": "Revenue", "title": "수익원", "tone": "accent", "bullets": ["pilot ask"] }
+              ],
+              "competitors": [
+                { "id": "agentic30", "title": "Agentic30", "tag": "Adaptive PMF evidence loop", "body": "기록을 evidence gate로 바꿉니다.", "gap": "paid pilot 반복", "x": 0.78, "y": 0.22, "adaptiveScore": 92, "evidenceScore": 84, "sourceLabel": "SPEC / ICP / Exa", "sourceURL": "https://agentic30.com", "sourceDisplay": "agentic30.com", "verifiedAt": "2026-06", "scoreRationale": "로컬 기록 기반", "category": "agentic30", "isAgentic30": true, "labelPlacement": "leading" },
+                { "id": "cursor", "title": "Cursor", "tag": "AI coding workspace", "body": "빌드 속도 중심입니다.", "gap": "PMF 증거 밖", "x": 0.72, "y": 0.72, "adaptiveScore": 80, "evidenceScore": 35, "sourceLabel": "Public docs", "sourceURL": "https://cursor.com", "sourceDisplay": "cursor.com", "verifiedAt": "2026-06", "scoreRationale": "코딩 적응성", "category": "aiBuild", "isAgentic30": false, "labelPlacement": "trailing" },
+                { "id": "indiefounders", "title": "IndieFounders", "tag": "Founder community", "body": "커뮤니티 중심입니다.", "gap": "로컬 loop 약함", "x": 0.32, "y": 0.38, "adaptiveScore": 42, "evidenceScore": 58, "sourceLabel": "Public site", "sourceURL": "https://indiefounders.net", "sourceDisplay": "indiefounders.net", "verifiedAt": "2026-06", "scoreRationale": "커뮤니티 증거", "category": "community", "isAgentic30": false, "labelPlacement": "leading" }
+              ],
+              "swotGroups": [
+                { "id": "strengths", "title": "Strengths", "tag": "내부 강점", "tone": "accent", "bullets": ["로컬 기록"] },
+                { "id": "weaknesses", "title": "Weaknesses", "tag": "내부 약점", "tone": "magenta", "bullets": ["데이터 부족"] },
+                { "id": "opportunities", "title": "Opportunities", "tag": "외부 기회", "tone": "sky", "bullets": ["AI coding 보급"] },
+                { "id": "threats", "title": "Threats", "tag": "외부 위협", "tone": "blue", "bullets": ["IDE 흡수"] }
+              ],
+              "swotMatrixColumnCount": 2,
+              "swotMatrixRows": [["strengths", "weaknesses"], ["opportunities", "threats"]],
+              "sourceRefs": [],
+              "searchableCopy": ["동적 리서치", "paid ask"]
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "strategy_report_result")
+        #expect(event.strategyReport?.status.state == "ready")
+        #expect(event.strategyReport?.report?.generatedBadge == "동적 리서치")
+        #expect(event.strategyReport?.report?.competitors.first?.isAgentic30 == true)
+        #expect(event.strategyReport?.report?.canvasBlocks.count == 9)
+    }
+
+    @MainActor @Test func decodesStrategyReportStatusObject() throws {
+        let payload = """
+        {
+          "type": "strategy_report_status",
+          "status": {
+            "state": "refreshing",
+            "stale": false,
+            "error": null,
+            "reason": "manual",
+            "researchSource": "Codex Exa MCP",
+            "stage": "running_adversarial_review",
+            "progressText": "적대적 리뷰 중",
+            "elapsedMs": 900,
+            "stepIndex": 4,
+            "stepCount": 6,
+            "partialFailures": [
+              {
+                "laneId": "adversarial_review",
+                "laneTitle": "적대적 리뷰",
+                "error": "weak evidence"
+              }
+            ]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "strategy_report_status")
+        #expect(event.status == nil)
+        #expect(event.strategyReportStatus?.state == "refreshing")
+        #expect(event.strategyReportStatus?.stage == "running_adversarial_review")
+        #expect(event.strategyReportStatus?.progressText == "적대적 리뷰 중")
+        #expect(event.strategyReportStatus?.stepIndex == 4)
+        #expect(event.strategyReportStatus?.stepCount == 6)
+        #expect(event.strategyReportStatus?.partialFailures?.first?.laneId == "adversarial_review")
     }
 
     @MainActor @Test func decodesBipResearchResult() throws {

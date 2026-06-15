@@ -1,0 +1,330 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import {
+  STRATEGY_REPORT_PROGRESS_STEPS,
+  buildStrategyReportProgressStatus,
+  loadStrategyReportSnapshot,
+  refreshStrategyReport,
+  resolveStrategyReportCachePath,
+} from "../sidecar/strategy-research-report.mjs";
+
+async function withTmpWorkspace(fn) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-strategy-"));
+  try {
+    return await fn(root);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}
+
+function exaRoute() {
+  return {
+    provider: "codex",
+    label: "Codex Exa MCP",
+    mcpConfig: {
+      type: "http",
+      url: "https://mcp.exa.ai/mcp?tools=web_search_exa,web_search_advanced_exa,web_fetch_exa",
+      headers: { "x-api-key": "exa_test_key" },
+    },
+  };
+}
+
+function completeReport(overrides = {}) {
+  return {
+    commandLine: "strategy@agentic30 ~/code/agentic30 $ synthesize dynamic-strategy --from exa SPEC ICP VALUES",
+    diagnosisKicker: "Business diagnosis",
+    diagnosisTitle: "Agentic30은 코딩 도구가 아니라 1인 개발자의 paid ask와 first_value 증거를 닫는 evidence assistant입니다.",
+    diagnosisLead: "공개 리서치, 경쟁 리뷰, 검증 패스를 종합하면 차별점은 빌드 속도가 아니라 로컬 실행 기록을 고객 행동 증거로 바꾸는 루프입니다.",
+    positioningStatement: "Agentic30은 혼자 일하는 개발자가 매일 프로젝트 기록을 paid ask와 first_value 실험으로 바꾸는 macOS evidence assistant입니다.",
+    judgement: "전략 판단은 private pilot에서 가격 ask와 activation 증거를 좁히고, 코딩 도구 경쟁이 아닌 PMF 증거 루프 카테고리를 고수하는 것입니다.",
+    generatedBadge: "동적 리서치",
+    analysisBasisLabel: "SPEC.md + ICP.md + VALUES.md + Exa public evidence",
+    summaryTiles: [
+      { id: "primary-icp", label: "Primary ICP", title: "전업 1인 개발자", detail: "첫 매출 전, macOS와 AI 코딩 도구를 쓰며 기록 제출 의향이 있습니다." },
+      { id: "wedge", label: "Wedge", title: "Local evidence loop", detail: "업무 기록에서 오늘의 paid ask와 first_value 목표를 만듭니다." },
+      { id: "proof-target", label: "Proof target", title: "고객 행동 증거", detail: "인터뷰 원문, 유료 ask, activation, Go/No-Go 결정을 연결합니다." },
+    ],
+    criteriaRows: [
+      { id: "product-shape", label: "제품 형태", value: "SwiftUI macOS 메뉴바 앱 + 로컬 Node sidecar + 선택적 외부 근거 리서치입니다." },
+      { id: "core-pain", label: "핵심 고통", value: "AI 코딩으로 만들 수는 있지만 누구에게 얼마로 팔지 모릅니다." },
+      { id: "differentiator", label: "차별 기준", value: "정적 강의가 아니라 로컬 실행 기록에서 adaptive Day 과제와 evidence gate를 생성합니다." },
+      { id: "stage", label: "현재 단계", value: "private pilot evidence와 외부 ICP 반응을 추적하는 단계입니다." },
+    ],
+    canvasBlocks: [
+      { id: "partners", number: "08", eyebrow: "Partners", title: "핵심 파트너", tone: "blue", bullets: ["Claude / Codex / Cursor / Gemini 같은 AI coding provider 생태계", "PostHog, GitHub, Cloudflare에서 읽는 activation evidence"] },
+      { id: "activities", number: "07", eyebrow: "Activities", title: "핵심 활동", tone: "accent", bullets: ["Foundation Day 0-3 dogfood와 private pilot 반복", "프로젝트/업무/인터뷰/BIP/PostHog 기록에서 다음 과제 생성"] },
+      { id: "resources", number: "06", eyebrow: "Resources", title: "핵심 자원", tone: "sky", bullets: ["로컬 실행 로그와 proof-ledger", "SPEC / ICP / VALUES 전략 문서"] },
+      { id: "value-proposition", number: "02", eyebrow: "Value proposition", title: "가치 제안", tone: "accent", bullets: ["오늘 보낼 paid ask와 측정할 first_value를 좁힙니다.", "혼자 판단하는 편향을 transcript, BIP, PostHog 숫자로 교정합니다."] },
+      { id: "relationships", number: "04", eyebrow: "Relationships", title: "고객 관계", tone: "accent", bullets: ["메뉴바 상주 assistant의 매일 체크인", "private pilot에서 맞춤 작업과 강한 피드백 루프"] },
+      { id: "channels", number: "03", eyebrow: "Channels", title: "채널", tone: "blue", bullets: ["Threads / Discord / indie founder 커뮤니티", "직접 사이트프로젝트를 가진 1인 개발자 referral"] },
+      { id: "customer-segments", number: "01", eyebrow: "Customer segments", title: "고객 세그먼트", tone: "accent", bullets: ["전업 1인 개발자, 첫 매출 전, macOS 사용자", "AI 코딩 도구 사용 경험이 있는 builder"] },
+      { id: "cost-structure", number: "09", eyebrow: "Cost structure", title: "비용 구조", tone: "magenta", bullets: ["provider execution 비용과 macOS 배포/지원 비용", "리서치/검증 패스의 시간 비용"] },
+      { id: "revenue-streams", number: "05", eyebrow: "Revenue streams", title: "수익원", tone: "accent", bullets: ["pilot 유료 ask", "월 구독형 개인 evidence assistant"] },
+    ],
+    competitors: [
+      { id: "agentic30", title: "Agentic30", tag: "Adaptive PMF evidence loop", body: "내 프로젝트 기록을 읽어 오늘의 유료 ask와 증거 gate를 만듭니다.", gap: "검증 과제: 유료 pilot에서 first_value를 반복 입증해야 합니다.", x: 0.78, y: 0.22, adaptiveScore: 92, evidenceScore: 84, sourceLabel: "SPEC / ICP / Exa", sourceURL: "https://agentic30.com", sourceDisplay: "agentic30.com", verifiedAt: "2026-06", scoreRationale: "로컬 기록 기반 adaptive 과제와 evidence gate가 함께 있습니다.", category: "agentic30", isAgentic30: true, labelPlacement: "leading" },
+      { id: "cursor", title: "Cursor", tag: "AI coding workspace", body: "빌드 속도는 높지만 PMF 증거 루프는 제품 밖에 있습니다.", gap: "Agentic30은 코딩 생산성 대신 고객 행동 증거를 닫습니다.", x: 0.72, y: 0.72, adaptiveScore: 80, evidenceScore: 35, sourceLabel: "Public docs", sourceURL: "https://cursor.com", sourceDisplay: "cursor.com", verifiedAt: "2026-06", scoreRationale: "코딩 적응성은 강하지만 paid ask 추적은 핵심 제품이 아닙니다.", category: "aiBuild", isAgentic30: false, labelPlacement: "trailing" },
+      { id: "indiefounders", title: "IndieFounders", tag: "Founder community", body: "창업자 네트워크와 학습 콘텐츠는 있으나 로컬 evidence loop는 약합니다.", gap: "Agentic30은 커뮤니티가 아니라 매일 실행 기록에 붙습니다.", x: 0.32, y: 0.38, adaptiveScore: 42, evidenceScore: 58, sourceLabel: "Public site", sourceURL: "https://indiefounders.net", sourceDisplay: "indiefounders.net", verifiedAt: "2026-06", scoreRationale: "커뮤니티 증거는 있으나 제품 실행 자동화는 제한적입니다.", category: "community", isAgentic30: false, labelPlacement: "leading" },
+    ],
+    swotGroups: [
+      { id: "strengths", title: "Strengths", tag: "내부 강점", tone: "accent", bullets: ["로컬 기록 기반 맥락", "매일 evidence gate로 이어지는 루프"] },
+      { id: "weaknesses", title: "Weaknesses", tag: "내부 약점", tone: "magenta", bullets: ["초기 데이터 밀도가 낮음", "macOS 한정 배포"] },
+      { id: "opportunities", title: "Opportunities", tag: "외부 기회", tone: "sky", bullets: ["AI coding tool 보급", "1인 개발자 monetization 니즈"] },
+      { id: "threats", title: "Threats", tag: "외부 위협", tone: "blue", bullets: ["대형 coding IDE의 workflow 흡수", "전략 리포트만으로 보이는 위험"] },
+    ],
+    swotMatrixColumnCount: 2,
+    swotMatrixRows: [["strengths", "weaknesses"], ["opportunities", "threats"]],
+    sourceRefs: [
+      { id: "cursor", sourceType: "public_web", title: "Cursor", url: "https://cursor.com", domain: "cursor.com", excerpt: "AI coding workspace reference" },
+    ],
+    ...overrides,
+  };
+}
+
+test("strategy report fails closed when Exa route is unavailable", async () => {
+  await withTmpWorkspace(async (root) => {
+    let called = false;
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [],
+      providerResearcher: async () => {
+        called = true;
+        return { text: "{}" };
+      },
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(called, false);
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.status.reason, "exa_mcp_missing");
+    assert.equal(snapshot.report, null);
+  });
+});
+
+test("strategy report executes research, adversarial review, and multidimensional verification in order", async () => {
+  await withTmpWorkspace(async (root) => {
+    const calls = [];
+    const progressStages = [];
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async ({
+        mode,
+        prompt,
+        exaResearchRoute,
+        exaResearchRoutes,
+        onProgress,
+      }) => {
+        calls.push(mode);
+        assert.match(prompt, /Exa public research pass/);
+        assert.match(prompt, /Structured output contract/);
+        assert.match(prompt, /summaryTiles: 3-6 items/);
+        assert.equal(exaResearchRoute.label, "Codex Exa MCP");
+        assert.equal(exaResearchRoutes[0].label, "Codex Exa MCP");
+        assert.equal(exaResearchRoutes[0].mcpConfig.type, "http");
+        assert.equal(exaResearchRoutes[0].mcpConfig.headers["x-api-key"], "exa_test_key");
+        assert.equal(typeof onProgress, "function");
+        return { text: JSON.stringify({ report: completeReport() }), provider: "codex", researchSource: "Codex Exa MCP" };
+      },
+      adversarialReviewer: async ({ mode, prompt, candidateReport }) => {
+        calls.push(mode);
+        assert.match(prompt, /Adversarial strategy review/);
+        assert.equal(candidateReport.positioningStatement.includes("Agentic30"), true);
+        return { text: JSON.stringify({ verdict: "pass_with_edits", findings: ["PMF evidence risk"], requiredChanges: ["tighten ICP"] }) };
+      },
+      multidimensionalVerifier: async ({ mode, prompt, adversarialReview }) => {
+        calls.push(mode);
+        assert.match(prompt, /Multidimensional final verification/);
+        assert.match(prompt, /Structured output contract/);
+        assert.match(prompt, /summaryTiles: 3-6 items/);
+        assert.equal(adversarialReview.verdict, "pass_with_edits");
+        return { text: JSON.stringify({ report: completeReport({ diagnosisKicker: "Verified diagnosis" }) }) };
+      },
+      onProgress: (progress) => progressStages.push(progress.stage),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.deepEqual(calls, ["exa_research", "adversarial_review", "multidimensional_verification"]);
+    assert.deepEqual(progressStages, STRATEGY_REPORT_PROGRESS_STEPS.map((step) => step.stage));
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(snapshot.report.diagnosisKicker, "Verified diagnosis");
+    assert.equal(snapshot.report.competitors.find((competitor) => competitor.id === "agentic30").isAgentic30, true);
+  });
+});
+
+test("strategy report structured output contract rejects missing summaryTiles before review passes", async () => {
+  await withTmpWorkspace(async (root) => {
+    const reportWithoutSummaryTiles = completeReport();
+    delete reportWithoutSummaryTiles.summaryTiles;
+    let adversarialCalled = false;
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: reportWithoutSummaryTiles }) }),
+      adversarialReviewer: async () => {
+        adversarialCalled = true;
+        return { text: JSON.stringify({ verdict: "pass" }) };
+      },
+      multidimensionalVerifier: async () => {
+        throw new Error("should not run");
+      },
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(adversarialCalled, false);
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.report, null);
+    assert.match(snapshot.status.error, /structured output contract violation/);
+    assert.match(snapshot.status.error, /summaryTiles/);
+  });
+});
+
+test("strategy report forwards provider progress text on the existing research stage", async () => {
+  await withTmpWorkspace(async (root) => {
+    const progressEvents = [];
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async ({ onProgress }) => {
+        onProgress({
+          stage: "running_provider_research",
+          progressText: "Codex Exa MCP로 공개 근거를 검색하는 중",
+          researchSource: "Codex Exa MCP",
+        });
+        return { text: JSON.stringify({ report: completeReport() }), provider: "codex", researchSource: "Codex Exa MCP" };
+      },
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({ text: JSON.stringify({ report: completeReport() }) }),
+      onProgress: (progress) => progressEvents.push(progress),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(
+      progressEvents.some((progress) => (
+        progress.stage === "running_exa_research"
+        && progress.progressText === "Codex Exa MCP로 공개 근거를 검색하는 중"
+      )),
+      true,
+    );
+  });
+});
+
+test("strategy report uses stale cache when a later refresh fails adversarial review", async () => {
+  await withTmpWorkspace(async (root) => {
+    const first = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: completeReport({ judgement: "이전 성공 판단" }) }) }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({ text: JSON.stringify({ report: completeReport({ judgement: "이전 성공 판단" }) }) }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    const second = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: completeReport({ judgement: "새 판단" }) }) }),
+      adversarialReviewer: async () => {
+        throw new Error("adversarial rejection");
+      },
+      multidimensionalVerifier: async () => {
+        throw new Error("should not run");
+      },
+      now: new Date("2026-06-15T00:00:00.000Z"),
+    });
+
+    assert.equal(first.status.state, "ready");
+    assert.equal(second.status.state, "failed");
+    assert.equal(second.status.stale, true);
+    assert.equal(second.report.judgement, "이전 성공 판단");
+    assert.match(second.status.error, /adversarial rejection/);
+  });
+});
+
+test("strategy report rejects provider output missing required static-equivalent sections", async () => {
+  await withTmpWorkspace(async (root) => {
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: completeReport() }) }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({ text: JSON.stringify({ report: completeReport({ swotGroups: [] }) }) }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.report, null);
+    assert.match(snapshot.status.error, /swotGroups/);
+  });
+});
+
+test("strategy report redacts private and secret-like text before cache persistence", async () => {
+  await withTmpWorkspace(async (root) => {
+    const privateText = "interview transcript says email founder@example.com token sk-secret123456789";
+    await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: completeReport({ diagnosisLead: privateText }) }) }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass", findings: [privateText] }) }),
+      multidimensionalVerifier: async () => ({ text: JSON.stringify({ report: completeReport({ diagnosisLead: privateText }) }) }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    const cacheText = await fs.readFile(resolveStrategyReportCachePath(root), "utf8");
+    assert.doesNotMatch(cacheText, /founder@example\.com/);
+    assert.doesNotMatch(cacheText, /sk-secret123456789/);
+    assert.doesNotMatch(cacheText, /interview transcript/i);
+    assert.match(cacheText, /\[redacted-private\]/);
+  });
+});
+
+test("strategy report cache has 0600 permissions and can load stale fallback", async () => {
+  await withTmpWorkspace(async (root) => {
+    await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: completeReport({ generatedBadge: "검증 완료" }) }) }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({ text: JSON.stringify({ report: completeReport({ generatedBadge: "검증 완료" }) }) }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    const cachePath = resolveStrategyReportCachePath(root);
+    const stat = await fs.stat(cachePath);
+    assert.equal(stat.mode & 0o777, 0o600);
+
+    const loaded = await loadStrategyReportSnapshot({
+      workspaceRoot: root,
+      exaConfigured: false,
+      now: new Date("2026-06-16T00:00:00.000Z"),
+    });
+    assert.equal(loaded.status.state, "stale");
+    assert.equal(loaded.status.reason, "exa_mcp_missing");
+    assert.equal(loaded.report.generatedBadge, "검증 완료");
+  });
+});
+
+test("strategy report progress status mirrors refreshing stage metadata", () => {
+  const status = buildStrategyReportProgressStatus(
+    { stage: "running_adversarial_review" },
+    { reason: "manual", startedAt: Date.parse("2026-06-14T00:00:00.000Z"), nowMs: Date.parse("2026-06-14T00:00:01.500Z") },
+  );
+  assert.equal(status.state, "refreshing");
+  assert.equal(status.stage, "running_adversarial_review");
+  assert.equal(status.stepIndex, 4);
+  assert.equal(status.stepCount, STRATEGY_REPORT_PROGRESS_STEPS.length);
+  assert.equal(status.elapsedMs, 1500);
+});

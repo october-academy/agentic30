@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   buildExternalOfficeHoursDigestPrompt,
   collectGitDailySignals,
+  collectGhDailySignals,
   evaluateOfficeHoursSourceGate,
   finalizeDailyOfficeHoursDigest,
   formatDailyOfficeHoursDigestForPrompt,
@@ -107,10 +108,65 @@ test("Day 2+ source gate skips source requirements in local dev fast-days mode",
   assert.equal(gate.ok, true);
   assert.equal(gate.skipped, true);
   assert.equal(gate.reason, "local_dev_fast_days");
-  assert.deepEqual(gate.selectedSources, []);
-  assert.deepEqual(gate.sources, []);
+  assert.deepEqual(gate.selectedSources, ["gh_cli", "posthog"]);
+  assert.equal(gate.sources.length, 4);
+  assert.equal(gate.sources.find((source) => source.id === "gh_cli").selected, true);
+  assert.equal(gate.sources.find((source) => source.id === "gh_cli").required, false);
+  assert.equal(gate.sources.find((source) => source.id === "posthog").selected, true);
+  assert.equal(gate.sources.find((source) => source.id === "posthog").required, false);
   assert.deepEqual(gate.missingRequiredSources, []);
-  assert.deepEqual(execImpl.calls, []);
+  assert.ok(execImpl.calls.some((call) => call.join(" ").includes("git rev-parse")));
+  assert.ok(execImpl.calls.some((call) => call.join(" ").includes("gh auth status")));
+});
+
+test("local dev fast-days preserves connected source status for digest dots", async () => {
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "oh-gate-fast-days-dots-"));
+  try {
+    await fs.writeFile(
+      path.join(appSupportPath, "mcp-oauth-state.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        servers: {
+          posthog: {
+            providers: {
+              codex: { state: "ready", detail: "ok", checkedAt: "2026-06-13T14:25:00.000Z" },
+            },
+          },
+          cloudflare: {
+            providers: {
+              codex: { state: "ready", detail: "ok", checkedAt: "2026-06-13T14:25:30.000Z" },
+            },
+          },
+        },
+      }),
+    );
+    const gate = await evaluateOfficeHoursSourceGate({
+      workspaceRoot: "/tmp/ws",
+      day: 2,
+      provider: "codex",
+      appSupportPath,
+      execImpl: fakeExec([
+        ["git rev-parse", { ok: true, stdout: "true\n" }],
+        ["gh auth status", { ok: true, stdout: "" }],
+      ]),
+      env: { AGENTIC30_LOCAL_DEV_FAST_DAYS: "1" },
+    });
+    const digest = finalizeDailyOfficeHoursDigest({
+      gate,
+      context: "Goal lane: build_product",
+      now: new Date("2026-06-09T10:30:00+09:00"),
+    });
+
+    assert.equal(gate.reason, "local_dev_fast_days");
+    assert.equal(gate.skipped, true);
+    for (const id of ["git", "gh_cli", "posthog", "cloudflare"]) {
+      const source = digest.sources.find((entry) => entry.id === id);
+      assert.equal(source.connectionState, "ready");
+      assert.equal(source.required, false);
+    }
+  } finally {
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
 });
 
 test("source gate can bypass local dev fast-days for morning briefing probes", async () => {
@@ -289,6 +345,86 @@ test("collectGitDailySignals stores aggregate summaries without commit SHAs", as
   assert.equal(source.counts.uncommittedChanges, 2);
   assert.match(source.summary, /git 커밋 2건/);
   assert.doesNotMatch(JSON.stringify(source), /aaa111|bbb222|[a-f0-9]{40}/i);
+});
+
+test("collectGitDailySignals includes tag events without exposing SHAs", async () => {
+  const window = officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), {
+    tzOffsetMinutes: KST,
+  });
+  const tagSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const execImpl = fakeExec([
+    ["git rev-parse", { ok: true, stdout: "true\n" }],
+    ["git log --all --no-merges", { ok: true, stdout: "" }],
+    ["git config user.email", { ok: true, stdout: "me@example.com\n" }],
+    ["git status --short", { ok: true, stdout: "" }],
+    ["git for-each-ref", {
+      ok: true,
+      stdout: [
+        `2026-06-08T21:10:00+09:00\tv20260608-2110\t${tagSha}`,
+        "2026-06-07T21:10:00+09:00\tv20260607-2110",
+      ].join("\n"),
+    }],
+  ]);
+
+  const source = await collectGitDailySignals({ workspaceRoot: "/tmp/ws", window, execImpl });
+
+  assert.equal(source.counts.tags, 1);
+  assert.ok(source.highlights.includes("태그 1개"));
+  assert.ok(source.events.some((event) => event.text === "태그 v20260608-2110 생성"));
+  assert.doesNotMatch(JSON.stringify(source), new RegExp(tagSha));
+});
+
+test("collectGhDailySignals preserves recent releases, issues, and failed workflow events", async () => {
+  const window = officeHoursDigestWindow(new Date("2026-06-15T03:38:00+09:00"), {
+    tzOffsetMinutes: KST,
+  });
+  const prs = Array.from({ length: 6 }, (_, index) => ({
+    number: index + 1,
+    title: `old pr ${index + 1}`,
+    state: "MERGED",
+    createdAt: "2026-06-14T00:00:00Z",
+    updatedAt: `2026-06-14T0${index}:00:00Z`,
+  }));
+  const execImpl = fakeExec([
+    ["gh auth status", { ok: true, stdout: "Logged in\n" }],
+    ["gh pr list", { ok: true, stdout: JSON.stringify(prs) }],
+    ["gh issue list", {
+      ok: true,
+      stdout: JSON.stringify([
+        { number: 31, title: "release checklist", state: "OPEN", createdAt: "2026-06-14T08:00:00Z", updatedAt: "2026-06-14T08:00:00Z" },
+      ]),
+    }],
+    ["gh release list", {
+      ok: true,
+      stdout: JSON.stringify([
+        { tagName: "v20260614-1426", name: "build 37", publishedAt: "2026-06-14T07:00:00Z" },
+        { tagName: "v20260614-2257", name: "build 40", publishedAt: "2026-06-14T14:00:00Z" },
+      ]),
+    }],
+    ["gh run list", {
+      ok: true,
+      stdout: JSON.stringify([
+        { workflowName: "Release", displayTitle: "build 38", headBranch: "v20260614-2210", conclusion: "failure", status: "completed", createdAt: "2026-06-14T09:00:00Z", updatedAt: "2026-06-14T09:10:00Z" },
+        { workflowName: "Secret Scanning", displayTitle: "scan", headBranch: "main", conclusion: "success", status: "completed", createdAt: "2026-06-14T10:00:00Z", updatedAt: "2026-06-14T10:01:00Z" },
+        { workflowName: "Secret Scanning", displayTitle: "scan", headBranch: "main", conclusion: "failure", status: "completed", createdAt: "2026-06-14T11:00:00Z", updatedAt: "2026-06-14T11:01:00Z" },
+        { workflowName: "Release", displayTitle: "build 39", headBranch: "v20260614-2240", conclusion: "failure", status: "completed", createdAt: "2026-06-14T12:00:00Z", updatedAt: "2026-06-14T12:10:00Z" },
+        { workflowName: "Release", displayTitle: "build 40", headBranch: "v20260614-2257", conclusion: "success", status: "completed", createdAt: "2026-06-14T13:00:00Z", updatedAt: "2026-06-14T13:10:00Z" },
+      ]),
+    }],
+  ]);
+
+  const source = await collectGhDailySignals({ workspaceRoot: "/tmp/ws", window, execImpl });
+  const texts = source.events.map((event) => event.text);
+
+  assert.equal(source.counts.releases, 2);
+  assert.equal(source.counts.failedWorkflowRuns, 3);
+  assert.ok(texts.includes("릴리즈 v20260614-2257 배포"));
+  assert.ok(texts.includes("이슈 #31 open · release checklist"));
+  assert.ok(texts.includes("배포 실패 · Release · v20260614-2210"));
+  assert.ok(texts.includes("배포 실패 · Release · v20260614-2240"));
+  assert.ok(texts.includes("체크 실패 · Secret Scanning · main"));
+  assert.ok(texts.includes("배포 성공 · Release · v20260614-2257"));
+  assert.ok(!texts.some((text) => /체크 성공|old pr 1/.test(text)));
 });
 
 test("persisted daily digest contains summaries only, not raw external payloads", async () => {
@@ -617,7 +753,7 @@ test("buildExternalOfficeHoursDigestPrompt uses source-specific count keys", () 
   assert.match(both, /"id": "cloudflare"/);
 });
 
-test("a failed external digest blocks via the structured gate error, not a raw crash", () => {
+test("a failed external digest preserves ready connection state and marks collection failed", () => {
   const gate = {
     day: 3,
     ok: true,
@@ -634,22 +770,20 @@ test("a failed external digest blocks via the structured gate error, not a raw c
   ];
   const externalSignals = normalizeExternalOfficeHoursDigest("", ["posthog"]);
 
-  assert.throws(
-    () => finalizeDailyOfficeHoursDigest({
-      gate,
-      localSignals,
-      externalSignals,
-      context: "Goal lane: make_money",
-      now: new Date("2026-06-09T10:30:00+09:00"),
-    }),
-    (error) => {
-      assert.equal(error.name, "OfficeHoursSourceGateError");
-      assert.equal(error.gate.reason, "selected_sources_failed");
-      assert.deepEqual(error.gate.missingRequiredSources, ["posthog"]);
-      assert.ok(error.gate.connectActions.some((action) => action.id === "connect_posthog"));
-      return true;
-    },
-  );
+  const digest = finalizeDailyOfficeHoursDigest({
+    gate,
+    localSignals,
+    externalSignals,
+    context: "Goal lane: make_money",
+    now: new Date("2026-06-09T10:30:00+09:00"),
+  });
+
+  const posthog = digest.sources.find((source) => source.id === "posthog");
+  assert.equal(posthog.state, "failed");
+  assert.equal(posthog.available, true);
+  assert.equal(posthog.connectionState, "ready");
+  assert.equal(posthog.collectionState, "failed");
+  assert.match(posthog.detail, /MCP 연결은 정상/);
 });
 
 test("a gate-deselected source stays non-required even when its signal claims otherwise", () => {

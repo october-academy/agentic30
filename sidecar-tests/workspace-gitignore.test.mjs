@@ -6,6 +6,7 @@ import os from "node:os";
 
 import {
   ensureAgentic30Gitignored,
+  inspectAgentic30Gitignore,
   AGENTIC30_GITIGNORE_ENTRY,
 } from "../sidecar/workspace-gitignore.mjs";
 
@@ -35,6 +36,31 @@ test("appends .agentic30/ to an existing .gitignore that lacks it", async (t) =>
   const content = await fs.readFile(path.join(root, ".gitignore"), "utf8");
   assert.ok(content.startsWith("node_modules/\n"), "preserves existing entries");
   assert.ok(content.includes(`\n${AGENTIC30_GITIGNORE_ENTRY}\n`), "appends the entry on its own line");
+});
+
+test("read-only inspection reports needs-consent without modifying .gitignore", async (t) => {
+  const root = await tempWorkspace(t);
+  await fs.writeFile(path.join(root, ".gitignore"), "node_modules/\n", "utf8");
+  const result = await inspectAgentic30Gitignore({ workspaceRoot: root });
+  assert.equal(result.status, "needs-consent");
+  assert.equal(result.entry, AGENTIC30_GITIGNORE_ENTRY);
+  assert.equal(await fs.readFile(path.join(root, ".gitignore"), "utf8"), "node_modules/\n");
+});
+
+test("read-only inspection preserves explicit user opt-in", async (t) => {
+  const root = await tempWorkspace(t);
+  await fs.writeFile(path.join(root, ".gitignore"), "!.agentic30/\n", "utf8");
+  const result = await inspectAgentic30Gitignore({ workspaceRoot: root });
+  assert.equal(result.status, "user-opted-in");
+  assert.equal(await fs.readFile(path.join(root, ".gitignore"), "utf8"), "!.agentic30/\n");
+});
+
+test("read-only inspection asks for consent before creating a missing gitignore", async (t) => {
+  const root = await tempWorkspace(t);
+  await fs.mkdir(path.join(root, ".git"));
+  const result = await inspectAgentic30Gitignore({ workspaceRoot: root });
+  assert.equal(result.status, "needs-consent");
+  await assert.rejects(fs.stat(path.join(root, ".gitignore")), /ENOENT/);
 });
 
 test("appended entry is honored by real git", async (t) => {
