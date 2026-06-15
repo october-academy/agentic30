@@ -676,6 +676,31 @@ final class SparkleUpdateTests: XCTestCase {
         XCTAssertNil(AppDelegate.updateCheckBlockReason(isUITestingLaunch: false, hasUsablePublicKey: true))
     }
 
+    func testSparkleNoUpdateErrorClassifierAcceptsSparkleCodeAndObservedMessage() {
+        XCTAssertTrue(
+            AppDelegate.isSparkleNoUpdateError(
+                NSError(domain: "SUSparkleErrorDomain", code: 1001)
+            )
+        )
+        XCTAssertTrue(
+            AppDelegate.isSparkleNoUpdateError(
+                NSError(domain: "Other", code: 0, userInfo: [NSLocalizedDescriptionKey: "You’re up to date!"])
+            )
+        )
+    }
+
+    func testSparkleNoUpdateErrorClassifierRejectsRealUpdateFailures() {
+        XCTAssertFalse(
+            AppDelegate.isSparkleNoUpdateError(
+                NSError(
+                    domain: "SUSparkleErrorDomain",
+                    code: 2001,
+                    userInfo: [NSLocalizedDescriptionKey: "An error occurred while downloading the update. Please try again later."]
+                )
+            )
+        )
+    }
+
     func testAppUpdateResultFormatsUserFacingState() {
         let available = AppUpdateResult.updateAvailable(version: "7", displayVersion: "1.0.6")
         let downloaded = AppUpdateResult.downloaded(version: "7", displayVersion: "1.0.6")

@@ -84,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let workspaceWindowTitle = "Agentic30"
     private static let updateBlockedErrorDomain = "Agentic30SparkleUpdateCheck"
+    private static let sparkleNoUpdateErrorCode = 1001
     private var openWorkspaceHandler: (() -> Void)?
     private var pendingWorkspaceOpen = false
     private(set) var shouldMaximizeWorkspaceWindowOnFirstAppear = AppDelegate.shouldMaximizeWorkspaceWindowOnLaunch(
@@ -95,6 +96,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var wasLaunchedAtLogin = false
 
     nonisolated static let initialWorkspaceMaximizeDefaultsKey = "agentic30.workspaceWindow.initialInstallMaximizeApplied.v1"
+
+    static func isSparkleNoUpdateError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == SUSparkleErrorDomain,
+           nsError.code == sparkleNoUpdateErrorCode {
+            return true
+        }
+
+        let normalizedDescription = error.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "’", with: "'")
+            .lowercased()
+        return normalizedDescription == "you're up to date!"
+    }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         Agentic30Theme.current.applyAppKitAppearance()
@@ -640,15 +655,19 @@ extension AppDelegate: SPUUpdaterDelegate {
 
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
         if let error {
-            viewModel.recordAppUpdateError(error.localizedDescription)
-            PostHogTelemetry.capture(
-                "mac_update_error",
-                properties: [
-                    "error_description": error.localizedDescription,
-                    "feed_url": viewModel.appUpdateState.feedURL,
-                ],
-                authSession: viewModel.macAuthSession
-            )
+            if Self.isSparkleNoUpdateError(error) {
+                viewModel.recordAppUpdateLatest()
+            } else {
+                viewModel.recordAppUpdateError(error.localizedDescription)
+                PostHogTelemetry.capture(
+                    "mac_update_error",
+                    properties: [
+                        "error_description": error.localizedDescription,
+                        "feed_url": viewModel.appUpdateState.feedURL,
+                    ],
+                    authSession: viewModel.macAuthSession
+                )
+            }
         } else {
             viewModel.recordAppUpdateCycleFinished()
         }
