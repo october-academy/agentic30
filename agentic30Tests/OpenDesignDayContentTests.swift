@@ -1616,6 +1616,14 @@ struct OpenDesignDayContentTests {
         #expect(preparingRows.first?.iconID == "exa")
         #expect(preparingRows.first?.detail == "리서치 준비 중")
 
+        let preparingFailedCache = newsMarketRadarPresentationState(
+            snapshot: makeNewsRadarSnapshot(state: "failed", reason: "search_failed", cardIDs: []),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: true
+        )
+        #expect(preparingFailedCache.primaryContent == .progress)
+        #expect(preparingFailedCache.suppressesEmptyStream)
+
         let refreshing = newsMarketRadarPresentationState(
             snapshot: makeNewsRadarSnapshot(state: "refreshing", cardIDs: []),
             userState: NewsMarketRadarUserState(),
@@ -1623,6 +1631,15 @@ struct OpenDesignDayContentTests {
         )
         #expect(refreshing.primaryContent == .progress)
         #expect(refreshing.suppressesEmptyStream)
+
+        let refreshingFailedCache = newsMarketRadarPresentationState(
+            snapshot: makeNewsRadarSnapshot(state: "refreshing", reason: "refresh_in_flight", cardIDs: []),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: false
+        )
+        #expect(refreshingFailedCache.primaryContent == .progress)
+        #expect(refreshingFailedCache.suppressesEmptyStream)
+
         let stagedStatus = NewsMarketRadarStatus(
             state: "refreshing",
             lastSuccessAt: nil,

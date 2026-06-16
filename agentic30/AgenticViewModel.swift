@@ -6241,9 +6241,36 @@ final class AgenticViewModel: ObservableObject {
             newsMarketRadarPreparingForDisplay = false
             return
         }
+        guard !newsMarketRadarPreparingForDisplay else { return }
         newsMarketRadarPreparingForDisplay = true
         markLongRunningCompletionDisplayInterest(.newsMarketRadar)
         requestNewsMarketRadar(autoRefreshIfDue: true)
+    }
+
+    private func applyNewsMarketRadarStatus(_ status: NewsMarketRadarStatus) {
+        let current = newsMarketRadar
+        let isRunning = longRunningCompletionStateIsRunning(status.state)
+        newsMarketRadar = NewsMarketRadarSnapshot(
+            schemaVersion: current.schemaVersion,
+            generatedAt: current.generatedAt,
+            nextRefreshAfter: current.nextRefreshAfter,
+            status: NewsMarketRadarStatus(
+                state: status.state,
+                lastSuccessAt: status.lastSuccessAt ?? current.status.lastSuccessAt,
+                stale: status.stale ?? current.status.stale,
+                error: isRunning ? status.error : (status.error ?? current.status.error),
+                reason: status.reason,
+                researchSource: status.researchSource ?? current.status.researchSource,
+                stage: status.stage ?? current.status.stage,
+                progressText: status.progressText ?? current.status.progressText,
+                elapsedMs: status.elapsedMs ?? current.status.elapsedMs,
+                stepIndex: status.stepIndex ?? current.status.stepIndex,
+                stepCount: status.stepCount ?? current.status.stepCount,
+                partialFailures: status.partialFailures ?? current.status.partialFailures
+            ),
+            workspaceEvidenceRefs: current.workspaceEvidenceRefs,
+            lanes: current.lanes
+        )
     }
 
     func requestWorkHistory() {
@@ -8608,27 +8635,7 @@ final class AgenticViewModel: ObservableObject {
                         source: status.reason ?? "display"
                     )
                 }
-                newsMarketRadar = NewsMarketRadarSnapshot(
-                    schemaVersion: newsMarketRadar.schemaVersion,
-                    generatedAt: newsMarketRadar.generatedAt,
-                    nextRefreshAfter: newsMarketRadar.nextRefreshAfter,
-                    status: NewsMarketRadarStatus(
-                        state: status.state,
-                        lastSuccessAt: status.lastSuccessAt ?? newsMarketRadar.status.lastSuccessAt,
-                        stale: status.stale ?? newsMarketRadar.status.stale,
-                        error: status.error ?? newsMarketRadar.status.error,
-                        reason: status.reason,
-                        researchSource: status.researchSource ?? newsMarketRadar.status.researchSource,
-                        stage: status.stage ?? newsMarketRadar.status.stage,
-                        progressText: status.progressText ?? newsMarketRadar.status.progressText,
-                        elapsedMs: status.elapsedMs ?? newsMarketRadar.status.elapsedMs,
-                        stepIndex: status.stepIndex ?? newsMarketRadar.status.stepIndex,
-                        stepCount: status.stepCount ?? newsMarketRadar.status.stepCount,
-                        partialFailures: status.partialFailures ?? newsMarketRadar.status.partialFailures
-                    ),
-                    workspaceEvidenceRefs: newsMarketRadar.workspaceEvidenceRefs,
-                    lanes: newsMarketRadar.lanes
-                )
+                applyNewsMarketRadarStatus(status)
                 if let outcome = longRunningCompletionOutcome(for: status.state, error: status.error) {
                     completeLongRunningCompletionAttempt(
                         .newsMarketRadar,

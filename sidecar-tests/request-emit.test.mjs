@@ -2012,6 +2012,77 @@ test("news_market_radar_get with autoRefreshIfDue false restores due cache witho
   }
 });
 
+test("news_market_radar_get marks cached failed snapshot refreshing while refresh is in flight", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      EXA_API_KEY: "exa_test_key",
+      AGENTIC30_TEST_STUB_PROVIDER_DELAY_MS: "750",
+    },
+  });
+  let ws;
+  try {
+    await fs.mkdir(path.join(harness.workspacePath, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(harness.workspacePath, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    const generatedAt = "2026-01-01T00:00:00.000Z";
+    await persistNewsMarketRadarSnapshot({
+      workspaceRoot: harness.workspacePath,
+      now: new Date(generatedAt),
+      snapshot: {
+        schemaVersion: 1,
+        generatedAt,
+        nextRefreshAfter: "2026-01-01T01:00:00.000Z",
+        status: {
+          state: "failed",
+          lastSuccessAt: null,
+          stale: false,
+          error: "cached search failed",
+          reason: "search_failed",
+          researchSource: "test cache",
+        },
+        workspaceEvidenceRefs: [],
+        lanes: [{ id: "icp", cards: [] }],
+      },
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "news_market_radar_refresh",
+      reason: "manual",
+      force: true,
+      preferredProvider: "codex",
+    }));
+    await waitForEvent(ws.events, (event) =>
+      event.type === "news_market_radar_status"
+        && event.status?.state === "refreshing"
+    );
+
+    ws.send(JSON.stringify({
+      type: "news_market_radar_get",
+      preferredProvider: "codex",
+      autoRefreshIfDue: true,
+    }));
+
+    const cached = await waitForEvent(ws.events, (event) =>
+      event.type === "news_market_radar_result"
+        && event.newsMarketRadar?.status?.reason === "refresh_in_flight"
+    );
+    assert.equal(cached.newsMarketRadar.status.state, "refreshing");
+    assert.equal(cached.newsMarketRadar.status.error, null);
+    assert.notEqual(cached.newsMarketRadar.status.state, "failed");
+    assert.equal(typeof cached.newsMarketRadar.status.stage, "string");
+
+    const status = await waitForEvent(ws.events, (event) =>
+      event.type === "news_market_radar_status"
+        && event.status?.reason === "refresh_in_flight"
+    );
+    assert.equal(status.status.state, "refreshing");
+    assert.equal(status.status.error, null);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("morning_briefing_refresh does not run Cloudflare direct fallback after failed MCP digest", async () => {
   const harness = await spawnSidecar();
   let ws;

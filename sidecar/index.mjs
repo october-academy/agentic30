@@ -2467,14 +2467,22 @@ async function handleClientMessage(socket, payload) {
         exaConfigured: exaRoutes.length > 0,
         exaResearchSource: exaRoutes[0]?.label || null,
       });
+      const inFlightStatus = state.newsMarketRadarRefreshPromise && state.newsMarketRadarProgress
+        ? newsMarketRadarRefreshInFlightStatus(snapshot, {
+          progress: state.newsMarketRadarProgress,
+          researchSource: exaRoutes[0]?.label || null,
+        })
+        : null;
       send(socket, {
         type: "news_market_radar_result",
-        newsMarketRadar: snapshot,
+        newsMarketRadar: inFlightStatus
+          ? { ...snapshot, status: inFlightStatus }
+          : snapshot,
       });
-      if (state.newsMarketRadarRefreshPromise && state.newsMarketRadarProgress) {
+      if (inFlightStatus) {
         send(socket, {
           type: "news_market_radar_status",
-          status: state.newsMarketRadarProgress,
+          status: inFlightStatus,
         });
       }
       if (
@@ -14013,6 +14021,28 @@ function scheduleNewsMarketRadarRefresh({
   });
   state.newsMarketRadarRefreshPromise = promise;
   return promise;
+}
+
+function newsMarketRadarRefreshInFlightStatus(snapshot, {
+  progress = {},
+  researchSource = null,
+} = {}) {
+  const currentStatus = snapshot?.status || {};
+  const status = buildNewsMarketRadarProgressStatus(progress, {
+    reason: "refresh_in_flight",
+    stale: Boolean(currentStatus.stale || snapshot?.generatedAt),
+    startedAt: state.newsMarketRadarProgressStartedAt,
+    researchSource: progress.researchSource || currentStatus.researchSource || researchSource || null,
+  });
+  return {
+    ...currentStatus,
+    ...status,
+    state: "refreshing",
+    lastSuccessAt: currentStatus.lastSuccessAt || null,
+    stale: status.stale,
+    error: null,
+    reason: "refresh_in_flight",
+  };
 }
 
 async function runNewsMarketRadarRefresh({

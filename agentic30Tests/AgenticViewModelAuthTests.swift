@@ -1353,6 +1353,75 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.strategyReportPreparingForDisplay == false)
     }
 
+    @Test @MainActor func prepareNewsMarketRadarForDisplayIsIdempotentWhilePreparing() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        sidecar.resetSentPayloads()
+
+        viewModel.prepareNewsMarketRadarForDisplay()
+        viewModel.prepareNewsMarketRadarForDisplay()
+
+        let newsPayloads = sidecar.sentPayloads.filter {
+            $0["type"] as? String == "news_market_radar_get"
+        }
+        #expect(newsPayloads.count == 1)
+        #expect(newsPayloads.first?["autoRefreshIfDue"] as? Bool == true)
+        #expect(viewModel.newsMarketRadarPreparingForDisplay == true)
+    }
+
+    @Test @MainActor func refreshingNewsMarketRadarStatusClearsCachedFailureError() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "news_market_radar_result",
+              "newsMarketRadar": {
+                "schemaVersion": 1,
+                "generatedAt": "2026-06-16T00:00:00.000Z",
+                "nextRefreshAfter": "2026-06-17T00:00:00.000Z",
+                "status": {
+                  "state": "failed",
+                  "lastSuccessAt": null,
+                  "stale": false,
+                  "error": "cached search failed",
+                  "reason": "search_failed"
+                },
+                "workspaceEvidenceRefs": [],
+                "lanes": []
+              }
+            }
+            """
+        ))
+        #expect(viewModel.newsMarketRadar.status.state == "failed")
+        #expect(viewModel.newsMarketRadar.status.error == "cached search failed")
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "news_market_radar_status",
+              "status": {
+                "state": "refreshing",
+                "stale": true,
+                "error": null,
+                "reason": "refresh_in_flight",
+                "stage": "running_provider_research",
+                "progressText": "Codex Exa MCP로 공개 근거를 검색하는 중",
+                "stepIndex": 4,
+                "stepCount": 6
+              }
+            }
+            """
+        ))
+        #expect(viewModel.newsMarketRadar.status.state == "refreshing")
+        #expect(viewModel.newsMarketRadar.status.error == nil)
+        #expect(viewModel.newsMarketRadar.status.reason == "refresh_in_flight")
+        #expect(viewModel.newsMarketRadar.status.stage == "running_provider_research")
+    }
+
     @Test @MainActor func sidecarInterruptionClearsIntegrationStatusCheckSpinner() throws {
         let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
         let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
