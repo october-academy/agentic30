@@ -498,6 +498,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
+    static func isSparkleNoUpdateCycleError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == SUSparkleErrorDomain && nsError.code == 1001 {
+            return true
+        }
+
+        let description = error.localizedDescription
+            .replacingOccurrences(of: "’", with: "'")
+            .lowercased()
+        return description.contains("up to date") || description.contains("no update")
+    }
+
     private static func sparkleConfiguration(bundle: Bundle = .main) -> SparkleConfiguration {
         let publicKey = bundle.object(forInfoDictionaryKey: "SUPublicEDKey") as? String
         let feedURL = bundle.object(forInfoDictionaryKey: "SUFeedURL") as? String
@@ -639,7 +651,9 @@ extension AppDelegate: SPUUpdaterDelegate {
     }
 
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
-        if let error {
+        let hadRealError: Bool
+        if let error, !Self.isSparkleNoUpdateCycleError(error) {
+            hadRealError = true
             viewModel.recordAppUpdateError(error.localizedDescription)
             PostHogTelemetry.capture(
                 "mac_update_error",
@@ -650,13 +664,14 @@ extension AppDelegate: SPUUpdaterDelegate {
                 authSession: viewModel.macAuthSession
             )
         } else {
+            hadRealError = false
             viewModel.recordAppUpdateCycleFinished()
         }
 
         PostHogTelemetry.capture(
             "mac_update_cycle_finished",
             properties: [
-                "had_error": error != nil,
+                "had_error": hadRealError,
                 "feed_url": viewModel.appUpdateState.feedURL,
                 "last_result": viewModel.appUpdateState.lastResult.statusText,
             ],
