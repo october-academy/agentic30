@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.25] - 2026-06-16
+
 ### 추가
 - **Morning Briefing 카드 스파크라인**: Cloudflare/GitHub drilldown이 카드용 8-bucket `cardSparkline`을 제공하고, Morning Briefing 카드가 차트 막대 대신 이 compact series를 사용하도록 정리했습니다.
 
