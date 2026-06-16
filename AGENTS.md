@@ -90,3 +90,4 @@ AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full
 - User-designated competitors to remember for future strategy/product/market work:
   - https://indiefounders.net/
   - https://www.threads.com/@classbinu
+- Coding preference: prefer explicit failure that exposes the root cause over meaningless fallback or recovery logic.

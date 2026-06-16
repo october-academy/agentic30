@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### 추가
+- **Office Hours pending 질문 복원**: 앱 재시작 뒤에도 진행 중이던 Day별 구조화 질문을 `.agentic30/memory/office-hours-pending.json`에서 복원하고, 답변 기록이 달라진 경우 새 provider run으로 덮어쓰지 않고 명시 실패로 멈추도록 했습니다.
+
+### 변경
+- **Morning Briefing 카드 스파크라인**: 카드 스파크라인을 briefing window 기준 8개 bucket으로 정렬하고, 드릴다운의 `at` timestamp와 zero-fill bucket을 사용해 카드 간 시간축을 맞췄습니다.
+- **News Market Radar 실패 계약**: 최종 합성 실패 또는 공개 근거 카드 0개 결과를 deterministic merge로 숨기지 않고 `failed`/`empty_result` 상태로 저장하도록 변경했습니다.
+
+### 수정
+- **Market Radar/Strategy UI 안정성**: cached 카드가 있는 실패 상태는 카드 화면을 유지하고, SWOT tone은 섹션 id 기준으로 고정해 upstream tone drift에도 색상이 흔들리지 않게 했습니다.
+- **Swift actor-isolation 진단 정리**: Strategy/News snapshot 모델과 progress helper를 `nonisolated`로 정리해 Swift 6 릴리스 빌드 진단을 줄였습니다.
+
 ## [1.0.25] - 2026-06-16
 
 ### 추가
