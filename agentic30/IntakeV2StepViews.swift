@@ -3,7 +3,6 @@ import AppKit
 import Combine
 
 // MARK: - Intake V2 Step Views — review decisions 2026-05-14
-// Role / Blocker / Commitment / Evidence / Folder Pick
 
 // MARK: - Commitment
 
@@ -47,10 +46,10 @@ struct IntakeV2CommitmentView: View {
 
 }
 
-// MARK: - Role
+// MARK: - Focus Area
 
 @MainActor
-struct IntakeV2RoleView: View {
+struct IntakeV2FocusAreaView: View {
     @ObservedObject var store: IntakeV2Store
     let onBack: () -> Void
     let onNext: () -> Void
@@ -61,17 +60,17 @@ struct IntakeV2RoleView: View {
             VStack(alignment: .leading, spacing: 24) {
                 IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
-                    title: "지금 하루를 가장 많이 쓰는 역할은 무엇인가요?",
-                    subtitle: "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다."
+                    title: OnboardingFocusArea.onboardingQuestion,
+                    subtitle: OnboardingFocusArea.onboardingSubtitle
                 )
                 VStack(spacing: 8) {
-                    ForEach(OnboardingRole.onboardingChoices, id: \.self) { role in
+                    ForEach(OnboardingFocusArea.onboardingChoices, id: \.self) { focusArea in
                         IntakeV2OptionCard(
-                            title: role.displayTitle,
-                            description: role.displayDescription,
-                            selected: store.role == role,
-                            accessibilityIdentifier: "intakeV2.role.option.\(role.rawValue)",
-                            onTap: { store.role = role; store.persist() }
+                            title: focusArea.displayTitle,
+                            description: focusArea.displayDescription,
+                            selected: store.focusArea == focusArea,
+                            accessibilityIdentifier: "intakeV2.focusArea.option.\(focusArea.rawValue)",
+                            onTap: { store.focusArea = focusArea; store.persist() }
                         )
                     }
                 }
@@ -80,7 +79,7 @@ struct IntakeV2RoleView: View {
             IntakeV2Footer(
                 backDisabled: false,
                 nextTitle: "Next →",
-                nextEnabled: store.isRoleComplete,
+                nextEnabled: store.isFocusAreaComplete,
                 onBack: onBack,
                 onNext: onNext
             )
@@ -89,10 +88,10 @@ struct IntakeV2RoleView: View {
 
 }
 
-// MARK: - Blocker
+// MARK: - Bottleneck
 
 @MainActor
-struct IntakeV2StuckView: View {
+struct IntakeV2BottleneckView: View {
     @ObservedObject var store: IntakeV2Store
     let onBack: () -> Void
     let onNext: () -> Void
@@ -103,17 +102,17 @@ struct IntakeV2StuckView: View {
             VStack(alignment: .leading, spacing: 24) {
                 IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
-                    title: "지금 가장 큰 막힘은 무엇인가요?",
-                    subtitle: "막힌 지점에 맞춰 먼저 볼 문제를 정합니다."
+                    title: OnboardingProductBottleneck.onboardingQuestion,
+                    subtitle: "병목에 맞춰 먼저 볼 문제를 정합니다."
                 )
                 VStack(spacing: 8) {
-                    ForEach(OnboardingProjectStage.onboardingChoices, id: \.self) { stage in
+                    ForEach(OnboardingProductBottleneck.onboardingChoices, id: \.self) { bottleneck in
                         IntakeV2OptionCard(
-                            title: stage.displayTitle,
-                            description: stage.displayDescription,
-                            selected: store.stuck == stage,
-                            accessibilityIdentifier: "intakeV2.blocker.option.\(stage.rawValue)",
-                            onTap: { store.stuck = stage; store.persist() }
+                            title: bottleneck.displayTitle,
+                            description: bottleneck.displayDescription,
+                            selected: store.bottleneck == bottleneck,
+                            accessibilityIdentifier: "intakeV2.bottleneck.option.\(bottleneck.rawValue)",
+                            onTap: { store.bottleneck = bottleneck; store.persist() }
                         )
                     }
                 }
@@ -122,7 +121,7 @@ struct IntakeV2StuckView: View {
             IntakeV2Footer(
                 backDisabled: false,
                 nextTitle: "Next →",
-                nextEnabled: store.isBlockerComplete,
+                nextEnabled: store.isBottleneckComplete,
                 onBack: onBack,
                 onNext: onNext
             )

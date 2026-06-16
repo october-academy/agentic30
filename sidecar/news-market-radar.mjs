@@ -21,7 +21,7 @@ export const NEWS_MARKET_RADAR_CACHE_SCHEMA_VERSION = 1;
 export const CURRICULUM_ANSWER_LOG_SCHEMA_VERSION = 1;
 export const NEWS_MARKET_RADAR_RETENTION_DAYS = 30;
 export const NEWS_MARKET_RADAR_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
-export const NEWS_MARKET_RADAR_DEFAULT_PROVIDER_TIMEOUT_MS = 480_000;
+export const NEWS_MARKET_RADAR_DEFAULT_PROVIDER_TIMEOUT_MS = 900_000;
 export const NEWS_MARKET_RADAR_CONTENT_LOCALE = "ko-KR";
 export const NEWS_MARKET_RADAR_PROMPT_PROFILE = "ko_market_radar_v7_market_surfaces_two_pass_exa";
 export const NEWS_MARKET_RADAR_LANE_CONCURRENCY = 2;
@@ -137,7 +137,7 @@ export function normalizeNewsMarketRadarProviderTimeout(
   {
     defaultMs = NEWS_MARKET_RADAR_DEFAULT_PROVIDER_TIMEOUT_MS,
     minMs = 30_000,
-    maxMs = 600_000,
+    maxMs = 1_200_000,
   } = {},
 ) {
   const parsed = Number.parseInt(String(value || ""), 10);
@@ -181,6 +181,17 @@ export function buildNewsMarketRadarProgressStatus(progress = {}, {
       : NEWS_MARKET_RADAR_PROGRESS_STEPS.length,
     partialFailures: normalizePartialFailures(progress.partialFailures || progress.partial_failures),
   };
+}
+
+export function isNewsMarketRadarAutoRefreshDue(snapshot, { now = new Date() } = {}) {
+  if (!snapshot || typeof snapshot !== "object") return true;
+  const reason = cleanString(snapshot.status?.reason || "", 80);
+  if (reason === "not_loaded") return true;
+  const nextRefreshMs = Date.parse(snapshot.nextRefreshAfter || "");
+  if (Number.isFinite(nextRefreshMs)) return now.getTime() >= nextRefreshMs;
+  const generatedAtMs = Date.parse(snapshot.generatedAt || "");
+  if (!Number.isFinite(generatedAtMs)) return true;
+  return now.getTime() - generatedAtMs >= NEWS_MARKET_RADAR_REFRESH_INTERVAL_MS;
 }
 
 const NEWS_LANE_TITLES = Object.freeze({
@@ -656,6 +667,13 @@ export async function refreshNewsMarketRadar({
       },
     };
     return persistNewsMarketRadarSnapshot({ workspaceRoot, snapshot: noExaRoute, now });
+  }
+  if (
+    !force
+    && isNewsMarketRadarAutomaticRefreshReason(reason)
+    && !isNewsMarketRadarAutoRefreshDue(previous, { now })
+  ) {
+    return previous;
   }
   notifyNewsMarketRadarProgress(onProgress, {
     stage: "loading_workspace_evidence",
@@ -1225,7 +1243,7 @@ export function buildMarketRadarProviderPrompt(context) {
     "",
     "Output language:",
     "- All user-facing prose in the JSON must be Korean (한국어).",
-    "- Write lane title/hypothesis, card title, summary, whyItMatters, suggestedHypothesisUpdate, and sourceRefs.excerpt in Korean.",
+    "- Write lane title/hypothesis, card title, summary, whyItMatters, and sourceRefs.excerpt in Korean.",
     "- Keep JSON keys, ids, enum values, URLs, domains, currency symbols, product names, plan names, and official source titles unchanged.",
     "- If a source page is English, summarize or paraphrase the supporting excerpt in Korean instead of copying English prose.",
     "- Do not emit English prose for card bodies even when every source is English.",
@@ -1330,7 +1348,7 @@ export function buildMarketRadarLaneProviderPrompt(context) {
     "",
     "Output language:",
     "- All user-facing prose in the JSON must be Korean (한국어).",
-    "- Write card title, summary, whyItMatters, suggestedHypothesisUpdate, and sourceRefs.excerpt in Korean.",
+    "- Write card title, summary, whyItMatters, and sourceRefs.excerpt in Korean.",
     "- Keep JSON keys, ids, enum values, URLs, domains, currency symbols, product names, plan names, and official source titles unchanged.",
     "- If a source page is English, summarize or paraphrase the supporting excerpt in Korean instead of copying English prose.",
     "",
@@ -1986,10 +2004,6 @@ function normalizeCard(value = {}, {
     }),
     actionHint: normalizeMarketRadarCardText(value.actionHint || value.action_hint || value.nextAction, 500),
     whyItMatters: cleanString(value.whyItMatters || value.why_it_matters || "", 1_200),
-    suggestedHypothesisUpdate: cleanString(
-      value.suggestedHypothesisUpdate || value.suggested_hypothesis_update || "",
-      1_500,
-    ),
     suggestedDocTargets: normalizeStringArray(value.suggestedDocTargets || value.suggested_doc_targets, 6, 80),
     relatedDays: normalizeIntArray(value.relatedDays || value.related_days, 1, 30, 8),
     relatedAnswerIds,
@@ -2282,7 +2296,6 @@ function mergeMarketRadarCards(a, b, { selfReferenceProfile = null } = {}) {
     impact: aggregateImpact([a, b]),
     confidence: normalizeCardConfidence(maxConfidence(a.confidence, b.confidence), domains.size, sourceRefs),
     whyItMatters: chooseCardText(a.whyItMatters, b.whyItMatters, 1_200),
-    suggestedHypothesisUpdate: chooseCardText(a.suggestedHypothesisUpdate, b.suggestedHypothesisUpdate, 1_500),
     marketEntity: chooseCardText(a.marketEntity, b.marketEntity, 160),
     offer: chooseCardText(a.offer, b.offer, 220),
     price: chooseCardText(a.price, b.price, 120),
@@ -2379,7 +2392,6 @@ function scoreMarketRadarCard(card = {}, {
     card.evidenceType,
     card.actionHint,
     card.whyItMatters,
-    card.suggestedHypothesisUpdate,
     ...(card.sourceRefs || []).flatMap((source) => [source.title, source.excerpt]),
   ].filter(Boolean).join(" ");
   return confidenceScore
@@ -2612,6 +2624,12 @@ function shouldReuseFailedNewsMarketRadarSnapshot({
   return now.getTime() - generatedAtMs < NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS;
 }
 
+function isNewsMarketRadarAutomaticRefreshReason(reason = "") {
+  return ["daily", "startup", "auto", "background", "day_answer", "workspace_scan"].includes(
+    cleanString(reason, 80),
+  );
+}
+
 function summarizePartialFailureErrors(partialFailures = []) {
   const errors = partialFailures
     .map((failure) => cleanString(failure.error || "", 500))
@@ -2742,7 +2760,6 @@ function makeProviderSchemaExample() {
             evidenceType: "pricing|review|launch|anti_signal|local_ko|competitor|platform|community|social_profile|reference",
             actionHint: "이 근거를 바탕으로 사용자가 다음에 검증할 행동",
             whyItMatters: "이 근거가 사용자의 다음 행동을 어떻게 바꾸는지 한국어로 설명",
-            suggestedHypothesisUpdate: "자동 수정이 아니라 한국어 문장으로 쓴 가설 갱신 제안",
             suggestedDocTargets: ["ICP.md", "SPEC.md"],
             relatedDays: [2, 5, 27],
             relatedAnswerIds: [],
@@ -2784,7 +2801,6 @@ function makeLaneProviderSchemaExample() {
           evidenceType: "pricing|review|launch|anti_signal|local_ko|competitor|platform|community|social_profile|reference",
           actionHint: "이 근거를 바탕으로 사용자가 다음에 검증할 행동",
           whyItMatters: "이 근거가 사용자의 다음 행동을 어떻게 바꾸는지 한국어로 설명",
-          suggestedHypothesisUpdate: "자동 수정이 아니라 한국어 문장으로 쓴 가설 갱신 제안",
           suggestedDocTargets: ["ICP.md", "SPEC.md"],
           relatedDays: [2, 5, 27],
           relatedAnswerIds: [],

@@ -96,8 +96,8 @@ final class AgenticViewModelAuthTests {
     @Test @MainActor func onboardingContextDecodesCurrentPayloadWithoutWorkMode() throws {
         let payload = """
         {
-          "role": "developer",
-          "project_stage": "building",
+          "focus_area": "development",
+          "product_bottleneck": "first_active_users",
           "isolation_level": "project_folder",
           "completed_at": "2026-05-08T00:00:00Z"
         }
@@ -106,11 +106,41 @@ final class AgenticViewModelAuthTests {
         let context = try JSONDecoder().decode(OnboardingContext.self, from: payload)
 
         #expect(context.workMode == .fullTimeSolo)
-        #expect(context.role == .developer)
-        #expect(context.projectStage == .building)
+        #expect(context.focusArea == .development)
+        #expect(context.productBottleneck == .firstActiveUsers)
         #expect(context.isolationLevel == .projectFolder)
         #expect(context.isolationLevels == [.projectFolder])
         #expect(context.completedAt == "2026-05-08T00:00:00Z")
+    }
+
+    @Test @MainActor func onboardingContextRejectsLegacyRolePayload() throws {
+        let payload = """
+        {
+          "role": "developer",
+          "product_bottleneck": "first_active_users",
+          "isolation_level": "project_folder",
+          "completed_at": "2026-05-08T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(OnboardingContext.self, from: payload)
+        }
+    }
+
+    @Test @MainActor func onboardingContextRejectsLegacyProjectStagePayload() throws {
+        let payload = """
+        {
+          "focus_area": "development",
+          "project_stage": "building",
+          "isolation_level": "project_folder",
+          "completed_at": "2026-05-08T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(OnboardingContext.self, from: payload)
+        }
     }
 
     @Test @MainActor func onboardingContextEncodesWorkModeForSidecarContract() throws {
@@ -120,8 +150,8 @@ final class AgenticViewModelAuthTests {
             goal: "Validate one paid user",
             customWorkMode: "주말마다 고객 인터뷰를 돌리는 중",
             workMode: .sideProject,
-            role: .designer,
-            projectStage: .preRevenue,
+            focusArea: .design,
+            productBottleneck: .pricingOffer,
             isolationLevel: .weeklyLoop,
             isolationLevels: [.weeklyLoop, .paymentResponses],
             completedAt: "2026-05-08T00:00:00Z"
@@ -136,8 +166,10 @@ final class AgenticViewModelAuthTests {
         #expect(object?["goal"] as? String == "Validate one paid user")
         #expect(object?["work_mode"] as? String == "side_project")
         #expect(object?["custom_work_mode"] as? String == "주말마다 고객 인터뷰를 돌리는 중")
-        #expect(object?["role"] as? String == "designer")
-        #expect(object?["project_stage"] as? String == "pre_revenue")
+        #expect(object?["focus_area"] as? String == "design")
+        #expect(object?["role"] == nil)
+        #expect(object?["product_bottleneck"] as? String == "pricing_offer")
+        #expect(object?["project_stage"] == nil)
         #expect(object?["isolation_level"] as? String == "weekly_loop")
         #expect(object?["isolation_levels"] as? [String] == ["payment_responses", "weekly_loop"])
         #expect(object?["completed_at"] as? String == "2026-05-08T00:00:00Z")
@@ -146,8 +178,10 @@ final class AgenticViewModelAuthTests {
         #expect((bridgePayload["goal"] as? String) == (object?["goal"] as? String))
         #expect((bridgePayload["custom_work_mode"] as? String) == (object?["custom_work_mode"] as? String))
         #expect((bridgePayload["work_mode"] as? String) == (object?["work_mode"] as? String))
-        #expect((bridgePayload["role"] as? String) == (object?["role"] as? String))
-        #expect((bridgePayload["project_stage"] as? String) == (object?["project_stage"] as? String))
+        #expect((bridgePayload["focus_area"] as? String) == (object?["focus_area"] as? String))
+        #expect(bridgePayload["role"] == nil)
+        #expect((bridgePayload["product_bottleneck"] as? String) == (object?["product_bottleneck"] as? String))
+        #expect(bridgePayload["project_stage"] == nil)
         #expect((bridgePayload["isolation_level"] as? String) == (object?["isolation_level"] as? String))
         #expect((bridgePayload["isolation_levels"] as? [String]) == (object?["isolation_levels"] as? [String]))
         #expect((bridgePayload["completed_at"] as? String) == (object?["completed_at"] as? String))
@@ -182,8 +216,8 @@ final class AgenticViewModelAuthTests {
             goal: "validate paid demand",
             customWorkMode: "하루 1~2시간",
             workMode: .sideProject,
-            role: .productManager,
-            projectStage: .firstUsers,
+            focusArea: .productPlanning,
+            productBottleneck: .pricingOffer,
             isolationLevel: .projectFolder,
             isolationLevels: [.projectFolder, .paymentResponses],
             completedAt: "2026-05-08T00:00:00Z"
@@ -194,7 +228,8 @@ final class AgenticViewModelAuthTests {
         let persisted = try #require(WorkspaceMemoryStore.loadOnboardingMemory(workspaceRoot: workspace.path))
         #expect(persisted.onboardingContext == context)
         #expect(persisted.projectPath == workspace.path)
-        #expect(persisted.answers.primaryRole.answer == "product_manager")
+        #expect(persisted.answers.primaryFocus.answer == "product_planning")
+        #expect(persisted.answers.primaryBottleneck.answer == "pricing_offer")
         #expect(persisted.answers.timeBudget.answer == "하루 1~2시간")
         #expect(persisted.readSources.contains(where: { $0.id == "local_folder" }))
         #expect(UserDefaults.standard.data(forKey: IntakeV2Store.stateDefaultsKey) == nil)
@@ -205,8 +240,8 @@ final class AgenticViewModelAuthTests {
     @Test @MainActor func onboardingContextPersistsMultipleRecordSources() throws {
         let context = OnboardingContext(
             workMode: .fullTimeSolo,
-            role: .developer,
-            projectStage: .building,
+            focusArea: .development,
+            productBottleneck: .firstActiveUsers,
             isolationLevel: .projectFolder,
             isolationLevels: [.workLog, .projectFolder, .workLog],
             completedAt: "2026-05-08T00:00:00Z"
@@ -225,8 +260,8 @@ final class AgenticViewModelAuthTests {
     @Test @MainActor func onboardingContextPersistsPaymentResponsesSource() throws {
         let context = OnboardingContext(
             workMode: .sideProject,
-            role: .marketerBusiness,
-            projectStage: .firstUsers,
+            focusArea: .salesMonetization,
+            productBottleneck: .pricingOffer,
             isolationLevel: .paymentResponses,
             completedAt: "2026-05-08T00:00:00Z"
         )
@@ -283,7 +318,7 @@ final class AgenticViewModelAuthTests {
         #expect(decoded.businessDescription == responses.businessDescription)
         #expect(decoded.currentStage == responses.currentStage)
         #expect(decoded.goal == responses.goal)
-        #expect(decoded.projectStage == .firstUsers)
+        #expect(decoded.productBottleneck == .repeatUsage)
         #expect(decoded.assistantSystemPromptFragment.contains("온보딩 답변"))
     }
 
@@ -925,8 +960,8 @@ final class AgenticViewModelAuthTests {
                 businessDescription: "Reset test",
                 currentStage: "Testing",
                 goal: "Verify reset",
-                role: .developer,
-                projectStage: .building,
+                focusArea: .development,
+                productBottleneck: .firstActiveUsers,
                 isolationLevel: .projectFolder
             ),
             disablesSidecarStartForTesting: true,
@@ -979,8 +1014,8 @@ final class AgenticViewModelAuthTests {
 
         let viewModel = AgenticViewModel(
             onboardingContextOverride: OnboardingContext.make(
-                role: .developer,
-                projectStage: .building,
+                focusArea: .development,
+                productBottleneck: .firstActiveUsers,
                 isolationLevel: .projectFolder
             ),
             activateAppForAuth: {}
@@ -1005,8 +1040,8 @@ final class AgenticViewModelAuthTests {
         viewModel.resetFoundationProgressForTesting()
         let context = OnboardingContext.make(
             workMode: .teamStartup,
-            role: .designer,
-            projectStage: .firstUsers,
+            focusArea: .design,
+            productBottleneck: .pricingOffer,
             isolationLevel: .projectFolder
         )
 
@@ -1016,7 +1051,7 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.needsOnboardingIntro == true)
         #expect(viewModel.needsOnboardingContext == false)
         #expect(viewModel.workspaceRoot == workspaceURL.path)
-        #expect(viewModel.onboardingContext?.role == .designer)
+        #expect(viewModel.onboardingContext?.focusArea == .design)
         #expect(viewModel.foundationStartedAt == nil)
         #expect(viewModel.isScanning == true)
         #expect(viewModel.scanProgressMessage == "Waiting for workspace connection...")
@@ -1039,14 +1074,14 @@ final class AgenticViewModelAuthTests {
         viewModel.resetFoundationProgressForTesting()
         let firstContext = OnboardingContext.make(
             workMode: .fullTimeSolo,
-            role: .developer,
-            projectStage: .building,
+            focusArea: .development,
+            productBottleneck: .firstActiveUsers,
             isolationLevel: .projectFolder
         )
         let secondContext = OnboardingContext.make(
             workMode: .sideProject,
-            role: .productManager,
-            projectStage: .preRevenue,
+            focusArea: .productPlanning,
+            productBottleneck: .pricingOffer,
             isolationLevel: .projectFolder
         )
 
@@ -1081,8 +1116,8 @@ final class AgenticViewModelAuthTests {
             url: workspaceURL,
             context: OnboardingContext.make(
                 workMode: .fullTimeSolo,
-                role: .developer,
-                projectStage: .building,
+                focusArea: .development,
+                productBottleneck: .firstActiveUsers,
                 isolationLevel: .projectFolder
             )
         )
@@ -1094,8 +1129,8 @@ final class AgenticViewModelAuthTests {
         viewModel.prepareIntakeOnlyOnboarding(
             context: OnboardingContext.make(
                 workMode: .sideProject,
-                role: .productManager,
-                projectStage: .ideaOnly,
+                focusArea: .productPlanning,
+                productBottleneck: .problemDefinition,
                 isolationLevel: .projectFolder
             )
         )
@@ -1121,8 +1156,8 @@ final class AgenticViewModelAuthTests {
         viewModel.resetFoundationProgressForTesting()
         let context = OnboardingContext.make(
             workMode: .sideProject,
-            role: .productManager,
-            projectStage: .ideaOnly,
+            focusArea: .productPlanning,
+            productBottleneck: .problemDefinition,
             isolationLevel: .projectFolder
         )
 
@@ -1159,7 +1194,7 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.mcpOauthConnecting.contains("vercel"))
     }
 
-    @Test @MainActor func readyRefreshesIntegrationStatusAfterProviderSettingsSync() throws {
+    @Test @MainActor func readyRestoresWorkspaceSurfacesAfterProviderSettingsSync() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
 
@@ -1184,14 +1219,138 @@ final class AgenticViewModelAuthTests {
 
         let types = sidecar.sentPayloads.compactMap { $0["type"] as? String }
         let settingsIndex = try #require(types.firstIndex(of: "provider_settings_update"))
+        let dayIndex = try #require(types.firstIndex(of: "day_progress_get"))
+        let briefingIndex = try #require(types.firstIndex(of: "morning_briefing_get"))
+        let strategyIndex = try #require(types.firstIndex(of: "strategy_report_get"))
+        let newsIndex = try #require(types.firstIndex(of: "news_market_radar_get"))
         let statusIndex = try #require(types.firstIndex(of: "integration_status_check"))
-        #expect(settingsIndex < statusIndex)
+        for restoreIndex in [dayIndex, briefingIndex, strategyIndex, newsIndex] {
+            #expect(settingsIndex < restoreIndex)
+            #expect(restoreIndex < statusIndex)
+        }
+        #expect(!types.contains("morning_briefing_refresh"))
+        #expect(!types.contains("strategy_report_refresh"))
+        #expect(!types.contains("news_market_radar_refresh"))
+
+        let dayPayload = try #require(sidecar.sentPayloads.first {
+            $0["type"] as? String == "day_progress_get"
+        })
+        #expect(dayPayload["workspaceRoot"] as? String == workspace.path)
+
+        let briefingPayload = try #require(sidecar.sentPayloads.first {
+            $0["type"] as? String == "morning_briefing_get"
+        })
+        #expect(briefingPayload["preferredProvider"] as? String == "claude")
+        #expect(briefingPayload["autoRefreshIfStale"] as? Bool == false)
+
+        let strategyPayload = try #require(sidecar.sentPayloads.first {
+            $0["type"] as? String == "strategy_report_get"
+        })
+        #expect(strategyPayload["preferredProvider"] as? String == "claude")
+
+        let newsPayload = try #require(sidecar.sentPayloads.first {
+            $0["type"] as? String == "news_market_radar_get"
+        })
+        #expect(newsPayload["preferredProvider"] as? String == "claude")
+        #expect(newsPayload["autoRefreshIfDue"] as? Bool == false)
 
         let statusPayload = try #require(sidecar.sentPayloads.first {
             $0["type"] as? String == "integration_status_check"
         })
         #expect(statusPayload["preferredProvider"] as? String == "claude")
         #expect(viewModel.integrationStatusChecking == true)
+        #expect(viewModel.morningBriefingCollecting == false)
+        #expect(viewModel.strategyReportPreparingForDisplay == false)
+        #expect(viewModel.newsMarketRadarPreparingForDisplay == false)
+    }
+
+    @Test @MainActor func cachedSurfaceResultEventsPopulateStateWithoutRefreshFlags() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "morning_briefing_status",
+              "status": { "state": "collecting" }
+            }
+            """
+        ))
+        #expect(viewModel.morningBriefingCollecting == true)
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "morning_briefing_result",
+              "status": {
+                "state": "ready",
+                "snapshot": true,
+                "reason": "startup_restore"
+              },
+              "morningBriefing": {
+                "schemaVersion": 2,
+                "generatedAt": "2026-06-16T00:00:00.000Z",
+                "summary": { "title": "복구된 아침 브리핑" },
+                "status": { "state": "ready" }
+              }
+            }
+            """
+        ))
+        #expect(viewModel.morningBriefing?.summary?.title == "복구된 아침 브리핑")
+        #expect(viewModel.morningBriefingCollecting == false)
+
+        viewModel.prepareNewsMarketRadarForDisplay()
+        #expect(viewModel.newsMarketRadarPreparingForDisplay == true)
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "news_market_radar_result",
+              "newsMarketRadar": {
+                "schemaVersion": 1,
+                "generatedAt": "2026-06-16T00:00:00.000Z",
+                "nextRefreshAfter": "2026-06-17T00:00:00.000Z",
+                "status": {
+                  "state": "ready",
+                  "lastSuccessAt": "2026-06-16T00:00:00.000Z",
+                  "stale": false,
+                  "error": null,
+                  "reason": "startup_restore"
+                },
+                "workspaceEvidenceRefs": [],
+                "lanes": []
+              }
+            }
+            """
+        ))
+        #expect(viewModel.newsMarketRadar.status.state == "ready")
+        #expect(viewModel.newsMarketRadarPreparingForDisplay == false)
+
+        viewModel.refreshStrategyReport(reason: "manual", force: false)
+        #expect(viewModel.strategyReportPreparingForDisplay == true)
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "strategy_report_result",
+              "strategyReport": {
+                "schemaVersion": 1,
+                "generatedAt": "2026-06-16T00:00:00.000Z",
+                "nextRefreshAfter": "2026-06-17T00:00:00.000Z",
+                "status": {
+                  "state": "ready",
+                  "lastSuccessAt": "2026-06-16T00:00:00.000Z",
+                  "stale": false,
+                  "error": null,
+                  "reason": "startup_restore"
+                },
+                "workspaceEvidenceRefs": [],
+                "report": null
+              }
+            }
+            """
+        ))
+        #expect(viewModel.strategyReport.status.state == "ready")
+        #expect(viewModel.strategyReportPreparingForDisplay == false)
     }
 
     @Test @MainActor func sidecarInterruptionClearsIntegrationStatusCheckSpinner() throws {
@@ -1320,8 +1479,8 @@ final class AgenticViewModelAuthTests {
         viewModel.resetFoundationProgressForTesting()
         let context = OnboardingContext.make(
             workMode: .sideProject,
-            role: .developer,
-            projectStage: .building,
+            focusArea: .development,
+            productBottleneck: .firstActiveUsers,
             isolationLevel: .projectFolder
         )
 
@@ -1358,8 +1517,8 @@ final class AgenticViewModelAuthTests {
             url: workspaceURL,
             context: OnboardingContext.make(
                 workMode: .fullTimeSolo,
-                role: .developer,
-                projectStage: .building,
+                focusArea: .development,
+                productBottleneck: .firstActiveUsers,
                 isolationLevel: .projectFolder
             )
         )
@@ -2050,8 +2209,8 @@ final class AgenticViewModelAuthTests {
 
         let viewModel = AgenticViewModel(
             onboardingContextOverride: OnboardingContext.make(
-                role: .developer,
-                projectStage: .building,
+                focusArea: .development,
+                productBottleneck: .firstActiveUsers,
                 isolationLevel: .projectFolder
             ),
             disablesSidecarStartForTesting: true,
@@ -2078,8 +2237,8 @@ final class AgenticViewModelAuthTests {
 
         let viewModel = AgenticViewModel(
             onboardingContextOverride: OnboardingContext.make(
-                role: .developer,
-                projectStage: .building,
+                focusArea: .development,
+                productBottleneck: .firstActiveUsers,
                 isolationLevel: .projectFolder
             ),
             activateAppForAuth: {}
@@ -2664,8 +2823,8 @@ final class AgenticViewModelAuthTests {
 
         let viewModel = AgenticViewModel(
             onboardingContextOverride: OnboardingContext.make(
-                role: .developer,
-                projectStage: .building,
+                focusArea: .development,
+                productBottleneck: .firstActiveUsers,
                 isolationLevel: .projectFolder
             ),
             activateAppForAuth: {}
@@ -2760,8 +2919,8 @@ final class AgenticViewModelAuthTests {
             currentStage: "building",
             goal: "Find ICP",
             workMode: .fullTimeSolo,
-            role: .developer,
-            projectStage: .building,
+            focusArea: .development,
+            productBottleneck: .firstActiveUsers,
             isolationLevel: .projectFolder,
             completedAt: "2026-05-08T00:00:00Z"
         )
@@ -3058,8 +3217,8 @@ final class AgenticViewModelAuthTests {
                 currentStage: "building",
                 goal: "Find ICP",
                 workMode: .fullTimeSolo,
-                role: .developer,
-                projectStage: .building,
+                focusArea: .development,
+                productBottleneck: .firstActiveUsers,
                 isolationLevel: .projectFolder,
                 completedAt: "2026-05-08T00:00:00Z"
             ),

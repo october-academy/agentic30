@@ -544,26 +544,24 @@ struct StructuredPromptSubmissionStateTests {
 
         viewModel.synchronizeStructuredPromptDrafts(with: prompt)
         viewModel.toggleStructuredPromptOption("Provider", for: question, in: prompt)
-        viewModel.updateStructuredPromptFreeText(
-            "기존 직접 입력 초안",
-            for: question,
-            in: prompt
-        )
         viewModel.activateStructuredPromptFreeText(for: question, in: prompt)
 
         let activated = viewModel.structuredPromptDraft(for: question, in: prompt)
-        #expect(activated.selectedOptions == ["Provider"])
-        #expect(activated.freeText == "기존 직접 입력 초안")
+        #expect(activated.selectedOptions.isEmpty)
+        #expect(activated.freeText.isEmpty)
+        #expect(viewModel.canSubmitStructuredPrompt(prompt) == false)
 
         viewModel.updateStructuredPromptFreeText(
-            "macOS 메뉴바 앱을 쓰는 1인 개발자",
+            "  macOS 메뉴바 앱을 쓰는 1인 개발자  ",
             for: question,
             in: prompt
         )
+        viewModel.toggleStructuredPromptOption("Provider", for: question, in: prompt)
+        viewModel.activateStructuredPromptFreeText(for: question, in: prompt)
 
         let captured = viewModel.structuredPromptDraft(for: question, in: prompt)
-        #expect(captured.selectedOptions == ["Provider"])
-        #expect(captured.freeText == "macOS 메뉴바 앱을 쓰는 1인 개발자")
+        #expect(captured.selectedOptions.isEmpty)
+        #expect(captured.freeText == "  macOS 메뉴바 앱을 쓰는 1인 개발자  ")
         #expect(viewModel.canSubmitStructuredPrompt(prompt) == true)
 
         viewModel.applySessionUpdatedForTesting(Self.makeSession(pendingUserInput: prompt))
@@ -574,7 +572,7 @@ struct StructuredPromptSubmissionStateTests {
 
         let submissions = viewModel.structuredPromptSubmissions(for: prompt)
         #expect(submissions.count == 1)
-        #expect(submissions[0].selectedOptions == ["Provider"])
+        #expect(submissions[0].selectedOptions.isEmpty)
         #expect(submissions[0].freeText == "macOS 메뉴바 앱을 쓰는 1인 개발자")
     }
 
@@ -845,8 +843,8 @@ struct StructuredPromptSubmissionStateTests {
         let viewModel = AgenticViewModel(
             onboardingContextOverride: OnboardingContext.make(
                 workMode: .fullTimeSolo,
-                role: .developer,
-                projectStage: .building,
+                focusArea: .development,
+                productBottleneck: .firstActiveUsers,
                 isolationLevel: .projectFolder
             ),
             disablesSidecarStartForTesting: true,

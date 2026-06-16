@@ -248,7 +248,7 @@ export function normalizeDayRecord(value = {}, { now = new Date(), fallbackDay }
   };
 }
 
-function makeDefaultDayProgress() {
+export function makeDefaultDayProgress() {
   return {
     schemaVersion: DAY_PROGRESS_SCHEMA_VERSION,
     schema: DAY_PROGRESS_SCHEMA,

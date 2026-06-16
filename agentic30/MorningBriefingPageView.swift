@@ -161,6 +161,11 @@ struct MorningBriefingPageView: View {
     private var totalDays: Int { displayBriefing?.totalDays ?? 30 }
     private var isLocked: Bool { displayBriefing?.status?.state == "locked" }
     private var isCollectingWithoutBriefing: Bool { displayBriefing == nil && collecting }
+    private var showsRefreshFailureNotice: Bool {
+        displayBriefing?.status?.state == "failed"
+            && !(displayBriefing?.cards?.isEmpty ?? true)
+            && !viewingPrevious
+    }
     private var coldLoadPresentation: MorningBriefingColdLoadPresentation {
         morningBriefingColdLoadPresentation(
             briefing: displayBriefing,
@@ -195,7 +200,7 @@ struct MorningBriefingPageView: View {
             SectionEntry(id: "sources", title: "소스 근거", meta: "Cloudflare · GitHub · PostHog", tone: .accent),
         ]
         if hasEvidenceFunnel {
-            entries.append(SectionEntry(id: "funnel", title: "증거 퍼널", meta: "방문 → activation → 결제", tone: .accent))
+            entries.append(SectionEntry(id: "funnel", title: "증거 퍼널", meta: "방문 → 검증 행동 → 결제", tone: .accent))
         }
         entries.append(SectionEntry(id: "timeline", title: "밤사이 타임라인", meta: timelineSectionMeta, tone: .ring))
         entries.append(SectionEntry(id: "actions", title: "오늘 검증 액션", meta: actionsSectionMeta, tone: .amber))
@@ -209,9 +214,13 @@ struct MorningBriefingPageView: View {
         !(displayBriefing?.evidenceFunnel?.steps ?? []).isEmpty
     }
 
+    private var hasRenderableVerdict: Bool {
+        displayBriefing?.customerEvidenceVerdict?.isRenderable == true
+    }
+
     private var verdictStateLabel: String {
         switch displayBriefing?.customerEvidenceVerdict?.state {
-        case "traffic_without_activation": return "방문 대비 activation"
+        case "traffic_without_activation": return "방문 대비 검증 행동"
         case "build_without_customer_evidence": return "빌드 대비 고객 증거"
         case "instrumentation_gap": return "계측 공백"
         case "healthy": return "증거 관측"
@@ -391,10 +400,10 @@ struct MorningBriefingPageView: View {
 
     private var collectingNavPlaceholder: some View {
         HStack(alignment: .top, spacing: 9) {
-            ProgressView()
-                .controlSize(.small)
+            OpenDesignInlineSpinner(accessibilityLabel: "신호 수집 중")
                 .frame(width: 14, height: 14)
                 .padding(.top, 3)
+                .accessibilityIdentifier("morningBriefing.nav.collecting.spinner")
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("신호 수집 중")
@@ -547,8 +556,10 @@ struct MorningBriefingPageView: View {
         VStack(spacing: 0) {
             mainHeader
             Divider().overlay(OpenDesignDayColor.borderSoft)
-            syncBar
-            Divider().overlay(OpenDesignDayColor.borderSoft)
+            if coldLoadPresentation.kind == .none {
+                syncBar
+                Divider().overlay(OpenDesignDayColor.borderSoft)
+            }
 
             if isLocked {
                 lockedState
@@ -560,8 +571,16 @@ struct MorningBriefingPageView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
+                            if showsRefreshFailureNotice {
+                                refreshFailureNotice
+                            }
+
                             sectionHeading(id: "summary", title: "오늘의 판정", meta: windowMetaLabel, markerColor: OpenDesignDayColor.accent)
-                            verdictCard
+                            if hasRenderableVerdict {
+                                verdictCard
+                            } else {
+                                summaryCard
+                            }
 
                             sectionHeading(id: "sources", title: "소스 근거 · 어제 대비", meta: "판정 아래 원자료", markerColor: OpenDesignDayColor.accent)
                             sourceCardsGrid
@@ -619,6 +638,40 @@ struct MorningBriefingPageView: View {
 
     private var windowMetaLabel: String {
         displayBriefing?.summary?.windowLabel ?? ""
+    }
+
+    private var refreshFailureNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(OpenDesignDayColor.rose)
+                .frame(width: 18, height: 18)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("이번 동기화는 완료하지 못했습니다")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text(displayBriefing?.status?.detail ?? "이전 브리핑을 표시 중입니다. 소스 상태를 확인한 뒤 다시 동기화하세요.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(OpenDesignDayColor.roseDim.opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(OpenDesignDayColor.roseLine, lineWidth: 1)
+                )
+        )
+        .padding(.bottom, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("morningBriefing.staleNotice")
     }
 
     private var mainHeader: some View {
@@ -690,8 +743,13 @@ struct MorningBriefingPageView: View {
 
             Button(action: refresh) {
                 HStack(spacing: 6) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10, weight: .semibold))
+                    if collecting {
+                        OpenDesignInlineSpinner(accessibilityLabel: "동기화 진행 중")
+                            .accessibilityIdentifier("morningBriefing.refresh.spinner")
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
                     Text(collecting ? "동기화 중…" : "다시 동기화")
                 }
                 .font(.system(size: 11.5))
@@ -736,15 +794,16 @@ struct MorningBriefingPageView: View {
     }
 
     private func syncPill(_ source: MorningBriefingSyncSource) -> some View {
-        let ready = source.state == "ready"
+        let color = syncPillColor(source.state)
+        let label = syncPillStatusLabel(source.state)
         return HStack(spacing: 7) {
             Circle()
-                .fill(ready ? OpenDesignDayColor.accent : OpenDesignDayColor.amber)
+                .fill(color)
                 .frame(width: 6, height: 6)
             Text(source.label ?? source.id)
                 .foregroundStyle(OpenDesignDayColor.fgSecondary)
-            Text(ready ? "연결됨" : "미연결")
-                .foregroundStyle(ready ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+            Text(label)
+                .foregroundStyle(source.state == "ready" ? OpenDesignDayColor.fg : color)
                 .fontWeight(.medium)
         }
         .font(.system(size: 10.5, design: .monospaced))
@@ -755,6 +814,28 @@ struct MorningBriefingPageView: View {
                 .fill(OpenDesignDayColor.surface)
                 .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
         )
+    }
+
+    private func syncPillStatusLabel(_ state: String?) -> String {
+        switch state {
+        case "ready":
+            return "연결됨"
+        case "failed":
+            return "수집 실패"
+        default:
+            return "미연결"
+        }
+    }
+
+    private func syncPillColor(_ state: String?) -> Color {
+        switch state {
+        case "ready":
+            return OpenDesignDayColor.accent
+        case "failed":
+            return OpenDesignDayColor.rose
+        default:
+            return OpenDesignDayColor.amber
+        }
     }
 
     // MARK: - Connect guide (Day-1 upgrade path)
@@ -893,9 +974,6 @@ struct MorningBriefingPageView: View {
                     .kerning(1.2)
                     .foregroundStyle(OpenDesignDayColor.accent)
                 Spacer()
-                Text(windowMetaLabel)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.muted)
             }
             .padding(.bottom, 9)
 
@@ -944,7 +1022,12 @@ struct MorningBriefingPageView: View {
     }
 
     private var verdictCard: some View {
-        if let verdict = displayBriefing?.customerEvidenceVerdict {
+        if let verdict = displayBriefing?.customerEvidenceVerdict,
+           let title = verdict.renderableTitle,
+           let body = verdict.renderableBody {
+            let evidence = verdict.renderableEvidence
+                .prefix(4)
+            guard !evidence.isEmpty else { return AnyView(EmptyView()) }
             return AnyView(
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .center, spacing: 10) {
@@ -963,37 +1046,30 @@ struct MorningBriefingPageView: View {
                                     .overlay(Capsule().stroke(verdictColor(verdict.state).opacity(0.35), lineWidth: 1))
                             )
                         Spacer()
-                        Text(windowMetaLabel)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(OpenDesignDayColor.muted)
                     }
 
-                    Text(verdict.title ?? "오늘 검증 판단을 준비 중이에요.")
+                    Text(title)
                         .font(.system(size: 21, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.fg)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if let body = verdict.body, !body.isEmpty {
-                        Text(body)
-                            .font(.system(size: 13))
-                            .lineSpacing(5)
-                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    Text(body)
+                        .font(.system(size: 13))
+                        .lineSpacing(5)
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                    if let evidence = verdict.evidence, !evidence.isEmpty {
-                        Divider().overlay(OpenDesignDayColor.borderSoft)
-                        VStack(alignment: .leading, spacing: 7) {
-                            ForEach(Array(evidence.prefix(4).enumerated()), id: \.offset) { _, line in
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    Circle()
-                                        .fill(verdictColor(verdict.state))
-                                        .frame(width: 5, height: 5)
-                                    Text(line)
-                                        .font(.system(size: 11.5, design: .monospaced))
-                                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
+                    Divider().overlay(OpenDesignDayColor.borderSoft)
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(Array(evidence.enumerated()), id: \.offset) { _, line in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Circle()
+                                    .fill(verdictColor(verdict.state))
+                                    .frame(width: 5, height: 5)
+                                Text(line)
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                     }
@@ -1018,7 +1094,7 @@ struct MorningBriefingPageView: View {
                 .accessibilityIdentifier("morningBriefing.verdict")
             )
         }
-        return AnyView(summaryCard)
+        return AnyView(EmptyView())
     }
 
     private var evidenceFunnelCard: some View {
@@ -1157,8 +1233,24 @@ struct MorningBriefingPageView: View {
         .accessibilityIdentifier("morningBriefing.sources")
     }
 
-    private func sourceLogoColor(_ id: String) -> Color {
+    private func normalizedSourceLogoID(_ id: String?) -> String {
         switch id {
+        case "git", "gh_cli": return "github"
+        default: return id ?? ""
+        }
+    }
+
+    private func sourceLogoAssetName(_ id: String?) -> String? {
+        switch normalizedSourceLogoID(id) {
+        case "cloudflare": return "BrandCloudflare"
+        case "github": return "BrandGitHub"
+        case "posthog": return "BrandPostHog"
+        default: return nil
+        }
+    }
+
+    private func sourceLogoColor(_ id: String) -> Color {
+        switch normalizedSourceLogoID(id) {
         case "cloudflare": return OpenDesignDayColor.amber
         case "posthog": return OpenDesignDayColor.violet
         default: return OpenDesignDayColor.fg
@@ -1166,15 +1258,61 @@ struct MorningBriefingPageView: View {
     }
 
     private func sourceLogoSymbol(_ id: String) -> String {
-        switch id {
+        switch normalizedSourceLogoID(id) {
         case "cloudflare": return "cloud"
         case "posthog": return "chart.line.uptrend.xyaxis"
         default: return "chevron.left.forwardslash.chevron.right"
         }
     }
 
+    private func sourceLogoTileFill(_ id: String) -> Color {
+        switch normalizedSourceLogoID(id) {
+        case "cloudflare": return OpenDesignDayColor.amber.opacity(0.13)
+        case "posthog": return OpenDesignDayColor.violet.opacity(0.13)
+        default: return OpenDesignDayColor.fg.opacity(0.09)
+        }
+    }
+
+    @ViewBuilder
+    private func sourceLogoMark(_ id: String, size: CGFloat, fallbackWeight: Font.Weight = .regular, fallbackColor: Color? = nil) -> some View {
+        let normalizedID = normalizedSourceLogoID(id)
+        if let assetName = sourceLogoAssetName(normalizedID) {
+            Image(assetName)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: sourceLogoSymbol(normalizedID))
+                .font(.system(size: max(size * 0.58, 10), weight: fallbackWeight))
+                .foregroundStyle(fallbackColor ?? sourceLogoColor(normalizedID))
+                .frame(width: size, height: size)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func sourceLogoBadge(_ id: String, size: CGFloat = 24, corner: CGFloat = 7, showsBorder: Bool = true) -> some View {
+        let normalizedID = normalizedSourceLogoID(id)
+        return ZStack {
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(sourceLogoTileFill(normalizedID))
+                .overlay(
+                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                        .stroke(showsBorder ? sourceLogoColor(normalizedID).opacity(0.35) : Color.clear, lineWidth: 1)
+                )
+            sourceLogoMark(normalizedID, size: size * 0.72, fallbackWeight: .medium)
+        }
+        .frame(width: size, height: size)
+    }
+
+    private func sourceLogoInline(_ id: String, fallbackColor: Color? = nil) -> some View {
+        sourceLogoMark(id, size: 16, fallbackColor: fallbackColor)
+            .frame(width: 22)
+    }
+
     private func sourceDisplayName(_ id: String?) -> String {
-        switch id {
+        switch normalizedSourceLogoID(id) {
         case "cloudflare": return "Cloudflare"
         case "posthog": return "PostHog"
         case "github": return "GitHub"
@@ -1186,20 +1324,10 @@ struct MorningBriefingPageView: View {
         // 어제 브리핑(읽기 전용) 모드에서는 라이브 진행을 겹치지 않는다.
         let progress = viewingPrevious ? nil : sourceProgress[card.id]
         let isCollectingCard = progress?.isCollecting == true
+        let isFailedCard = card.state == "failed"
         return VStack(alignment: .leading, spacing: 11) {
             HStack(spacing: 9) {
-                Image(systemName: sourceLogoSymbol(card.id))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(sourceLogoColor(card.id))
-                    .frame(width: 24, height: 24)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(sourceLogoColor(card.id).opacity(0.13))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .stroke(sourceLogoColor(card.id).opacity(0.35), lineWidth: 1)
-                            )
-                    )
+                sourceLogoBadge(card.id)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(card.label ?? card.id)
                         .font(.system(size: 12.5, weight: .semibold))
@@ -1207,6 +1335,10 @@ struct MorningBriefingPageView: View {
                     Text(card.subtitle ?? "")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
+                }
+                Spacer(minLength: 0)
+                if !card.isReady && !isCollectingCard {
+                    sourceCardStateBadge(card)
                 }
             }
 
@@ -1259,49 +1391,25 @@ struct MorningBriefingPageView: View {
                     }
                 }
             } else {
-                Text(card.note ?? "연결되지 않음")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(OpenDesignDayColor.muted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 12)
+                HStack(alignment: .top, spacing: 8) {
+                    if isFailedCard {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(OpenDesignDayColor.rose)
+                    }
+                    Text(card.note ?? "연결되지 않음")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(isFailedCard ? OpenDesignDayColor.rose : OpenDesignDayColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 12)
             }
 
             Spacer(minLength: 0)
 
             Divider().overlay(OpenDesignDayColor.borderSoft)
-            HStack {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(card.noteTone == "warn" ? OpenDesignDayColor.amber : OpenDesignDayColor.muted)
-                        .frame(width: 5, height: 5)
-                    Text(footerStatusLabel(card, collecting: isCollectingCard))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(card.noteTone == "warn" ? OpenDesignDayColor.amber : OpenDesignDayColor.mutedDeep)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if card.isReady, !isCollectingCard {
-                    // The sidecar guarantees a drilldown for every ready source
-                    // (counts-grade at minimum), so this always navigates —
-                    // same as the briefing.html drill links.
-                    Button {
-                        withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.15)) {
-                            presentedDrilldownID = card.id
-                        }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Text("드릴다운")
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 8, weight: .bold))
-                        }
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.accent)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("morningBriefing.drill.\(card.id)")
-                }
-            }
+            sourceCardFooter(card, collecting: isCollectingCard)
         }
         .padding(EdgeInsets(top: 15, leading: 15, bottom: 13, trailing: 15))
         .frame(maxWidth: .infinity, minHeight: 200, alignment: .topLeading)
@@ -1310,11 +1418,102 @@ struct MorningBriefingPageView: View {
                 .fill(OpenDesignDayColor.surface)
                 .overlay(
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
+                        .stroke(sourceCardBorderColor(card), lineWidth: isFailedCard ? 1.25 : 1)
                 )
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("morningBriefing.card.\(card.id)")
+    }
+
+    private func sourceCardStateBadge(_ card: MorningBriefingCard) -> some View {
+        let failed = card.state == "failed"
+        return Text(failed ? "수집 실패" : "미연결")
+            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+            .foregroundStyle(failed ? OpenDesignDayColor.rose : OpenDesignDayColor.amber)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(failed ? OpenDesignDayColor.roseDim : OpenDesignDayColor.amberDim)
+                    .overlay(Capsule().stroke(failed ? OpenDesignDayColor.roseLine : OpenDesignDayColor.amberLine, lineWidth: 1))
+            )
+            .accessibilityIdentifier("morningBriefing.card.\(card.id).state")
+    }
+
+    private func sourceCardBorderColor(_ card: MorningBriefingCard) -> Color {
+        switch card.state {
+        case "failed":
+            return OpenDesignDayColor.roseLine
+        default:
+            return OpenDesignDayColor.borderSoft
+        }
+    }
+
+    @ViewBuilder
+    private func sourceCardFooter(_ card: MorningBriefingCard, collecting: Bool) -> some View {
+        let showsDrilldown = card.isReady && !collecting
+        if showsDrilldown {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 10) {
+                    sourceCardFooterStatus(card, collecting: collecting)
+                    Spacer(minLength: 8)
+                    sourceCardDrilldownButton(card)
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    sourceCardFooterStatus(card, collecting: collecting)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    sourceCardDrilldownButton(card)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+        } else {
+            sourceCardFooterStatus(card, collecting: collecting)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func sourceCardFooterStatus(_ card: MorningBriefingCard, collecting: Bool) -> some View {
+        let color = sourceCardFooterColor(card, collecting: collecting)
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 5, height: 5)
+            Text(footerStatusLabel(card, collecting: collecting))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(color)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func sourceCardFooterColor(_ card: MorningBriefingCard, collecting: Bool) -> Color {
+        if collecting { return OpenDesignDayColor.accent }
+        if card.state == "failed" { return OpenDesignDayColor.rose }
+        if card.noteTone == "warn" { return OpenDesignDayColor.amber }
+        return OpenDesignDayColor.mutedDeep
+    }
+
+    private func sourceCardDrilldownButton(_ card: MorningBriefingCard) -> some View {
+        // The sidecar guarantees a drilldown for every ready source
+        // (counts-grade at minimum), so this always navigates —
+        // same as the briefing.html drill links.
+        Button {
+            withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.15)) {
+                presentedDrilldownID = card.id
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text("드릴다운")
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .font(.system(size: 10.5, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.accent)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("morningBriefing.drill.\(card.id)")
     }
 
     /// 비-ready 카드의 footer 한 줄. "failed"는 연결은 됐는데 이번 수집이
@@ -1330,8 +1529,8 @@ struct MorningBriefingPageView: View {
     private func cardCollectingBody(_ progress: MorningBriefingSourceProgress) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
+                OpenDesignInlineSpinner(accessibilityLabel: "소스 수집 중")
+                    .accessibilityIdentifier("morningBriefing.cardProgress.spinner")
                 Text((progress.detail?.isEmpty == false ? progress.detail : nil) ?? "수집 중…")
                     .font(.system(size: 11.5))
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
@@ -1398,10 +1597,7 @@ struct MorningBriefingPageView: View {
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(OpenDesignDayColor.muted)
                             .frame(width: 44, alignment: .leading)
-                        Image(systemName: sourceLogoSymbol(event.source ?? ""))
-                            .font(.system(size: 11))
-                            .foregroundStyle(sourceLogoColor(event.source ?? ""))
-                            .frame(width: 22)
+                        sourceLogoInline(event.source ?? "")
                         Text(event.text ?? "")
                             .font(.system(size: 12.5))
                             .foregroundStyle(OpenDesignDayColor.fgSecondary)
@@ -1958,10 +2154,7 @@ struct MorningBriefingPageView: View {
                 VStack(spacing: 1) {
                     ForEach(displayBriefing?.sync?.sources ?? []) { source in
                         HStack(spacing: 10) {
-                            Image(systemName: sourceLogoSymbol(source.id == "git" || source.id == "gh_cli" ? "github" : source.id))
-                                .font(.system(size: 11))
-                                .foregroundStyle(OpenDesignDayColor.muted)
-                                .frame(width: 22)
+                            sourceLogoInline(source.id, fallbackColor: OpenDesignDayColor.muted)
                             Text(source.label ?? source.id)
                                 .font(.system(size: 12))
                                 .foregroundStyle(OpenDesignDayColor.fgSecondary)
@@ -2025,10 +2218,7 @@ struct MorningBriefingPageView: View {
                     ForEach(displayBriefing?.cards ?? []) { card in
                         if card.isReady, let metric = card.metric, let delta = metric.deltaLabel {
                             HStack(spacing: 10) {
-                                Image(systemName: sourceLogoSymbol(card.id))
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(OpenDesignDayColor.muted)
-                                    .frame(width: 22)
+                                sourceLogoInline(card.id, fallbackColor: OpenDesignDayColor.muted)
                                 Text(metric.unit ?? card.id)
                                     .font(.system(size: 12))
                                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
@@ -2187,33 +2377,13 @@ struct MorningBriefingPageView: View {
     }
 
     private func collectingState(_ presentation: MorningBriefingColdLoadPresentation) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .top, spacing: 12) {
-                    ProgressView()
-                        .controlSize(.small)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("밤사이 신호를 모으는 중")
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .foregroundStyle(OpenDesignDayColor.fg)
-                        Text("소스별 수집 로그가 도착하는 대로 업데이트됩니다.")
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(OpenDesignDayColor.muted)
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(presentation.rows) { row in
-                        loadingSourceRow(row)
-                    }
-                }
-            }
-            .frame(maxWidth: 780, alignment: .leading)
-            .padding(24)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("morningBriefing.loading")
+        OpenDesignColdLoadingStateView(
+            title: "밤사이 신호를 모으는 중",
+            detail: "소스별 수집 로그가 도착하는 대로 업데이트됩니다.",
+            rows: openDesignLoadingRows(from: presentation.rows),
+            accessibilityIdentifier: "morningBriefing.loading",
+            spinnerAccessibilityLabel: "밤사이 신호 수집 중"
+        )
     }
 
     private func loadingErrorState(_ presentation: MorningBriefingColdLoadPresentation) -> some View {
@@ -2257,14 +2427,7 @@ struct MorningBriefingPageView: View {
     private func loadingSourceRow(_ row: MorningBriefingLoadingRow) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Image(systemName: sourceLogoSymbol(row.id))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(sourceLogoColor(row.id))
-                    .frame(width: 24, height: 24)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(sourceLogoColor(row.id).opacity(0.13))
-                    )
+                sourceLogoBadge(row.id, showsBorder: false)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.title)
                         .font(.system(size: 12.5, weight: .bold))
@@ -2301,9 +2464,12 @@ struct MorningBriefingPageView: View {
         let isCollecting = state == "collecting"
         return HStack(spacing: 5) {
             if isCollecting {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.72)
+                OpenDesignInlineSpinner(
+                    accessibilityLabel: "수집 중",
+                    size: 10,
+                    lineWidth: 1.4
+                )
+                .accessibilityIdentifier("morningBriefing.loading.badge.spinner")
             } else {
                 Circle()
                     .fill(OpenDesignDayColor.muted.opacity(0.65))
@@ -2316,11 +2482,19 @@ struct MorningBriefingPageView: View {
     }
 
     private func loadingStateLabel(_ state: String) -> String {
-        switch state {
-        case "collecting": return "수집 중"
-        case "failed": return "실패"
-        case "ready": return "완료"
-        default: return "대기 중"
+        openDesignLoadingStateLabel(state)
+    }
+
+    private func openDesignLoadingRows(from rows: [MorningBriefingLoadingRow]) -> [OpenDesignLoadingCardRow] {
+        rows.map { row in
+            OpenDesignLoadingCardRow(
+                id: row.id,
+                title: row.title,
+                state: row.state,
+                detail: row.detail,
+                logLines: row.logLines,
+                iconID: row.id
+            )
         }
     }
 

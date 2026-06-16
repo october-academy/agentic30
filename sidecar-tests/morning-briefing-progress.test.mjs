@@ -76,6 +76,7 @@ test("snapshots are deep copies — later mutation does not rewrite emitted hist
 
 test("describeMorningBriefingToolEvent maps MCP tools to Korean labels and drops noise", () => {
   assert.equal(describeMorningBriefingToolEvent({ phase: "use", toolName: "ToolSearch" }), "MCP 도구 검색");
+  assert.equal(describeMorningBriefingToolEvent({ phase: "use", toolName: "tool_search" }), "MCP 도구 검색");
   assert.equal(
     describeMorningBriefingToolEvent({ phase: "use", toolName: "mcp__posthog__execute-sql" }),
     "PostHog 집계 쿼리 실행",
@@ -83,6 +84,22 @@ test("describeMorningBriefingToolEvent maps MCP tools to Korean labels and drops
   assert.equal(
     describeMorningBriefingToolEvent({ phase: "use", toolName: "mcp__cloudflare__graphql_query" }),
     "Cloudflare GraphQL Analytics 조회",
+  );
+  assert.equal(
+    describeMorningBriefingToolEvent({ phase: "use", toolName: "mcp__cloudflare_api__execute" }),
+    "Cloudflare Analytics 조회",
+  );
+  assert.equal(
+    describeMorningBriefingToolEvent({ phase: "use", toolName: "mcp__cloudflare-api__execute" }),
+    "Cloudflare Analytics 조회",
+  );
+  assert.equal(
+    describeMorningBriefingToolEvent({
+      phase: "use",
+      toolName: "execute",
+      payload: { namespace: "mcp__cloudflare_api", server: "cloudflare-api", tool: "execute" },
+    }),
+    "Cloudflare Analytics 조회",
   );
   assert.equal(
     describeMorningBriefingToolEvent({ phase: "use", toolName: "mcp__notion__search" }),

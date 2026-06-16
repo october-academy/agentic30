@@ -2327,6 +2327,80 @@ enum OpenDesignStrategyLabelPlacement: String, Hashable {
             return .trailing
         }
     }
+
+    static func resolved(horizontalDirection: CGFloat, verticalDirection: CGFloat) -> OpenDesignStrategyLabelPlacement {
+        if verticalDirection < 0 {
+            return horizontalDirection < 0 ? .aboveLeading : .aboveTrailing
+        }
+        if verticalDirection > 0 {
+            return horizontalDirection < 0 ? .belowLeading : .belowTrailing
+        }
+        return horizontalDirection < 0 ? .leading : .trailing
+    }
+}
+
+struct OpenDesignStrategyMatrixLayout {
+    let point: CGPoint
+    let labelPlacement: OpenDesignStrategyLabelPlacement
+}
+
+enum OpenDesignStrategyMatrixLayoutPolicy {
+    static let competitorFrameSize = CGSize(width: 230, height: 82)
+    static let edgeThreshold: CGFloat = 0.12
+
+    static func layout(
+        x: CGFloat,
+        y: CGFloat,
+        preferredLabelPlacement: OpenDesignStrategyLabelPlacement,
+        boardSize: CGSize
+    ) -> OpenDesignStrategyMatrixLayout {
+        let unitX = clamp(x, lower: 0, upper: 1)
+        let unitY = clamp(y, lower: 0, upper: 1)
+        return OpenDesignStrategyMatrixLayout(
+            point: safePoint(x: unitX, y: unitY, boardSize: boardSize),
+            labelPlacement: edgeAwareLabelPlacement(
+                preferredLabelPlacement,
+                x: unitX,
+                y: unitY
+            )
+        )
+    }
+
+    private static func safePoint(x: CGFloat, y: CGFloat, boardSize: CGSize) -> CGPoint {
+        let horizontalInset = min(competitorFrameSize.width / 2, boardSize.width / 2)
+        let verticalInset = min(competitorFrameSize.height / 2, boardSize.height / 2)
+        return CGPoint(
+            x: clamp(boardSize.width * x, lower: horizontalInset, upper: boardSize.width - horizontalInset),
+            y: clamp(boardSize.height * y, lower: verticalInset, upper: boardSize.height - verticalInset)
+        )
+    }
+
+    private static func edgeAwareLabelPlacement(
+        _ preferred: OpenDesignStrategyLabelPlacement,
+        x: CGFloat,
+        y: CGFloat
+    ) -> OpenDesignStrategyLabelPlacement {
+        var horizontalDirection = preferred.horizontalDirection
+        var verticalDirection = preferred.verticalDirection
+        if x <= edgeThreshold {
+            horizontalDirection = 1
+        } else if x >= 1 - edgeThreshold {
+            horizontalDirection = -1
+        }
+        if y <= edgeThreshold {
+            verticalDirection = 1
+        } else if y >= 1 - edgeThreshold {
+            verticalDirection = -1
+        }
+        return OpenDesignStrategyLabelPlacement.resolved(
+            horizontalDirection: horizontalDirection,
+            verticalDirection: verticalDirection
+        )
+    }
+
+    private static func clamp(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+        min(max(value, lower), max(lower, upper))
+    }
 }
 
 enum OpenDesignStrategyCompetitorCategory: String, Hashable {
@@ -2341,7 +2415,7 @@ enum OpenDesignStrategyCompetitorCategory: String, Hashable {
 
     var label: String {
         switch self {
-        case .agentic30: return "Agentic30 (자사 anchor)"
+        case .agentic30: return "Agentic30"
         case .koreanAC: return "한국 AC · 1인창업"
         case .koreanProof: return "한국 수요검증"
         case .aiValidation: return "AI 검증 OS · 리포트"
@@ -2423,8 +2497,8 @@ struct OpenDesignStrategyCompetitor: Hashable, Identifiable {
     let isAgentic30: Bool
     let isHistorical: Bool
 
-    var x: CGFloat { CGFloat(adaptiveScore) / 100 }
-    var y: CGFloat { 1 - CGFloat(evidenceScore) / 100 }
+    var x: CGFloat { CGFloat(max(0, min(100, adaptiveScore))) / 100 }
+    var y: CGFloat { 1 - CGFloat(max(0, min(100, evidenceScore))) / 100 }
 
     var sourceDisplay: String {
         if !sourceLabel.isEmpty {
@@ -2584,7 +2658,7 @@ enum OpenDesignStrategyCanvasReference {
     }
 
     static let competitors = [
-        OpenDesignStrategyCompetitor(id: "agentic30", title: "Agentic30", category: .agentic30, tag: "local-first 30일 PMF·첫 매출 evidence loop", body: "자사 제품입니다. macOS 로컬에서 프로젝트 경로·작업로그·고객 인터뷰·BIP 기록을 읽고, paid ask와 first_value 같은 증거 목표를 Day별로 좁히는 제품입니다. 현재는 private pilot과 외부 ICP evidence를 검증하는 단계라 public launch와 가격은 확정하지 않습니다.", gap: "빈자리: 전업 1인 개발자를 위해 로컬 프로젝트 기록, 고객대화, BIP, activation 지표를 읽고 30일 동안 매일 PMF·첫 매출 검증 액션을 생성하는 무게이트 소프트웨어.", sourceURL: "https://agentic30.app", sourceLabel: "Agentic30 source docs", verifiedAt: "2026-06-15", scoreRationale: "로컬 실행 기록 기반 자동 적응에 가장 가깝고, paid ask와 first_value gate를 제품 명세에 둔 자사 anchor입니다.", adaptiveScore: 90, evidenceScore: 84, labelPlacement: .leading, isAgentic30: true),
+        OpenDesignStrategyCompetitor(id: "agentic30", title: "Agentic30", category: .agentic30, tag: "local-first 30일 PMF·첫 매출 evidence loop", body: "자사 제품입니다. macOS 로컬에서 프로젝트 경로·작업로그·고객 인터뷰·BIP 기록을 읽고, paid ask와 first_value 같은 증거 목표를 Day별로 좁히는 제품입니다. 현재는 private pilot과 외부 ICP evidence를 검증하는 단계라 public launch와 가격은 확정하지 않습니다.", gap: "빈자리: 전업 1인 개발자를 위해 로컬 프로젝트 기록, 고객대화, BIP, activation 지표를 읽고 30일 동안 매일 PMF·첫 매출 검증 액션을 생성하는 무게이트 소프트웨어.", sourceURL: "https://agentic30.app", sourceLabel: "Agentic30 source docs", verifiedAt: "2026-06-15", scoreRationale: "로컬 실행 기록 기반 자동 적응에 가장 가깝고, paid ask와 first_value gate를 제품 명세에 둡니다.", adaptiveScore: 90, evidenceScore: 84, labelPlacement: .leading, isAgentic30: true),
         OpenDesignStrategyCompetitor(id: "spark-claw", title: "Spark Claw", category: .koreanAC, tag: "SparkLabs AI-native 1인·소규모팀 프로그램", body: "AI-native 1인/소규모팀 창업가를 위한 SparkLabs 프로그램입니다. 투자, AI 크레딧, 오피스아워, 그룹세션, 커뮤니티를 제공하므로 ICP 접근과 신뢰는 강하지만, 심사·투자·사람 운영이 중심입니다.", gap: "차이: 사람·투자·심사 게이트가 있는 AC가 아니라 매일 로컬 기록에서 다음 검증 행동을 만드는 소프트웨어.", sourceURL: "https://www.sparkclaw.co.kr", sourceLabel: "sparkclaw.co.kr", verifiedAt: "2026-06-15", scoreRationale: "AI founder workflow와 커뮤니티는 강하지만 사용자 로컬 기록 기반 자동 적응은 제한적입니다.", adaptiveScore: 62, evidenceScore: 64, labelPlacement: .leading),
         OpenDesignStrategyCompetitor(id: "indiefounders", title: "IndieFounders", category: .koreanAC, tag: "AI 시대 1인 창업 실전 학교", body: "수익 우선 1인 창업을 전면에 둔 한국어 학교/커뮤니티입니다. 고객을 먼저 찾고 첫 매출을 만들자는 메시지가 Agentic30과 직접 겹칩니다. classbinu 개인은 별도 경쟁자가 아니라 IndieFounders 운영자·채널 맥락으로만 다룹니다.", gap: "차이: 강의·커뮤니티·스프린트가 아니라 사용자의 프로젝트 기록과 evidence state에 붙는 개인 루프.", sourceURL: "https://indiefounders.net", sourceLabel: "IndieFounders", verifiedAt: "2026-06-15", scoreRationale: "첫 매출 메시지는 강하지만 정적 교육/커뮤니티 중심이라 adaptivity는 낮고 evidence는 중간입니다.", adaptiveScore: 38, evidenceScore: 60),
         OpenDesignStrategyCompetitor(id: "market-test", title: "마켓테스트", category: .koreanProof, tag: "광고·구매클릭·설문 기반 수요검증", body: "광고 클릭부터 구매 클릭, 설문, 퍼널 이탈, 리포트 다운로드까지 추적해 사업 가능성을 정량화합니다. 실제 고객 행동 증거가 강하지만 프로젝트 기록을 매일 읽는 adaptive loop라기보다는 캠페인형 검증 리포트에 가깝습니다.", gap: "차이: 1회성 광고 검증 리포트가 아니라 30일 동안 오늘의 검증 과제를 계속 갱신합니다.", sourceURL: "https://www.markettest.kr", sourceLabel: "markettest.kr", verifiedAt: "2026-06-15", scoreRationale: "퍼널 행동 증거가 강해 evidence는 높고, 반복 개인화보다는 캠페인 워크플로우라 adaptivity는 중간입니다.", adaptiveScore: 42, evidenceScore: 82),
@@ -5546,6 +5620,34 @@ private enum OpenDesignStrategyStep: String, CaseIterable, Identifiable {
     }
 }
 
+nonisolated func openDesignUpdatedAtText(_ date: Date?) -> String {
+    guard let date else { return "없음" }
+
+    let timeFormatter = DateFormatter()
+    timeFormatter.locale = Locale(identifier: "ko_KR")
+    timeFormatter.timeZone = .current
+    timeFormatter.dateFormat = "HH:mm"
+    let time = timeFormatter.string(from: date)
+
+    let calendar = Calendar.current
+    if calendar.isDateInToday(date) {
+        return "오늘 \(time)"
+    }
+    if calendar.isDateInYesterday(date) {
+        return "어제 \(time)"
+    }
+
+    let dateFormatter = DateFormatter()
+    dateFormatter.locale = Locale(identifier: "ko_KR")
+    dateFormatter.timeZone = .current
+    dateFormatter.dateFormat = "M/d HH:mm"
+    return dateFormatter.string(from: date)
+}
+
+nonisolated func openDesignLastUpdatedLabel(_ date: Date?) -> String {
+    "마지막 업데이트 \(openDesignUpdatedAtText(date))"
+}
+
 private struct OpenDesignStrategyPageView: View {
     let strategyReport: StrategyReportSnapshot
     let strategyReportPreparingForDisplay: Bool
@@ -5554,7 +5656,6 @@ private struct OpenDesignStrategyPageView: View {
 
     @State private var selectedStep: OpenDesignStrategyStep = .canvas
     @State private var selectedCompetitorID = "agentic30"
-    @State private var didCopyPositioning = false
 
     private var displayContent: OpenDesignStrategyDisplayContent {
         guard strategyReportDynamicActivated,
@@ -5573,6 +5674,18 @@ private struct OpenDesignStrategyPageView: View {
         researchIsRefreshing || (strategyReportDynamicActivated && strategyReport.status.state == "failed")
     }
 
+    private var shouldShowColdLoading: Bool {
+        strategyReportShowsColdLoading(
+            snapshot: strategyReport,
+            isPreparing: strategyReportPreparingForDisplay,
+            dynamicActivated: strategyReportDynamicActivated
+        )
+    }
+
+    private var lastUpdatedAt: Date? {
+        strategyReport.status.lastSuccessAt ?? strategyReport.report?.generatedAt ?? strategyReport.generatedAt
+    }
+
     private var selectedCompetitor: OpenDesignStrategyCompetitor {
         displayContent.competitors.first { $0.id == selectedCompetitorID }
             ?? displayContent.competitors.first { $0.isAgentic30 }
@@ -5580,40 +5693,55 @@ private struct OpenDesignStrategyPageView: View {
     }
 
     var body: some View {
-        ScrollViewReader { scrollProxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    header {
-                        scroll(to: .matrix, using: scrollProxy)
-                    }
-                    if shouldShowStatusBanner {
-                        StrategyResearchStatusBanner(
-                            status: strategyReport.status,
-                            isPreparing: strategyReportPreparingForDisplay
-                        )
-                    }
-                    stepper { step in
-                        scroll(to: step, using: scrollProxy)
-                    }
-                    commandLine
-                    diagnosisSection
-                    criteriaSection
-                    businessCanvasSection
-                        .id(OpenDesignStrategyStep.canvas.scrollTargetID)
-                    matrixSection
-                        .id(OpenDesignStrategyStep.matrix.scrollTargetID)
-                    swotSection
-                        .id(OpenDesignStrategyStep.swot.scrollTargetID)
-                    judgementSection
-                }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 24)
-                .frame(maxWidth: 1180, alignment: .leading)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("strategy.screen")
-            }
+        if shouldShowColdLoading {
+            OpenDesignColdLoadingStateView(
+                title: "전략 근거를 모으는 중",
+                detail: strategyResearchStatusMessage(
+                    strategyReport.status,
+                    isPreparing: strategyReportPreparingForDisplay
+                ),
+                rows: strategyReportLoadingRows(
+                    status: strategyReport.status,
+                    isPreparing: strategyReportPreparingForDisplay
+                ),
+                accessibilityIdentifier: "strategy.loading",
+                spinnerAccessibilityLabel: "전략 리서치 진행 중"
+            )
             .background(StrategyBackdropView().ignoresSafeArea())
-            .accessibilityIdentifier("strategy.scroll")
+        } else {
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        header
+                        if shouldShowStatusBanner {
+                            StrategyResearchStatusBanner(
+                                status: strategyReport.status,
+                                isPreparing: strategyReportPreparingForDisplay
+                            )
+                        }
+                        stepper { step in
+                            scroll(to: step, using: scrollProxy)
+                        }
+                        commandLine
+                        diagnosisSection
+                        criteriaSection
+                        businessCanvasSection
+                            .id(OpenDesignStrategyStep.canvas.scrollTargetID)
+                        matrixSection
+                            .id(OpenDesignStrategyStep.matrix.scrollTargetID)
+                        swotSection
+                            .id(OpenDesignStrategyStep.swot.scrollTargetID)
+                        judgementSection
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: 1180, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("strategy.screen")
+                }
+                .background(StrategyBackdropView().ignoresSafeArea())
+                .accessibilityIdentifier("strategy.scroll")
+            }
         }
     }
 
@@ -5624,7 +5752,7 @@ private struct OpenDesignStrategyPageView: View {
         }
     }
 
-    private func header(showMatrix: @escaping () -> Void) -> some View {
+    private var header: some View {
         HStack(alignment: .center, spacing: 14) {
             Text("BC")
                 .font(.system(size: 18, weight: .bold, design: .monospaced))
@@ -5652,6 +5780,16 @@ private struct OpenDesignStrategyPageView: View {
                         .foregroundStyle(OpenDesignDayColor.muted)
                         .lineLimit(1)
                 }
+                HStack(spacing: 6) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    Text(openDesignLastUpdatedLabel(lastUpdatedAt))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(1)
+                }
+                .accessibilityIdentifier("strategy.last-updated")
             }
 
             Spacer(minLength: 12)
@@ -5670,7 +5808,7 @@ private struct OpenDesignStrategyPageView: View {
             Button(action: refreshStrategyReport) {
                 HStack(spacing: 8) {
                     if researchIsRefreshing {
-                        StrategyResearchInlineSpinner()
+                        OpenDesignInlineSpinner(accessibilityLabel: "리서치 진행 중")
                             .accessibilityIdentifier("strategy.action.research.spinner")
                         Text("리서치 중")
                     } else {
@@ -5683,19 +5821,6 @@ private struct OpenDesignStrategyPageView: View {
             .disabled(researchIsRefreshing)
             .accessibilityIdentifier("strategy.action.research")
 
-            Button(action: showMatrix) {
-                Label("Matrix 보기", systemImage: "chart.xyaxis.line")
-            }
-            .buttonStyle(OpenDesignStrategyHeaderButtonStyle(isPrimary: false))
-            .accessibilityIdentifier("strategy.action.show-matrix")
-
-            Button {
-                copyPositioning()
-            } label: {
-                Text(didCopyPositioning ? "복사됨" : "포지셔닝 복사")
-            }
-            .buttonStyle(OpenDesignStrategyHeaderButtonStyle(isPrimary: true))
-            .accessibilityIdentifier("strategy.action.copy-positioning")
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("strategy.header")
@@ -5818,36 +5943,21 @@ private struct OpenDesignStrategyPageView: View {
                             competitors: displayContent.competitors,
                             selectedCompetitorID: $selectedCompetitorID
                         )
-                        strategyAccessibilityMarker(
-                            identifier: "strategy.matrix",
-                            label: "Strategy positioning matrix"
-                        )
-                        strategyAccessibilityMarker(
-                            identifier: "strategy.matrix.board",
-                            label: "Strategy positioning matrix board"
-                        )
-                        .offset(x: 2)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("strategy.matrix.board")
                     }
                         .frame(maxWidth: .infinity)
                         .accessibilityElement(children: .contain)
 
                     StrategyMatrixDetailPanel(competitor: selectedCompetitor)
                 }
+                .accessibilityElement(children: .contain)
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .background(StrategyPanelBackground(cornerRadius: 14, fill: OpenDesignDayColor.surface))
         }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("strategy.matrix.section")
-    }
-
-    private func strategyAccessibilityMarker(identifier: String, label: String) -> some View {
-        Rectangle()
-            .fill(OpenDesignDayColor.surface.opacity(0.001))
-            .frame(width: 1, height: 1)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(label)
-            .accessibilityIdentifier(identifier)
+        .accessibilityLabel("Strategy positioning matrix")
     }
 
     private var swotSection: some View {
@@ -5888,14 +5998,6 @@ private struct OpenDesignStrategyPageView: View {
         .accessibilityIdentifier("strategy.judgement")
     }
 
-    private func copyPositioning() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(displayContent.positioningStatement, forType: .string)
-        didCopyPositioning = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
-            didCopyPositioning = false
-        }
-    }
 }
 
 private struct StrategyResearchStatusBanner: View {
@@ -5922,7 +6024,7 @@ private struct StrategyResearchStatusBanner: View {
                     .foregroundStyle(OpenDesignDayColor.orange)
                     .frame(width: 24, height: 24)
             } else {
-                StrategyResearchRotatingStatusIcon()
+                OpenDesignRotatingStatusIcon()
             }
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
@@ -5978,25 +6080,348 @@ nonisolated func strategyResearchStatusMessage(
     return status.progressText ?? "Exa 공개 근거와 검증 패스를 실행하는 중"
 }
 
-private struct StrategyResearchInlineSpinner: View {
+nonisolated func strategyReportShowsColdLoading(
+    snapshot: StrategyReportSnapshot,
+    isPreparing: Bool,
+    dynamicActivated: Bool
+) -> Bool {
+    dynamicActivated && snapshot.report == nil && (isPreparing || snapshot.status.state == "refreshing")
+}
+
+nonisolated func strategyReportLoadingRows(
+    status: StrategyReportStatus,
+    isPreparing: Bool
+) -> [OpenDesignLoadingCardRow] {
+    strategyReportProgressSteps.map { step in
+        OpenDesignLoadingCardRow(
+            id: step.id,
+            title: step.title,
+            state: strategyReportLoadingState(for: step, status: status, isPreparing: isPreparing),
+            detail: strategyReportLoadingDetail(for: step, status: status, isPreparing: isPreparing),
+            iconID: step.iconID
+        )
+    }
+}
+
+nonisolated private struct StrategyReportProgressStep: Hashable, Identifiable {
+    let id: String
+    let order: Int
+    let title: String
+    let fallbackDetail: String
+    let iconID: String
+}
+
+nonisolated private let strategyReportProgressSteps: [StrategyReportProgressStep] = [
+    .init(id: "checking_exa_route", order: 1, title: "Exa 연결", fallbackDetail: "Exa MCP 연결을 확인하는 중", iconID: "exa"),
+    .init(id: "loading_strategy_context", order: 2, title: "전략 근거", fallbackDetail: "전략 근거 문서를 읽는 중", iconID: "context"),
+    .init(id: "running_exa_research", order: 3, title: "공개 근거 검색", fallbackDetail: "Exa 공개 근거로 전략 리포트를 조사하는 중", iconID: "web"),
+    .init(id: "running_adversarial_review", order: 4, title: "약한 가정 리뷰", fallbackDetail: "적대적 리뷰로 약한 가정과 누락 근거를 찾는 중", iconID: "review"),
+    .init(id: "running_multidimensional_review", order: 5, title: "섹션 검증", fallbackDetail: "다차원 리뷰와 최종 검증으로 섹션 품질을 맞추는 중", iconID: "strategy"),
+    .init(id: "saving_results", order: 6, title: "저장", fallbackDetail: "전략 리포트를 로컬 캐시에 저장하는 중", iconID: "saving"),
+]
+
+nonisolated private func strategyReportLoadingState(
+    for step: StrategyReportProgressStep,
+    status: StrategyReportStatus,
+    isPreparing: Bool
+) -> String {
+    let current = strategyReportResolvedProgressStepIndex(status, isPreparing: isPreparing) ?? 1
+    if step.order < current { return "ready" }
+    if step.order == current { return "collecting" }
+    return "waiting"
+}
+
+nonisolated private func strategyReportLoadingDetail(
+    for step: StrategyReportProgressStep,
+    status: StrategyReportStatus,
+    isPreparing: Bool
+) -> String {
+    let current = strategyReportResolvedProgressStepIndex(status, isPreparing: isPreparing) ?? 1
+    if step.order == current {
+        return strategyResearchStatusMessage(status, isPreparing: isPreparing)
+    }
+    return step.fallbackDetail
+}
+
+nonisolated private func strategyReportResolvedProgressStepIndex(
+    _ status: StrategyReportStatus,
+    isPreparing: Bool
+) -> Int? {
+    if isPreparing { return 1 }
+    if let stepIndex = status.stepIndex, stepIndex > 0 { return stepIndex }
+    guard let stage = status.stage else { return nil }
+    return strategyReportProgressSteps.first(where: { $0.id == stage })?.order
+}
+
+nonisolated struct OpenDesignLoadingCardRow: Hashable, Identifiable {
+    let id: String
+    let title: String
+    let state: String
+    let detail: String?
+    let logLines: [String]
+    let iconID: String
+
+    init(
+        id: String,
+        title: String,
+        state: String,
+        detail: String? = nil,
+        logLines: [String] = [],
+        iconID: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.state = state
+        self.detail = detail
+        self.logLines = logLines
+        self.iconID = iconID ?? id
+    }
+}
+
+struct OpenDesignColdLoadingStateView: View {
+    let title: String
+    let detail: String
+    let rows: [OpenDesignLoadingCardRow]
+    let accessibilityIdentifier: String
+    let spinnerAccessibilityLabel: String
+    var maxWidth: CGFloat = 780
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                OpenDesignRotatingStatusIcon(
+                    accessibilityLabel: spinnerAccessibilityLabel,
+                    isAccessibilityHidden: true
+                )
+                .accessibilityIdentifier("\(accessibilityIdentifier).spinner")
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text(detail)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(rows) { row in
+                    OpenDesignLoadingCardRowView(
+                        row: row,
+                        accessibilityIdentifier: "\(accessibilityIdentifier).card.\(row.id)"
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: maxWidth, alignment: .leading)
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
+private struct OpenDesignLoadingCardRowView: View {
+    let row: OpenDesignLoadingCardRow
+    let accessibilityIdentifier: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                openDesignLoadingIconBadge(row.iconID)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.title)
+                        .font(.system(size: 12.5, weight: .bold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text(row.detail?.isEmpty == false ? row.detail! : openDesignLoadingStateLabel(row.state))
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                OpenDesignLoadingStateBadge(state: row.state)
+            }
+
+            if !row.logLines.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(row.logLines.suffix(3).enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .padding(.leading, 34)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(OpenDesignDayColor.surface))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
+private struct OpenDesignLoadingStateBadge: View {
+    let state: String
+
+    private var isCollecting: Bool {
+        state == "collecting"
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if isCollecting {
+                OpenDesignInlineSpinner(
+                    accessibilityLabel: "수집 중",
+                    size: 10,
+                    lineWidth: 1.4
+                )
+                .accessibilityIdentifier("opendesign.loading.badge.spinner")
+            } else {
+                Circle()
+                    .fill(OpenDesignDayColor.muted.opacity(0.65))
+                    .frame(width: 6, height: 6)
+            }
+            Text(openDesignLoadingStateLabel(state))
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(isCollecting ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+        }
+    }
+}
+
+private func openDesignLoadingIconBadge(_ id: String, size: CGFloat = 24, corner: CGFloat = 7) -> some View {
+    let normalizedID = openDesignNormalizedLoadingIconID(id)
+    return ZStack {
+        RoundedRectangle(cornerRadius: corner, style: .continuous)
+            .fill(openDesignLoadingIconTileFill(normalizedID))
+        openDesignLoadingIconMark(normalizedID, size: size * 0.72)
+    }
+    .frame(width: size, height: size)
+}
+
+@ViewBuilder
+private func openDesignLoadingIconMark(_ id: String, size: CGFloat) -> some View {
+    if let assetName = openDesignLoadingIconAssetName(id) {
+        Image(assetName)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    } else {
+        Image(systemName: openDesignLoadingIconSymbol(id))
+            .font(.system(size: max(size * 0.58, 10), weight: .medium))
+            .foregroundStyle(openDesignLoadingIconColor(id))
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
+nonisolated private func openDesignNormalizedLoadingIconID(_ id: String?) -> String {
+    switch id {
+    case "git", "gh_cli": return "github"
+    default: return id ?? ""
+    }
+}
+
+private func openDesignLoadingIconAssetName(_ id: String) -> String? {
+    switch openDesignNormalizedLoadingIconID(id) {
+    case "cloudflare": return "BrandCloudflare"
+    case "github": return "BrandGitHub"
+    case "posthog": return "BrandPostHog"
+    default: return nil
+    }
+}
+
+private func openDesignLoadingIconColor(_ id: String) -> Color {
+    switch openDesignNormalizedLoadingIconID(id) {
+    case "cloudflare": return OpenDesignDayColor.amber
+    case "posthog": return OpenDesignDayColor.violet
+    case "news", "exa", "web": return OpenDesignDayColor.sky
+    case "strategy", "review": return OpenDesignDayColor.accent
+    default: return OpenDesignDayColor.fg
+    }
+}
+
+private func openDesignLoadingIconTileFill(_ id: String) -> Color {
+    switch openDesignNormalizedLoadingIconID(id) {
+    case "cloudflare": return OpenDesignDayColor.amber.opacity(0.13)
+    case "posthog": return OpenDesignDayColor.violet.opacity(0.13)
+    case "news", "exa", "web": return OpenDesignDayColor.sky.opacity(0.13)
+    case "strategy", "review": return OpenDesignDayColor.accent.opacity(0.13)
+    default: return OpenDesignDayColor.fg.opacity(0.09)
+    }
+}
+
+private func openDesignLoadingIconSymbol(_ id: String) -> String {
+    switch openDesignNormalizedLoadingIconID(id) {
+    case "cloudflare": return "cloud"
+    case "posthog": return "chart.line.uptrend.xyaxis"
+    case "exa", "web": return "globe"
+    case "workspace", "context": return "folder"
+    case "news": return "newspaper"
+    case "strategy": return "chart.xyaxis.line"
+    case "review": return "checkmark.seal"
+    case "saving": return "tray.and.arrow.down"
+    default: return "chevron.left.forwardslash.chevron.right"
+    }
+}
+
+nonisolated func openDesignLoadingStateLabel(_ state: String) -> String {
+    switch state {
+    case "collecting": return "수집 중"
+    case "failed": return "실패"
+    case "ready": return "완료"
+    default: return "대기 중"
+    }
+}
+
+struct OpenDesignInlineSpinner: View {
+    let accessibilityLabel: String
+    let size: CGFloat
+    let lineWidth: CGFloat
+    let trackColor: Color
+    let accentColor: Color
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var rotation: Double = 0
+
+    init(
+        accessibilityLabel: String = "진행 중",
+        size: CGFloat = 12,
+        lineWidth: CGFloat = 1.5,
+        trackColor: Color = OpenDesignDayColor.border,
+        accentColor: Color = OpenDesignDayColor.accent
+    ) {
+        self.accessibilityLabel = accessibilityLabel
+        self.size = size
+        self.lineWidth = lineWidth
+        self.trackColor = trackColor
+        self.accentColor = accentColor
+    }
 
     var body: some View {
         ZStack {
             Circle()
-                .stroke(OpenDesignDayColor.border, lineWidth: 1.5)
+                .stroke(trackColor, lineWidth: lineWidth)
             Circle()
                 .trim(from: 0.12, to: 0.72)
                 .stroke(
-                    OpenDesignDayColor.accent,
-                    style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                    accentColor,
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(rotation - 90))
         }
-        .frame(width: 12, height: 12)
+        .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("리서치 진행 중")
+        .accessibilityLabel(accessibilityLabel)
         .onAppear {
             updateAnimation(reduceMotion: reduceMotion)
         }
@@ -6016,17 +6441,38 @@ private struct StrategyResearchInlineSpinner: View {
     }
 }
 
-private struct StrategyResearchRotatingStatusIcon: View {
+struct OpenDesignRotatingStatusIcon: View {
+    let accessibilityLabel: String
+    let size: CGFloat
+    let frameSize: CGFloat
+    let color: Color
+    let isAccessibilityHidden: Bool
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var rotation: Double = 0
 
+    init(
+        accessibilityLabel: String = "진행 중",
+        size: CGFloat = 15,
+        frameSize: CGFloat = 24,
+        color: Color = OpenDesignDayColor.accent,
+        isAccessibilityHidden: Bool = true
+    ) {
+        self.accessibilityLabel = accessibilityLabel
+        self.size = size
+        self.frameSize = frameSize
+        self.color = color
+        self.isAccessibilityHidden = isAccessibilityHidden
+    }
+
     var body: some View {
         Image(systemName: "arrow.triangle.2.circlepath")
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(OpenDesignDayColor.accent)
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(color)
             .rotationEffect(.degrees(rotation))
-            .frame(width: 24, height: 24)
-            .accessibilityHidden(true)
+            .frame(width: frameSize, height: frameSize)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityHidden(isAccessibilityHidden)
             .onAppear {
                 updateAnimation(reduceMotion: reduceMotion)
             }
@@ -6129,62 +6575,102 @@ private struct StrategyPanelBackground: View {
     }
 }
 
+private enum StrategyCanvasRailStyle {
+    case neutral
+    case sky
+    case accentPrimary
+    case rose
+    case amber
+    case tone
+
+    var isPrimary: Bool {
+        if case .accentPrimary = self { return true }
+        return false
+    }
+
+    var usesDepthFill: Bool {
+        if case .tone = self { return true }
+        return false
+    }
+
+    func color(tone: Color) -> Color {
+        switch self {
+        case .neutral:
+            return OpenDesignDayColor.border
+        case .sky:
+            return OpenDesignDayColor.sky
+        case .accentPrimary:
+            return OpenDesignDayColor.accent
+        case .rose:
+            return OpenDesignDayColor.rose
+        case .amber:
+            return OpenDesignDayColor.amber
+        case .tone:
+            return tone
+        }
+    }
+}
+
 private struct StrategyCanvasCardBackground: View {
     @Environment(\.colorSchemeContrast) private var contrast
 
     let tone: Color
-    let isPrimary: Bool
+    let railStyle: StrategyCanvasRailStyle
     let cornerRadius: CGFloat
 
     var body: some View {
         let usesIncreasedContrast = contrast == .increased
         let lineWidth = OpenDesignAccessibilityMetrics.borderLineWidth(isIncreasedContrast: usesIncreasedContrast)
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        let stroke = isPrimary
-            ? tone.opacity(usesIncreasedContrast ? 0.58 : 0.42)
+        let railColor = railStyle.color(tone: tone)
+        let stroke = railStyle.isPrimary
+            ? (usesIncreasedContrast ? railColor.opacity(0.58) : OpenDesignDayColor.accentLine)
             : (usesIncreasedContrast ? OpenDesignDayColor.border : OpenDesignDayColor.borderSoft)
 
         shape
-            .fill(
-                LinearGradient(
-                    colors: isPrimary
-                        ? [
-                            tone.opacity(0.18),
-                            OpenDesignDayColor.surface.opacity(0.98),
-                            OpenDesignDayColor.bgDeep.opacity(0.90),
-                        ]
-                        : [
-                            OpenDesignDayColor.surface.opacity(0.98),
-                            OpenDesignDayColor.surface2.opacity(0.62),
-                            OpenDesignDayColor.surface.opacity(0.96),
+            .fill(OpenDesignDayColor.surface)
+            .overlay {
+                if railStyle.isPrimary {
+                    LinearGradient(
+                        colors: [
+                            railColor.opacity(0.09),
+                            Color.clear,
                         ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay(alignment: .leading) {
-                LinearGradient(
-                    colors: [
-                        tone.opacity(isPrimary ? 0.15 : 0.08),
-                        tone.opacity(isPrimary ? 0.06 : 0.03),
-                        Color.clear,
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: isPrimary ? 32 : 26)
-                .allowsHitTesting(false)
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .allowsHitTesting(false)
+                } else if railStyle.usesDepthFill {
+                    LinearGradient(
+                        colors: [
+                            Color.clear,
+                            OpenDesignDayColor.surface2.opacity(0.42),
+                            Color.clear,
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .allowsHitTesting(false)
+                }
             }
             .overlay(shape.stroke(stroke, lineWidth: lineWidth))
             .overlay(alignment: .leading) {
                 Rectangle()
-                    .fill(tone.opacity(isPrimary ? 0.98 : 0.72))
-                    .frame(width: isPrimary ? 3 : 2)
-                    .shadow(color: isPrimary ? tone.opacity(0.44) : Color.clear, radius: isPrimary ? 10 : 0)
+                    .fill(railColor.opacity(railStyle.isPrimary ? 0.98 : 0.88))
+                    .frame(width: 2)
+                    .shadow(
+                        color: railStyle.isPrimary ? railColor.opacity(0.44) : Color.clear,
+                        radius: railStyle.isPrimary ? 14 : 0
+                    )
                     .allowsHitTesting(false)
             }
             .clipShape(shape)
-            .shadow(color: Color.black.opacity(Agentic30Theme.current == .white ? 0.04 : 0.18), radius: isPrimary ? 18 : 12, x: 0, y: 8)
+            .shadow(
+                color: Color.black.opacity(Agentic30Theme.current == .white ? 0.04 : 0.18),
+                radius: railStyle.isPrimary ? 18 : 12,
+                x: 0,
+                y: 8
+            )
     }
 }
 
@@ -6392,6 +6878,21 @@ private struct StrategyCanvasBlockView: View {
     let block: OpenDesignStrategyCanvasBlock
     var layout: StrategyCanvasBlockLayout = .stacked
 
+    private var railStyle: StrategyCanvasRailStyle {
+        switch block.id {
+        case "partners":
+            return .sky
+        case "value-proposition":
+            return .accentPrimary
+        case "cost-structure":
+            return .rose
+        case "revenue-streams":
+            return .amber
+        default:
+            return .neutral
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -6419,7 +6920,7 @@ private struct StrategyCanvasBlockView: View {
         .background(
             StrategyCanvasCardBackground(
                 tone: strategyToneColor(block.tone),
-                isPrimary: block.id == "value-proposition",
+                railStyle: railStyle,
                 cornerRadius: 12
             )
         )
@@ -6483,7 +6984,7 @@ private struct StrategySWOTCardView: View {
         .background(
             StrategyCanvasCardBackground(
                 tone: strategyToneColor(group.tone),
-                isPrimary: false,
+                railStyle: .tone,
                 cornerRadius: 12
             )
         )
@@ -6512,6 +7013,7 @@ private struct StrategyPositioningMatrixView: View {
                 .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
 
                 matrixAxisLabel("↑ PMF Evidence · 고객 행동 · 첫 매출", alignment: .center, width: 290, isAccent: true)
+                    .accessibilityIdentifier("strategy.matrix")
                     .position(x: proxy.size.width * 0.5, y: 28)
                 matrixAxisLabel("Build Speed · 코드 생산 ↓", alignment: .center, width: 210, isAccent: false)
                     .position(x: proxy.size.width * 0.5, y: proxy.size.height - 18)
@@ -6530,15 +7032,19 @@ private struct StrategyPositioningMatrixView: View {
                     .position(x: proxy.size.width - 100, y: proxy.size.height - 40)
 
                 ForEach(competitors) { competitor in
+                    let layout = OpenDesignStrategyMatrixLayoutPolicy.layout(
+                        x: competitor.x,
+                        y: competitor.y,
+                        preferredLabelPlacement: competitor.labelPlacement,
+                        boardSize: proxy.size
+                    )
                     StrategyMatrixCompetitorButton(
                         competitor: competitor,
+                        labelPlacement: layout.labelPlacement,
                         isSelected: selectedCompetitorID == competitor.id,
                         select: { selectedCompetitorID = competitor.id }
                     )
-                    .position(
-                        x: proxy.size.width * competitor.x,
-                        y: proxy.size.height * competitor.y
-                    )
+                    .position(layout.point)
                 }
             }
         }
@@ -6735,6 +7241,7 @@ private struct StrategyMatrixScoreBar: View {
 
 private struct StrategyMatrixCompetitorButton: View {
     let competitor: OpenDesignStrategyCompetitor
+    let labelPlacement: OpenDesignStrategyLabelPlacement
     let isSelected: Bool
     let select: () -> Void
 
@@ -6761,7 +7268,7 @@ private struct StrategyMatrixCompetitorButton: View {
             Button(action: select) {
                 labelText(isEmphasized: isEmphasized, visuals: visuals)
                     .padding(.horizontal, 6)
-                    .frame(width: labelWidth, height: 24, alignment: competitor.labelPlacement.alignment)
+                    .frame(width: labelWidth, height: 24, alignment: labelPlacement.alignment)
                     .background(
                         Capsule()
                             .fill(labelCapsuleFill(visuals: visuals))
@@ -6812,8 +7319,8 @@ private struct StrategyMatrixCompetitorButton: View {
         let horizontal = markerSize / 2 + 7 + labelWidth / 2
         let vertical = markerSize / 2 + 18
         return CGSize(
-            width: competitor.labelPlacement.horizontalDirection * horizontal,
-            height: competitor.labelPlacement.verticalDirection * vertical
+            width: labelPlacement.horizontalDirection * horizontal,
+            height: labelPlacement.verticalDirection * vertical
         )
     }
 
@@ -9076,12 +9583,13 @@ private struct OpenDesignDayGoalSelectionCard: View {
         return Button {
             selectedGoalType = draft.goalType
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
                     Text(draft.goalType.title)
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(OpenDesignDayColor.fg)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                     Spacer(minLength: 0)
                     if isSaved {
                         Image(systemName: "checkmark.circle.fill")
@@ -9089,17 +9597,14 @@ private struct OpenDesignDayGoalSelectionCard: View {
                             .foregroundStyle(OpenDesignDayColor.accent)
                     }
                 }
-                Text(openDesignAttributedText(
-                    [.body(draft.goalType.promptHint)],
-                    bodySize: 11.5,
-                    bodyWeight: .medium,
-                    bodyColor: OpenDesignDayColor.muted
-                ))
+                Text(goalLanePromptText(draft.goalType.promptHint))
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, minHeight: 98, alignment: .topLeading)
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? OpenDesignDayColor.accentDim : OpenDesignDayColor.surface2)
@@ -9111,6 +9616,10 @@ private struct OpenDesignDayGoalSelectionCard: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("opendesign.day.goal.option.\(draft.goalType.rawValue)")
+    }
+
+    private func goalLanePromptText(_ value: String) -> String {
+        value.replacingOccurrences(of: "**", with: "")
     }
 
     private enum BadgeTone {

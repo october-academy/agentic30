@@ -116,6 +116,31 @@ function digestFixture({
   };
 }
 
+function drilldownChartFixture() {
+  return {
+    cloudflare: {
+      chart: {
+        kind: "bars",
+        bars: [
+          { label: "9", value: 3 },
+          { label: "10", value: 7 },
+          { label: "11", value: 5 },
+        ],
+      },
+    },
+    github: {
+      chart: {
+        kind: "bars",
+        bars: [
+          { label: "00", value: 0 },
+          { label: "05", value: 7 },
+          { label: "09", value: 1 },
+        ],
+      },
+    },
+  };
+}
+
 test("extractMorningBriefingMetrics maps digest counts to card metrics", () => {
   const metrics = extractMorningBriefingMetrics({ sources: digestFixture().sources });
   assert.deepEqual(metrics, { cloudflare: 64, github: 9, posthog: 11 });
@@ -163,6 +188,66 @@ test("buildMorningBriefingCards computes deltas against previous metrics", () =>
   assert.equal(posthog.metric.direction, "down");
   assert.equal(posthog.metric.deltaLabel, "▼ 56%");
   assert.equal(posthog.noteTone, "warn");
+});
+
+test("buildMorningBriefing derives source card sparklines from drilldown chart bars first", () => {
+  const briefing = buildMorningBriefing({
+    digest: digestFixture(),
+    day: 12,
+    drilldowns: drilldownChartFixture(),
+    now: NOW,
+  });
+
+  const cloudflare = briefing.cards.find((card) => card.id === "cloudflare");
+  assert.deepEqual(cloudflare.spark, [3, 7, 5]);
+  assert.deepEqual(
+    cloudflare.sparkPoints.map((point) => point.timeLabel),
+    ["09시", "10시", "11시"],
+  );
+  assert.deepEqual(
+    cloudflare.sparkPoints.map((point) => point.at),
+    [null, null, null],
+  );
+
+  const github = briefing.cards.find((card) => card.id === "github");
+  assert.deepEqual(github.spark, [0, 7, 1]);
+  assert.deepEqual(
+    github.sparkPoints.map((point) => point.timeLabel),
+    ["00시", "05시", "09시"],
+  );
+
+  const posthog = briefing.cards.find((card) => card.id === "posthog");
+  assert.deepEqual(posthog.spark, [11]);
+  assert.equal(posthog.sparkPoints.length, 1);
+});
+
+test("buildMorningBriefingCards derives source card sparklines from drilldown curve points when bars are absent", () => {
+  const cards = buildMorningBriefingCards({
+    digest: digestFixture(),
+    history: [],
+    generatedAt: "2026-06-10T09:00:00",
+    drilldowns: {
+      posthog: {
+        chart: {
+          kind: "curve",
+          points: [
+            { label: "06-05 · 39%", pct: 39, date: "2026-06-05" },
+            { label: "06-06 · 44%", pct: 44, date: "2026-06-06" },
+            { label: "오늘 · 27%", pct: 27 },
+          ],
+        },
+      },
+    },
+  });
+  const posthog = cards.find((card) => card.id === "posthog");
+
+  assert.deepEqual(posthog.spark, [39, 44, 27]);
+  assert.deepEqual(
+    posthog.sparkPoints.map((point) => point.timeLabel),
+    ["06-05 · 39%", "06-06 · 44%", "오늘 · 27%"],
+  );
+  assert.equal(posthog.sparkPoints[0].at, "2026-06-05T00:00:00.000Z");
+  assert.equal(posthog.sparkPoints[2].at, null);
 });
 
 test("buildMorningBriefingCards fails when previous metrics lack sparkline history", () => {
@@ -279,6 +364,7 @@ test("buildMorningBriefingSummary leads with the biggest drop", () => {
     history: previousHistory(),
   });
   const summary = buildMorningBriefingSummary({ digest, cards, window: digest.window });
+  assert.equal(summary.title, "밤사이 신호 요약");
   assert.ok(summary.statement.startsWith("밤사이 가장 큰 변화는 PostHog"));
   assert.ok(summary.crits.length >= 2);
   assert.equal(summary.windowLabel, "2026-06-09 00:00 -> 2026-06-10 now");
@@ -397,13 +483,14 @@ test("buildMorningBriefingEvidenceFunnel and verdict prioritize customer evidenc
 
   const verdict = buildCustomerEvidenceVerdict({ digest, cards: [], evidenceFunnel: funnel });
   assert.equal(verdict.state, "instrumentation_gap");
-  assert.match(verdict.title, /고객 증거\/activation 계측/);
+  assert.equal(verdict.title, undefined);
+  assert.equal(verdict.body, undefined);
   assert.equal(verdict.primaryActionId, "task");
   assert.ok(verdict.evidence.some((line) => line.includes("전환 0건")));
 
   const actions = buildMorningBriefingActions({ digest, customerEvidenceVerdict: verdict });
   assert.equal(actions[2].id, "task");
-  assert.match(actions[2].tasks[0].title, /activation\/signup/);
+  assert.match(actions[2].tasks[0].title, /검증 행동\/가입/);
 });
 
 test("buildMorningBriefing assembles the full payload", () => {
@@ -572,7 +659,86 @@ test("morning briefing run logs are JSONL and redact sensitive fields", async ()
   }
 });
 
-test("loadMorningBriefingStore resets on schema mismatch", async () => {
+test("loadMorningBriefingStore hydrates cached card sparklines from drilldown charts", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mb-cache-spark-"));
+  try {
+    const filePath = resolveMorningBriefingPath(dir);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({
+        schemaVersion: MORNING_BRIEFING_SCHEMA_VERSION,
+        current: {
+          day: 2,
+          generatedAt: "2026-06-10T00:00:00.000Z",
+          cards: [
+            {
+              id: "cloudflare",
+              state: "ready",
+              spark: [64],
+              sparkPoints: [{ value: 64, timeLabel: "오늘", at: "2026-06-10T00:00:00.000Z" }],
+            },
+          ],
+          drilldowns: {
+            cloudflare: {
+              chart: {
+                kind: "bars",
+                bars: [
+                  { label: "9", value: 3 },
+                  { label: "10", value: 7 },
+                ],
+              },
+            },
+          },
+        },
+        previous: null,
+        history: [],
+      }),
+      "utf8",
+    );
+
+    const store = await loadMorningBriefingStore({ workspaceRoot: dir });
+    assert.deepEqual(store.current.cards[0].spark, [3, 7]);
+    assert.deepEqual(
+      store.current.cards[0].sparkPoints.map((point) => point.timeLabel),
+      ["09시", "10시"],
+    );
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadMorningBriefingStore migrates v2 history into the current schema", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mb-schema-v2-"));
+  try {
+    const filePath = resolveMorningBriefingPath(dir);
+    const current = {
+      day: 2,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      metrics: { cloudflare: 64, github: 9, posthog: 11 },
+    };
+    const previous = {
+      day: 1,
+      generatedAt: "2026-06-09T00:00:00.000Z",
+      metrics: { cloudflare: 41, github: 6, posthog: 25 },
+    };
+    const history = [
+      { date: "2026-06-09", generatedAt: previous.generatedAt, metrics: previous.metrics },
+    ];
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, JSON.stringify({ schemaVersion: 2, current, previous, history }), "utf8");
+
+    const store = await loadMorningBriefingStore({ workspaceRoot: dir });
+    assert.equal(store.schemaVersion, MORNING_BRIEFING_SCHEMA_VERSION);
+    assert.deepEqual(store.current, current);
+    assert.deepEqual(store.previous, previous);
+    assert.deepEqual(store.history, history);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadMorningBriefingStore resets on unknown schema mismatch", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mb-schema-"));
   try {
     const filePath = resolveMorningBriefingPath(dir);

@@ -10,6 +10,7 @@ import {
   loadStrategyReportSnapshot,
   refreshStrategyReport,
   resolveStrategyReportCachePath,
+  resolveStrategyReportRunsDir,
 } from "../sidecar/strategy-research-report.mjs";
 
 async function withTmpWorkspace(fn) {
@@ -32,6 +33,18 @@ function exaRoute() {
     },
   };
 }
+
+const REQUIRED_CANVAS_BLOCK_IDS = [
+  "partners",
+  "activities",
+  "resources",
+  "value-proposition",
+  "relationships",
+  "channels",
+  "customer-segments",
+  "cost-structure",
+  "revenue-streams",
+];
 
 function completeReport(overrides = {}) {
   return {
@@ -157,6 +170,306 @@ test("strategy report executes research, adversarial review, and multidimensiona
   });
 });
 
+test("strategy report normalizes competitor score scales into 0-100 matrix coordinates", async () => {
+  await withTmpWorkspace(async (root) => {
+    const scaledCompetitors = [
+      {
+        ...completeReport().competitors[0],
+        adaptiveScore: 0.9,
+        evidenceScore: 0.84,
+      },
+      {
+        ...completeReport().competitors[1],
+        adaptive_score: "8 / 10",
+        evidence_score: 3.5,
+        adaptiveScore: undefined,
+        evidenceScore: undefined,
+      },
+      {
+        ...completeReport().competitors[2],
+        adaptiveScore: 4,
+        evidenceScore: 5,
+      },
+    ];
+
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({
+        text: JSON.stringify({ report: completeReport({ competitors: scaledCompetitors }) }),
+        provider: "codex",
+        researchSource: "Codex Exa MCP",
+      }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({
+        text: JSON.stringify({ report: completeReport({ competitors: scaledCompetitors }) }),
+      }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    const competitorsByID = new Map(snapshot.report.competitors.map((competitor) => [competitor.id, competitor]));
+    assert.deepEqual(
+      {
+        adaptiveScore: competitorsByID.get("agentic30").adaptiveScore,
+        evidenceScore: competitorsByID.get("agentic30").evidenceScore,
+        x: competitorsByID.get("agentic30").x,
+        y: competitorsByID.get("agentic30").y,
+      },
+      { adaptiveScore: 90, evidenceScore: 84, x: 0.9, y: 0.16 },
+    );
+    assert.deepEqual(
+      {
+        adaptiveScore: competitorsByID.get("cursor").adaptiveScore,
+        evidenceScore: competitorsByID.get("cursor").evidenceScore,
+        x: competitorsByID.get("cursor").x,
+        y: competitorsByID.get("cursor").y,
+      },
+      { adaptiveScore: 80, evidenceScore: 35, x: 0.8, y: 0.65 },
+    );
+    assert.deepEqual(
+      {
+        adaptiveScore: competitorsByID.get("indiefounders").adaptiveScore,
+        evidenceScore: competitorsByID.get("indiefounders").evidenceScore,
+        x: competitorsByID.get("indiefounders").x,
+        y: competitorsByID.get("indiefounders").y,
+      },
+      { adaptiveScore: 40, evidenceScore: 50, x: 0.4, y: 0.5 },
+    );
+  });
+});
+
+test("strategy report normalizes provider searchableCopy strings instead of failing the report", async () => {
+  await withTmpWorkspace(async (root) => {
+    const providerSearchableCopy = "paid ask first_value evidence loop ".repeat(40);
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({
+        text: JSON.stringify({ report: completeReport({ searchableCopy: providerSearchableCopy }) }),
+        provider: "codex",
+        researchSource: "Codex Exa MCP",
+      }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({
+        text: JSON.stringify({ report: completeReport({ searchableCopy: providerSearchableCopy }) }),
+      }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(Array.isArray(snapshot.report.searchableCopy), true);
+    assert.equal(snapshot.report.searchableCopy.length, 1);
+    assert.equal(snapshot.report.searchableCopy[0].length <= 500, true);
+    assert.match(snapshot.report.searchableCopy[0], /paid ask first_value evidence loop/);
+  });
+});
+
+test("strategy report ignores malformed optional layout helpers instead of failing the report", async () => {
+  await withTmpWorkspace(async (root) => {
+    const reportWithMalformedLayout = completeReport({
+      swotMatrixColumnCount: "2",
+      swotMatrixRows: [
+        { left: "strengths", right: "weaknesses" },
+        { left: "opportunities", right: "threats" },
+      ],
+      sourceRefs: { title: "Cursor", url: "https://cursor.com" },
+      businessCanvasTopRows: [{ cells: ["partners"] }],
+      businessCanvasBottomRow: { cells: ["cost-structure", "revenue-streams"] },
+    });
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({
+        text: JSON.stringify({ report: reportWithMalformedLayout }),
+        provider: "codex",
+        researchSource: "Codex Exa MCP",
+      }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({
+        text: JSON.stringify({ report: reportWithMalformedLayout }),
+      }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    assert.deepEqual(snapshot.report.swotMatrixRows, [["strengths", "weaknesses"], ["opportunities", "threats"]]);
+    assert.deepEqual(snapshot.report.businessCanvasBottomRow, ["cost-structure", "revenue-streams"]);
+  });
+});
+
+test("strategy report normalizes object-shaped display metadata instead of failing the report", async () => {
+  await withTmpWorkspace(async (root) => {
+    const objectMetaReport = completeReport({
+      canvasMeta: { text: "9 blocks from object metadata" },
+      matrixMeta: { label: "positioning from object metadata" },
+      swotMeta: { note: "SWOT from object metadata" },
+    });
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({
+        text: JSON.stringify({ report: objectMetaReport }),
+        provider: "codex",
+        researchSource: "Codex Exa MCP",
+      }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({
+        text: JSON.stringify({ report: objectMetaReport }),
+      }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(snapshot.report.canvasMeta, "9 blocks from object metadata");
+    assert.equal(snapshot.report.matrixMeta, "positioning from object metadata");
+    assert.equal(snapshot.report.swotMeta, "SWOT from object metadata");
+    assert.doesNotMatch(snapshot.report.canvasMeta, /\[object Object\]/);
+    assert.doesNotMatch(snapshot.report.matrixMeta, /\[object Object\]/);
+    assert.doesNotMatch(snapshot.report.swotMeta, /\[object Object\]/);
+  });
+});
+
+test("strategy report canonicalizes provider canvas block aliases before required validation", async () => {
+  await withTmpWorkspace(async (root) => {
+    const aliasedBlocks = completeReport().canvasBlocks.map((block) => ({ ...block }));
+    aliasedBlocks[3] = {
+      id: "valueProposition",
+      number: "02",
+      eyebrow: "Value proposition",
+      title: "가치 제안",
+      tone: "accent",
+      bullets: ["오늘 보낼 paid ask와 측정할 first_value를 좁힙니다."],
+    };
+    aliasedBlocks[6] = {
+      id: "customer_segments",
+      number: "01",
+      label: "Customer segments",
+      title: "고객 세그먼트",
+      tone: "accent",
+      items: ["전업 1인 개발자, 첫 매출 전, macOS 사용자"],
+    };
+    aliasedBlocks[7] = {
+      id: "비용 구조",
+      number: "09",
+      label: "비용 구조",
+      title: "비용 구조",
+      tone: "magenta",
+      bullets: ["provider execution 비용과 macOS 배포/지원 비용"],
+    };
+    aliasedBlocks[8] = {
+      id: "pilotPayments",
+      number: "05",
+      title: "Pilot paid conversion",
+      tone: "accent",
+      bullets: ["pilot 유료 ask와 월 구독 전환"],
+    };
+    const aliasedReport = completeReport({ canvasBlocks: aliasedBlocks });
+
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({
+        text: JSON.stringify({ report: aliasedReport }),
+        provider: "codex",
+        researchSource: "Codex Exa MCP",
+      }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({
+        text: JSON.stringify({ report: aliasedReport }),
+        provider: "codex",
+        researchSource: "codex synthesis",
+      }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    const ids = snapshot.report.canvasBlocks.map((block) => block.id);
+    assert.equal(new Set(ids).size, ids.length);
+    for (const id of REQUIRED_CANVAS_BLOCK_IDS) {
+      assert.equal(ids.includes(id), true, `${id} should be present`);
+    }
+    assert.equal(snapshot.report.canvasBlocks.find((block) => block.title === "Pilot paid conversion").id, "revenue-streams");
+  });
+});
+
+test("strategy report still fails after normalization when a required canvas block is genuinely absent", async () => {
+  await withTmpWorkspace(async (root) => {
+    const missingRevenueBlocks = completeReport().canvasBlocks.map((block) => (
+      block.id === "revenue-streams"
+        ? { ...block, id: "channels", number: "03", eyebrow: "Channels", title: "중복 채널" }
+        : { ...block }
+    ));
+    const reportWithMissingBlock = completeReport({ canvasBlocks: missingRevenueBlocks });
+
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({
+        text: JSON.stringify({ report: reportWithMissingBlock }),
+        provider: "codex",
+        researchSource: "Codex Exa MCP",
+      }),
+      adversarialReviewer: async () => {
+        throw new Error("should not run");
+      },
+      multidimensionalVerifier: async () => {
+        throw new Error("should not run");
+      },
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.report, null);
+    assert.match(snapshot.status.error, /canvasBlocks/);
+    assert.match(snapshot.status.error, /revenue-streams/);
+  });
+});
+
+test("strategy report normalizes object-shaped adversarial review findings", async () => {
+  await withTmpWorkspace(async (root) => {
+    let observedReview = null;
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({
+        text: JSON.stringify({ report: completeReport() }),
+        provider: "codex",
+        researchSource: "Codex Exa MCP",
+      }),
+      adversarialReviewer: async () => ({
+        text: JSON.stringify({
+          verdict: "pass_with_edits",
+          confidence: 0.74,
+          findings: [
+            { title: "ICP risk", risk: "paid ask proof is still thin", recommendation: "narrow pilot segment" },
+          ],
+          required_changes: [
+            { action: "tighten positioning", rationale: "avoid generic coding tool framing" },
+          ],
+        }),
+      }),
+      multidimensionalVerifier: async ({ adversarialReview }) => {
+        observedReview = adversarialReview;
+        return { text: JSON.stringify({ report: completeReport({ diagnosisKicker: "Verified diagnosis" }) }) };
+      },
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(observedReview.confidence, "0.74");
+    assert.match(observedReview.findings[0], /ICP risk/);
+    assert.match(observedReview.requiredChanges[0], /tighten positioning/);
+  });
+});
+
 test("strategy report structured output contract rejects missing summaryTiles before review passes", async () => {
   await withTmpWorkspace(async (root) => {
     const reportWithoutSummaryTiles = completeReport();
@@ -266,6 +579,94 @@ test("strategy report rejects provider output missing required static-equivalent
     assert.equal(snapshot.status.state, "failed");
     assert.equal(snapshot.report, null);
     assert.match(snapshot.status.error, /swotGroups/);
+  });
+});
+
+test("strategy report failure diagnostics keep pass summaries without raw provider text", async () => {
+  await withTmpWorkspace(async (root) => {
+    const first = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({
+        text: JSON.stringify({ report: completeReport({ judgement: "이전 성공 판단" }) }),
+        provider: "codex",
+        researchSource: "Codex Exa MCP",
+      }),
+      adversarialReviewer: async () => ({
+        text: JSON.stringify({ verdict: "pass" }),
+        provider: "codex",
+        researchSource: "codex synthesis",
+      }),
+      multidimensionalVerifier: async () => ({
+        text: JSON.stringify({ report: completeReport({ judgement: "이전 성공 판단" }) }),
+        provider: "codex",
+        researchSource: "codex synthesis",
+      }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    const second = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({
+        text: JSON.stringify({ report: completeReport({ judgement: "새 판단" }) }),
+        provider: "codex",
+        researchSource: "Codex Exa MCP",
+      }),
+      adversarialReviewer: async () => ({
+        text: JSON.stringify({ verdict: "pass" }),
+        provider: "codex",
+        researchSource: "codex synthesis",
+      }),
+      multidimensionalVerifier: async () => ({
+        text: JSON.stringify({ report: completeReport({ judgement: "새 판단", swotGroups: [] }) }),
+        provider: "codex",
+        researchSource: "codex synthesis",
+      }),
+      now: new Date("2026-06-15T00:00:00.000Z"),
+    });
+
+    assert.equal(first.status.state, "ready");
+    assert.equal(second.status.state, "failed");
+    assert.equal(second.status.stale, true);
+    assert.equal(second.report.judgement, "이전 성공 판단");
+    assert.match(second.status.error, /swotGroups/);
+
+    const cache = JSON.parse(await fs.readFile(resolveStrategyReportCachePath(root), "utf8"));
+    assert.equal(cache.rawProviderResult.mode, "three_pass_strategy_report_failed");
+    assert.match(cache.rawProviderResult.error, /swotGroups/);
+    assert.equal(cache.rawProviderResult.passes.length, 3);
+    assert.equal(cache.rawProviderResult.passes[0].mode, "exa_research");
+    assert.equal(cache.rawProviderResult.passes[1].mode, "adversarial_review");
+    assert.equal(cache.rawProviderResult.passes[2].mode, "multidimensional_verification");
+    assert.equal(cache.rawProviderResult.passes.every((pass) => pass.textChars > 0), true);
+    assert.equal(cache.rawProviderResult.passes.every((pass) => !Object.hasOwn(pass, "text")), true);
+    assert.equal(cache.rawProviderResult.passes[0].parsedReportShape.canvasBlockCount, 9);
+    assert.equal(cache.rawProviderResult.passes[2].parsedReportShape.canvasBlockCount, 9);
+    assert.equal(cache.rawProviderResult.passes[2].parsedReportShape.canvasBlocks.length, 9);
+    assert.equal(
+      cache.rawProviderResult.passes[2].parsedReportShape.canvasBlocks.some((block) => (
+        block.id === "revenue-streams"
+        && block.number === "05"
+        && block.title === "수익원"
+        && block.canonicalId === "revenue-streams"
+      )),
+      true,
+    );
+
+    const runFiles = (await fs.readdir(resolveStrategyReportRunsDir(root)))
+      .filter((file) => file.endsWith(".json"))
+      .sort();
+    const latestRun = JSON.parse(
+      await fs.readFile(path.join(resolveStrategyReportRunsDir(root), runFiles.at(-1)), "utf8"),
+    );
+    assert.equal(latestRun.rawProviderResult.mode, "three_pass_strategy_report_failed");
+    assert.match(latestRun.rawProviderResult.error, /swotGroups/);
+    assert.equal(latestRun.rawProviderResult.passes.every((pass) => !Object.hasOwn(pass, "text")), true);
+    assert.equal(latestRun.rawProviderResult.passes[2].parsedReportShape.canvasBlockCount, 9);
+    assert.equal(latestRun.rawProviderResult.passes[2].parsedReportShape.canvasBlocks[0].canonicalId, "partners");
   });
 });
 

@@ -640,6 +640,35 @@ nonisolated struct MorningBriefingCustomerEvidenceVerdict: Codable, Hashable {
     var body: String?
     var evidence: [String]?
     var primaryActionId: String?
+    var verdictProvider: String?
+    var verdictGeneratedAt: String?
+    var contextRefs: [String]?
+}
+
+extension MorningBriefingCustomerEvidenceVerdict {
+    var renderableTitle: String? {
+        Self.trimmedNonEmpty(title)
+    }
+
+    var renderableBody: String? {
+        Self.trimmedNonEmpty(body)
+    }
+
+    var renderableEvidence: [String] {
+        (evidence ?? []).compactMap { Self.trimmedNonEmpty($0) }
+    }
+
+    var isRenderable: Bool {
+        renderableTitle != nil && renderableBody != nil && !renderableEvidence.isEmpty
+    }
+
+    private static func trimmedNonEmpty(_ value: String?) -> String? {
+        guard let cleaned = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !cleaned.isEmpty else {
+            return nil
+        }
+        return cleaned
+    }
 }
 
 nonisolated struct MorningBriefingEvidenceFunnel: Codable, Hashable {
@@ -791,6 +820,38 @@ nonisolated struct MorningBriefingSyncSource: Codable, Hashable, Identifiable {
 nonisolated struct MorningBriefingStatus: Codable, Hashable {
     var state: String?
     var detail: String?
+    var reason: String?
+    var runId: String?
+    var snapshot: Bool?
+    var failedSources: [MorningBriefingStatusFailedSource]?
+
+    init(
+        state: String? = nil,
+        detail: String? = nil,
+        reason: String? = nil,
+        runId: String? = nil,
+        snapshot: Bool? = nil,
+        failedSources: [MorningBriefingStatusFailedSource]? = nil
+    ) {
+        self.state = state
+        self.detail = detail
+        self.reason = reason
+        self.runId = runId
+        self.snapshot = snapshot
+        self.failedSources = failedSources
+    }
+}
+
+nonisolated struct MorningBriefingStatusFailedSource: Codable, Hashable, Identifiable {
+    var id: String
+    var label: String?
+    var detail: String?
+
+    init(id: String, label: String? = nil, detail: String? = nil) {
+        self.id = id
+        self.label = label
+        self.detail = detail
+    }
 }
 
 /// morning_briefing_progress: 수집 중 카드별 라이브 진행. 사이드카가 emit마다
@@ -1034,7 +1095,7 @@ extension MorningBriefing {
             label: "2026-06-09 00:00 -> 2026-06-10 now"
         ),
         summary: MorningBriefingSummary(
-            title: "overnight digest",
+            title: "밤사이 신호 요약",
             windowLabel: "2026-06-09 00:00 -> 2026-06-10 now",
             statement: "밤사이 가장 큰 변화는 PostHog 활성 사용자 ▼ 56% 하락이에요. Cloudflare 방문은 어제보다 늘었지만, 늘어난 유입이 온보딩에서 빠지고 있어요.",
             statementMarks: ["PostHog 활성 사용자 ▼ 56% 하락"],
@@ -1045,17 +1106,7 @@ extension MorningBriefing {
                 MorningBriefingSummaryCrit(source: "PostHog", label: "활성 사용자", value: "▼ 56%", direction: "down"),
             ]
         ),
-        customerEvidenceVerdict: MorningBriefingCustomerEvidenceVerdict(
-            state: "instrumentation_gap",
-            title: "빌드는 충분함. 고객 증거/activation 계측이 부족함.",
-            body: "오늘은 늘어난 방문이 signup, workspace, 검증 행동으로 이어지는지 먼저 확인합니다.",
-            evidence: [
-                "Cloudflare 순 방문 64명",
-                "GitHub 커밋 9건 · PR 업데이트 2건",
-                "PostHog 활성 사용자 11명 · 전환 2건",
-            ],
-            primaryActionId: "task"
-        ),
+        customerEvidenceVerdict: nil,
         evidenceFunnel: MorningBriefingEvidenceFunnel(
             steps: [
                 MorningBriefingEvidenceFunnelStep(
@@ -1455,6 +1506,51 @@ extension MorningBriefing {
             ),
         ]
     )
+
+    nonisolated static var uiTestingFailedSourceSample: MorningBriefing {
+        var sample = uiTestingSample
+        let failedDetail = "판정 생성 실패: ACP Codex mode requires CODEX_API_KEY or OPENAI_API_KEY. 이전 브리핑을 stale 상태로 유지합니다."
+        sample.status = MorningBriefingStatus(
+            state: "failed",
+            detail: failedDetail,
+            reason: "manual",
+            runId: "ui-testing-morning-briefing-failed",
+            snapshot: false,
+            failedSources: [
+                MorningBriefingStatusFailedSource(
+                    id: "cloudflare",
+                    label: "Cloudflare",
+                    detail: "Cloudflare MCP digest 수집 실패: 인증 토큰을 찾지 못했습니다."
+                ),
+            ]
+        )
+        if var sync = sample.sync {
+            sync.readyCount = 3
+            sync.sources = sync.sources?.map { source in
+                guard source.id == "cloudflare" else { return source }
+                var failed = source
+                failed.state = "failed"
+                failed.selected = true
+                failed.detail = "Cloudflare MCP digest 수집 실패: 인증 토큰을 찾지 못했습니다."
+                return failed
+            }
+            sample.sync = sync
+        }
+        sample.cards = sample.cards?.map { card in
+            guard card.id == "cloudflare" else { return card }
+            var failed = card
+            failed.state = "failed"
+            failed.metric = nil
+            failed.rows = []
+            failed.spark = []
+            failed.sparkPoints = []
+            failed.note = "Cloudflare MCP digest 수집 실패: 인증 토큰을 찾지 못했습니다."
+            failed.noteTone = "error"
+            failed.highlights = ["수집 실패"]
+            return failed
+        }
+        return sample
+    }
 }
 
 struct OfficeHoursLiveStatus: Hashable {
@@ -3139,7 +3235,6 @@ struct NewsMarketRadarCard: Codable, Hashable, Identifiable {
     let impact: String
     let confidence: String
     let whyItMatters: String?
-    let suggestedHypothesisUpdate: String?
     let suggestedDocTargets: [String]?
     let relatedDays: [Int]?
     let relatedAnswerIds: [String]?

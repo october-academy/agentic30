@@ -7,7 +7,7 @@ import {
   normalizeMorningBriefingDrilldowns,
 } from "./morning-briefing-drilldown.mjs";
 
-export const MORNING_BRIEFING_SCHEMA_VERSION = 2;
+export const MORNING_BRIEFING_SCHEMA_VERSION = 3;
 export const MORNING_BRIEFING_FILE = "morning-briefing.json";
 export const MORNING_BRIEFING_RUNS_DIR = "morning-briefing-runs";
 export const MORNING_BRIEFING_HISTORY_LIMIT = 14;
@@ -281,6 +281,68 @@ function sparkPointsFrom(history = [], cardId = "", current = null, { generatedA
   return points.slice(-8);
 }
 
+function normalizeSparkPointLabel(label = "") {
+  const cleaned = cleanString(label, 40);
+  if (!cleaned) return "값";
+  if (/^\d{1,2}$/.test(cleaned)) return `${cleaned.padStart(2, "0")}시`;
+  return cleaned;
+}
+
+function firstIsoValue(record = {}) {
+  for (const key of ["at", "datetimeIso", "timestamp", "date"]) {
+    const iso = toIso(record?.[key]);
+    if (iso) return iso;
+  }
+  return null;
+}
+
+function sparkSamplesFromChartEntries(entries = [], { valueKeys = ["value"] } = {}) {
+  if (!Array.isArray(entries)) return null;
+  const samples = entries
+    .map((entry, index) => {
+      const value = valueKeys
+        .map((key) => finiteNumber(entry?.[key]))
+        .find((candidate) => candidate !== null);
+      if (value === null || value === undefined) return null;
+      return {
+        value,
+        timeLabel: normalizeSparkPointLabel(entry?.label || `값 ${index + 1}`),
+        at: firstIsoValue(entry),
+      };
+    })
+    .filter(Boolean);
+  return samples.length >= 2 ? samples.slice(-8) : null;
+}
+
+function sparkFromDrilldownChart(drilldown = {}) {
+  const chart = drilldown?.chart && typeof drilldown.chart === "object" ? drilldown.chart : {};
+  const barSamples = sparkSamplesFromChartEntries(chart.bars, { valueKeys: ["value"] });
+  const samples = barSamples || sparkSamplesFromChartEntries(chart.points, { valueKeys: ["value", "pct"] });
+  if (!samples) return null;
+  return {
+    spark: samples.map((sample) => sample.value),
+    sparkPoints: samples,
+  };
+}
+
+function hydrateBriefingCardSparklines(briefing = null) {
+  if (!briefing || typeof briefing !== "object" || !Array.isArray(briefing.cards)) return briefing ?? null;
+  const drilldowns = briefing.drilldowns && typeof briefing.drilldowns === "object" ? briefing.drilldowns : {};
+  let changed = false;
+  const cards = briefing.cards.map((card) => {
+    if (!card || card.state !== "ready") return card;
+    const chartSpark = sparkFromDrilldownChart(drilldowns[card.id]);
+    if (!chartSpark) return card;
+    changed = true;
+    return {
+      ...card,
+      spark: chartSpark.spark,
+      sparkPoints: chartSpark.sparkPoints,
+    };
+  });
+  return changed ? { ...briefing, cards } : briefing;
+}
+
 function assertSparklineHistoryAvailable({ history = [], cardId = "", previousValue = null } = {}) {
   const previous = finiteNumber(previousValue);
   if (previous === null) return;
@@ -459,10 +521,6 @@ export function buildCustomerEvidenceVerdict({ digest = {}, cards = [], evidence
   if (hasBuild && (!hasCustomerEvidence || instrumentationMissing)) {
     return {
       state: instrumentationMissing ? "instrumentation_gap" : "build_without_customer_evidence",
-      title: "빌드는 충분함. 고객 증거/activation 계측이 부족함.",
-      body: hasTraffic
-        ? "오늘은 새 기능을 더 쌓기보다 방문 이후 다운로드·설치·activation이 끊기는 지점을 먼저 계측하고 확인해야 합니다."
-        : "오늘은 코드 신호를 고객 행동 증거로 넘기는 것이 우선입니다. 다운로드/설치/activation 중 하나를 명시적으로 잡아야 합니다.",
       evidence,
       primaryActionId: "task",
     };
@@ -470,8 +528,6 @@ export function buildCustomerEvidenceVerdict({ digest = {}, cards = [], evidence
   if (hasTraffic && posthogReady && !hasCustomerEvidence) {
     return {
       state: "traffic_without_activation",
-      title: "방문은 있지만 activation 증거가 얇음.",
-      body: "방문자를 더 모으기 전에 다운로드/설치 후 첫 검증 행동까지 이어졌는지 확인해야 합니다.",
       evidence,
       primaryActionId: "message",
     };
@@ -479,16 +535,12 @@ export function buildCustomerEvidenceVerdict({ digest = {}, cards = [], evidence
   if (posthogReady && hasCustomerEvidence) {
     return {
       state: "healthy",
-      title: "고객 행동 신호가 잡힘. 가장 큰 공백 하나를 좁힐 차례.",
-      body: "오늘은 관측된 activation 또는 사용자 행동 신호를 근거로 질문 하나와 실험 하나를 좁히면 됩니다.",
       evidence,
       primaryActionId: cards.some((card) => card.metric?.direction === "down") ? "message" : "experiment",
     };
   }
   return {
     state: "instrumentation_gap",
-    title: "고객 증거 판단에 필요한 계측이 부족함.",
-    body: "PostHog/Cloudflare 연결 또는 목표 이벤트가 없어서 오늘의 검증 판단이 제한적입니다.",
     evidence,
     primaryActionId: "task",
   };
@@ -496,7 +548,14 @@ export function buildCustomerEvidenceVerdict({ digest = {}, cards = [], evidence
 
 // ── Cards ────────────────────────────────────────────────────────────────────
 
-export function buildMorningBriefingCards({ digest = {}, previousMetrics = {}, history = [], generatedAt = null } = {}) {
+export function buildMorningBriefingCards({
+  digest = {},
+  previousMetrics = {},
+  history = [],
+  generatedAt = null,
+  drilldowns = {},
+} = {}) {
+  const safeDrilldowns = drilldowns && typeof drilldowns === "object" ? drilldowns : {};
   const byId = sourceById(digest.sources || []);
   const metrics = extractMorningBriefingMetrics({ sources: digest.sources || [] });
   const cards = [];
@@ -513,6 +572,7 @@ export function buildMorningBriefingCards({ digest = {}, previousMetrics = {}, h
     previousMetrics,
     history,
     generatedAt,
+    drilldown: safeDrilldowns.cloudflare,
     rows: countRows(cloudflare?.counts, [
       ["pageviews", "페이지뷰"],
       ["requests", "요청"],
@@ -540,6 +600,7 @@ export function buildMorningBriefingCards({ digest = {}, previousMetrics = {}, h
     previousMetrics,
     history,
     generatedAt,
+    drilldown: safeDrilldowns.github,
     rows: [
       ...countRows(gh?.counts, [
         ["prs", "PR 업데이트"],
@@ -565,6 +626,7 @@ export function buildMorningBriefingCards({ digest = {}, previousMetrics = {}, h
     previousMetrics,
     history,
     generatedAt,
+    drilldown: safeDrilldowns.posthog,
     rows: countRows(posthog?.counts, [
       ["events", "이벤트"],
       ["conversions", "전환"],
@@ -585,16 +647,27 @@ function buildCard({
   previousMetrics,
   history,
   generatedAt,
+  drilldown = null,
   rows = [],
 }) {
   const ready = state === "ready";
   const failed = state === "failed";
   const delta = ready ? deltaFor(metricValue, previousMetrics?.[id]) : null;
-  assertSparklineHistoryAvailable({
-    history,
-    cardId: id,
-    previousValue: previousMetrics?.[id],
-  });
+  const chartSpark = ready ? sparkFromDrilldownChart(drilldown) : null;
+  if (ready && !chartSpark) {
+    assertSparklineHistoryAvailable({
+      history,
+      cardId: id,
+      previousValue: previousMetrics?.[id],
+    });
+  }
+  const fallbackSpark = ready && !chartSpark
+    ? {
+        spark: sparkFrom(history, id, metricValue),
+        sparkPoints: sparkPointsFrom(history, id, metricValue, { generatedAt }),
+      }
+    : null;
+  const cardSpark = chartSpark || fallbackSpark || { spark: [], sparkPoints: [] };
   const note = cleanString(
     ready
       ? (source?.evidenceGaps?.[0] || source?.goalSignals?.[0] || source?.highlights?.[0] || "")
@@ -616,8 +689,8 @@ function buildCard({
       versusLabel: delta ? `어제 ${delta.previous}` : null,
     },
     rows: rows.map((row) => ({ k: cleanString(row.k, 40), v: cleanString(row.v, 80) })),
-    spark: ready ? sparkFrom(history, id, metricValue) : [],
-    sparkPoints: ready ? sparkPointsFrom(history, id, metricValue, { generatedAt }) : [],
+    spark: cardSpark.spark,
+    sparkPoints: cardSpark.sparkPoints,
     note,
     noteTone: failed || (ready && (source?.evidenceGaps?.length || delta?.direction === "down")) ? "warn" : "info",
     highlights: (source?.highlights || []).slice(0, 4),
@@ -675,7 +748,7 @@ export function buildMorningBriefingSummary({ digest = {}, cards = [], window = 
       direction: card.metric.direction || "flat",
     }));
   return {
-    title: "overnight digest",
+    title: "밤사이 신호 요약",
     windowLabel: cleanString(window.label || "", 120),
     statement,
     statementMarks: marks.filter((phrase) => statement.includes(phrase)),
@@ -801,7 +874,7 @@ export function buildMorningBriefingActions({ digest = {}, anomaly = null, custo
 
   const experimentBody = [
     "# 실험: evidence-gap-probe",
-    `가설   ${evidenceNeedsInstrumentation ? "activation/signup 계측 공백을 메우면 고객 증거 판단이 가능해진다" : (gap || "가장 큰 증거 공백을 좁히면 다음 행동이 명확해진다")}`,
+    `가설   ${evidenceNeedsInstrumentation ? "검증 행동/가입 계측 공백을 메우면 고객 증거 판단이 가능해진다" : (gap || "가장 큰 증거 공백을 좁히면 다음 행동이 명확해진다")}`,
     "대상   최근 활성 사용자 · 신규 가입자",
     "측정   고객 행동 증거 1건 (주) · 응답률 (보조)",
     "기간   3일 또는 응답 n≥3 중 늦은 쪽",
@@ -809,7 +882,7 @@ export function buildMorningBriefingActions({ digest = {}, anomaly = null, custo
 
   const taskItems = [
     evidenceNeedsInstrumentation
-      ? { title: "activation/signup canonical 이벤트 보강", tag: "계측" }
+      ? { title: "검증 행동/가입 canonical 이벤트 보강", tag: "계측" }
       : null,
     anomaly
       ? { title: `${anomalyTitle} 라벨 확정 후 첫 액션 실행`, tag: "신뢰도" }
@@ -852,7 +925,7 @@ export function buildMorningBriefingActions({ digest = {}, anomaly = null, custo
       kind: "task",
       badge: "태스크",
       title: evidenceNeedsInstrumentation ? "오늘 먼저 메울 계측 공백" : "오늘 빌드에 추가할 태스크",
-      subtitle: evidenceNeedsInstrumentation ? "activation/signup 신뢰도부터 확보" : "증거 신뢰도부터 확보",
+      subtitle: evidenceNeedsInstrumentation ? "검증 행동/가입 신뢰도부터 확보" : "증거 신뢰도부터 확보",
       body: "",
       why: "추적이 못 믿을 상태면 실험 결과도 못 믿어요.",
       copyText: taskItems.map((item) => item.title).join(" / "),
@@ -916,7 +989,17 @@ export function buildMorningBriefing({
     || history[history.length - 1]?.metrics
     || {};
   const { priorHistory, metricHistory } = metricHistoryForRefresh({ history, previous, generatedAt });
-  const cards = buildMorningBriefingCards({ digest, previousMetrics, history: metricHistory, generatedAt });
+  const normalizedDrilldowns = ensureMorningBriefingDrilldowns({
+    drilldowns: normalizeMorningBriefingDrilldowns(drilldowns || {}),
+    sources: digest.sources || [],
+  });
+  const cards = buildMorningBriefingCards({
+    digest,
+    previousMetrics,
+    history: metricHistory,
+    generatedAt,
+    drilldowns: normalizedDrilldowns,
+  });
   const anomaly = detectMorningBriefingAnomaly({ digest, cards });
   const evidenceFunnel = buildMorningBriefingEvidenceFunnel({ digest });
   const customerEvidenceVerdict = buildCustomerEvidenceVerdict({ digest, cards, evidenceFunnel });
@@ -945,10 +1028,7 @@ export function buildMorningBriefing({
     // Every ready source is guaranteed a drilldown: richer provider/CLI payloads
     // win, and a counts-grade drilldown (built from already-collected aggregates)
     // fills any gap so the 드릴다운 link always lands on a real screen.
-    drilldowns: ensureMorningBriefingDrilldowns({
-      drilldowns: normalizeMorningBriefingDrilldowns(drilldowns || {}),
-      sources: digest.sources || [],
-    }),
+    drilldowns: normalizedDrilldowns,
     sync: {
       sources: (digest.sources || []).map((source) => ({
         id: source.id,
@@ -1148,13 +1228,21 @@ export async function loadMorningBriefingStore({ workspaceRoot, fsImpl = fs } = 
   try {
     const raw = await fsImpl.readFile(filePath, "utf8");
     const parsed = JSON.parse(raw);
+    if (parsed?.schemaVersion === 2) {
+      return {
+        schemaVersion: MORNING_BRIEFING_SCHEMA_VERSION,
+        current: hydrateBriefingCardSparklines(parsed.current ?? null),
+        previous: hydrateBriefingCardSparklines(parsed.previous ?? null),
+        history: Array.isArray(parsed.history) ? parsed.history : [],
+      };
+    }
     if (parsed?.schemaVersion !== MORNING_BRIEFING_SCHEMA_VERSION) {
       return { schemaVersion: MORNING_BRIEFING_SCHEMA_VERSION, current: null, previous: null, history: [] };
     }
     return {
       schemaVersion: MORNING_BRIEFING_SCHEMA_VERSION,
-      current: parsed.current ?? null,
-      previous: parsed.previous ?? null,
+      current: hydrateBriefingCardSparklines(parsed.current ?? null),
+      previous: hydrateBriefingCardSparklines(parsed.previous ?? null),
       history: Array.isArray(parsed.history) ? parsed.history : [],
     };
   } catch {

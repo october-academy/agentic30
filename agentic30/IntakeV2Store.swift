@@ -6,11 +6,6 @@ import Combine
 //   D3 (eng): @StateObject IntakeStore (ObservableObject + UserDefaults)
 //   D6 (eng): 3-class split — IntakeStore / SourceManager / DecisionEngine (engine in IntakeV2DecisionEngine.swift)
 //   D1 (eng): Records → post-onboarding (corpus is filled AFTER first Decide, not during 4-step intake)
-// Reuses existing enums from MacOnboardingContext.swift:
-//   OnboardingWorkMode (workmode)
-//   OnboardingRole (role)
-//   OnboardingProjectStage (stuck)
-
 // MARK: - Source identifiers (D6 — owned by SourceManager)
 
 enum IntakeSourceID: String, Codable, CaseIterable, Hashable {
@@ -413,14 +408,18 @@ extension OnboardingIsolationLevel {
 @MainActor
 final class IntakeV2Store: ObservableObject {
     @Published var workmode: OnboardingWorkMode?
-    @Published var role: OnboardingRole?
-    @Published var stuck: OnboardingProjectStage?
+    @Published var focusArea: OnboardingFocusArea?
+    @Published var bottleneck: OnboardingProductBottleneck?
     @Published var commitmentLevel: IntakeV2CommitmentLevel?
     @Published var evidenceLevels: [OnboardingIsolationLevel] = []
     @Published var folderURL: URL?
     @Published var completedAt: Date?
 
-    static let stateDefaultsKey = "agentic30.intakeV2.state.v1"
+    static let stateDefaultsKey = "agentic30.intakeV2.state.v3"
+    private static let legacyStateDefaultsKeys = [
+        "agentic30.intakeV2.state.v2",
+        "agentic30.intakeV2.state.v1",
+    ]
 
     private let defaults: UserDefaults
 
@@ -436,8 +435,8 @@ final class IntakeV2Store: ObservableObject {
 
     private struct Snapshot: Codable {
         var workmode: OnboardingWorkMode?
-        var role: OnboardingRole?
-        var stuck: OnboardingProjectStage?
+        var focusArea: OnboardingFocusArea?
+        var bottleneck: OnboardingProductBottleneck?
         var commitmentLevel: IntakeV2CommitmentLevel?
         var evidenceLevels: [OnboardingIsolationLevel]?
         var folderPath: String?
@@ -453,8 +452,8 @@ final class IntakeV2Store: ObservableObject {
         do {
             let snap = try JSONDecoder().decode(Snapshot.self, from: data)
             self.workmode = snap.workmode
-            self.role = snap.role
-            self.stuck = snap.stuck
+            self.focusArea = snap.focusArea
+            self.bottleneck = snap.bottleneck
             self.commitmentLevel = snap.commitmentLevel
             if self.workmode == nil {
                 self.workmode = snap.commitmentLevel?.workMode
@@ -475,8 +474,8 @@ final class IntakeV2Store: ObservableObject {
     func persist() {
         let snap = Snapshot(
             workmode: workmode,
-            role: role,
-            stuck: stuck,
+            focusArea: focusArea,
+            bottleneck: bottleneck,
             commitmentLevel: commitmentLevel,
             evidenceLevels: evidenceLevels,
             folderPath: folderURL?.path,
@@ -492,8 +491,8 @@ final class IntakeV2Store: ObservableObject {
 
     func reset() {
         workmode = nil
-        role = nil
-        stuck = nil
+        focusArea = nil
+        bottleneck = nil
         commitmentLevel = nil
         evidenceLevels = []
         folderURL = nil
@@ -504,23 +503,26 @@ final class IntakeV2Store: ObservableObject {
 
     static func clearPersistedDraft(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: stateDefaultsKey)
+        for key in legacyStateDefaultsKeys {
+            defaults.removeObject(forKey: key)
+        }
     }
 
     // MARK: - Step completion
 
-    var isRoleComplete: Bool { role != nil }
-    var isBlockerComplete: Bool { stuck != nil }
+    var isFocusAreaComplete: Bool { focusArea != nil }
+    var isBottleneckComplete: Bool { bottleneck != nil }
     var isCommitmentComplete: Bool { commitmentLevel != nil }
     var isEvidenceComplete: Bool { !evidenceLevels.isEmpty }
     var isFolderComplete: Bool { folderURL != nil }
 
     var isStep1Complete: Bool { isCommitmentComplete }
-    var isStep2Complete: Bool { isRoleComplete }
-    var isStep3Complete: Bool { isBlockerComplete }
+    var isStep2Complete: Bool { isFocusAreaComplete }
+    var isStep3Complete: Bool { isBottleneckComplete }
     var isStep4Complete: Bool { isFolderComplete }
 
     var isFullyComplete: Bool {
-        isRoleComplete && isBlockerComplete && isCommitmentComplete && isEvidenceComplete
+        isFocusAreaComplete && isBottleneckComplete && isCommitmentComplete && isEvidenceComplete
     }
 
     func selectCommitmentLevel(_ level: IntakeV2CommitmentLevel) {
@@ -564,8 +566,8 @@ final class IntakeV2Store: ObservableObject {
 enum IntakeV2OnboardingContextMapper {
     @MainActor
     static func makeContext(from store: IntakeV2Store) -> OnboardingContext? {
-        guard let role = store.role,
-              let stuck = store.stuck,
+        guard let focusArea = store.focusArea,
+              let bottleneck = store.bottleneck,
               let commitmentLevel = store.commitmentLevel,
               !store.evidenceLevels.isEmpty else { return nil }
 
@@ -578,8 +580,8 @@ enum IntakeV2OnboardingContextMapper {
         return OnboardingContext.make(
             customWorkMode: commitmentLevel.customWorkMode,
             workMode: workMode,
-            role: role,
-            projectStage: stuck,
+            focusArea: focusArea,
+            productBottleneck: bottleneck,
             isolationLevel: primaryLevel,
             isolationLevels: levels
         )

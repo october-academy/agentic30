@@ -618,6 +618,13 @@ export function mergeMorningBriefingDrilldownMaps(primary = {}, secondary = {}) 
   return output;
 }
 
+export function shouldCollectCloudflareDirectDrilldown({ readySources = [], externalSources = [] } = {}) {
+  if (!Array.isArray(readySources) || !readySources.includes("cloudflare")) return false;
+  const cloudflare = (Array.isArray(externalSources) ? externalSources : [])
+    .find((source) => source?.id === "cloudflare");
+  return cloudflare?.state === "ready";
+}
+
 function kpiNumber(drilldown, label) {
   const value = drilldown?.kpis?.find((kpi) => kpi.label === label)?.valueLabel;
   if (value === null || value === undefined) return null;

@@ -8,6 +8,7 @@ import {
   collectPosthogDirectDrilldown,
   mergeMorningBriefingDrilldown,
   mergeMorningBriefingDrilldownMaps,
+  shouldCollectCloudflareDirectDrilldown,
 } from "../sidecar/morning-briefing-direct-sources.mjs";
 import {
   normalizeMorningBriefingDrilldown,
@@ -465,6 +466,31 @@ test("OAuth-only PostHog (collector returned null) keeps the digest's real numbe
   assert.equal(merged.posthog.kpis.find((kpi) => kpi.label === "이벤트").valueLabel, "297");
   assert.ok(!merged.posthog.collectionFailed);
   assert.doesNotMatch(merged.posthog.title, /수집 실패/);
+});
+
+test("shouldCollectCloudflareDirectDrilldown requires a ready MCP digest result", () => {
+  assert.equal(shouldCollectCloudflareDirectDrilldown({
+    readySources: ["cloudflare"],
+    externalSources: [{ id: "cloudflare", state: "ready" }],
+  }), true);
+
+  assert.equal(shouldCollectCloudflareDirectDrilldown({
+    readySources: ["cloudflare"],
+    externalSources: [{
+      id: "cloudflare",
+      state: "failed",
+      detail: "Cloudflare 실행 도구가 현재 세션에 노출되지 않음",
+    }],
+  }), false);
+
+  assert.equal(shouldCollectCloudflareDirectDrilldown({
+    readySources: ["cloudflare"],
+    externalSources: [],
+  }), false);
+  assert.equal(shouldCollectCloudflareDirectDrilldown({
+    readySources: ["posthog"],
+    externalSources: [{ id: "cloudflare", state: "ready" }],
+  }), false);
 });
 
 test("mergeMorningBriefingDrilldownMaps merges per source id", () => {

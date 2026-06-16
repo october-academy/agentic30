@@ -2,14 +2,13 @@ import Foundation
 
 // MARK: - Intake V2 Decision Engine — review decision D4 (eng)
 // Rule-based hybrid first-Decide engine.
-// Inputs: IntakeSnapshot (workmode/role/stuck/folderURL) + LocalScanResult
 // Output: IntakeV2Decision (badge, body, rationale, source attribution)
 // Future: LLM fallback path (out of scope for this PR — flagged in plan)
 
 struct IntakeSnapshot: Equatable {
     let workmode: OnboardingWorkMode?
-    let role: OnboardingRole?
-    let stuck: OnboardingProjectStage?
+    let focusArea: OnboardingFocusArea?
+    let bottleneck: OnboardingProductBottleneck?
     let evidenceLevels: [OnboardingIsolationLevel]
     let folderURL: URL?
 
@@ -17,8 +16,8 @@ struct IntakeSnapshot: Equatable {
     static func from(store: IntakeV2Store) -> IntakeSnapshot {
         IntakeSnapshot(
             workmode: store.workmode,
-            role: store.role,
-            stuck: store.stuck,
+            focusArea: store.focusArea,
+            bottleneck: store.bottleneck,
             evidenceLevels: store.evidenceLevels,
             folderURL: store.folderURL
         )
@@ -96,8 +95,8 @@ struct IntakeV2DecisionEngine {
     /// Pure function — no I/O, no side effects. Trivially testable.
     func generate(intake: IntakeSnapshot, scan: LocalScanResult) -> IntakeV2Decision {
 
-        // Rule 1 — strong stale signal trumps stuck mapping
-        if let staleDays = scan.staleTodoDays, staleDays >= 7, intake.stuck != .preRevenue {
+        // Rule 1 — strong stale signal trumps bottleneck mapping
+        if let staleDays = scan.staleTodoDays, staleDays >= 7, intake.bottleneck != .pricingOffer {
             return IntakeV2Decision(
                 category: .docChange,
                 priority: .medium,
@@ -109,8 +108,7 @@ struct IntakeV2DecisionEngine {
             )
         }
 
-        // Rule 2 — stuck=ideaOnly + interview gap → demand interview
-        if intake.stuck == .ideaOnly {
+        if intake.bottleneck == .problemDefinition {
             let weeksGap = scan.lastCommitDays.map { Int(Double($0) / 7.0) } ?? 8
             if intake.evidenceLevels.contains(.occasional) || scan.hasInterviewTranscripts {
                 return IntakeV2Decision(
@@ -134,8 +132,7 @@ struct IntakeV2DecisionEngine {
             )
         }
 
-        // Rule 3 — stuck=firstUsers (payment) + hint of payment data → payment analysis
-        if intake.stuck == .firstUsers {
+        if intake.bottleneck == .pricingOffer {
             if intake.evidenceLevels.contains(.paymentResponses) {
                 return IntakeV2Decision(
                     category: .paymentResponse,
@@ -150,33 +147,17 @@ struct IntakeV2DecisionEngine {
                 )
             }
             return IntakeV2Decision(
-                category: .paymentResponse,
-                priority: .high,
-                taskID: makeID("pmt"),
-                body: "지난 결제 거절·이탈 응답을 모아 공통 사유 3가지 정리.",
-                rationale: "수익화가 막혀 있습니다. 결제 직전 이탈이 가장 비싼 신호이므로 패턴부터 봅니다.",
-                metaLine: "2일 경과",
-                attributedSources: scan.hasPaymentResponses
-                    ? [.localFolder, .toss, .stripe]
-                    : [.localFolder]
-            )
-        }
-
-        // Rule 4 — stuck=preRevenue (pricing) → pricing experiment
-        if intake.stuck == .preRevenue {
-            return IntakeV2Decision(
                 category: .pricing,
                 priority: .high,
                 taskID: makeID("price"),
                 body: "가격 후보 2개를 정하고 다음 인터뷰에서 직접 제안 테스트.",
-                rationale: "가격 검증이 필요합니다. 가격은 직접 제안해 봐야 알 수 있으므로 다음 인터뷰가 실험장입니다.",
+                rationale: "결제 제안과 가격 설정이 막혀 있습니다. 가격은 직접 제안해 봐야 알 수 있으므로 다음 인터뷰가 실험장입니다.",
                 metaLine: "미검증",
                 attributedSources: [.localFolder]
             )
         }
 
-        // Rule 5 — stuck=building (acquisition)
-        if intake.stuck == .building {
+        if intake.bottleneck == .firstActiveUsers {
             return IntakeV2Decision(
                 category: .acquisition,
                 priority: .high,
@@ -188,20 +169,19 @@ struct IntakeV2DecisionEngine {
             )
         }
 
-        // Rule 6 — stuck=postRevenue (retention/growth)
-        if intake.stuck == .postRevenue {
+        if intake.bottleneck == .repeatUsage {
             return IntakeV2Decision(
                 category: .churnSignal,
                 priority: .medium,
                 taskID: makeID("churn"),
-                body: "6개월 이상 사용자 중 최근 30일 미접속 명단을 정리.",
-                rationale: "성장 단계에서는 오래 쓴 사람의 이탈이 가장 비싼 신호입니다.",
+                body: "최근 사용자 중 두 번째 사용으로 이어지지 않은 흐름 3개를 정리.",
+                rationale: "반복 사용이 막혀 있습니다. 새 유입보다 다시 돌아오지 않는 이유를 먼저 봐야 합니다.",
                 metaLine: "사용자 확인 필요",
                 attributedSources: [.localFolder, .posthog]
             )
         }
 
-        // Fallback — no rule matched (empty scan + no stuck answer)
+        // Fallback — no rule matched (empty scan + no bottleneck answer)
         return IntakeV2Decision(
             category: .fallback,
             priority: .low,
@@ -216,7 +196,7 @@ struct IntakeV2DecisionEngine {
     /// Make decision when scan completely failed (D3 design — graceful fallback).
     /// Used by readyAnalyze when sidecar scan errors or permission denied — template-only Decide.
     func fallbackTemplate(intake: IntakeSnapshot) -> IntakeV2Decision {
-        // Force empty scan path through main generate() so the same rules cover stuck mapping.
+        // Force empty scan path through main generate() so the same rules cover bottleneck mapping.
         return generate(intake: intake, scan: .empty)
     }
 
@@ -230,7 +210,7 @@ struct IntakeV2DecisionEngine {
     private func attributedSourcesForInterview(intake: IntakeSnapshot) -> [IntakeSourceID] {
         // Always start with local folder; cloud sources are post-onboarding (D1)
         var sources: [IntakeSourceID] = [.localFolder]
-        if intake.role == .productManager {
+        if intake.focusArea == .productPlanning {
             sources.append(.notion)
         }
         return sources

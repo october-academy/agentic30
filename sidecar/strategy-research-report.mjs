@@ -27,6 +27,124 @@ const REQUIRED_CANVAS_BLOCK_IDS = Object.freeze([
   "cost-structure",
   "revenue-streams",
 ]);
+const CANVAS_BLOCK_ID_BY_NUMBER = new Map([
+  ["1", "customer-segments"],
+  ["01", "customer-segments"],
+  ["2", "value-proposition"],
+  ["02", "value-proposition"],
+  ["3", "channels"],
+  ["03", "channels"],
+  ["4", "relationships"],
+  ["04", "relationships"],
+  ["5", "revenue-streams"],
+  ["05", "revenue-streams"],
+  ["6", "resources"],
+  ["06", "resources"],
+  ["7", "activities"],
+  ["07", "activities"],
+  ["8", "partners"],
+  ["08", "partners"],
+  ["9", "cost-structure"],
+  ["09", "cost-structure"],
+]);
+const CANVAS_BLOCK_ALIAS_BY_KEY = new Map([
+  ["partners", [
+    "partners",
+    "partner",
+    "key-partners",
+    "key-partner",
+    "partnerships",
+    "핵심-파트너",
+    "핵심파트너",
+    "파트너",
+    "파트너십",
+  ]],
+  ["activities", [
+    "activities",
+    "activity",
+    "key-activities",
+    "key-activity",
+    "핵심-활동",
+    "핵심활동",
+    "활동",
+  ]],
+  ["resources", [
+    "resources",
+    "resource",
+    "key-resources",
+    "key-resource",
+    "핵심-자원",
+    "핵심자원",
+    "자원",
+  ]],
+  ["value-proposition", [
+    "value-proposition",
+    "value-propositions",
+    "value-prop",
+    "value-props",
+    "value",
+    "uvp",
+    "가치-제안",
+    "가치제안",
+    "가치",
+  ]],
+  ["relationships", [
+    "relationships",
+    "relationship",
+    "customer-relationships",
+    "customer-relationship",
+    "고객-관계",
+    "고객관계",
+    "관계",
+  ]],
+  ["channels", [
+    "channels",
+    "channel",
+    "go-to-market",
+    "gtm",
+    "유통-채널",
+    "채널",
+  ]],
+  ["customer-segments", [
+    "customer-segments",
+    "customer-segment",
+    "customers",
+    "segments",
+    "audience",
+    "icp",
+    "고객-세그먼트",
+    "고객세그먼트",
+    "고객-군",
+    "고객군",
+    "고객",
+  ]],
+  ["cost-structure", [
+    "cost-structure",
+    "cost-structures",
+    "cost",
+    "costs",
+    "비용-구조",
+    "비용구조",
+    "비용",
+  ]],
+  ["revenue-streams", [
+    "revenue-streams",
+    "revenue-stream",
+    "revenue",
+    "revenues",
+    "pricing",
+    "monetization",
+    "수익원",
+    "수익-원",
+    "수익-흐름",
+    "수익흐름",
+    "수익",
+    "매출",
+    "과금",
+  ]],
+].flatMap(([canonicalId, aliases]) => (
+  aliases.map((alias) => [normalizeCanvasAliasKey(alias), canonicalId])
+)));
 const REQUIRED_SWOT_GROUP_IDS = Object.freeze([
   "strengths",
   "weaknesses",
@@ -107,6 +225,11 @@ const PRIVATE_RAW_TEXT_PATTERN = /(raw\s+private|private\s+alignment|interview\s
 const StrategyReportStringSchema = z.string().trim().min(1);
 const StrategyReportOptionalStringSchema = z.string().trim().optional();
 const StrategyReportToneSchema = z.string().trim().max(40).optional();
+const StrategyReportSearchableCopySchema = z.union([
+  z.array(z.string()),
+  z.string(),
+]).optional();
+const StrategyReportOptionalGeneratedFieldSchema = z.any().optional();
 
 const StrategyReportSummaryTileSchema = z.object({
   id: StrategyReportStringSchema.max(80),
@@ -122,12 +245,26 @@ const StrategyReportCriteriaRowSchema = z.object({
 }).passthrough();
 
 const StrategyReportCanvasBlockSchema = z.object({
-  id: StrategyReportStringSchema.max(80),
-  number: StrategyReportOptionalStringSchema,
-  eyebrow: StrategyReportOptionalStringSchema,
-  title: StrategyReportStringSchema.max(120),
-  tone: StrategyReportToneSchema,
-  bullets: z.array(StrategyReportStringSchema.max(280)).min(1).max(8),
+  id: StrategyReportOptionalGeneratedFieldSchema,
+  blockId: StrategyReportOptionalGeneratedFieldSchema,
+  block_id: StrategyReportOptionalGeneratedFieldSchema,
+  canvasBlockId: StrategyReportOptionalGeneratedFieldSchema,
+  canvas_block_id: StrategyReportOptionalGeneratedFieldSchema,
+  key: StrategyReportOptionalGeneratedFieldSchema,
+  slug: StrategyReportOptionalGeneratedFieldSchema,
+  number: StrategyReportOptionalGeneratedFieldSchema,
+  order: StrategyReportOptionalGeneratedFieldSchema,
+  index: StrategyReportOptionalGeneratedFieldSchema,
+  eyebrow: StrategyReportOptionalGeneratedFieldSchema,
+  label: StrategyReportOptionalGeneratedFieldSchema,
+  title: StrategyReportOptionalGeneratedFieldSchema,
+  name: StrategyReportOptionalGeneratedFieldSchema,
+  tone: StrategyReportOptionalGeneratedFieldSchema,
+  bullets: StrategyReportOptionalGeneratedFieldSchema,
+  items: StrategyReportOptionalGeneratedFieldSchema,
+  points: StrategyReportOptionalGeneratedFieldSchema,
+  details: StrategyReportOptionalGeneratedFieldSchema,
+  content: StrategyReportOptionalGeneratedFieldSchema,
 }).passthrough();
 
 const StrategyReportCompetitorSchema = z.object({
@@ -138,8 +275,10 @@ const StrategyReportCompetitorSchema = z.object({
   gap: StrategyReportStringSchema.max(420),
   x: z.number().min(0).max(1).optional(),
   y: z.number().min(0).max(1).optional(),
-  adaptiveScore: z.number().int().min(0).max(100),
-  evidenceScore: z.number().int().min(0).max(100),
+  adaptiveScore: StrategyReportOptionalGeneratedFieldSchema,
+  adaptive_score: StrategyReportOptionalGeneratedFieldSchema,
+  evidenceScore: StrategyReportOptionalGeneratedFieldSchema,
+  evidence_score: StrategyReportOptionalGeneratedFieldSchema,
   sourceLabel: StrategyReportStringSchema.max(160),
   sourceURL: z.string().trim().max(500).optional(),
   sourceDisplay: StrategyReportOptionalStringSchema,
@@ -178,50 +317,22 @@ export const StrategyReportContentContract = z.object({
   judgement: StrategyReportStringSchema.max(900),
   generatedBadge: StrategyReportOptionalStringSchema,
   analysisBasisLabel: StrategyReportStringSchema.max(160),
-  canvasMeta: StrategyReportOptionalStringSchema,
-  matrixMeta: StrategyReportOptionalStringSchema,
-  swotMeta: StrategyReportOptionalStringSchema,
+  canvasMeta: StrategyReportOptionalGeneratedFieldSchema,
+  matrixMeta: StrategyReportOptionalGeneratedFieldSchema,
+  swotMeta: StrategyReportOptionalGeneratedFieldSchema,
   summaryTiles: z.array(StrategyReportSummaryTileSchema).min(3).max(6),
   criteriaRows: z.array(StrategyReportCriteriaRowSchema).min(4).max(12),
-  canvasBlocks: z.array(StrategyReportCanvasBlockSchema).min(9).max(12),
+  canvasBlocks: z.array(StrategyReportCanvasBlockSchema).max(24),
   competitors: z.array(StrategyReportCompetitorSchema).min(3).max(12),
   swotGroups: z.array(StrategyReportSwotGroupSchema).min(4).max(8),
-  swotMatrixColumnCount: z.number().int().min(1).max(4).optional(),
-  swotMatrixRows: z.array(z.array(StrategyReportStringSchema.max(80)).min(1).max(4)).max(4).optional(),
-  sourceRefs: z.array(StrategyReportSourceRefSchema).max(24).optional(),
-  searchableCopy: z.array(StrategyReportStringSchema.max(500)).max(80).optional(),
-  businessCanvasTopRows: z.array(z.array(StrategyReportStringSchema.max(80)).min(1).max(6)).max(6).optional(),
-  businessCanvasBottomRow: z.array(StrategyReportStringSchema.max(80)).max(10).optional(),
+  swotMatrixColumnCount: StrategyReportOptionalGeneratedFieldSchema,
+  swotMatrixRows: StrategyReportOptionalGeneratedFieldSchema,
+  sourceRefs: StrategyReportOptionalGeneratedFieldSchema,
+  searchableCopy: StrategyReportSearchableCopySchema,
+  businessCanvasTopRows: StrategyReportOptionalGeneratedFieldSchema,
+  businessCanvasBottomRow: StrategyReportOptionalGeneratedFieldSchema,
   generatedAt: StrategyReportOptionalStringSchema,
-}).passthrough().superRefine((report, context) => {
-  const canvasIds = new Set(report.canvasBlocks.map((block) => block.id));
-  for (const id of REQUIRED_CANVAS_BLOCK_IDS) {
-    if (!canvasIds.has(id)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["canvasBlocks"],
-        message: `missing required canvas block ${id}`,
-      });
-    }
-  }
-  if (!report.competitors.some((competitor) => competitor.id === "agentic30" && competitor.isAgentic30 === true)) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["competitors"],
-      message: "missing required Agentic30 competitor with isAgentic30=true",
-    });
-  }
-  const swotIds = new Set(report.swotGroups.map((group) => group.id));
-  for (const id of REQUIRED_SWOT_GROUP_IDS) {
-    if (!swotIds.has(id)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["swotGroups"],
-        message: `missing required SWOT group ${id}`,
-      });
-    }
-  }
-});
+}).passthrough();
 
 export const StrategyReportOutputContract = z.object({
   report: StrategyReportContentContract,
@@ -229,10 +340,10 @@ export const StrategyReportOutputContract = z.object({
 
 const StrategyReportAdversarialReviewContract = z.object({
   verdict: StrategyReportStringSchema.max(80),
-  confidence: StrategyReportOptionalStringSchema,
-  findings: z.array(StrategyReportStringSchema.max(420)).max(12).default([]),
-  requiredChanges: z.array(StrategyReportStringSchema.max(420)).max(12).default([]),
-  required_changes: z.array(StrategyReportStringSchema.max(420)).max(12).optional(),
+  confidence: StrategyReportOptionalGeneratedFieldSchema,
+  findings: StrategyReportOptionalGeneratedFieldSchema,
+  requiredChanges: StrategyReportOptionalGeneratedFieldSchema,
+  required_changes: StrategyReportOptionalGeneratedFieldSchema,
 }).passthrough();
 
 const STRATEGY_REPORT_STRUCTURED_OUTPUT_CONTRACT = [
@@ -241,7 +352,7 @@ const STRATEGY_REPORT_STRUCTURED_OUTPUT_CONTRACT = [
   "summaryTiles: 3-6 items, each {id,label,title,detail}; never omit this field.",
   "criteriaRows: at least 4 items, each {id,label,value}.",
   "canvasBlocks: at least 9 items covering partners, activities, resources, value-proposition, relationships, channels, customer-segments, cost-structure, revenue-streams; each has {id,title,bullets}.",
-  "competitors: at least 3 items, including {id:\"agentic30\", isAgentic30:true}; every item has title, tag, body, gap, adaptiveScore, evidenceScore, sourceLabel, scoreRationale.",
+  "competitors: at least 3 items, including {id:\"agentic30\", isAgentic30:true}; every item has title, tag, body, gap, adaptiveScore, evidenceScore, sourceLabel, scoreRationale. adaptiveScore and evidenceScore must be 0-100 integers.",
   "swotGroups: exactly/at least strengths, weaknesses, opportunities, threats; each has {id,title,tag,bullets}.",
   "Optional but preferred: tone, swotMatrixColumnCount, swotMatrixRows, sourceRefs, searchableCopy, generatedBadge, canvasMeta, matrixMeta, swotMeta.",
 ].join("\n");
@@ -412,6 +523,9 @@ export async function refreshStrategyReport({
   }
 
   const startedAt = now.toISOString();
+  let researchResult = null;
+  let adversarialResult = null;
+  let finalResult = null;
   try {
     if (typeof providerResearcher !== "function") {
       throw new Error("strategy report requires a providerResearcher.");
@@ -427,7 +541,7 @@ export async function refreshStrategyReport({
       stage: "running_exa_research",
       researchSource: primaryRoute?.label || null,
     });
-    const researchResult = await providerResearcher({
+    researchResult = await providerResearcher({
       context,
       prompt: buildStrategyReportResearchPrompt(context),
       exaMcpConfig: primaryRoute.mcpConfig,
@@ -448,7 +562,7 @@ export async function refreshStrategyReport({
       stage: "running_adversarial_review",
       researchSource: primaryRoute?.label || null,
     });
-    const adversarialResult = await adversarialReviewer({
+    adversarialResult = await adversarialReviewer({
       context,
       candidateReport,
       prompt: buildStrategyReportAdversarialPrompt({
@@ -471,7 +585,7 @@ export async function refreshStrategyReport({
       stage: "running_multidimensional_review",
       researchSource: primaryRoute?.label || null,
     });
-    const finalResult = await multidimensionalVerifier({
+    finalResult = await multidimensionalVerifier({
       context,
       candidateReport,
       adversarialReview,
@@ -549,10 +663,13 @@ export async function refreshStrategyReport({
         contextFingerprint,
         startedAt,
       }),
-      rawProviderResult: {
+      rawProviderResult: summarizeProviderPasses({
         mode: "three_pass_strategy_report_failed",
-        error: formatStrategyReportError(error),
-      },
+        researchResult,
+        adversarialResult,
+        finalResult,
+        error,
+      }),
       now,
     });
   }
@@ -720,6 +837,7 @@ async function persistStrategyReportSnapshot({
     schemaVersion: STRATEGY_REPORT_CACHE_SCHEMA_VERSION,
     updatedAt: now.toISOString(),
     snapshot: normalized,
+    rawProviderResult: deepSanitize(rawProviderResult),
   });
   await fs.mkdir(runsDir, { recursive: true });
   await atomicWriteJson(path.join(runsDir, `${safeTimestamp(now)}.json`), {
@@ -817,9 +935,21 @@ function normalizeStrategyReport(value = {}, { now = new Date() } = {}) {
     judgement: cleanString(sanitized.judgement || sanitized.strategyJudgement || sanitized.strategy_judgement, 900),
     generatedBadge: cleanString(sanitized.generatedBadge || sanitized.generated_badge || "동적 리서치", 80),
     analysisBasisLabel: cleanString(sanitized.analysisBasisLabel || sanitized.analysis_basis_label || "SPEC.md + ICP.md + VALUES.md + Exa", 160),
-    canvasMeta: cleanString(sanitized.canvasMeta || sanitized.canvas_meta || "9 blocks · dynamic report", 120),
-    matrixMeta: cleanString(sanitized.matrixMeta || sanitized.matrix_meta || "positioning · Exa verified", 120),
-    swotMeta: cleanString(sanitized.swotMeta || sanitized.swot_meta || "internal / external · verified", 120),
+    canvasMeta: normalizeDisplayMeta(
+      sanitized.canvasMeta ?? sanitized.canvas_meta,
+      "9 blocks · dynamic report",
+      120,
+    ),
+    matrixMeta: normalizeDisplayMeta(
+      sanitized.matrixMeta ?? sanitized.matrix_meta,
+      "positioning · Exa verified",
+      120,
+    ),
+    swotMeta: normalizeDisplayMeta(
+      sanitized.swotMeta ?? sanitized.swot_meta,
+      "internal / external · verified",
+      120,
+    ),
     summaryTiles: normalizeSummaryTiles(sanitized.summaryTiles || sanitized.summary_tiles),
     criteriaRows: normalizeCriteriaRows(sanitized.criteriaRows || sanitized.criteria_rows),
     canvasBlocks: normalizeCanvasBlocks(sanitized.canvasBlocks || sanitized.canvas_blocks),
@@ -833,9 +963,13 @@ function normalizeStrategyReport(value = {}, { now = new Date() } = {}) {
     ),
     swotMatrixRows: normalizeSwotMatrixRows(sanitized.swotMatrixRows || sanitized.swot_matrix_rows),
     sourceRefs: normalizeSourceRefs(sanitized.sourceRefs || sanitized.source_refs),
-    searchableCopy: normalizeStringArray(sanitized.searchableCopy || sanitized.searchable_copy, 80, 500),
+    searchableCopy: [],
     generatedAt: normalizeIsoDate(sanitized.generatedAt || sanitized.generated_at) || now.toISOString(),
   };
+  report.searchableCopy = normalizeSearchableCopy(
+    sanitized.searchableCopy ?? sanitized.searchable_copy,
+    report,
+  );
   validateStrategyReport(report);
   return {
     ...report,
@@ -900,30 +1034,129 @@ function normalizeCriteriaRows(value) {
 }
 
 function normalizeCanvasBlocks(value) {
-  return asArray(value).map((block, index) => ({
-    id: slugify(block?.id || block?.title || `block-${index + 1}`),
-    number: cleanString(block?.number || String(index + 1).padStart(2, "0"), 8),
-    eyebrow: cleanString(block?.eyebrow || block?.label, 80),
-    title: cleanString(block?.title, 120),
-    bullets: normalizeStringArray(block?.bullets || block?.items, 8, 280),
-    tone: normalizeTone(block?.tone),
-  })).filter((block) => block.id && block.title && block.bullets.length > 0).slice(0, 12);
+  const seen = new Set();
+  const blocks = [];
+  for (const [index, block] of asArray(value).entries()) {
+    if (!block || typeof block !== "object") continue;
+    const number = normalizeCanvasBlockNumber(block.number ?? block.order ?? block.index)
+      || String(index + 1).padStart(2, "0");
+    const eyebrow = firstGeneratedString([
+      block.eyebrow,
+      block.label,
+      block.category,
+      block.subtitle,
+    ], 80);
+    const title = firstGeneratedString([
+      block.title,
+      block.name,
+      block.label,
+      block.eyebrow,
+    ], 120);
+    const normalized = {
+      id: normalizeCanvasBlockId(block, index, { number, eyebrow, title }),
+      number,
+      eyebrow,
+      title,
+      bullets: normalizeGeneratedTextArray(
+        block.bullets ?? block.items ?? block.points ?? block.details ?? block.content,
+        8,
+        280,
+      ),
+      tone: normalizeTone(block.tone),
+    };
+    if (!normalized.id || !normalized.title || normalized.bullets.length === 0) continue;
+    if (seen.has(normalized.id)) continue;
+    seen.add(normalized.id);
+    blocks.push(normalized);
+    if (blocks.length >= 12) break;
+  }
+  return blocks;
+}
+
+function normalizeCanvasBlockId(block, index = 0, normalized = {}) {
+  const candidates = [
+    block?.id,
+    block?.blockId,
+    block?.block_id,
+    block?.canvasBlockId,
+    block?.canvas_block_id,
+    block?.key,
+    block?.slug,
+    block?.eyebrow,
+    block?.label,
+    block?.title,
+    block?.name,
+    normalized.eyebrow,
+    normalized.title,
+  ];
+  for (const candidate of candidates) {
+    const canonicalId = canonicalCanvasBlockIdFromAlias(candidate);
+    if (canonicalId) return canonicalId;
+  }
+  return canonicalCanvasBlockIdFromNumber(normalized.number ?? block?.number ?? block?.order ?? block?.index)
+    || slugify(firstGeneratedString([block?.id, block?.title, block?.label], 80) || `block-${index + 1}`);
+}
+
+function canonicalCanvasBlockIdFromAlias(value) {
+  const text = generatedFieldToString(value, 120);
+  if (!text) return "";
+  const keys = canvasAliasKeyVariants(text);
+  for (const key of keys) {
+    if (REQUIRED_CANVAS_BLOCK_IDS.includes(key)) return key;
+    const canonicalId = CANVAS_BLOCK_ALIAS_BY_KEY.get(key);
+    if (canonicalId) return canonicalId;
+  }
+  return "";
+}
+
+function canvasAliasKeyVariants(value) {
+  const key = normalizeCanvasAliasKey(value);
+  if (!key) return [];
+  const variants = new Set([key]);
+  variants.add(key.replace(/^(?:bmc-)?0?[1-9]-/, ""));
+  variants.add(key.replace(/-0?[1-9]$/, ""));
+  variants.add(key.replace(/^(?:block|canvas)-/, ""));
+  return [...variants].filter(Boolean);
+}
+
+function canonicalCanvasBlockIdFromNumber(value) {
+  const raw = generatedFieldToString(value, 40);
+  const match = raw.match(/\b0?([1-9])\b/);
+  if (!match) return "";
+  return CANVAS_BLOCK_ID_BY_NUMBER.get(match[0]) || CANVAS_BLOCK_ID_BY_NUMBER.get(match[1]) || "";
+}
+
+function normalizeCanvasBlockNumber(value) {
+  const raw = generatedFieldToString(value, 40);
+  const match = raw.match(/\b0?([1-9])\b/);
+  if (!match) return "";
+  return match[1].padStart(2, "0");
 }
 
 function normalizeCompetitors(value) {
   return asArray(value).map((competitor, index) => {
     const title = cleanString(competitor?.title || competitor?.name, 120);
     const id = slugify(competitor?.id || title || `competitor-${index + 1}`);
+    const rawAdaptiveScore = competitor?.adaptiveScore ?? competitor?.adaptive_score;
+    const rawEvidenceScore = competitor?.evidenceScore ?? competitor?.evidence_score;
+    const adaptiveScore = normalizeCompetitorScore(
+      rawAdaptiveScore,
+      0,
+    );
+    const evidenceScore = normalizeCompetitorScore(
+      rawEvidenceScore,
+      0,
+    );
     return {
       id,
       title,
       tag: cleanString(competitor?.tag || competitor?.subtitle, 180),
       body: cleanString(competitor?.body || competitor?.description, 600),
       gap: cleanString(competitor?.gap || competitor?.strategicGap || competitor?.strategic_gap, 420),
-      x: clampNumber(competitor?.x, 0.02, 0.98, 0.5),
-      y: clampNumber(competitor?.y, 0.02, 0.98, 0.5),
-      adaptiveScore: clampInt(competitor?.adaptiveScore ?? competitor?.adaptive_score, 0, 100, 0),
-      evidenceScore: clampInt(competitor?.evidenceScore ?? competitor?.evidence_score, 0, 100, 0),
+      x: matrixCoordinateFromScore(adaptiveScore),
+      y: matrixCoordinateFromScore(evidenceScore, { inverted: true }),
+      adaptiveScore,
+      evidenceScore,
       sourceLabel: cleanString(competitor?.sourceLabel || competitor?.source_label, 160),
       sourceURL: cleanString(competitor?.sourceURL || competitor?.sourceUrl || competitor?.source_url, 500),
       sourceDisplay: cleanString(competitor?.sourceDisplay || competitor?.source_display, 160),
@@ -932,6 +1165,7 @@ function normalizeCompetitors(value) {
       category: normalizeCompetitorCategory(competitor?.category, Boolean(competitor?.isAgentic30 || competitor?.is_agentic30)),
       isAgentic30: Boolean(competitor?.isAgentic30 || competitor?.is_agentic30 || id === "agentic30"),
       labelPlacement: normalizeLabelPlacement(competitor?.labelPlacement || competitor?.label_placement),
+      hasMatrixScores: hasGeneratedScore(rawAdaptiveScore) && hasGeneratedScore(rawEvidenceScore),
     };
   }).filter((competitor) => (
     competitor.id
@@ -940,7 +1174,51 @@ function normalizeCompetitors(value) {
     && competitor.body
     && competitor.sourceLabel
     && competitor.scoreRationale
-  )).slice(0, 12);
+    && competitor.hasMatrixScores
+  )).map(({ hasMatrixScores, ...competitor }) => competitor).slice(0, 12);
+}
+
+function normalizeCompetitorScore(value, fallback = 0) {
+  const fraction = parseScoreFraction(value);
+  if (fraction) {
+    return clampInt(Math.round((fraction.numerator / fraction.denominator) * 100), 0, 100, fallback);
+  }
+  const parsed = parseGeneratedNumber(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed > 0 && parsed <= 1) return clampInt(Math.round(parsed * 100), 0, 100, fallback);
+  if (parsed > 1 && parsed <= 10) return clampInt(Math.round(parsed * 10), 0, 100, fallback);
+  return clampInt(Math.round(parsed), 0, 100, fallback);
+}
+
+function parseScoreFraction(value) {
+  const raw = generatedFieldToString(value, 80);
+  const match = raw.match(/(-?\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const numerator = Number(match[1]);
+  const denominator = Number(match[2]);
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
+    return null;
+  }
+  return { numerator, denominator };
+}
+
+function parseGeneratedNumber(value) {
+  if (typeof value === "number") return value;
+  const raw = generatedFieldToString(value, 80);
+  if (!raw) return Number.NaN;
+  const match = raw.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : Number.NaN;
+}
+
+function matrixCoordinateFromScore(score, { inverted = false } = {}) {
+  const coordinate = clampNumber(score / 100, 0, 1, 0);
+  const value = inverted ? 1 - coordinate : coordinate;
+  return Number(value.toFixed(4));
+}
+
+function hasGeneratedScore(value) {
+  if (typeof value === "number") return Number.isFinite(value);
+  return /-?\d/.test(generatedFieldToString(value, 80));
 }
 
 function normalizeSwotGroups(value) {
@@ -994,9 +1272,40 @@ function normalizeAdversarialReview(value = {}) {
   return {
     verdict: cleanString(normalized.verdict || "needs_review", 80),
     confidence: cleanString(normalized.confidence, 80) || null,
-    findings: normalizeStringArray(normalized.findings, 12, 420),
-    requiredChanges: normalizeStringArray(normalized.requiredChanges || normalized.required_changes, 12, 420),
+    findings: normalizeReviewTextArray(normalized.findings, 12, 420),
+    requiredChanges: normalizeReviewTextArray(normalized.requiredChanges || normalized.required_changes, 12, 420),
   };
+}
+
+function normalizeReviewTextArray(value, maxItems = 12, maxLength = 420) {
+  return asArray(value)
+    .map((item) => reviewItemToString(item, maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function reviewItemToString(item, maxLength = 420) {
+  if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+    return cleanString(item, maxLength);
+  }
+  if (!item || typeof item !== "object") return "";
+  const parts = [
+    item.finding,
+    item.title,
+    item.issue,
+    item.summary,
+    item.risk,
+    item.critique,
+    item.rationale,
+    item.evidence,
+    item.recommendation,
+    item.requiredChange,
+    item.required_change,
+    item.change,
+    item.action,
+  ].map((part) => cleanString(part, Math.ceil(maxLength / 2))).filter(Boolean);
+  if (parts.length > 0) return cleanString(parts.join(" · "), maxLength);
+  return cleanString(JSON.stringify(item), maxLength);
 }
 
 function normalizeStrategyReportStatus(value = {}, { hasReport = false } = {}) {
@@ -1103,27 +1412,81 @@ function evidenceToSourceRef(evidence) {
 }
 
 function summarizeProviderPasses({
+  mode = "three_pass_strategy_report",
   researchResult = null,
   adversarialResult = null,
   finalResult = null,
+  error = null,
 } = {}) {
-  return {
-    mode: "three_pass_strategy_report",
+  const summary = {
+    mode,
     passes: [
       summarizeProviderResult("exa_research", researchResult),
       summarizeProviderResult("adversarial_review", adversarialResult),
       summarizeProviderResult("multidimensional_verification", finalResult),
     ],
   };
+  if (error) {
+    summary.error = formatStrategyReportError(error);
+  }
+  return summary;
 }
 
 function summarizeProviderResult(mode, result) {
-  return {
+  const summary = {
     mode,
     provider: cleanString(result?.provider, 80) || null,
     model: cleanString(result?.model, 160) || null,
     researchSource: rawProviderResultResearchSource(result),
     textChars: String(result?.text || "").length,
+  };
+  const parsedReportShape = summarizeParsedReportShape(result);
+  if (parsedReportShape) {
+    summary.parsedReportShape = parsedReportShape;
+  }
+  return summary;
+}
+
+function summarizeParsedReportShape(result) {
+  try {
+    const parsed = extractProviderJson(result);
+    const report = parsed?.report || parsed?.strategyReport || parsed?.strategy_report || parsed;
+    if (!report || typeof report !== "object") return null;
+    const canvasBlocks = asArray(report.canvasBlocks || report.canvas_blocks);
+    return {
+      canvasBlockCount: canvasBlocks.length,
+      canvasBlocks: canvasBlocks.slice(0, 24).map((block, index) => summarizeCanvasBlockShape(block, index)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function summarizeCanvasBlockShape(block, index = 0) {
+  if (!block || typeof block !== "object") {
+    return {
+      index,
+      type: Array.isArray(block) ? "array" : typeof block,
+    };
+  }
+  const number = normalizeCanvasBlockNumber(block.number ?? block.order ?? block.index) || null;
+  const eyebrow = firstGeneratedString([block.eyebrow, block.label], 80) || null;
+  const title = firstGeneratedString([block.title, block.name], 120) || null;
+  return {
+    index,
+    id: firstGeneratedString([
+      block.id,
+      block.blockId,
+      block.block_id,
+      block.canvasBlockId,
+      block.canvas_block_id,
+      block.key,
+      block.slug,
+    ], 80) || null,
+    number,
+    eyebrow,
+    title,
+    canonicalId: normalizeCanvasBlockId(block, index, { number, eyebrow, title }) || null,
   };
 }
 
@@ -1255,6 +1618,90 @@ function normalizeStringArray(value, maxItems = 8, maxLength = 240) {
     .slice(0, maxItems);
 }
 
+function normalizeGeneratedTextArray(value, maxItems = 8, maxLength = 240) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : value === undefined || value === null ? [] : [value];
+  return rawItems
+    .map((item) => generatedFieldToString(item, maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function firstGeneratedString(values, maxLength = 240) {
+  for (const value of values) {
+    const text = generatedFieldToString(value, maxLength);
+    if (text) return text;
+  }
+  return "";
+}
+
+function generatedFieldToString(value, maxLength = 240) {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return cleanString(value, maxLength);
+  }
+  if (Array.isArray(value)) {
+    return cleanString(
+      value
+        .map((item) => generatedFieldToString(item, Math.ceil(maxLength / 2)))
+        .filter(Boolean)
+        .join(" · "),
+      maxLength,
+    );
+  }
+  if (!value || typeof value !== "object") return "";
+  for (const key of ["text", "label", "summary", "detail", "description", "title", "note", "value", "body", "content", "name"]) {
+    const text = generatedFieldToString(value[key], maxLength);
+    if (text) return text;
+  }
+  return "";
+}
+
+function normalizeSearchableCopy(value, report = {}) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : typeof value === "string" ? [value] : [];
+  const normalized = rawItems
+    .map((item) => (typeof item === "string" || typeof item === "number" ? cleanString(item, 500) : ""))
+    .filter(Boolean)
+    .slice(0, 80);
+  if (normalized.length > 0) return normalized;
+  return normalizeStringArray([
+    report.diagnosisTitle,
+    report.diagnosisLead,
+    report.positioningStatement,
+    report.judgement,
+    ...(report.summaryTiles || []).flatMap((tile) => [tile.title, tile.detail]),
+    ...(report.competitors || []).flatMap((competitor) => [competitor.title, competitor.tag, competitor.body]),
+  ], 80, 500);
+}
+
+function normalizeDisplayMeta(value, fallback, maxLength = 120) {
+  const text = displayMetaToString(value, maxLength);
+  return text || cleanString(fallback, maxLength);
+}
+
+function displayMetaToString(value, maxLength = 120) {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return cleanString(value, maxLength);
+  }
+  if (Array.isArray(value)) {
+    return cleanString(
+      value
+        .map((item) => displayMetaToString(item, Math.ceil(maxLength / 2)))
+        .filter(Boolean)
+        .join(" · "),
+      maxLength,
+    );
+  }
+  if (!value || typeof value !== "object") return "";
+  for (const key of ["text", "label", "summary", "detail", "description", "title", "note", "value"]) {
+    const text = displayMetaToString(value[key], maxLength);
+    if (text) return text;
+  }
+  return "";
+}
+
 function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -1304,6 +1751,14 @@ function slugify(value) {
     .replace(/[^a-z0-9가-힣]+/gi, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
+}
+
+function normalizeCanvasAliasKey(value) {
+  return slugify(
+    String(value ?? "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+      .replace(/_/g, "-"),
+  );
 }
 
 function stableHash(value) {

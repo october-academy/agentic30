@@ -9,6 +9,9 @@ import {
   createUserInputRequest,
   deleteUserInputArtifacts,
   ensureUserInputDirs,
+  extractCodexStructuredInputToolOutputFromPayload,
+  isAnsweredCodexStructuredInputToolOutput,
+  isPendingCodexStructuredInputToolOutput,
   listUserInputRequests,
   waitForUserInputResponse,
   writeUserInputResponse,
@@ -110,6 +113,84 @@ test("buildPendingUserInputToolOutput returns non-blocking Codex Office Hours sh
   assert.deepEqual(output.answers, {});
   assert.deepEqual(output.annotations, {});
   assert.deepEqual(output.responses, []);
+});
+
+test("extractCodexStructuredInputToolOutputFromPayload parses nested Codex result text", () => {
+  const output = {
+    status: "pending_user_input",
+    requestId: "request-from-log",
+    title: "Office Hours",
+    questions: [
+      {
+        header: "오늘 외부 행동",
+        question: "박조은님께 아직 보내지 못한 프로젝트 기록 요청을 오늘 어떤 확인 가능한 행동으로 닫을까요?",
+        options: [
+          {
+            label: "지금 바로 요청 보내기",
+            description: "보낸 캡처나 링크가 남아 오늘 고객 접점 공백을 줄입니다.",
+          },
+          {
+            label: "먼저 15분 통화 잡기",
+            description: "요청 없이 콜만 잡으면 행동 증거는 약합니다.",
+          },
+        ],
+        allowFreeText: true,
+      },
+    ],
+    answers: {},
+    annotations: {},
+    responses: [],
+  };
+
+  const parsed = extractCodexStructuredInputToolOutputFromPayload({
+    result: {
+      type: "text",
+      text: JSON.stringify(output, null, 2),
+    },
+  });
+
+  assert.equal(parsed.requestId, "request-from-log");
+  assert.equal(parsed.questions[0].header, "오늘 외부 행동");
+  assert.equal(isPendingCodexStructuredInputToolOutput(parsed), true);
+  assert.equal(isAnsweredCodexStructuredInputToolOutput(parsed), false);
+});
+
+test("extractCodexStructuredInputToolOutputFromPayload parses content arrays and detects blocking answers", () => {
+  const output = {
+    requestId: "answered-request",
+    title: "Office Hours",
+    questions: [
+      {
+        header: "오늘 외부 행동",
+        question: "오늘 어떤 행동을 했나요?",
+        options: [
+          { label: "아직 보내지 못했다", description: "증거가 없습니다." },
+          { label: "바로 보냈다", description: "외부 고객 행동 증거가 남았습니다." },
+        ],
+      },
+    ],
+    answers: { "오늘 어떤 행동을 했나요?": "아직 보내지 못했다" },
+    annotations: {},
+    responses: [
+      {
+        question: "오늘 어떤 행동을 했나요?",
+        selectedOptions: ["아직 보내지 못했다"],
+        freeText: "",
+      },
+    ],
+  };
+
+  const parsed = extractCodexStructuredInputToolOutputFromPayload({
+    result: {
+      content: [
+        { type: "text", text: JSON.stringify(output) },
+      ],
+    },
+  });
+
+  assert.equal(parsed.requestId, "answered-request");
+  assert.equal(isPendingCodexStructuredInputToolOutput(parsed), false);
+  assert.equal(isAnsweredCodexStructuredInputToolOutput(parsed), true);
 });
 
 test("clearUserInputArtifacts removes stale request and response files", async () => {

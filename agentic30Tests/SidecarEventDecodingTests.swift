@@ -540,7 +540,7 @@ struct SidecarEventDecodingTests {
               "label": "2026-06-09 00:00 -> 2026-06-10 now"
             },
             "summary": {
-              "title": "overnight digest",
+              "title": "밤사이 신호 요약",
               "windowLabel": "2026-06-09 00:00 -> 2026-06-10 now",
               "statement": "밤사이 가장 큰 변화는 PostHog 활성 사용자 ▼ 56% 하락이에요.",
               "crits": [
@@ -549,10 +549,13 @@ struct SidecarEventDecodingTests {
             },
             "customerEvidenceVerdict": {
               "state": "instrumentation_gap",
-              "title": "빌드는 충분함. 고객 증거/activation 계측이 부족함.",
-              "body": "오늘은 activation 계측을 먼저 메웁니다.",
+              "title": "빌드는 충분하지만 고객 행동 근거가 부족함.",
+              "body": "오늘은 검증 행동 계측을 먼저 메웁니다.",
               "evidence": ["GitHub 커밋 55건", "PostHog 활성 1명 · 전환 0건"],
-              "primaryActionId": "task"
+              "primaryActionId": "task",
+              "verdictProvider": "codex",
+              "verdictGeneratedAt": "2026-06-10T00:01:00.000Z",
+              "contextRefs": ["onboarding", "day1_goal", "office_hours", "cloudflare", "github", "posthog"]
             },
             "evidenceFunnel": {
               "steps": [
@@ -640,6 +643,8 @@ struct SidecarEventDecodingTests {
         #expect(briefing.summary?.crits?.first?.direction == "down")
         #expect(briefing.customerEvidenceVerdict?.state == "instrumentation_gap")
         #expect(briefing.customerEvidenceVerdict?.primaryActionId == "task")
+        #expect(briefing.customerEvidenceVerdict?.verdictProvider == "codex")
+        #expect(briefing.customerEvidenceVerdict?.contextRefs?.contains("office_hours") == true)
         #expect(briefing.evidenceFunnel?.steps?.first?.id == "traffic")
         #expect(briefing.evidenceFunnel?.steps?.last?.status == "missing")
         let card = try #require(briefing.cards?.first)
@@ -663,6 +668,55 @@ struct SidecarEventDecodingTests {
         // Drilldown payload absent on older sidecars: decoders must fail soft.
         #expect(briefing.drilldowns == nil)
         #expect(briefing.historyEntries == nil)
+    }
+
+    @Test func morningBriefingVerdictRequiresTitleBodyAndEvidenceToRender() {
+        let missingTitle = MorningBriefingCustomerEvidenceVerdict(
+            state: "healthy",
+            title: nil,
+            body: "고객 행동 근거가 잡혔어요.",
+            evidence: ["PostHog conversions 2 집계가 있습니다."],
+            primaryActionId: "experiment",
+            verdictProvider: "codex",
+            verdictGeneratedAt: "2026-06-16T00:00:00.000Z",
+            contextRefs: ["onboarding", "day1_goal", "office_hours", "cloudflare", "github", "posthog"]
+        )
+        let missingBody = MorningBriefingCustomerEvidenceVerdict(
+            state: "healthy",
+            title: "고객 행동 근거가 잡혔어요.",
+            body: " ",
+            evidence: ["PostHog conversions 2 집계가 있습니다."],
+            primaryActionId: "experiment",
+            verdictProvider: "codex",
+            verdictGeneratedAt: "2026-06-16T00:00:00.000Z",
+            contextRefs: ["onboarding", "day1_goal", "office_hours", "cloudflare", "github", "posthog"]
+        )
+        let missingEvidence = MorningBriefingCustomerEvidenceVerdict(
+            state: "healthy",
+            title: "고객 행동 근거가 잡혔어요.",
+            body: "오늘은 다음 공백을 좁히면 됩니다.",
+            evidence: ["  "],
+            primaryActionId: "experiment",
+            verdictProvider: "codex",
+            verdictGeneratedAt: "2026-06-16T00:00:00.000Z",
+            contextRefs: ["onboarding", "day1_goal", "office_hours", "cloudflare", "github", "posthog"]
+        )
+        let valid = MorningBriefingCustomerEvidenceVerdict(
+            state: "healthy",
+            title: "고객 행동 근거가 잡혔어요.",
+            body: "오늘은 다음 공백을 좁히면 됩니다.",
+            evidence: [" PostHog conversions 2 집계가 있습니다. "],
+            primaryActionId: "experiment",
+            verdictProvider: "codex",
+            verdictGeneratedAt: "2026-06-16T00:00:00.000Z",
+            contextRefs: ["onboarding", "day1_goal", "office_hours", "cloudflare", "github", "posthog"]
+        )
+
+        #expect(missingTitle.isRenderable == false)
+        #expect(missingBody.isRenderable == false)
+        #expect(missingEvidence.isRenderable == false)
+        #expect(valid.isRenderable == true)
+        #expect(valid.renderableEvidence == ["PostHog conversions 2 집계가 있습니다."])
     }
 
     @MainActor @Test func decodesMorningBriefingDrilldownPayload() throws {
@@ -1133,6 +1187,63 @@ struct SidecarEventDecodingTests {
         #expect(event.morningBriefingStatus?.state == "collecting")
     }
 
+    @MainActor @Test func cachedMorningBriefingResultKeepsCollectionProgressAlive() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        let collectingPayload = """
+        {
+          "type": "morning_briefing_status",
+          "status": { "state": "collecting", "reason": "manual", "runId": "run-1" }
+        }
+        """
+        let progressPayload = """
+        {
+          "type": "morning_briefing_progress",
+          "morningBriefingProgress": {
+            "cards": [
+              { "id": "github", "state": "collecting", "detail": "git · gh CLI 신호 수집 중" }
+            ]
+          }
+        }
+        """
+        let cachedPayload = """
+        {
+          "type": "morning_briefing_result",
+          "status": { "state": "collecting", "snapshot": true, "reason": "refresh_in_flight", "runId": "run-1" },
+          "morningBriefing": {
+            "schemaVersion": 2,
+            "generatedAt": "2026-06-14T10:21:41.391Z",
+            "day": 3,
+            "totalDays": 30,
+            "summary": { "title": "밤사이 신호 요약" },
+            "sync": {
+              "sources": [
+                { "id": "github", "label": "GitHub", "state": "ready", "selected": true, "detail": "cached" }
+              ],
+              "readyCount": 1,
+              "syncedAt": "2026-06-14T10:21:41.391Z",
+              "syncedAtLabel": "19:21"
+            },
+            "status": { "state": "ready", "detail": "old success" }
+          }
+        }
+        """
+
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(collectingPayload.utf8)))
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(progressPayload.utf8)))
+        #expect(viewModel.morningBriefingCollecting)
+        #expect(viewModel.morningBriefingSourceProgress["github"]?.state == "collecting")
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(cachedPayload.utf8))
+        #expect(event.morningBriefingStatus?.snapshot == true)
+        #expect(event.morningBriefingStatus?.reason == "refresh_in_flight")
+        #expect(event.morningBriefingStatus?.runId == "run-1")
+        viewModel.applySidecarEventForTesting(event)
+
+        #expect(viewModel.morningBriefing?.sync?.syncedAtLabel == "19:21")
+        #expect(viewModel.morningBriefingCollecting)
+        #expect(viewModel.morningBriefingSourceProgress["github"]?.state == "collecting")
+    }
+
     @MainActor @Test func morningBriefingResultTopLevelFailureMarksStaleBriefingFailed() throws {
         let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
         let collectingPayload = """
@@ -1586,14 +1697,13 @@ struct SidecarEventDecodingTests {
         #expect(day1?.orderedSteps.last?.id == "first_interview")
         #expect(day1?.isComplete == true)
 
-        // Day-1 stepper/badge display layer drops the intro stages (onboarding, scan)
-        // while the data axis above keeps all four. Day 3+ stays on the full loop.
         #expect(day1?.displaySteps.map({ $0.id }) == ["goal", "first_interview"])
         #expect(day1?.displayTotalCount == 2)
         #expect(day1?.displayCompletedCount == 2)
         #expect(day1?.isDisplayComplete == true)
-        #expect(day7?.displaySteps.count == 5)
-        #expect(day7?.displayCompletedCount == 3)
+        #expect(day7?.displaySteps.map({ $0.id }) == ["interview", "execution"])
+        #expect(day7?.displayTotalCount == 2)
+        #expect(day7?.displayCompletedCount == 0)
 
         #expect(event.dayProgress?.recordedDaysDescending.first?.day == 7)
         #expect(event.error == nil)
@@ -1998,13 +2108,13 @@ struct SidecarEventDecodingTests {
             "schemaVersion": 1,
             "day": 30,
             "onboarding": {
-              "role": "developer",
+              "focusArea": "development",
               "timeBudget": "daily_1_2h",
               "blocker": "building",
               "records": "project_folder,work_log",
               "projectPath": "/Users/october/prj/myapp",
               "readSources": ["GitHub:connected", "Notion:disabled"],
-              "summary": "역할=developer"
+              "summary": "집중영역=development"
             },
             "dayRollup": [
               {
@@ -2138,15 +2248,23 @@ struct SidecarEventDecodingTests {
         #expect(day2.displayTotalCount == 2)
         #expect(day2.displayCompletedCount == 0)
 
-        // Day 3+ (standard) is unaffected — the full macro loop stays visible.
-        let day7 = DayRecord(
+        let day3 = DayRecord(
+            day: 3,
+            kind: .standard,
+            steps: ["scan": .done, "retro": .done, "goal": .done, "interview": .active, "execution": .pending]
+        )
+        #expect(day3.displaySteps.map({ $0.id }) == ["interview", "execution"])
+        #expect(day3.displayTotalCount == 2)
+        #expect(day3.displayCompletedCount == 0)
+
+        let day7GoalBlocked = DayRecord(
             day: 7,
             kind: .standard,
             steps: ["scan": .done, "retro": .done, "goal": .active, "interview": .pending, "execution": .pending]
         )
-        #expect(day7.displaySteps.map({ $0.id }) == ["scan", "retro", "goal", "interview", "execution"])
-        #expect(day7.displayTotalCount == 5)
-        #expect(day7.displayCompletedCount == 2)
+        #expect(day7GoalBlocked.displaySteps.map({ $0.id }) == ["goal", "interview", "execution"])
+        #expect(day7GoalBlocked.displayTotalCount == 3)
+        #expect(day7GoalBlocked.displayCompletedCount == 0)
     }
 
     @MainActor @Test func decodesWorkspaceScanResultWithDay1SituationSummary() throws {
@@ -2978,7 +3096,6 @@ struct SidecarEventDecodingTests {
                     "impact": "strengthens",
                     "confidence": "strong",
                     "whyItMatters": "가격 ask 기준이 생깁니다.",
-                    "suggestedHypothesisUpdate": "ICP에 paid tool spend를 추가",
                     "suggestedDocTargets": ["ICP.md", "SPEC.md"],
                     "relatedDays": [2, 5, 27],
                     "relatedAnswerIds": ["answer-1"],

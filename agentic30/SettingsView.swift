@@ -932,11 +932,11 @@ struct SettingsView: View {
                     odSettingsToggle(isOn: Binding(get: { loginItemsManager.isEnabled }, set: { loginItemsManager.setEnabled($0) }))
                         .accessibilityIdentifier("settings.menubar.launchAtLogin.toggle")
                 }
-                odSettingsRow(title: "질문 준비 알림", detail: "Office Hours 인터뷰에서 다음 질문 생성이 끝나면, 앱이 백그라운드일 때 macOS 알림을 보냅니다.") {
+                odSettingsRow(title: "질문 준비 알림", detail: "Office Hours 질문이 준비됐는데 앱이 뒤에 있을 때만 macOS 알림을 보냅니다.") {
                     odSettingsToggle(isOn: $questionReadyNotificationEnabled)
                         .accessibilityIdentifier("settings.menubar.questionReadyNotification.toggle")
                 }
-                odSettingsRow(title: "작업 완료 알림", detail: "브리핑, 리서치, 히스토리, 문서 생성처럼 오래 걸리는 작업이 끝나면 macOS 알림을 보냅니다.") {
+                odSettingsRow(title: "작업 완료 알림", detail: "사용자가 시작한 브리핑, 리서치, 히스토리, 문서 생성이 끝났거나 확인이 필요할 때만 알림을 보냅니다.") {
                     odSettingsToggle(isOn: $longRunningCompletionNotificationEnabled)
                         .accessibilityIdentifier("settings.menubar.longRunningCompletionNotification.toggle")
                 }
@@ -1190,6 +1190,7 @@ struct SettingsView: View {
     private func exaMcpControls() -> some View {
         let actionLocked = viewModel.integrationStatusChecking || viewModel.exaMcpConnecting || !viewModel.isConnected
         let caption = exaMcpCaption
+        let isConnected = exaMcpIsConnected
         return VStack(alignment: .trailing, spacing: 6) {
             HStack(spacing: 8) {
                 odSettingsStatus(
@@ -1197,24 +1198,27 @@ struct SettingsView: View {
                     color: exaMcpStatusColor,
                     isLoading: viewModel.integrationStatusChecking || viewModel.exaMcpConnecting
                 )
-                odSettingsGhostButton(
-                    title: "상태 확인",
-                    systemImage: "arrow.clockwise",
-                    width: 88,
-                    identifier: "settings.exa.refreshStatusButton",
-                    isDisabled: actionLocked
-                ) {
-                    viewModel.refreshIntegrationStatus()
-                }
-                odSettingsGhostButton(
-                    title: "MCP 연결",
-                    systemImage: "link",
-                    width: 96,
-                    identifier: "settings.exa.mcpConnectButton",
-                    isDisabled: actionLocked,
-                    isLoading: viewModel.exaMcpConnecting
-                ) {
-                    presentExaMcpModal()
+                if isConnected {
+                    odSettingsGhostButton(
+                        title: "상태 확인",
+                        systemImage: "arrow.clockwise",
+                        width: 88,
+                        identifier: "settings.exa.refreshStatusButton",
+                        isDisabled: actionLocked
+                    ) {
+                        viewModel.refreshIntegrationStatus()
+                    }
+                } else {
+                    odSettingsGhostButton(
+                        title: "MCP 연결",
+                        systemImage: "link",
+                        width: 96,
+                        identifier: "settings.exa.mcpConnectButton",
+                        isDisabled: actionLocked,
+                        isLoading: viewModel.exaMcpConnecting
+                    ) {
+                        presentExaMcpModal()
+                    }
                 }
             }
 
@@ -1228,6 +1232,15 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.exa.mcpCaption")
         }
         .frame(maxWidth: 420, alignment: .trailing)
+    }
+
+    private var exaMcpIsConnected: Bool {
+        if viewModel.exaMcpConnecting { return false }
+        if let result = viewModel.exaMcpConnectResult {
+            if result.isReady { return true }
+            if result.isFailed || result.isMissing { return false }
+        }
+        return viewModel.integrationStatus?.exa?.isReady == true
     }
 
     private var exaMcpApiKeySheet: some View {
@@ -1384,6 +1397,7 @@ struct SettingsView: View {
         identifier: String
     ) -> some View {
         let isConnecting = viewModel.mcpOauthConnecting.contains(server)
+        let isConnected = mcpIntegrationIsConnected(server: server, probe: probe)
         return VStack(alignment: .trailing, spacing: 6) {
             HStack(spacing: 8) {
                 odSettingsStatus(
@@ -1399,6 +1413,16 @@ struct SettingsView: View {
                         identifier: "\(identifier).stop"
                     ) {
                         viewModel.cancelMcpOauth(server: server)
+                    }
+                } else if isConnected {
+                    odSettingsGhostButton(
+                        title: "상태 확인",
+                        systemImage: "arrow.clockwise",
+                        width: 88,
+                        identifier: "settings.\(server).refreshStatusButton",
+                        isDisabled: integrationActionLocked(for: server)
+                    ) {
+                        viewModel.refreshIntegrationStatus()
                     }
                 } else {
                     odSettingsGhostButton(
@@ -1425,6 +1449,14 @@ struct SettingsView: View {
             }
         }
         .frame(maxWidth: 360, alignment: .trailing)
+    }
+
+    private func mcpIntegrationIsConnected(server: String, probe: IntegrationProbeStatus?) -> Bool {
+        if viewModel.mcpOauthConnecting.contains(server) { return false }
+        if let result = viewModel.mcpOauthResults[server] {
+            return result.isReady
+        }
+        return probe?.isReady == true
     }
 
     private func mcpCompactCaption(server: String, probe: IntegrationProbeStatus?) -> (text: String, color: Color)? {

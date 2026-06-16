@@ -325,6 +325,10 @@ test("isProviderAuthRequiredError detects expected provider auth setup prompts",
     true,
   );
   assert.equal(
+    isProviderAuthRequiredError(new Error("ACP Codex mode requires CODEX_API_KEY or OPENAI_API_KEY.")),
+    true,
+  );
+  assert.equal(
     isProviderAuthRequiredError(new Error("Claude Code에 로그인하거나 ANTHROPIC_API_KEY를 설정하세요.")),
     true,
   );
@@ -590,6 +594,7 @@ test("buildCodexConfig keeps office_hours_question on the structured-input-only 
     });
 
     assert.deepEqual(Object.keys(config.mcp_servers), ["agentic30_sidecar"]);
+    assert.equal(config.mcp_servers.agentic30_sidecar.env.AGENTIC30_EXECUTION_MODE, "office_hours_question");
     assert.deepEqual(
       config.mcp_servers.agentic30_sidecar.enabled_tools,
       ["agentic30_request_user_input", "AskUserQuestion", "ask_user_question"],
@@ -748,6 +753,10 @@ test("provider permission bypass requires an approved agentic action", () => {
   );
   assert.equal(
     codexSandboxForExecution({ executionMode: "agentic", approvedToolExecution: false }),
+    "read-only",
+  );
+  assert.equal(
+    codexSandboxForExecution({ executionMode: "judge_read_only", approvedToolExecution: true }),
     "read-only",
   );
 });

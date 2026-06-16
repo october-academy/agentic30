@@ -128,6 +128,22 @@ struct OfficeHoursQuestionReadyNotification: Hashable, Sendable {
             .nonEmpty
     }
 
+    static func notificationTitle(from sidecarTitle: String?) -> String {
+        isFirstQuestionTitle(sidecarTitle) ? "첫 질문 준비 완료" : "다음 질문 준비 완료"
+    }
+
+    static func notificationBody(from sidecarTitle: String?) -> String {
+        isFirstQuestionTitle(sidecarTitle)
+            ? "열어서 첫 질문에 답하고 Office Hours를 시작하세요."
+            : "열어서 다음 질문에 답하고 Office Hours를 이어가세요."
+    }
+
+    private static func isFirstQuestionTitle(_ title: String?) -> Bool {
+        title?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .contains("첫 질문") == true
+    }
+
     var appRoute: AgenticAppRoute {
         AgenticAppRoute(
             destination: .officeHoursQuestion(sessionId: sessionId, requestId: requestId),
@@ -234,11 +250,18 @@ struct McpOauthConnectedNotification: Hashable, Sendable {
     }
 
     var notificationTitle: String {
-        "\(Self.displayName(for: server)) MCP 연결 완료"
+        "\(Self.displayName(for: server)) 연동 완료"
     }
 
     var notificationBody: String {
-        "AI 실행에서 바로 사용할 수 있어요."
+        switch Self.normalizedServer(server) {
+        case "posthog":
+            return "다음 브리핑에서 제품 지표를 함께 볼 수 있어요."
+        case "cloudflare":
+            return "다음 브리핑에서 트래픽 신호를 함께 볼 수 있어요."
+        default:
+            return "다음 브리핑에서 새 연동 신호를 함께 볼 수 있어요."
+        }
     }
 
     var appRoute: AgenticAppRoute {
@@ -340,6 +363,157 @@ extension LongRunningCompletionNotificationKind {
         default:
             return nil
         }
+    }
+}
+
+enum LocalNotificationCopyPolicy {
+    private static let maxBodyLength = 90
+    private static let unsafeBodyNeedles = [
+        "http://",
+        "https://",
+        "www.",
+        "api",
+        "apikey",
+        "auth",
+        "bearer",
+        "command not found",
+        "digest failed",
+        "digest succeeded",
+        "error",
+        "exception",
+        "external mcp digest",
+        "failed",
+        "forbidden",
+        "is required",
+        "mcp",
+        "oauth",
+        "raw error",
+        "secret",
+        "stack trace",
+        "stderr",
+        "stdout",
+        "succeeded",
+        "token",
+        "traceback",
+        "unauthorized",
+    ]
+
+    static func safeBodyCandidate(_ candidate: String?) -> String? {
+        guard let cleaned = candidate?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty else {
+            return nil
+        }
+        guard cleaned.count <= maxBodyLength,
+              cleaned.rangeOfCharacter(from: .newlines) == nil,
+              containsKorean(cleaned) else {
+            return nil
+        }
+        let lowercased = cleaned.lowercased()
+        guard !unsafeBodyNeedles.contains(where: { lowercased.contains($0) }) else {
+            return nil
+        }
+        return cleaned
+    }
+
+    static func morningBriefingSuccessDetail(_ briefing: MorningBriefing?) -> String {
+        if let verdictTitle = safeBodyCandidate(briefing?.customerEvidenceVerdict?.title) {
+            return verdictTitle
+        }
+        if let statement = safeBodyCandidate(briefing?.summary?.statement) {
+            return statement
+        }
+        return "밤사이 제품·고객 신호를 정리했어요."
+    }
+
+    static func morningBriefingFailureDetail(_ detail: String?) -> String {
+        safeBodyCandidate(detail)
+            ?? "브리핑을 끝내지 못했어요. 열어서 연결 상태를 확인하세요."
+    }
+
+    static func failedMorningBriefingSourceDetail(_ sources: [MorningBriefingStatusFailedSource]) -> String {
+        let labels = sources
+            .map { ($0.label ?? $0.id).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(2)
+        let labelText = labels.isEmpty ? "일부 소스" : labels.joined(separator: " · ")
+        return "\(labelText) 수집을 완료하지 못했어요. 브리핑에서 연결 상태를 확인하세요."
+    }
+
+    static func longRunningBody(
+        kind: LongRunningCompletionNotificationKind,
+        outcome: LongRunningCompletionOutcome,
+        docPath: String?,
+        detail: String?
+    ) -> String {
+        if let safeDetail = safeBodyCandidate(detail) {
+            return safeDetail
+        }
+
+        switch (kind, outcome) {
+        case (.morningBriefing, .success):
+            return "밤사이 제품·고객 신호를 정리했어요."
+        case (.morningBriefing, _):
+            return "브리핑을 끝내지 못했어요. 열어서 연결 상태를 확인하세요."
+        case (.workspaceScan, .success):
+            return "워크스페이스 분석이 끝났고 Day 1을 이어갈 수 있어요."
+        case (.workspaceScan, .blocked):
+            if let provider = providerName(in: detail) {
+                return "\(provider) 로그인이 필요해 워크스페이스 분석을 멈췄어요."
+            }
+            return "AI 연결 확인이 필요해 워크스페이스 분석을 멈췄어요."
+        case (.workspaceScan, .failed):
+            return "워크스페이스 분석을 끝내지 못했어요. 열어서 다시 시도하세요."
+        case (.documentCreation, .success):
+            if let docPath {
+                return "\((docPath as NSString).lastPathComponent)을 만들었어요."
+            }
+            return "요청한 문서를 만들었어요."
+        case (.documentCreation, _):
+            return "문서를 만들지 못했어요. 열어서 다시 시도하세요."
+        case (.workHistory, .success):
+            return "이번 주 작업 히스토리를 볼 수 있어요."
+        case (.workHistory, _):
+            return "히스토리를 끝내지 못했어요. 열어서 연결 상태를 확인하세요."
+        case (.bipResearch, .success):
+            return "새 고객 후보와 공개 신호를 확인할 수 있어요."
+        case (.bipResearch, _):
+            return "고객 후보 리서치를 끝내지 못했어요. 열어서 다시 시도하세요."
+        case (.newsMarketRadar, .success):
+            return "새 시장 신호 카드를 확인할 수 있어요."
+        case (.newsMarketRadar, _):
+            return "시장 신호 업데이트를 끝내지 못했어요. 열어서 다시 시도하세요."
+        case (.strategyReport, .success):
+            return "새 전략 리포트를 확인할 수 있어요."
+        case (.strategyReport, _):
+            return "전략 리포트를 끝내지 못했어요. 열어서 다시 시도하세요."
+        case (.bipMission, .success):
+            return "근거 기반 실행 미션을 확인할 수 있어요."
+        case (.bipMission, _):
+            return "오늘 미션을 만들지 못했어요. 열어서 다시 시도하세요."
+        }
+    }
+
+    private static func containsKorean(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0xAC00...0xD7A3, 0x3130...0x318F:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func providerName(in detail: String?) -> String? {
+        let lowercased = detail?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        if lowercased.contains("codex") { return "Codex" }
+        if lowercased.contains("claude") { return "Claude" }
+        if lowercased.contains("gemini") { return "Gemini" }
+        if lowercased.contains("cursor") { return "Cursor" }
+        return nil
     }
 }
 
@@ -450,49 +624,12 @@ struct LongRunningCompletionNotification: Hashable, Sendable {
     }
 
     var notificationBody: String {
-        if let detail {
-            return detail
-        }
-
-        switch (kind, outcome) {
-        case (.morningBriefing, .success):
-            return "클릭하면 아침 브리핑을 엽니다."
-        case (.morningBriefing, _):
-            return "브리핑 수집을 완료하지 못했어요."
-        case (.workspaceScan, .success):
-            return "워크스페이스 분석이 끝났고 Day 1을 이어갈 수 있어요."
-        case (.workspaceScan, .blocked):
-            return "AI 연결 또는 권한 확인이 필요해요."
-        case (.workspaceScan, .failed):
-            return "워크스페이스 분석을 완료하지 못했어요."
-        case (.documentCreation, .success):
-            if let docPath {
-                return "\((docPath as NSString).lastPathComponent)을 만들었어요."
-            }
-            return "요청한 문서를 만들었어요."
-        case (.documentCreation, _):
-            return "문서를 만들지 못했어요."
-        case (.workHistory, .success):
-            return "이번 주 작업 히스토리를 볼 수 있어요."
-        case (.workHistory, _):
-            return "히스토리 인덱싱을 완료하지 못했어요."
-        case (.bipResearch, .success):
-            return "새 고객 후보와 공개 신호를 확인할 수 있어요."
-        case (.bipResearch, _):
-            return "고객 후보 리서치를 완료하지 못했어요."
-        case (.newsMarketRadar, .success):
-            return "새 시장 신호 카드를 확인할 수 있어요."
-        case (.newsMarketRadar, _):
-            return "시장 신호 업데이트를 완료하지 못했어요."
-        case (.strategyReport, .success):
-            return "새 전략 리포트를 확인할 수 있어요."
-        case (.strategyReport, _):
-            return "전략 리포트 생성을 완료하지 못했어요."
-        case (.bipMission, .success):
-            return "근거 기반 실행 미션을 확인할 수 있어요."
-        case (.bipMission, _):
-            return "미션 생성에 실패했어요."
-        }
+        LocalNotificationCopyPolicy.longRunningBody(
+            kind: kind,
+            outcome: outcome,
+            docPath: docPath,
+            detail: detail
+        )
     }
 
     var userInfo: [AnyHashable: Any] {
@@ -534,6 +671,69 @@ enum LongRunningCompletionNotifier {
         }
         return !isAppActive || elapsed >= activeAppMinimumElapsed
     }
+}
+
+struct MorningBriefingCompletionClassification: Equatable {
+    let isCollectingSnapshot: Bool
+    let outcome: LongRunningCompletionOutcome?
+    let detail: String?
+}
+
+enum MorningBriefingCompletionClassifier {
+    static func classify(
+        topLevelStatus: MorningBriefingStatus?,
+        briefing: MorningBriefing?
+    ) -> MorningBriefingCompletionClassification {
+        let state = topLevelStatus?.state?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if ["collecting", "refreshing", "running"].contains(state) {
+            return MorningBriefingCompletionClassification(
+                isCollectingSnapshot: true,
+                outcome: nil,
+                detail: nil
+            )
+        }
+        if state == "failed" || state == "error" {
+            return MorningBriefingCompletionClassification(
+                isCollectingSnapshot: false,
+                outcome: .failed,
+                detail: LocalNotificationCopyPolicy.morningBriefingFailureDetail(
+                    topLevelStatus?.detail ?? briefing?.status?.detail
+                )
+            )
+        }
+        let failedSources = selectedFailedSources(topLevelStatus: topLevelStatus, briefing: briefing)
+        if !failedSources.isEmpty {
+            return MorningBriefingCompletionClassification(
+                isCollectingSnapshot: false,
+                outcome: .failed,
+                detail: LocalNotificationCopyPolicy.failedMorningBriefingSourceDetail(failedSources)
+            )
+        }
+        return MorningBriefingCompletionClassification(
+            isCollectingSnapshot: false,
+            outcome: .success,
+            detail: LocalNotificationCopyPolicy.morningBriefingSuccessDetail(briefing)
+        )
+    }
+
+    private static func selectedFailedSources(
+        topLevelStatus: MorningBriefingStatus?,
+        briefing: MorningBriefing?
+    ) -> [MorningBriefingStatusFailedSource] {
+        if let failedSources = topLevelStatus?.failedSources, !failedSources.isEmpty {
+            return failedSources
+        }
+        return (briefing?.sync?.sources ?? [])
+            .filter { $0.selected == true && $0.state == "failed" }
+            .map {
+                MorningBriefingStatusFailedSource(
+                    id: $0.id,
+                    label: $0.label,
+                    detail: $0.detail
+                )
+            }
+    }
+
 }
 
 private struct LongRunningCompletionAttempt: Equatable {
@@ -1644,13 +1844,8 @@ enum DayLoopSteps {
     static let day1: [String] = ["onboarding", "scan", "goal", "first_interview"]
     static let standard: [String] = ["scan", "retro", "goal", "interview", "execution"]
 
-    // Day-1 intro stages auto-complete before Office Hours opens, so the macro
-    // stepper + progress badges hide them — Day 1 surfaces only the stages the
-    // user actively works (목표 → 첫 인터뷰). Day 2 starts after scan/retro/goal,
-    // so the display axis opens directly on 인터뷰 → 실행 while the stored data
-    // keeps the full standard loop for gates/resume.
     static let day1HiddenFromDisplay: Set<String> = ["onboarding", "scan"]
-    static let day2HiddenFromDisplay: Set<String> = ["scan", "retro", "goal"]
+    static let standardPreparationSteps: Set<String> = ["scan", "retro", "goal"]
 
     static func kind(forDay day: Int) -> DayKind { day == 1 ? .day1 : .standard }
 
@@ -1658,17 +1853,14 @@ enum DayLoopSteps {
         kind == .day1 ? day1 : standard
     }
 
-    /// Stepper/progress-visible step ids — drops completed setup stages for
-    /// Day 1 and Day 2. Day 3+ mirrors `ids` exactly.
-    static func displayIds(forDay day: Int, kind: DayKind) -> [String] {
-        let all = ids(forDay: day, kind: kind)
+    static func displayIds(forDay dayNumber: Int, kind: DayKind, steps: [String: DayStepStatus]) -> [String] {
+        let all = ids(forDay: dayNumber, kind: kind)
         if kind == .day1 {
             return all.filter { !day1HiddenFromDisplay.contains($0) }
         }
-        if day == 2 {
-            return all.filter { !day2HiddenFromDisplay.contains($0) }
+        return all.filter { id in
+            !standardPreparationSteps.contains(id) || steps[id] != .done
         }
-        return all
     }
 
     static func label(for stepId: String) -> String {
@@ -1714,10 +1906,8 @@ struct DayRecord: Codable, Equatable, Hashable {
         }
     }
 
-    /// Stepper/progress-visible steps — hides completed setup stages for Day 1
-    /// and Day 2 while preserving the full data axis in `orderedSteps`.
     var displaySteps: [(id: String, label: String, status: DayStepStatus)] {
-        DayLoopSteps.displayIds(forDay: day, kind: kind).map { id in
+        DayLoopSteps.displayIds(forDay: day, kind: kind, steps: steps).map { id in
             (id, DayLoopSteps.label(for: id), steps[id] ?? .pending)
         }
     }
@@ -1727,7 +1917,7 @@ struct DayRecord: Codable, Equatable, Hashable {
     var isComplete: Bool { completedCount == totalCount }
 
     /// Display-scoped counts (Day-1 intro stages excluded) for the stepper + sidebar badges.
-    var displayTotalCount: Int { DayLoopSteps.displayIds(forDay: day, kind: kind).count }
+    var displayTotalCount: Int { DayLoopSteps.displayIds(forDay: day, kind: kind, steps: steps).count }
     var displayCompletedCount: Int { displaySteps.filter { $0.status == .done }.count }
     var isDisplayComplete: Bool { displayCompletedCount == displayTotalCount }
 }
@@ -1793,7 +1983,7 @@ struct OfficeHoursMemorySummary: Codable, Equatable, Hashable {
 
 struct OfficeHoursHistorySummary: Codable, Equatable, Hashable {
     struct Onboarding: Codable, Equatable, Hashable {
-        let role: String?
+        let focusArea: String?
         let timeBudget: String?
         let blocker: String?
         let records: String?
@@ -1802,12 +1992,12 @@ struct OfficeHoursHistorySummary: Codable, Equatable, Hashable {
         let summary: String?
 
         enum CodingKeys: String, CodingKey {
-            case role, timeBudget, blocker, records, projectPath, readSources, summary
+            case focusArea, timeBudget, blocker, records, projectPath, readSources, summary
         }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            role = try c.decodeIfPresent(String.self, forKey: .role)
+            focusArea = try c.decodeIfPresent(String.self, forKey: .focusArea)
             timeBudget = try c.decodeIfPresent(String.self, forKey: .timeBudget)
             blocker = try c.decodeIfPresent(String.self, forKey: .blocker)
             records = try c.decodeIfPresent(String.self, forKey: .records)
@@ -2787,6 +2977,7 @@ final class AgenticViewModel: ObservableObject {
     private var pendingWorkspaceScanRoot: String?
     private var pendingWorkspaceScanProvider: AgentProvider?
     private var pendingProjectContextRefresh: PendingProjectContextRefresh?
+    private var pendingStrategyReportRefresh: PendingStrategyReportRefresh?
     private var attemptedStartupWorkspaceScanRecoveryRoots = Set<String>()
     #if DEBUG
     static var workspaceScanResultAppSupportURLOverrideForTesting: URL?
@@ -2830,6 +3021,11 @@ final class AgenticViewModel: ObservableObject {
         let completedDay: Int
         let unlockedDay: Int
         let workspaceRoot: String
+    }
+
+    private struct PendingStrategyReportRefresh: Hashable {
+        let reason: String
+        let force: Bool
     }
 
     /// Legacy global key used before the progress state became workspace-scoped.
@@ -3348,7 +3544,13 @@ final class AgenticViewModel: ObservableObject {
             requestId: prompt.requestId,
             answersByQuestionID: [:]
         )
-        let draft = state.answersByQuestionID[question.id] ?? StructuredPromptAnswerDraft()
+        var draft = state.answersByQuestionID[question.id] ?? StructuredPromptAnswerDraft()
+        let supportsFreeText = question.allowFreeText == true
+            || question.requiresFreeText == true
+            || question.options?.isEmpty != false
+        if supportsFreeText {
+            draft.selectedOptions.removeAll()
+        }
         state.answersByQuestionID[question.id] = draft
         structuredPromptDraftBySession[prompt.sessionId] = state
     }
@@ -5950,16 +6152,25 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    private func restoreWorkspaceSurfacesFromMemory() {
+        guard isConnected else { return }
+        _ = requestDayProgress()
+        requestMorningBriefing(autoRefreshIfStale: false)
+        requestStrategyReport()
+        requestNewsMarketRadar(autoRefreshIfDue: false)
+    }
+
     func requestDiagnostics() {
         PostHogTelemetry.capture("mac_diagnostics_requested", authSession: macAuthSession)
         sidecar.send(payload: ["type": "get_diagnostics"])
     }
 
-    func requestNewsMarketRadar() {
+    func requestNewsMarketRadar(autoRefreshIfDue: Bool = false) {
         guard isConnected else { return }
         sidecar.send(payload: [
             "type": "news_market_radar_get",
             "preferredProvider": selectedProvider.rawValue,
+            "autoRefreshIfDue": autoRefreshIfDue,
         ])
     }
 
@@ -5993,7 +6204,9 @@ final class AgenticViewModel: ObservableObject {
         if emitUITestingStrategyReportEventsIfRequested() { return }
         #endif
         guard isConnected else {
-            strategyReportPreparingForDisplay = false
+            pendingStrategyReportRefresh = PendingStrategyReportRefresh(reason: reason, force: force)
+            strategyReportPreparingForDisplay = true
+            strategyReportDynamicActivated = true
             return
         }
         strategyReportPreparingForDisplay = true
@@ -6013,6 +6226,12 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    private func flushPendingStrategyReportRefreshIfNeeded() {
+        guard let refresh = pendingStrategyReportRefresh else { return }
+        pendingStrategyReportRefresh = nil
+        refreshStrategyReport(reason: refresh.reason, force: refresh.force)
+    }
+
     func prepareNewsMarketRadarForDisplay() {
         lastNewsMarketRadarViewedAt = Date()
         #if DEBUG
@@ -6024,9 +6243,7 @@ final class AgenticViewModel: ObservableObject {
         }
         newsMarketRadarPreparingForDisplay = true
         markLongRunningCompletionDisplayInterest(.newsMarketRadar)
-        requestNewsMarketRadar()
-        guard shouldRefreshNewsMarketRadarForDisplay else { return }
-        refreshNewsMarketRadar(reason: "daily", force: false)
+        requestNewsMarketRadar(autoRefreshIfDue: true)
     }
 
     func requestWorkHistory() {
@@ -6070,9 +6287,15 @@ final class AgenticViewModel: ObservableObject {
         #endif
         guard isConnected else { return }
         markLongRunningCompletionDisplayInterest(.morningBriefing)
+        requestMorningBriefing(autoRefreshIfStale: true)
+    }
+
+    private func requestMorningBriefing(autoRefreshIfStale: Bool) {
+        guard isConnected else { return }
         sidecar.send(payload: [
             "type": "morning_briefing_get",
             "preferredProvider": selectedProvider.rawValue,
+            "autoRefreshIfStale": autoRefreshIfStale,
         ])
     }
 
@@ -6124,7 +6347,8 @@ final class AgenticViewModel: ObservableObject {
     private func emitUITestingMorningBriefingEventsIfRequested() -> Bool {
         let arguments = CommandLine.arguments
         let wantsLoadingFixture = arguments.contains("--ui-testing-stub-morning-briefing-loading")
-        guard wantsLoadingFixture || arguments.contains("--ui-testing-stub-morning-briefing-events") else {
+        let wantsFailedSourceFixture = arguments.contains("--ui-testing-stub-morning-briefing-failed-source")
+        guard wantsLoadingFixture || wantsFailedSourceFixture || arguments.contains("--ui-testing-stub-morning-briefing-events") else {
             return false
         }
         guard !didEmitUITestingMorningBriefingEvents else {
@@ -6157,7 +6381,7 @@ final class AgenticViewModel: ObservableObject {
             ]
             return true
         }
-        morningBriefing = .uiTestingSample
+        morningBriefing = wantsFailedSourceFixture ? .uiTestingFailedSourceSample : .uiTestingSample
         morningBriefingCollecting = false
         morningBriefingSourceProgress = [:]
         return true
@@ -6560,7 +6784,7 @@ final class AgenticViewModel: ObservableObject {
             competitors: [
                 StrategyReportCompetitor(id: "agentic30", title: "Agentic30", tag: "Adaptive PMF evidence loop", body: "내 프로젝트 기록을 읽어 오늘의 유료 ask와 증거 gate를 만듭니다.", gap: "검증 과제: 유료 pilot에서 first_value를 반복 입증해야 합니다.", x: 0.78, y: 0.22, adaptiveScore: 92, evidenceScore: 84, sourceLabel: "SPEC / ICP / Exa", sourceURL: "https://agentic30.com", sourceDisplay: "agentic30.com", verifiedAt: "2026-06", scoreRationale: "로컬 기록 기반 adaptive 과제와 evidence gate가 함께 있습니다.", category: "agentic30", isAgentic30: true, labelPlacement: "leading"),
                 StrategyReportCompetitor(id: "cursor", title: "Cursor", tag: "AI coding workspace", body: "빌드 속도는 높지만 PMF 증거 루프는 제품 밖에 있습니다.", gap: "Agentic30은 코딩 생산성 대신 고객 행동 증거를 닫습니다.", x: 0.72, y: 0.72, adaptiveScore: 80, evidenceScore: 35, sourceLabel: "Public docs", sourceURL: "https://cursor.com", sourceDisplay: "cursor.com", verifiedAt: "2026-06", scoreRationale: "코딩 적응성은 강하지만 paid ask 추적은 핵심 제품이 아닙니다.", category: "aiBuild", isAgentic30: false, labelPlacement: "trailing"),
-                StrategyReportCompetitor(id: "indiefounders", title: "IndieFounders", tag: "Founder community", body: "창업자 네트워크와 학습 콘텐츠는 있으나 로컬 evidence loop는 약합니다.", gap: "Agentic30은 커뮤니티가 아니라 매일 실행 기록에 붙습니다.", x: 0.32, y: 0.38, adaptiveScore: 42, evidenceScore: 58, sourceLabel: "Public site", sourceURL: "https://indiefounders.net", sourceDisplay: "indiefounders.net", verifiedAt: "2026-06", scoreRationale: "커뮤니티 증거는 있으나 제품 실행 자동화는 제한적입니다.", category: "community", isAgentic30: false, labelPlacement: "leading"),
+                StrategyReportCompetitor(id: "indiefounders", title: "IndieFounders", tag: "Founder community", body: "창업자 네트워크와 학습 콘텐츠는 있으나 로컬 evidence loop는 약합니다.", gap: "Agentic30은 커뮤니티가 아니라 매일 실행 기록에 붙습니다.", x: 0.04, y: 0.95, adaptiveScore: 4, evidenceScore: 5, sourceLabel: "Public site", sourceURL: "https://indiefounders.net", sourceDisplay: "indiefounders.net", verifiedAt: "2026-06", scoreRationale: "커뮤니티 증거는 있으나 제품 실행 자동화는 제한적입니다.", category: "community", isAgentic30: false, labelPlacement: "leading"),
             ],
             swotGroups: [
                 StrategyReportSWOTGroup(id: "strengths", title: "Strengths", tag: "내부 강점", tone: "accent", bullets: ["로컬 기록 기반 맥락", "매일 evidence gate로 이어지는 루프"]),
@@ -6766,7 +6990,6 @@ final class AgenticViewModel: ObservableObject {
                                     impact: "strengthens",
                                     confidence: "strong",
                                     whyItMatters: "리서치 갱신 후에도 선택한 뉴스 라우트가 유지되는지 확인합니다.",
-                                    suggestedHypothesisUpdate: nil,
                                     suggestedDocTargets: ["ICP.md"],
                                     relatedDays: [2, 5],
                                     relatedAnswerIds: ["ui-test-answer"],
@@ -6895,14 +7118,6 @@ final class AgenticViewModel: ObservableObject {
         return true
     }
     #endif
-
-    private var shouldRefreshNewsMarketRadarForDisplay: Bool {
-        if newsMarketRadar.status.state == "refreshing" { return false }
-        if newsMarketRadar.status.state == "stale" { return true }
-        if newsMarketRadar.status.state == "failed" { return true }
-        guard let generatedAt = newsMarketRadar.generatedAt else { return true }
-        return Date().timeIntervalSince(generatedAt) >= 24 * 60 * 60
-    }
 
     private func resolvedBipResearchDayNumber(_ explicitDayNumber: Int?) -> Int {
         let day = explicitDayNumber ?? foundationProgressState.currentDayNumber() ?? 1
@@ -7400,8 +7615,8 @@ final class AgenticViewModel: ObservableObject {
         PostHogTelemetry.capture("mac_onboarding_workspace_prefetch_requested", properties: [
             "workspace_basename": url.lastPathComponent,
             "work_mode": context.workMode.rawValue,
-            "role": context.role.rawValue,
-            "project_stage": context.projectStage.rawValue,
+            "focus_area": context.focusArea.rawValue,
+            "product_bottleneck": context.productBottleneck.rawValue,
         ], authSession: macAuthSession)
 
         start(allowOnboardingPrefetch: true, anchorFoundation: false)
@@ -7439,8 +7654,8 @@ final class AgenticViewModel: ObservableObject {
 
         PostHogTelemetry.capture("mac_onboarding_intake_only_prepared", properties: [
             "work_mode": context.workMode.rawValue,
-            "role": context.role.rawValue,
-            "project_stage": context.projectStage.rawValue,
+            "focus_area": context.focusArea.rawValue,
+            "product_bottleneck": context.productBottleneck.rawValue,
         ], authSession: macAuthSession)
     }
 
@@ -7451,8 +7666,8 @@ final class AgenticViewModel: ObservableObject {
         [
             url.standardizedFileURL.path,
             context.workMode.rawValue,
-            context.role.rawValue,
-            context.projectStage.rawValue,
+            context.focusArea.rawValue,
+            context.productBottleneck.rawValue,
             context.isolationLevel.rawValue,
             context.isolationLevels.map(\.rawValue).joined(separator: ","),
         ].joined(separator: "|")
@@ -7525,8 +7740,8 @@ final class AgenticViewModel: ObservableObject {
                 "has_goal": !context.goal.isEmpty,
                 "work_mode": context.workMode.rawValue,
                 "has_custom_work_mode": !context.customWorkMode.isEmpty,
-                "role": context.role.rawValue,
-                "project_stage": context.projectStage.rawValue,
+                "focus_area": context.focusArea.rawValue,
+                "product_bottleneck": context.productBottleneck.rawValue,
                 "isolation_level": context.isolationLevel.rawValue,
                 "isolation_levels": context.isolationLevels.map(\.rawValue).joined(separator: ","),
             ], authSession: macAuthSession)
@@ -7884,9 +8099,10 @@ final class AgenticViewModel: ObservableObject {
             sendAuthContextToSidecar()
             sendOnboardingMemoryToSidecarIfAvailable()
             syncProviderSettingsToSidecar()
+            restoreWorkspaceSurfacesFromMemory()
             refreshIntegrationStatus()
             flushPendingProjectContextRefreshIfNeeded()
-            prepareNewsMarketRadarForDisplay()
+            flushPendingStrategyReportRefreshIfNeeded()
             refreshPresentationState()
             requestCodexWarmupIfNeeded()
             requestBipReadinessCheck()
@@ -8531,16 +8747,24 @@ final class AgenticViewModel: ObservableObject {
             if let previous = event.morningBriefingPrevious {
                 morningBriefingPrevious = previous
             }
+            let completion = MorningBriefingCompletionClassifier.classify(
+                topLevelStatus: topLevelStatus,
+                briefing: event.morningBriefing
+            )
+            if completion.isCollectingSnapshot {
+                morningBriefingCollecting = true
+                return
+            }
             morningBriefingCollecting = false
             // 수집 종료: 카드별 진행 잔상을 지운다 — 완성 데이터가 자리를 대체.
             morningBriefingSourceProgress.removeAll()
-            let briefingState = topLevelStatus?.state ?? event.morningBriefing?.status?.state
-            let briefingDetail = topLevelStatus?.detail ?? event.morningBriefing?.status?.detail
-            completeLongRunningCompletionAttempt(
-                .morningBriefing,
-                outcome: briefingState == "failed" ? .failed : .success,
-                detail: briefingState == "failed" ? briefingDetail : event.morningBriefing?.summary?.title
-            )
+            if let outcome = completion.outcome {
+                completeLongRunningCompletionAttempt(
+                    .morningBriefing,
+                    outcome: outcome,
+                    detail: completion.detail
+                )
+            }
         case "morning_briefing_status":
             morningBriefingCollecting = event.morningBriefingStatus?.state == "collecting"
             if event.morningBriefingStatus?.state == "failed" {
@@ -11794,8 +12018,7 @@ final class AgenticViewModel: ObservableObject {
             await postQuestionReadyNotification(
                 sessionId: status.sessionId,
                 requestId: requestId,
-                title: title,
-                body: status.detail
+                title: title
             )
         }
     }
@@ -11991,14 +12214,13 @@ final class AgenticViewModel: ObservableObject {
     private func postQuestionReadyNotification(
         sessionId: String,
         requestId: String,
-        title: String,
-        body: String?
+        title: String
     ) async {
         let notification = OfficeHoursQuestionReadyNotification(sessionId: sessionId, requestId: requestId)
         let posted = await postLocalNotification(
             identifier: OfficeHoursQuestionReadyNotification.notificationIdentifier(requestId: requestId),
-            title: title,
-            body: body,
+            title: OfficeHoursQuestionReadyNotification.notificationTitle(from: title),
+            body: OfficeHoursQuestionReadyNotification.notificationBody(from: title),
             userInfo: notification.userInfo
         )
         guard posted else { return }
@@ -12309,8 +12531,8 @@ final class AgenticViewModel: ObservableObject {
             businessDescription: "Agentic30 직접 사용 워크스페이스",
             currentStage: "First users and onboarding validation",
             goal: "Complete Day 1 and verify curriculum setup",
-            role: .developer,
-            projectStage: .firstUsers,
+            focusArea: .development,
+            productBottleneck: .firstActiveUsers,
             isolationLevel: .projectFolder
         )
     }

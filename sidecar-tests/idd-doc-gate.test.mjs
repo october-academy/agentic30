@@ -341,21 +341,22 @@ test("initial IDD structured inputs are document-specific for GOAL, VALUES, and 
   assert.equal(spec.questions[0].requiresFreeText, false);
 });
 
-test("adaptive ICP self option labels support new onboarding roles", () => {
-  const marketerInput = buildAdaptiveIcpInitialInput({
-    onboardingContext: { role: "marketer_business" },
+test("adaptive ICP self option labels support onboarding focus areas", () => {
+  const acquisitionInput = buildAdaptiveIcpInitialInput({
+    onboardingContext: { focus_area: "customer_acquisition" },
   });
-  assert.match(marketerInput.questions[0].options[0].label, /마케터\/비즈니스 담당자/);
+  assert.match(acquisitionInput.questions[0].options[0].label, /고객 확보에 집중하는 사람/);
 
-  const generalistInput = buildAdaptiveIcpInitialInput({
-    onboardingContext: { role: "generalist" },
+  const monetizationInput = buildAdaptiveIcpInitialInput({
+    onboardingContext: { focus_area: "sales_monetization" },
   });
-  assert.match(generalistInput.questions[0].options[0].label, /여러 역할을 맡은 사람/);
+  assert.match(monetizationInput.questions[0].options[0].label, /판매\/수익화를 실험하는 사람/);
 
-  const legacyStudentInput = buildAdaptiveIcpInitialInput({
+  const legacyRoleInput = buildAdaptiveIcpInitialInput({
     onboardingContext: { role: "student" },
   });
-  assert.match(legacyStudentInput.questions[0].options[0].label, /나 같은 학생/);
+  assert.match(legacyRoleInput.questions[0].options[0].label, /나 또는 우리 팀/);
+  assert.doesNotMatch(legacyRoleInput.questions[0].options[0].label, /학생/);
 });
 
 test("IDD setup error is serialized for the Mac surface", () => {

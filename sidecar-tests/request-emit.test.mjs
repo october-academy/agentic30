@@ -10,7 +10,16 @@ import {
   createUserInputRequest,
   listUserInputRequests,
 } from "../sidecar/user-input.mjs";
-import { appendOfficeHoursTurn } from "../sidecar/workspace-memory.mjs";
+import { saveDay1GoalSelection } from "../sidecar/day1-goal-state.mjs";
+import {
+  appendOfficeHoursTurn,
+  loadDayMemory,
+  loadOfficeHoursTurnLog,
+  saveOnboardingMemory,
+} from "../sidecar/workspace-memory.mjs";
+import {
+  persistNewsMarketRadarSnapshot,
+} from "../sidecar/news-market-radar.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -828,6 +837,129 @@ test("office_hours Codex-style MCP request waits for submit before continuation"
   }
 });
 
+test("office_hours Day 3 answer persists to memory before the next Codex card", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+    },
+  });
+  let ws;
+  try {
+    await initGitRepo(harness.workspacePath);
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 3,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: [
+        "Office Hours mode: Startup",
+        "Office Hours day: 3",
+        "Expected question count: 6",
+        "Yesterday briefing: 고객 행동 증거 공백",
+        "Goal text: Support leads will pay to avoid missed Slack escalations.",
+      ].join("\n"),
+      visiblePrompt: "Test Day 3 Office Hours",
+      source: "office_hours_day_3",
+      day: 3,
+      selectedSources: ["git"],
+    }));
+
+    const pending = await waitForPendingOfficeHoursPrompt(ws, created.session.id);
+    submitStructuredAnswer(ws, created.session.id, pending, {
+      selectedOptions: [],
+      freeText: "아직 보내지 못했다",
+    });
+    const followup = await waitForPendingOfficeHoursPrompt(ws, created.session.id, pending.requestId);
+
+    assert.notEqual(followup.requestId, pending.requestId);
+    const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot: harness.workspacePath });
+    assert.equal(
+      turnLog.turns.some((turn) =>
+        turn.day === 3
+          && turn.sessionId === created.session.id
+          && turn.requestId === pending.requestId
+          && turn.responseText === "아직 보내지 못했다"
+      ),
+      true,
+    );
+    const dayMemory = await loadDayMemory({ workspaceRoot: harness.workspacePath, day: 3 });
+    assert.equal(
+      dayMemory?.details?.officeHoursTurns?.some((turn) =>
+        turn.requestId === pending.requestId && turn.responseText === "아직 보내지 못했다"
+      ),
+      true,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours pending Codex tool result without request transport fails explicitly", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_RESULT_ONLY: "1",
+    },
+  });
+  let ws;
+  try {
+    await initGitRepo(harness.workspacePath);
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 3,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: "Office Hours mode: Startup\nOffice Hours day: 3\nExpected question count: 6",
+      visiblePrompt: "Test result-only Codex Office Hours",
+      source: "office_hours_day_3",
+      day: 3,
+      selectedSources: ["git"],
+    }));
+
+    const failed = await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "error"
+        && /pending_user_input but no pending request was attachable/.test(event.session?.error || "")
+    );
+    assert.equal(failed.session.pendingUserInput, null);
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "session_updated"
+          && event.session?.id === created.session.id
+          && event.session?.status === "awaiting_input"
+      ),
+      false,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("office_hours Day 1 stops at expected six questions and suppresses stray seventh request", async () => {
   const harness = await spawnSidecar();
   let ws;
@@ -1138,6 +1270,494 @@ test("office_hours_start blocks Day 2+ when no live source exists", async () => 
   }
 });
 
+test("morning_briefing_get marks selected failed sources on final result metadata", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    await seedMorningBriefingStore(harness.workspacePath, {
+      generatedAt: new Date().toISOString(),
+      cloudflareState: "failed",
+      cloudflareSelected: true,
+      cloudflareDetail: "Cloudflare MCP 도구를 사용할 수 없어 집계 트래픽을 계산하지 못했습니다.",
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "morning_briefing_get",
+      preferredProvider: "codex",
+    }));
+
+    const result = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_result"
+        && event.status?.snapshot === false
+        && event.status?.failedSources?.some((source) => source.id === "cloudflare"),
+    );
+    assert.equal(result.status.state, "ready");
+    assert.equal(result.status.failedSources[0].label, "Cloudflare");
+    assert.match(result.status.failedSources[0].detail, /Cloudflare MCP/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("morning_briefing_get marks cached snapshot while refresh is in flight", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: { AGENTIC30_TEST_MORNING_BRIEFING_REFRESH_DELAY_MS: "750" },
+  });
+  let ws;
+  try {
+    await seedMorningBriefingStore(harness.workspacePath, {
+      generatedAt: new Date().toISOString(),
+      cloudflareState: "ready",
+      cloudflareSelected: true,
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "morning_briefing_refresh",
+      reason: "manual",
+      force: true,
+      preferredProvider: "codex",
+    }));
+    const collecting = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_status"
+        && event.status?.state === "collecting"
+        && event.status?.runId,
+    );
+
+    ws.send(JSON.stringify({
+      type: "morning_briefing_get",
+      preferredProvider: "codex",
+    }));
+
+    const cached = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_result"
+        && event.status?.state === "collecting"
+        && event.status?.snapshot === true,
+    );
+    assert.equal(cached.status.reason, "refresh_in_flight");
+    assert.equal(cached.status.runId, collecting.status.runId);
+    assert.equal(cached.morningBriefing.summary.title, "밤사이 신호 요약");
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("morning_briefing_get with autoRefreshIfStale false restores stale cache without refresh", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    await seedMorningBriefingStore(harness.workspacePath, {
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      cloudflareState: "ready",
+      cloudflareSelected: true,
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "morning_briefing_get",
+      preferredProvider: "codex",
+      autoRefreshIfStale: false,
+    }));
+
+    const cached = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_result"
+        && event.status?.snapshot === true
+        && event.status?.reason === "startup_restore",
+    );
+    assert.equal(cached.status.state, "ready");
+    assert.equal(cached.morningBriefing.summary.title, "밤사이 신호 요약");
+
+    const statusCount = ws.events.filter((event) => event.type === "morning_briefing_status").length;
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.filter((event) => event.type === "morning_briefing_status").length,
+      statusCount,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("morning_briefing_get with autoRefreshIfStale false restores current cache as snapshot", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    await seedMorningBriefingStore(harness.workspacePath, {
+      generatedAt: new Date().toISOString(),
+      cloudflareState: "ready",
+      cloudflareSelected: true,
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "morning_briefing_get",
+      preferredProvider: "codex",
+      autoRefreshIfStale: false,
+    }));
+
+    const cached = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_result"
+        && event.status?.snapshot === true
+        && event.status?.reason === "startup_restore",
+    );
+    assert.equal(cached.status.state, "ready");
+    assert.equal(cached.morningBriefing.summary.title, "밤사이 신호 요약");
+
+    const statusCount = ws.events.filter((event) => event.type === "morning_briefing_status").length;
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.filter((event) => event.type === "morning_briefing_status").length,
+      statusCount,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("morning_briefing_get with autoRefreshIfStale false fails cache without verdict metadata", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    await seedMorningBriefingStore(harness.workspacePath, {
+      generatedAt: new Date().toISOString(),
+      cloudflareState: "ready",
+      cloudflareSelected: true,
+      includeVerdict: false,
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "morning_briefing_get",
+      preferredProvider: "codex",
+      autoRefreshIfStale: false,
+    }));
+
+    const failed = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_status"
+        && event.status?.state === "failed"
+        && event.status?.reason === "startup_restore",
+    );
+    assert.match(failed.status.detail, /판정 근거/);
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.some((event) => event.type === "morning_briefing_result"),
+      false,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("news_market_radar_get with autoRefreshIfDue false restores due cache without refresh", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    const generatedAt = "2026-01-01T00:00:00.000Z";
+    await persistNewsMarketRadarSnapshot({
+      workspaceRoot: harness.workspacePath,
+      now: new Date(generatedAt),
+      snapshot: {
+        schemaVersion: 1,
+        generatedAt,
+        nextRefreshAfter: "2026-01-01T01:00:00.000Z",
+        status: {
+          state: "ready",
+          lastSuccessAt: generatedAt,
+          stale: false,
+          researchSource: "test cache",
+        },
+        workspaceEvidenceRefs: [],
+        lanes: [{
+          id: "icp",
+          cards: [{
+            id: "icp-cache-card",
+            title: "Cached ICP signal",
+            summary: "Persisted market radar cache should render after restart.",
+            impact: "strengthens",
+            sourceRefs: [{ url: "https://example.com/icp", title: "ICP source" }],
+          }],
+        }],
+      },
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "news_market_radar_get",
+      preferredProvider: "codex",
+      autoRefreshIfDue: false,
+    }));
+
+    const cached = await waitForEvent(ws.events, (event) =>
+      event.type === "news_market_radar_result"
+        && event.newsMarketRadar?.lanes?.some((lane) =>
+          lane.id === "icp" && lane.cards?.some((card) => card.id === "icp-cache-card"),
+        ),
+    );
+    assert.equal(cached.newsMarketRadar.status.state, "ready");
+
+    const statusCount = ws.events.filter((event) => event.type === "news_market_radar_status").length;
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.filter((event) => event.type === "news_market_radar_status").length,
+      statusCount,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("morning_briefing_refresh does not run Cloudflare direct fallback after failed MCP digest", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    await seedMcpOauthState(harness.appSupportPath, {
+      cloudflare: {
+        codex: {
+          state: "ready",
+          detail: "Cloudflare MCP OAuth connection verified",
+          checkedAt: new Date().toISOString(),
+        },
+      },
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "morning_briefing_refresh",
+      reason: "manual",
+      force: true,
+      preferredProvider: "codex",
+    }));
+    const collecting = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_status"
+        && event.status?.state === "collecting"
+        && event.status?.runId,
+    );
+    await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_status"
+        && event.status?.runId === collecting.status.runId
+        && ["ready", "failed"].includes(event.status?.state),
+      45_000,
+    );
+
+    const runEvents = await readMorningBriefingRunLog(harness.workspacePath, collecting.status.runId);
+    const summary = runEvents.find((event) =>
+      event.stage === "external_digest_summary"
+        && event.source === "cloudflare"
+    );
+    assert.equal(summary?.state, "failed");
+    assert.equal(summary?.collectionState, "failed");
+
+    const direct = runEvents.find((event) =>
+      event.stage === "cloudflare_direct"
+        && event.outcome === "skipped"
+    );
+    assert.equal(direct?.reason, "mcp_digest_not_ready");
+    assert.equal(direct?.detail, summary.detail);
+    assert.equal(
+      runEvents.some((event) =>
+        event.stage === "cloudflare_direct"
+          && event.outcome === "started"
+      ),
+      false,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("morning_briefing_refresh completes verdict through judge_read_only with local stub auth", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: { AGENTIC30_TEST_STUB_MORNING_BRIEFING_EXTERNAL_DIGEST: "ready" },
+  });
+  let ws;
+  try {
+    await initGitRepo(harness.workspacePath);
+    await seedMorningBriefingVerdictContext(harness.workspacePath);
+    await seedMcpOauthState(harness.appSupportPath, {
+      posthog: {
+        codex: {
+          state: "ready",
+          detail: "PostHog MCP OAuth connection verified",
+          checkedAt: new Date().toISOString(),
+        },
+      },
+      cloudflare: {
+        codex: {
+          state: "ready",
+          detail: "Cloudflare MCP OAuth connection verified",
+          checkedAt: new Date().toISOString(),
+        },
+      },
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "morning_briefing_refresh",
+      reason: "manual",
+      force: true,
+      preferredProvider: "codex",
+    }));
+    const collecting = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_status"
+        && event.status?.state === "collecting"
+        && event.status?.runId,
+    );
+    const result = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_result"
+        && event.status?.runId === collecting.status.runId
+        && event.status?.state === "ready",
+      45_000,
+    );
+
+    assert.equal(result.morningBriefing.customerEvidenceVerdict.verdictProvider, "codex");
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "morning_briefing_status"
+          && event.status?.runId === collecting.status.runId
+          && event.status?.state === "failed"
+      ),
+      false,
+    );
+
+    const runEvents = await readMorningBriefingRunLog(harness.workspacePath, collecting.status.runId);
+    const started = runEvents.find((event) =>
+      event.stage === "verdict_provider"
+        && event.outcome === "started"
+    );
+    assert.equal(started?.provider, "codex");
+    assert.equal(started?.executionMode, "judge_read_only");
+
+    const validated = runEvents.find((event) =>
+      event.stage === "verdict_provider"
+        && event.outcome === "validated"
+    );
+    assert.equal(validated?.provider, "codex");
+    assert.equal(validated?.executionMode, "judge_read_only");
+    assert.equal(
+      runEvents.some((event) =>
+        event.stage === "verdict_provider"
+          && event.outcome === "failed"
+      ),
+      false,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("morning_briefing_refresh fails explicitly when verdict provider fails", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_MORNING_BRIEFING_EXTERNAL_DIGEST: "ready",
+      AGENTIC30_TEST_MORNING_BRIEFING_VERDICT_FAILURE: "1",
+    },
+  });
+  let ws;
+  try {
+    await initGitRepo(harness.workspacePath);
+    await seedMorningBriefingVerdictContext(harness.workspacePath);
+    await seedMcpOauthState(harness.appSupportPath, {
+      posthog: {
+        codex: {
+          state: "ready",
+          detail: "PostHog MCP OAuth connection verified",
+          checkedAt: new Date().toISOString(),
+        },
+      },
+      cloudflare: {
+        codex: {
+          state: "ready",
+          detail: "Cloudflare MCP OAuth connection verified",
+          checkedAt: new Date().toISOString(),
+        },
+      },
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "morning_briefing_refresh",
+      reason: "manual",
+      force: true,
+      preferredProvider: "codex",
+    }));
+    const collecting = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_status"
+        && event.status?.state === "collecting"
+        && event.status?.runId,
+    );
+    const failed = await waitForEvent(ws.events, (event) =>
+      event.type === "morning_briefing_status"
+        && event.status?.runId === collecting.status.runId
+        && event.status?.state === "failed",
+      45_000,
+    );
+
+    assert.match(failed.status.detail, /판정 생성 실패/);
+    assert.match(failed.status.detail, /Forced morning briefing verdict provider failure/);
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "morning_briefing_result"
+          && event.status?.runId === collecting.status.runId
+      ),
+      false,
+    );
+
+    const runEvents = await readMorningBriefingRunLog(harness.workspacePath, collecting.status.runId);
+    assert.equal(
+      runEvents.some((event) =>
+        event.stage === "verdict_provider"
+          && event.outcome === "failed"
+      ),
+      true,
+    );
+    assert.equal(
+      runEvents.filter((event) =>
+        event.stage === "verdict_provider"
+          && event.outcome === "started"
+      ).length,
+      1,
+    );
+    assert.equal(
+      runEvents.some((event) =>
+        event.stage === "verdict_provider"
+          && event.outcome === "fallback"
+      ),
+      false,
+    );
+    assert.equal(
+      runEvents.some((event) => event.stage === "persist"),
+      false,
+    );
+    assert.equal(
+      runEvents.some((event) =>
+        event.stage === "refresh"
+          && event.outcome === "completed"
+      ),
+      false,
+    );
+    assert.equal(
+      runEvents.some((event) =>
+        event.stage === "refresh"
+          && event.outcome === "failed"
+      ),
+      true,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("office_hours_start skips Day 2+ source gate in local dev fast-days mode", async () => {
   const harness = await spawnSidecar({
     extraEnv: { AGENTIC30_LOCAL_DEV_FAST_DAYS: "1" },
@@ -1266,10 +1886,39 @@ test("day_progress_patch skips milestone gates in local dev fast-days mode", asy
   }
 });
 
-test("day_progress_get emits Office Hours day close policy without changing proof sink contract", async () => {
+test("day_progress_get returns an empty default state when no file exists", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "day_progress_get",
+      workspaceRoot: harness.workspacePath,
+    }));
+
+    const progress = await waitForEvent(ws.events, (event) =>
+      event.type === "day_progress_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.dayProgress,
+    );
+
+    assert.equal(progress.dayProgress.schemaVersion, 1);
+    assert.equal(progress.dayProgress.schema, "agentic30.day_progress.v1");
+    assert.equal(progress.dayProgress.challengeStartedAt, null);
+    assert.deepEqual(progress.dayProgress.days, {});
+    assert.equal(progress.currentDay, null);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("day_progress_get emits persisted Day state and Office Hours day close policy", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    await seedDay1ActiveProgress(harness.workspacePath);
     ws = await connectAndCollect(harness);
 
     ws.send(JSON.stringify({
@@ -1284,6 +1933,8 @@ test("day_progress_get emits Office Hours day close policy without changing proo
     );
 
     assert.equal(progress.dayClosePolicy.role, "evidence_closing_operator");
+    assert.equal(progress.dayProgress.challengeStartedAt, localDateString(new Date()));
+    assert.equal(progress.dayProgress.days["1"].steps.first_interview, "active");
     assert.deepEqual(progress.dayClosePolicy.closeTypes, ["customer_evidence", "posted_url_target", "blocked", "carry"]);
     assert.equal(progress.dayClosePolicy.mandatoryBip.state, "target_behavior");
     assert.equal(progress.dayClosePolicy.mandatoryBip.currentProofSink, "local");
@@ -1544,6 +2195,148 @@ async function spawnSidecar({ extraEnv = {} } = {}) {
   };
 }
 
+async function seedMcpOauthState(appSupportPath, serversById = {}) {
+  const servers = {};
+  for (const [server, providers] of Object.entries(serversById)) {
+    servers[server] = { providers };
+  }
+  await fs.writeFile(
+    path.join(appSupportPath, "mcp-oauth-state.json"),
+    JSON.stringify({ schemaVersion: 2, servers }, null, 2),
+    "utf8",
+  );
+}
+
+async function readMorningBriefingRunLog(workspacePath, runId) {
+  const filePath = path.join(workspacePath, ".agentic30", "morning-briefing-runs", `${runId}.jsonl`);
+  const raw = await fs.readFile(filePath, "utf8");
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+async function seedMorningBriefingStore(workspacePath, {
+  generatedAt = new Date().toISOString(),
+  cloudflareState = "ready",
+  cloudflareSelected = cloudflareState === "ready",
+  cloudflareDetail = cloudflareState === "ready"
+    ? "external MCP digest succeeded"
+    : "Cloudflare MCP 도구를 사용할 수 없어 집계 트래픽을 계산하지 못했습니다.",
+  includeVerdict = true,
+} = {}) {
+  const agenticRoot = path.join(workspacePath, ".agentic30");
+  await fs.mkdir(agenticRoot, { recursive: true });
+  const current = {
+    schemaVersion: 3,
+    generatedAt,
+    day: 3,
+    totalDays: 30,
+    summary: { title: "밤사이 신호 요약", statement: "git 커밋 7건" },
+    ...(includeVerdict ? {
+      customerEvidenceVerdict: {
+        state: "traffic_without_activation",
+        title: "유입은 있지만 첫 핵심 행동 근거가 아직 얇아요.",
+        body: "Day 1 목표와 Office Hours 약속 기준으로 다운로드 이후 검증 행동을 먼저 확인합니다.",
+        evidence: [
+          "Cloudflare visits 64 집계가 있습니다.",
+          "GitHub commits 7 집계가 있습니다.",
+          "PostHog conversions 0 집계가 있습니다.",
+        ],
+        primaryActionId: "task",
+        verdictProvider: "codex",
+        verdictGeneratedAt: generatedAt,
+        contextRefs: ["onboarding", "day1_goal", "office_hours", "cloudflare", "github", "posthog"],
+      },
+    } : {}),
+    sync: {
+      sources: [
+        { id: "git", label: "git", state: "ready", selected: true, detail: "git log/status live query succeeded" },
+        { id: "posthog", label: "PostHog", state: "ready", selected: true, detail: "external MCP digest succeeded" },
+        {
+          id: "cloudflare",
+          label: "Cloudflare",
+          state: cloudflareState,
+          selected: cloudflareSelected,
+          detail: cloudflareDetail,
+        },
+      ],
+      readyCount: cloudflareState === "ready" ? 3 : 2,
+      syncedAt: generatedAt,
+      syncedAtLabel: "16:31",
+    },
+    status: {
+      state: "ready",
+      detail: cloudflareState === "ready"
+        ? "소스 3개에서 밤사이 신호를 모았어요."
+        : "소스 2개에서 밤사이 신호를 모았어요.",
+    },
+  };
+  await fs.writeFile(
+    path.join(agenticRoot, "morning-briefing.json"),
+    JSON.stringify({ schemaVersion: 3, current, previous: null, history: [] }, null, 2),
+    "utf8",
+  );
+  return current;
+}
+
+async function seedMorningBriefingVerdictContext(workspacePath) {
+  await saveOnboardingMemory({
+    workspaceRoot: workspacePath,
+    memory: {
+      onboardingContext: {
+        business_description: "1인 개발자를 위한 macOS 검증 코치",
+        current_stage: "첫 고객 행동 증거 검증",
+        goal: "30일 안에 실제 사용 증거 확보",
+        focus_area: "development",
+        product_bottleneck: "first_active_users",
+        isolation_levels: ["project_folder"],
+      },
+      answers: {
+        timeBudget: {
+          question: "하루에 얼마나 시간을 쓸 수 있나요?",
+          answer: "퇴근 후 2시간",
+        },
+        primaryFocus: {
+          question: "요즘 어디에 시간을 쓰나요?",
+          answer: "Agentic30 첫 고객 검증",
+        },
+        primaryBottleneck: {
+          question: "가장 큰 병목은?",
+          answer: "실제 사용 증거가 부족함",
+        },
+      },
+    },
+    now: new Date("2026-06-16T00:00:00.000Z"),
+  });
+  await saveDay1GoalSelection({
+    workspaceRoot: workspacePath,
+    selection: {
+      goalType: "get_users",
+      goalText: "1인 개발자 3명이 실제 프로젝트에서 Agentic30을 써 보게 한다",
+      customer: "퇴근 후 제품을 만드는 1인 개발자",
+      problem: "고객 검증보다 기능 빌드로 도망간다",
+      validationAction: "Office Hours 질문에 답하고 workspace scan을 완료한다",
+      evidenceRefs: ["Cloudflare visits", "PostHog activeUsers"],
+      proofSink: "local",
+    },
+    now: new Date("2026-06-16T00:00:00.000Z"),
+  });
+  await appendOfficeHoursTurn({
+    workspaceRoot: workspacePath,
+    turn: {
+      day: 2,
+      questionText: "오늘 확인할 고객 행동은 무엇인가요?",
+      responseText: "설치 후 workspace scan 완료와 Office Hours 답변을 확인한다.",
+      signalId: "validation_action",
+      signalLabel: "검증 행동",
+      occurredAt: "2026-06-16T00:00:00.000Z",
+    },
+    now: new Date("2026-06-16T00:00:00.000Z"),
+  });
+}
+
 async function waitForPendingOfficeHoursPrompt(ws, sessionId, previousRequestId = "") {
   const prior = String(previousRequestId || "");
   const event = await waitForEvent(ws.events, (candidate) =>
@@ -1557,10 +2350,20 @@ async function waitForPendingOfficeHoursPrompt(ws, sessionId, previousRequestId 
   return event.session.pendingUserInput;
 }
 
-function submitStructuredAnswer(ws, sessionId, prompt) {
+function submitStructuredAnswer(ws, sessionId, prompt, {
+  selectedOptions = null,
+  freeText = null,
+} = {}) {
   const question = prompt.questions[0];
   const selectedLabel = question.options?.[0]?.label || "직접 입력";
-  const evidenceText = question.requiresFreeText === true
+  const resolvedSelectedOptions = Array.isArray(selectedOptions)
+    ? selectedOptions
+    : question.options?.length
+      ? [selectedLabel]
+      : [];
+  const evidenceText = typeof freeText === "string"
+    ? freeText
+    : question.requiresFreeText === true
     ? "6/13 실명 후보 A가 현재 대안 비용과 유료 진행 조건을 답했다"
     : "";
   ws.send(JSON.stringify({
@@ -1570,8 +2373,8 @@ function submitStructuredAnswer(ws, sessionId, prompt) {
     responses: [
       {
         question: question.question,
-        selectedOptions: question.options?.length ? [selectedLabel] : [],
-        freeText: question.options?.length ? evidenceText : selectedLabel,
+        selectedOptions: resolvedSelectedOptions,
+        freeText: question.options?.length ? evidenceText : (freeText ?? selectedLabel),
       },
     ],
   }));
@@ -1747,4 +2550,8 @@ async function waitForEvent(events, predicate, timeoutMs = 10_000) {
     return event.type;
   });
   throw new Error(`Timed out waiting for event. Saw: ${summary.join(", ")}`);
+}
+
+async function waitForEventSettle(ms = 250) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }

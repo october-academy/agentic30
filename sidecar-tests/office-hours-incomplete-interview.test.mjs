@@ -7,6 +7,11 @@ import {
   isOfficeHoursTerminalAlternativesRequest,
   parseExpectedOfficeHoursQuestionCount,
 } from "../sidecar/office-hours-structured-input.mjs";
+import {
+  extractCodexStructuredInputToolOutputFromPayload,
+  isAnsweredCodexStructuredInputToolOutput,
+  isPendingCodexStructuredInputToolOutput,
+} from "../sidecar/user-input.mjs";
 
 // Mirrors the shape ContentView's office-hours context builder emits: the
 // count line sits between unrelated "key: value" lines, so the parser must
@@ -67,6 +72,42 @@ test("buildOfficeHoursIncompleteInterviewMessage names both counts", () => {
   assert.match(message, /6개/);
   assert.match(message, /5개/);
   assert.match(message, /다시 시도/);
+});
+
+test("pending Codex structured input result is not an answered interview turn", () => {
+  const output = extractCodexStructuredInputToolOutputFromPayload({
+    result: {
+      type: "text",
+      text: JSON.stringify({
+        status: "pending_user_input",
+        requestId: "pending-office-hours-card",
+        title: "Office Hours",
+        questions: [
+          {
+            header: "오늘 외부 행동",
+            question: "오늘 고객에게 보낼 가장 작은 확인 행동은 무엇인가요?",
+            options: [
+              {
+                label: "지금 바로 요청 보내기",
+                description: "보낸 캡처나 링크가 남아야 합니다.",
+              },
+              {
+                label: "아직 보내지 못했다",
+                description: "오늘 닫아야 할 고객 행동 증거가 없습니다.",
+              },
+            ],
+            allowFreeText: true,
+          },
+        ],
+        answers: {},
+        annotations: {},
+        responses: [],
+      }),
+    },
+  });
+
+  assert.equal(isPendingCodexStructuredInputToolOutput(output), true);
+  assert.equal(isAnsweredCodexStructuredInputToolOutput(output), false);
 });
 
 // The prompt smart-skips routed questions and closes with the 대안 비교 card,

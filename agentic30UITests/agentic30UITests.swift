@@ -1070,16 +1070,13 @@ final class agentic30UITests: XCTestCase {
             XCTAssertTrue(elementWithIdentifier(in: app, "strategy.canvas.block.\(canvasBlockID)").exists)
         }
 
-        let showMatrixButton = elementWithIdentifier(in: app, "strategy.action.show-matrix")
-        XCTAssertTrue(scrollElementToHittable(
-            showMatrixButton,
+        let matrix = elementWithIdentifier(in: app, "strategy.matrix")
+        XCTAssertTrue(scrollElementToVisible(
+            matrix,
             in: app,
-            timeout: 5,
+            timeout: 12,
             scrollViewIdentifier: strategyScrollIdentifier
         ))
-        showMatrixButton.click()
-
-        let matrix = elementWithIdentifier(in: app, "strategy.matrix")
         XCTAssertTrue(matrix.waitForExistence(timeout: 5))
         let matrixBoard = elementWithIdentifier(in: app, "strategy.matrix.board")
         let matrixDetail = elementWithIdentifier(in: app, "strategy.matrix.detail")
@@ -1146,6 +1143,12 @@ final class agentic30UITests: XCTestCase {
         assertInlineDotLabelAligned(cofounderNode, cofounderLabel, labelIsLeading: false, message: "CoFounder.im dot and text should share a centerline")
         assertInlineDotLabelAligned(agentic30Node, agentic30Label, labelIsLeading: true, message: "Agentic30 dot and text should share a centerline")
 
+        XCTAssertTrue(scrollElementToHittable(
+            cursorNode,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: strategyScrollIdentifier
+        ))
         clickCenter(of: cursorNode)
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.matrix.detail", containing: "Cursor", timeout: 3))
         attachScreenshot(from: app, named: "Strategy Matrix Cursor Visual QA")
@@ -1244,17 +1247,98 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(elementWithIdentifier(in: app, "strategy.generated.badge").waitForExistence(timeout: 5))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.generated.badge", containing: "동적 리서치", timeout: 3))
 
-        let showMatrixButton = elementWithIdentifier(in: app, "strategy.action.show-matrix")
-        XCTAssertTrue(scrollElementToHittable(
-            showMatrixButton,
+        let matrix = elementWithIdentifier(in: app, "strategy.matrix")
+        XCTAssertTrue(scrollElementToVisible(
+            matrix,
             in: app,
-            timeout: 5,
+            timeout: 12,
             scrollViewIdentifier: "strategy.scroll"
         ))
-        showMatrixButton.click()
-        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.indiefounders").waitForExistence(timeout: 5))
+        let matrixBoard = elementWithIdentifier(in: app, "strategy.matrix.board")
+        let indieFoundersNode = elementWithIdentifier(in: app, "strategy.matrix.node.indiefounders")
+        let indieFoundersLabel = elementWithIdentifier(in: app, "strategy.matrix.label.indiefounders")
+        XCTAssertTrue(matrixBoard.waitForExistence(timeout: 5))
+        XCTAssertTrue(indieFoundersNode.waitForExistence(timeout: 5))
+        XCTAssertTrue(indieFoundersLabel.waitForExistence(timeout: 5))
         XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.cursor").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "strategy.matrix.node.spark-claw").exists)
+        assertFrame(indieFoundersNode.frame, isInside: matrixBoard.frame, message: "Manual research edge node should stay inside the strategy matrix board")
+        assertFrame(indieFoundersLabel.frame, isInside: matrixBoard.frame, message: "Manual research edge label should stay inside the strategy matrix board")
+        assertLabelSitsAboveAndRight(indieFoundersLabel, of: indieFoundersNode, message: "Manual research lower-left label should flip above-right")
+    }
+
+    @MainActor
+    func testStrategyResearchRunsThroughSidecarAndPersistsCanonicalRunDiagnostics() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-strategy-sidecar-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-strategy-sidecar-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-workspace-scan-cache",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
+            "EXA_API_KEY": "exa_test_key",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 15))
+        elementWithIdentifier(in: app, "opendesign.day.rail.item.strategy").click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.screen").waitForExistence(timeout: 10))
+
+        let researchButton = elementWithIdentifier(in: app, "strategy.action.research")
+        XCTAssertTrue(researchButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitUntilHittable(researchButton, timeout: 10))
+        researchButton.click()
+
+        XCTAssertNotNil(waitForAnyElement(
+            in: app,
+            identifiers: ["strategy.research.progress", "strategy.generated.badge"],
+            timeout: 15
+        ))
+        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.research.error").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.generated.badge").waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.generated.badge", containing: "동적 리서치", timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.research.error").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.canvas.block.value-proposition").waitForExistence(timeout: 5))
+
+        let matrix = elementWithIdentifier(in: app, "strategy.matrix")
+        XCTAssertTrue(scrollElementToVisible(
+            matrix,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: "strategy.scroll"
+        ))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.indiefounders").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.cursor").exists)
+
+        let latestRun = try waitForStrategyReportRun(
+            workspacePath: workspacePath,
+            state: "ready",
+            timeout: 20
+        )
+        assertStrategyReportRunHasCanonicalCanvasAndDiagnostics(latestRun)
+
+        let cache = try readStrategyReportCache(workspacePath: workspacePath)
+        assertStrategyReportRunHasRawProviderPasses(cache)
     }
 
     @MainActor
@@ -3266,8 +3350,48 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.briefing", containing: "loading", timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.loading").waitForExistence(timeout: 5))
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.loading.card.github").waitForExistence(timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "morningBriefing.syncbar").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "morningBriefing.verdict").exists)
         attachScreenshot(from: app, named: "Morning Briefing Loading Progress")
+    }
+
+    @MainActor
+    func testMorningBriefingFailureFixtureShowsStaleNoticeAndFailedSourceStates() throws {
+        let workspacePath = "/tmp/agentic30-ui-morning-briefing-failed-source-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-stub-morning-briefing-failed-source",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+        }
+
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 10))
+        let railItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.briefing")
+        XCTAssertTrue(railItem.waitForExistence(timeout: 5))
+        railItem.click()
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.screen").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.staleNotice").waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.staleNotice", containing: "판정 생성 실패", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.syncbar", containing: "수집 실패", timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.card.cloudflare.state").waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.card.cloudflare.state", containing: "수집 실패", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.card.cloudflare", containing: "Cloudflare MCP digest 수집 실패", timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.summary").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "morningBriefing.loading.error").exists)
+        attachScreenshot(from: app, named: "Morning Briefing Failed Source States")
     }
 
     @MainActor
@@ -4557,6 +4681,143 @@ final class agentic30UITests: XCTestCase {
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: path, isDirectory: true))
     }
 
+    private func waitForStrategyReportRun(
+        workspacePath: String,
+        state expectedState: String,
+        timeout: TimeInterval
+    ) throws -> [String: Any] {
+        let deadline = Date().addingTimeInterval(timeout)
+        var latestRun: [String: Any]?
+        repeat {
+            latestRun = try latestStrategyReportRun(workspacePath: workspacePath)
+            if let state = (((latestRun?["snapshot"] as? [String: Any])?["status"] as? [String: Any])?["state"] as? String),
+               state == expectedState {
+                return latestRun ?? [:]
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+
+        let observed = (((latestRun?["snapshot"] as? [String: Any])?["status"] as? [String: Any])?["state"] as? String)
+            ?? "missing"
+        throw uiTestError("Expected latest strategy report run state \(expectedState), observed \(observed)")
+    }
+
+    private func latestStrategyReportRun(workspacePath: String) throws -> [String: Any]? {
+        let runsURL = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .appendingPathComponent(".agentic30/strategy/runs", isDirectory: true)
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: runsURL,
+            includingPropertiesForKeys: nil
+        ) else {
+            return nil
+        }
+        let jsonURLs = urls
+            .filter { $0.pathExtension == "json" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        guard let latestURL = jsonURLs.last else { return nil }
+        return try readJSONObject(at: latestURL)
+    }
+
+    private func readStrategyReportCache(workspacePath: String) throws -> [String: Any] {
+        let cacheURL = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .appendingPathComponent(".agentic30/strategy/research-report-cache.json")
+        return try readJSONObject(at: cacheURL)
+    }
+
+    private func readJSONObject(at url: URL) throws -> [String: Any] {
+        let data = try Data(contentsOf: url)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw uiTestError("Expected JSON object at \(url.path)")
+        }
+        return object
+    }
+
+    private func assertStrategyReportRunHasCanonicalCanvasAndDiagnostics(
+        _ run: [String: Any],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let snapshot = run["snapshot"] as? [String: Any],
+              let status = snapshot["status"] as? [String: Any],
+              let report = snapshot["report"] as? [String: Any],
+              let canvasBlocks = report["canvasBlocks"] as? [[String: Any]]
+        else {
+            XCTFail("Strategy report run is missing snapshot/status/report/canvasBlocks", file: file, line: line)
+            return
+        }
+
+        XCTAssertEqual(status["state"] as? String, "ready", file: file, line: line)
+        let requiredIDs: Set<String> = [
+            "partners",
+            "activities",
+            "resources",
+            "value-proposition",
+            "relationships",
+            "channels",
+            "customer-segments",
+            "cost-structure",
+            "revenue-streams",
+        ]
+        let ids = Set(canvasBlocks.compactMap { $0["id"] as? String })
+        XCTAssertEqual(ids, requiredIDs, file: file, line: line)
+        XCTAssertEqual(canvasBlocks.count, 9, file: file, line: line)
+
+        assertStrategyReportRunHasRawProviderPasses(run, file: file, line: line)
+        guard let rawProviderResult = run["rawProviderResult"] as? [String: Any],
+              let passes = rawProviderResult["passes"] as? [[String: Any]],
+              let finalShape = passes.last?["parsedReportShape"] as? [String: Any],
+              let shapeBlocks = finalShape["canvasBlocks"] as? [[String: Any]]
+        else {
+            XCTFail("Strategy report run is missing parsed canvas shape diagnostics", file: file, line: line)
+            return
+        }
+
+        XCTAssertTrue(shapeBlocks.contains { block in
+            block["id"] as? String == "valueProposition"
+                && block["canonicalId"] as? String == "value-proposition"
+        }, file: file, line: line)
+        XCTAssertTrue(shapeBlocks.contains { block in
+            block["id"] as? String == "customer_segments"
+                && block["canonicalId"] as? String == "customer-segments"
+        }, file: file, line: line)
+        XCTAssertTrue(shapeBlocks.contains { block in
+            block["id"] as? String == "비용 구조"
+                && block["canonicalId"] as? String == "cost-structure"
+        }, file: file, line: line)
+        XCTAssertTrue(shapeBlocks.contains { block in
+            block["id"] as? String == "pilotPayments"
+                && block["number"] as? String == "05"
+                && block["canonicalId"] as? String == "revenue-streams"
+        }, file: file, line: line)
+    }
+
+    private func assertStrategyReportRunHasRawProviderPasses(
+        _ object: [String: Any],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let rawProviderResult = object["rawProviderResult"] as? [String: Any],
+              let passes = rawProviderResult["passes"] as? [[String: Any]]
+        else {
+            XCTFail("Strategy report diagnostics are missing rawProviderResult.passes", file: file, line: line)
+            return
+        }
+        XCTAssertEqual(passes.count, 3, file: file, line: line)
+        XCTAssertEqual(passes.compactMap { $0["mode"] as? String }, [
+            "exa_research",
+            "adversarial_review",
+            "multidimensional_verification",
+        ], file: file, line: line)
+        XCTAssertFalse(passes.contains { $0.keys.contains("text") }, file: file, line: line)
+        XCTAssertTrue(passes.contains { pass in
+            (pass["parsedReportShape"] as? [String: Any])?["canvasBlockCount"] as? Int == 9
+        }, file: file, line: line)
+    }
+
+    private func uiTestError(_ message: String) -> NSError {
+        NSError(domain: "agentic30UITests", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
     private func hideKnownInterferingApplications() {
         for application in NSWorkspace.shared.runningApplications where shouldHideForUITest(application) {
             application.hide()
@@ -4964,7 +5225,7 @@ final class agentic30UITests: XCTestCase {
     private func scrollNudgeDistance(for gap: CGFloat, in scrollView: XCUIElement) -> CGFloat {
         let visibleHeight = max(scrollView.frame.height, 1)
         let cappedGap = max(gap, 0)
-        return max(28, min(cappedGap * 0.35 + 18, min(120, visibleHeight * 0.22)))
+        return max(40, min(cappedGap * 0.45 + 28, min(260, visibleHeight * 0.42)))
     }
 
     private func scrollMovement(from beforeMidY: CGFloat, to afterMidY: CGFloat, matches direction: ScrollNudgeDirection) -> Bool {
@@ -5090,6 +5351,24 @@ final class agentic30UITests: XCTestCase {
         } while Date() < deadline
         let element = elementWithIdentifier(in: app, identifier)
         return element.exists && self.element(element, contains: marker)
+    }
+
+    @MainActor
+    private func waitForAnyElement(
+        in app: XCUIApplication,
+        identifiers: [String],
+        timeout: TimeInterval
+    ) -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            for identifier in identifiers {
+                if elementWithIdentifier(in: app, identifier).exists {
+                    return identifier
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return identifiers.first { elementWithIdentifier(in: app, $0).exists }
     }
 
     @MainActor

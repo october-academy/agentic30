@@ -21,6 +21,9 @@ import {
   captureExecutionOsTelemetryEvents,
   composeExecutionOsSnapshot,
   loadProofLedger,
+  makeDefaultProofLedger,
+  normalizeProofLedger,
+  resolveProofLedgerPath,
 } from "./execution-os.mjs";
 import {
   buildOfficeHoursDocsPrompt,
@@ -50,6 +53,7 @@ import {
   applyMorningBriefingLiveSync,
   appendMorningBriefingRunLog,
   buildMorningBriefing,
+  buildMorningBriefingActions,
   labelMorningBriefingAnomaly,
   loadMorningBriefingStore,
   persistMorningBriefing,
@@ -69,7 +73,14 @@ import {
   collectPosthogDirectDrilldown,
   mergeMorningBriefingDrilldownMaps,
   posthogSourceSignalFromDrilldown,
+  shouldCollectCloudflareDirectDrilldown,
 } from "./morning-briefing-direct-sources.mjs";
+import {
+  buildMorningBriefingVerdictContext,
+  buildMorningBriefingVerdictPrompt,
+  isMorningBriefingLlmVerdict,
+  normalizeMorningBriefingLlmVerdict,
+} from "./morning-briefing-verdict.mjs";
 import {
   collectIntegrationStatus,
   mergeMcpOauthConnectResultIntoIntegrationStatus,
@@ -157,11 +168,13 @@ import {
   computeDayNumber,
   ensureChallengeStart,
   loadDayProgress,
+  makeDefaultDayProgress,
   patchDayStep,
   setDayActiveStep,
 } from "./day-progress-state.mjs";
 import {
   buildGateBlockedMessage,
+  evaluateProgramGates,
   evaluateDayProgressPatchGate,
   loadGateLedger,
   recordMissionSubstitution,
@@ -183,6 +196,7 @@ import {
   labelAdaptiveRuleEvent,
   runAdaptiveRulesCycle,
 } from "./adaptive-rules.mjs";
+import { assembleAdaptiveRuleSignals } from "./adaptive-rule-signals.mjs";
 
 // §13.4: intervention 세션이 열렸을 때 어느 gate의 통과 토큰을 기다리는지
 // 워크스페이스별로 기억한다(in-memory — 재시작 시 founder가 intervention을
@@ -333,6 +347,7 @@ import {
   buildExaMcpConfig,
   buildNewsMarketRadarProgressStatus,
   formatNewsMarketRadarProviderTimeout,
+  isNewsMarketRadarAutoRefreshDue,
   loadNewsMarketRadarSnapshot,
   normalizeNewsMarketRadarProviderTimeout,
   refreshNewsMarketRadar,
@@ -419,7 +434,10 @@ import {
   createUserInputRequest,
   deleteUserInputArtifacts,
   ensureUserInputDirs,
+  extractCodexStructuredInputToolOutputFromPayload,
   getUserInputPaths,
+  isAnsweredCodexStructuredInputToolOutput,
+  isPendingCodexStructuredInputToolOutput,
   listUserInputRequests,
   writeUserInputResponse,
 } from "./user-input.mjs";
@@ -586,6 +604,7 @@ const state = {
   workHistoryProgress: null,
   workHistoryProgressStartedAt: null,
   morningBriefingRefreshPromise: null,
+  morningBriefingRefreshRunId: "",
   userInputRequestWatcher: null,
   // 수집 중 카드별 라이브 진행(스피너+에이전트 로그). 서빙 전용, persist 금지.
   morningBriefingProgressTracker: null,
@@ -2429,6 +2448,7 @@ async function handleClientMessage(socket, payload) {
       const exaRoutes = resolveNewsMarketRadarExaRoutes({
         preferredProvider: payload.preferredProvider,
       });
+      const autoRefreshIfDue = payload.autoRefreshIfDue === true;
       const snapshot = await loadNewsMarketRadarSnapshot({
         workspaceRoot,
         exaApiKey: currentExaApiKey(),
@@ -2443,6 +2463,19 @@ async function handleClientMessage(socket, payload) {
         send(socket, {
           type: "news_market_radar_status",
           status: state.newsMarketRadarProgress,
+        });
+      }
+      if (
+        autoRefreshIfDue
+        && exaRoutes.length > 0
+        && !state.newsMarketRadarRefreshPromise
+        && isNewsMarketRadarAutoRefreshDue(snapshot)
+      ) {
+        scheduleNewsMarketRadarRefresh({
+          reason: "daily",
+          force: false,
+          preferredProvider: payload.preferredProvider,
+          targetSocket: socket,
         });
       }
       return;
@@ -2521,16 +2554,44 @@ async function handleClientMessage(socket, payload) {
     case "morning_briefing_get": {
       const store = await loadMorningBriefingStore({ workspaceRoot });
       const refreshInFlight = Boolean(state.morningBriefingRefreshPromise);
+      const autoRefreshIfStale = payload.autoRefreshIfStale !== false;
+      const cacheHasVerdict = isMorningBriefingLlmVerdict(store.current);
       // Tab-entry refresh policy: the briefing is a daily artifact, so anything
       // generated on a previous local date is stale and re-collects on entry.
-      const staleDate = !store.current || !isSameLocalDate(store.current.generatedAt, new Date());
-      if (store.current) {
-        if (refreshInFlight || staleDate) {
-          // 곧 fresh 결과가 라이브 연결 상태를 들고 브로드캐스트된다 — 스냅샷만
-          // 즉시 서빙. 오버레이 재전송은 금지: Swift가 morning_briefing_result를
-          // 받으면 collecting=false라 수집 중 스피너를 꺼버린다.
+      const staleDate = !store.current || !cacheHasVerdict || !isSameLocalDate(store.current.generatedAt, new Date());
+      if (store.current && !cacheHasVerdict && !autoRefreshIfStale) {
+        send(socket, {
+          type: "morning_briefing_status",
+          status: {
+            state: "failed",
+            reason: "startup_restore",
+            detail: "저장된 브리핑에 판정 근거가 없어 복원하지 않았어요. 다시 동기화가 필요합니다.",
+          },
+        });
+        return;
+      }
+      if (store.current && cacheHasVerdict) {
+        if (!autoRefreshIfStale) {
           send(socket, {
             type: "morning_briefing_result",
+            status: morningBriefingResultStatus(store.current, {
+              snapshot: true,
+              reason: "startup_restore",
+            }),
+            morningBriefing: store.current,
+            morningBriefingPrevious: store.previous,
+          });
+        } else if (refreshInFlight || staleDate) {
+          // 곧 fresh 결과가 라이브 연결 상태를 들고 브로드캐스트된다. 이 응답은
+          // 캐시 스냅샷일 뿐이므로 top-level status로 완료가 아님을 명시한다.
+          send(socket, {
+            type: "morning_briefing_result",
+            status: morningBriefingResultStatus(store.current, {
+              state: "collecting",
+              snapshot: true,
+              reason: refreshInFlight ? "refresh_in_flight" : "tab_enter",
+              runId: state.morningBriefingRefreshRunId,
+            }),
             morningBriefing: store.current,
             morningBriefingPrevious: store.previous,
           });
@@ -2544,11 +2605,15 @@ async function handleClientMessage(socket, payload) {
             preferredProvider: payload.preferredProvider,
             emit: (morningBriefing, morningBriefingPrevious) => send(socket, {
               type: "morning_briefing_result",
+              status: morningBriefingResultStatus(morningBriefing, { snapshot: false }),
               morningBriefing,
               morningBriefingPrevious,
             }),
           });
         }
+      }
+      if (!autoRefreshIfStale) {
+        return;
       }
       if (refreshInFlight) {
         send(socket, { type: "morning_briefing_status", status: { state: "collecting" } });
@@ -2559,7 +2624,7 @@ async function handleClientMessage(socket, payload) {
         }
         return;
       }
-      if (staleDate) {
+      if (staleDate && autoRefreshIfStale) {
         scheduleMorningBriefingRefresh({
           reason: "tab_enter",
           preferredProvider: payload.preferredProvider,
@@ -2591,6 +2656,7 @@ async function handleClientMessage(socket, payload) {
           preferredProvider: payload.preferredProvider,
           emit: (morningBriefing, morningBriefingPrevious) => broadcast({
             type: "morning_briefing_result",
+            status: morningBriefingResultStatus(morningBriefing, { snapshot: false }),
             morningBriefing,
             morningBriefingPrevious,
           }),
@@ -3491,7 +3557,7 @@ async function handleDay1GoalSave(socket, payload = {}) {
 
 async function handleDayProgressGet(socket, payload = {}) {
   const root = resolveDay1GoalWorkspaceRoot(payload);
-  const dayProgress = await loadDayProgress({ workspaceRoot: root });
+  const dayProgress = (await loadDayProgress({ workspaceRoot: root })) ?? makeDefaultDayProgress();
   if (path.resolve(root) === path.resolve(workspaceRoot)) {
     state.dayProgress = dayProgress;
   }
@@ -4476,6 +4542,7 @@ async function runPrompt(
       : null;
     let officeHoursStructuredInputAsked = false;
     let officeHoursStructuredInputAnswered = false;
+    const officeHoursStructuredInputToolState = createOfficeHoursStructuredInputToolState();
     let routedSpecialist = specialist;
     let systemPromptOverride = "";
     if (officeHoursContext) {
@@ -4485,7 +4552,7 @@ async function runPrompt(
         elapsedMs: performance.now() - runStartedAt,
       });
     }
-    if (officeHoursContext && !routedSpecialist) {
+    if (officeHoursContext) {
       route = {
         ...route,
         executionMode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
@@ -4494,10 +4561,12 @@ async function runPrompt(
         inlineBipContext: false,
         approvedToolExecution: false,
       };
-      routedSpecialist = selectOfficeHoursSpecialist({
-        context: officeHoursContext,
-        lastAnswer: prompt,
-      });
+      if (!routedSpecialist) {
+        routedSpecialist = selectOfficeHoursSpecialist({
+          context: officeHoursContext,
+          lastAnswer: prompt,
+        });
+      }
       emitOfficeHoursStatus(session, {
         stage: "specialist_routed",
         messageId: assistantMessage.id,
@@ -4511,17 +4580,19 @@ async function runPrompt(
         context: officeHoursContext,
         provider: session.provider,
       });
-      telemetry.captureEvent("mac_sidecar_specialist_routed", {
-        session_id: session.id,
-        stage: "office_hours_continuation",
-        specialist_id: routedSpecialist.id,
-        phase: routedSpecialist.phase,
-        decision_kind: routedSpecialist.decisionKind,
-        vendor_used: Boolean(
-          routedSpecialist?.vendor?.claude?.exists
-            && routedSpecialist?.vendor?.codex?.exists,
-        ),
-      });
+      if (routedSpecialist) {
+        telemetry.captureEvent("mac_sidecar_specialist_routed", {
+          session_id: session.id,
+          stage: "office_hours_continuation",
+          specialist_id: routedSpecialist.id,
+          phase: routedSpecialist.phase,
+          decision_kind: routedSpecialist.decisionKind,
+          vendor_used: Boolean(
+            routedSpecialist?.vendor?.claude?.exists
+              && routedSpecialist?.vendor?.codex?.exists,
+          ),
+        });
+      }
     }
     recordMessageTiming(session, assistantMessage, runStartedAt, "route.classified", route);
     emitChatRunPhase(session, assistantMessage.id, `route=${route.executionMode} reason=${route.reason}`);
@@ -4636,8 +4707,16 @@ async function runPrompt(
             elapsed_ms: Math.max(0, Math.round(performance.now() - runStartedAt)),
             continuation: true,
           });
+          const structuredInputCapture = recordOfficeHoursStructuredInputToolEvent(
+            officeHoursStructuredInputToolState,
+            event,
+          );
           officeHoursStructuredInputAsked = true;
-          if (isSuccessfulStructuredInputToolEvent(event)) {
+          if (
+            structuredInputCapture?.kind !== "pending"
+            && structuredInputCapture?.kind !== "answered"
+            && isSuccessfulStructuredInputToolEvent(event)
+          ) {
             officeHoursStructuredInputAnswered = true;
           }
         }
@@ -4723,8 +4802,12 @@ async function runPrompt(
     setAssistantText(session, assistantMessage.id, assistantMessage.content);
     recordMessageTiming(session, assistantMessage, runStartedAt, "provider.call_finished");
 
+    if (officeHoursContext && officeHoursStructuredInputToolState.contractError) {
+      throw officeHoursStructuredInputToolState.contractError;
+    }
     if (officeHoursContext) {
       await syncPendingUserInputRequests();
+      assertOfficeHoursPendingUserInputAttached(session, officeHoursStructuredInputToolState);
     }
     assistantMessage.state = "final";
     session.status = session.pendingUserInput ? "awaiting_input" : "idle";
@@ -6024,6 +6107,8 @@ async function buildGetUsersActiveUserDefinitionPreamble({ workspaceRoot, contex
 // 소스당 타임아웃은 여유분 포함 240초. 브리핑은 "collecting" 상태를 띄우는
 // 백그라운드 수집이고 소스들이 병렬이라 체감 대기는 가장 느린 소스 하나다.
 const MORNING_BRIEFING_PROVIDER_TIMEOUT_MS = 240_000;
+const MORNING_BRIEFING_VERDICT_PROVIDER_TIMEOUT_MS = 90_000;
+const MORNING_BRIEFING_VERDICT_EXECUTION_MODE = "judge_read_only";
 const MORNING_BRIEFING_ALL_SOURCES = Object.freeze(["git", "gh_cli", "posthog", "cloudflare"]);
 
 function isSameLocalDate(iso, now = new Date()) {
@@ -6094,6 +6179,44 @@ function createMorningBriefingRunLogger({ reason = "manual", force = false } = {
   return { runId, record };
 }
 
+function morningBriefingFailedSources(briefing = null) {
+  return (Array.isArray(briefing?.sync?.sources) ? briefing.sync.sources : [])
+    .filter((source) => source?.selected === true && source?.state === "failed")
+    .map((source) => ({
+      id: String(source?.id || ""),
+      label: String(source?.label || source?.id || ""),
+      detail: String(source?.detail || ""),
+    }))
+    .filter((source) => source.id);
+}
+
+function morningBriefingResultStatus(briefing = null, {
+  state = "",
+  snapshot = false,
+  reason = "",
+  runId = "",
+  detail = "",
+} = {}) {
+  const failedSources = morningBriefingFailedSources(briefing);
+  const status = {
+    state: state || briefing?.status?.state || "ready",
+    snapshot: Boolean(snapshot),
+  };
+  if (reason) status.reason = reason;
+  if (runId) status.runId = runId;
+  const resolvedDetail = detail || briefing?.status?.detail || "";
+  if (resolvedDetail) status.detail = resolvedDetail;
+  if (!snapshot && failedSources.length) status.failedSources = failedSources;
+  return status;
+}
+
+async function delayMorningBriefingRefreshForTesting() {
+  const raw = Number(process.env.AGENTIC30_TEST_MORNING_BRIEFING_REFRESH_DELAY_MS || 0);
+  if (!Number.isFinite(raw) || raw <= 0) return;
+  const delayMs = Math.min(5_000, Math.max(0, Math.round(raw)));
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 function morningBriefingFailedSourceFromGate(gate, id, detail) {
   const source = (gate?.sources || []).find((entry) => entry.id === id) || {};
   return {
@@ -6111,6 +6234,17 @@ function morningBriefingFailedSourceFromGate(gate, id, detail) {
     evidenceGaps: [detail],
     events: [],
   };
+}
+
+async function recordMorningBriefingExternalDigestSummary(runLog, external = {}) {
+  const sources = Array.isArray(external?.sources) ? external.sources : [];
+  await Promise.all(sources.map((source) => runLog.record("external_digest_summary", "source", {
+    source: source?.id || "",
+    state: source?.state || "",
+    collectionState: source?.collectionState || source?.state || "",
+    detail: source?.detail || "",
+    countKeys: Object.keys(source?.counts || {}).slice(0, 20),
+  })));
 }
 
 function fallbackMorningBriefingGate(detail = "") {
@@ -6162,7 +6296,12 @@ async function collectMorningBriefingStage({ runLog, stage, fields = {}, fn, fal
       error: detail,
     });
     telemetry.captureException(error, { operation: `morning_briefing_${stage}` });
-    if (fallback === undefined) throw error;
+    if (fallback === undefined) {
+      if (error && typeof error === "object") {
+        error.morningBriefingStage = stage;
+      }
+      throw error;
+    }
     return typeof fallback === "function" ? fallback(error, detail) : fallback;
   }
 }
@@ -6198,11 +6337,15 @@ function scheduleMorningBriefingRefresh({
   targetSocket = null,
 } = {}) {
   if (state.morningBriefingRefreshPromise) {
-    send(targetSocket, { type: "morning_briefing_status", status: { state: "collecting", reason } });
+    send(targetSocket, {
+      type: "morning_briefing_status",
+      status: { state: "collecting", reason, runId: state.morningBriefingRefreshRunId },
+    });
     return state.morningBriefingRefreshPromise;
   }
   const promise = runMorningBriefingRefresh({ reason, force, preferredProvider }).finally(() => {
     state.morningBriefingRefreshPromise = null;
+    state.morningBriefingRefreshRunId = "";
     state.morningBriefingProgressTracker = null;
   });
   state.morningBriefingRefreshPromise = promise;
@@ -6212,8 +6355,10 @@ function scheduleMorningBriefingRefresh({
 async function runMorningBriefingRefresh({ reason = "manual", force = false, preferredProvider = "" } = {}) {
   const startedAt = Date.now();
   const runLog = createMorningBriefingRunLogger({ reason, force });
+  state.morningBriefingRefreshRunId = runLog.runId;
   await runLog.record("refresh", "started", { preferredProvider });
   broadcast({ type: "morning_briefing_status", status: { state: "collecting", reason, runId: runLog.runId } });
+  await delayMorningBriefingRefreshForTesting();
   try {
     const store = await collectMorningBriefingStage({
       runLog,
@@ -6224,7 +6369,8 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     // A persisted "locked" briefing predates Day-1 support — never serve it from
     // the same-date cache; fall through and collect a real one.
     const cachedIsLocked = store.current?.status?.state === "locked";
-    if (!force && !cachedIsLocked && store.current && isSameLocalDate(store.current.generatedAt, new Date())) {
+    const cachedHasVerdict = isMorningBriefingLlmVerdict(store.current);
+    if (!force && !cachedIsLocked && cachedHasVerdict && store.current && isSameLocalDate(store.current.generatedAt, new Date())) {
       await runLog.record("cache", "served", {
         generatedAt: store.current.generatedAt,
         syncedAt: store.current.sync?.syncedAt,
@@ -6235,6 +6381,11 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
         preferredProvider,
         emit: (morningBriefing, morningBriefingPrevious) => broadcast({
           type: "morning_briefing_result",
+          status: morningBriefingResultStatus(morningBriefing, {
+            snapshot: false,
+            reason,
+            runId: runLog.runId,
+          }),
           morningBriefing,
           morningBriefingPrevious,
         }),
@@ -6325,31 +6476,62 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
         drilldowns: {},
       }),
     });
-    // §15.4: 활성 사용자 스냅샷은 브리핑 수집 사이클에 편승한다(일 1회 — 같은
-    // 날짜 스냅샷은 모듈이 교체). 미연동/실패는 아무것도 기록하지 않는다
-    // (fail-closed — G4②는 §21 provisional 경로로 처리). 브리핑을 막지 않는다.
-    await runLog.record("active_user_snapshot", "scheduled");
-    void collectActiveUserSnapshot({
-      workspaceRoot,
-      day: Number.isFinite(day) ? day : null,
-      env: process.env,
-      appSupportPath,
-    }).then((result) => {
-      void runLog.record("active_user_snapshot", result.status === "ok" ? "completed" : "skipped", {
-        status: result.status,
+    await recordMorningBriefingExternalDigestSummary(runLog, external);
+    // §15.4: Day 14/G4 이후 verdict의 healthy 승격은 first_value 스냅샷에
+    // 의존한다. 그 전에는 기존처럼 비차단 수집으로 두고, Day 14부터는
+    // verdict_context 전에 수집 결과를 동기화한다.
+    const activeUserSnapshotDay = Number.isFinite(day) ? day : null;
+    let activeUserSnapshotResult = null;
+    if (activeUserSnapshotDay !== null && activeUserSnapshotDay >= 14) {
+      activeUserSnapshotResult = await collectMorningBriefingStage({
+        runLog,
+        stage: "active_user_snapshot",
+        fields: { day: activeUserSnapshotDay, required: true },
+        fn: () => collectActiveUserSnapshot({
+          workspaceRoot,
+          day: activeUserSnapshotDay,
+          env: process.env,
+          appSupportPath,
+        }),
       });
-      if (result.status === "ok") {
+      if (activeUserSnapshotResult.status === "ok") {
         telemetry.captureEvent("mac_sidecar_active_user_snapshot", {
-          active_user_count: result.snapshot.activeUserCount,
-          day: result.snapshot.day,
+          active_user_count: activeUserSnapshotResult.snapshot.activeUserCount,
+          day: activeUserSnapshotResult.snapshot.day,
         });
       }
-    }).catch((error) => {
-      void runLog.record("active_user_snapshot", "failed", { error: formatMorningBriefingRunError(error) });
-      telemetry.captureException(error, { operation: "active_user_snapshot" });
+    } else {
+      await runLog.record("active_user_snapshot", "scheduled", {
+        day: activeUserSnapshotDay,
+        required: false,
+      });
+      void collectActiveUserSnapshot({
+        workspaceRoot,
+        day: activeUserSnapshotDay,
+        env: process.env,
+        appSupportPath,
+      }).then((result) => {
+        void runLog.record("active_user_snapshot", result.status === "ok" ? "completed" : "skipped", {
+          status: result.status,
+        });
+        if (result.status === "ok") {
+          telemetry.captureEvent("mac_sidecar_active_user_snapshot", {
+            active_user_count: result.snapshot.activeUserCount,
+            day: result.snapshot.day,
+          });
+        }
+      }).catch((error) => {
+        void runLog.record("active_user_snapshot", "failed", { error: formatMorningBriefingRunError(error) });
+        telemetry.captureException(error, { operation: "active_user_snapshot" });
+      });
+    }
+    const cloudflareSourceFromDigest = (external.sources || []).find((source) => source.id === "cloudflare") || {};
+    const collectCloudflareDirect = shouldCollectCloudflareDirectDrilldown({
+      readySources,
+      externalSources: external.sources || [],
     });
     const [cloudflareDirect, posthogDirect] = await Promise.all([
-      readySources.includes("cloudflare")
+      collectCloudflareDirect
         ? collectMorningBriefingStage({
             runLog,
             stage: "cloudflare_direct",
@@ -6357,7 +6539,13 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
             fn: () => collectCloudflareDirectDrilldown({ window: gate.window, appSupportPath }),
             fallback: null,
           })
-        : Promise.resolve(null),
+        : readySources.includes("cloudflare")
+          ? runLog.record("cloudflare_direct", "skipped", {
+              source: "cloudflare",
+              reason: "mcp_digest_not_ready",
+              detail: cloudflareSourceFromDigest.detail || "",
+            }).then(() => null)
+          : Promise.resolve(null),
       readySources.includes("posthog")
         ? collectMorningBriefingStage({
             runLog,
@@ -6370,7 +6558,7 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     ]);
     const cloudflareDirectSource = cloudflareSourceSignalFromDrilldown(
       cloudflareDirect,
-      (external.sources || []).find((source) => source.id === "cloudflare") || {},
+      cloudflareSourceFromDigest,
     );
     const posthogDirectSource = posthogSourceSignalFromDrilldown(
       posthogDirect,
@@ -6436,7 +6624,7 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
       fallback: null,
     });
     if (githubTracked) progress.finish("github", { detail: "수집 완료" });
-    const briefing = await collectMorningBriefingStage({
+    const baseBriefing = await collectMorningBriefingStage({
       runLog,
       stage: "build_briefing",
       fields: { validSourceCount },
@@ -6460,6 +6648,44 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
         ),
       }),
     });
+    const verdictContext = await collectMorningBriefingStage({
+      runLog,
+      stage: "verdict_context",
+      fields: { validSourceCount },
+      fn: () => collectMorningBriefingVerdictContext({
+        digest,
+        briefing: baseBriefing,
+        day,
+        activeUserSnapshotResult,
+      }),
+    });
+    const verdictProvider = pickMorningBriefingProvider(preferredProvider);
+    const customerEvidenceVerdict = await collectMorningBriefingStage({
+      runLog,
+      stage: "verdict_provider",
+      fields: {
+        provider: verdictProvider,
+        executionMode: MORNING_BRIEFING_VERDICT_EXECUTION_MODE,
+        contextRefs: verdictContext.contextRefs,
+        actionIds: verdictContext.availableActionIds,
+      },
+      fn: () => runMorningBriefingVerdictProvider({
+        context: verdictContext,
+        preferredProvider,
+        provider: verdictProvider,
+        executionMode: MORNING_BRIEFING_VERDICT_EXECUTION_MODE,
+        runLog,
+      }),
+    });
+    const briefing = {
+      ...baseBriefing,
+      customerEvidenceVerdict,
+      actions: buildMorningBriefingActions({
+        digest,
+        anomaly: baseBriefing.anomaly,
+        customerEvidenceVerdict,
+      }),
+    };
     const persistedStore = await collectMorningBriefingStage({
       runLog,
       stage: "persist",
@@ -6472,6 +6698,11 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     });
     broadcast({
       type: "morning_briefing_result",
+      status: morningBriefingResultStatus(briefing, {
+        snapshot: false,
+        reason,
+        runId: runLog.runId,
+      }),
       morningBriefing: briefing,
       morningBriefingPrevious: persistedStore.previous,
     });
@@ -6495,7 +6726,10 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
   } catch (error) {
     telemetry.captureException(error, { operation: "morning_briefing_refresh", reason });
     state.morningBriefingProgressTracker?.failAll("브리핑 수집이 실패했어요 — 다시 동기화를 눌러 주세요.");
-    const detail = "브리핑 수집에 실패했어요. 이전 브리핑을 stale 상태로 유지합니다.";
+    const errorDetail = formatMorningBriefingRunError(error);
+    const detail = error?.morningBriefingStage === "verdict_provider"
+      ? `판정 생성 실패: ${errorDetail} 이전 브리핑을 stale 상태로 유지합니다.`
+      : `브리핑 수집 실패: ${errorDetail} 이전 브리핑을 stale 상태로 유지합니다.`;
     await runLog.record("refresh", "failed", {
       durationMs: Date.now() - startedAt,
       error: formatMorningBriefingRunError(error),
@@ -6506,6 +6740,190 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     });
     return null;
   }
+}
+
+async function loadProofLedgerStrictForMorningVerdict({ workspaceRoot: root, now = new Date() } = {}) {
+  if (!root || typeof root !== "string") return makeDefaultProofLedger(now);
+  const filePath = resolveProofLedgerPath(root);
+  try {
+    const raw = JSON.parse(await fs.readFile(filePath, "utf8"));
+    return normalizeProofLedger(raw, { now });
+  } catch (error) {
+    if (error?.code === "ENOENT") return makeDefaultProofLedger(now);
+    throw new Error(`Morning briefing verdict proof-ledger read failed: ${error.message}`);
+  }
+}
+
+function trafficSignalFromMorningSources({ digest = {}, briefing = {} } = {}) {
+  const cloudflareSource = (digest.sources || []).find((source) => source?.id === "cloudflare") || {};
+  const cloudflareCard = (briefing.cards || []).find((card) => card?.id === "cloudflare") || {};
+  const counts = {
+    ...(cloudflareSource.counts || {}),
+  };
+  for (const row of cloudflareCard.rows || []) {
+    const key = String(row?.k || row?.key || "").toLowerCase();
+    const value = Number(String(row?.v ?? row?.value ?? "").replace(/[^\d.-]/g, ""));
+    if (!Number.isFinite(value)) continue;
+    if (key.includes("방문") || key.includes("요청") || key.includes("request") || key.includes("visit")) {
+      counts.cardTraffic = Math.max(Number(counts.cardTraffic || 0), value);
+    }
+  }
+  const known = Object.values(counts).some((value) => Number.isFinite(Number(value)));
+  if (!known) return null;
+  const observed = Object.entries(counts).some(([key, value]) => {
+    const lower = String(key).toLowerCase();
+    if (!/(visit|visitor|request|pageview|traffic|방문|요청)/.test(lower)) return false;
+    return Number(value) > 0;
+  });
+  return { observed };
+}
+
+async function collectMorningBriefingVerdictContext({
+  digest = {},
+  briefing = {},
+  day = null,
+  activeUserSnapshotResult = null,
+} = {}) {
+  const currentDay = normalizeOfficeHoursDay(day) || normalizeOfficeHoursDay(briefing?.day) || null;
+  const [
+    onboardingMemory,
+    day1GoalSelection,
+    officeHoursMemory,
+    officeHoursHistory,
+    dayProgress,
+    proofLedger,
+    gateLedger,
+    firstValueSignal,
+    workHistory,
+  ] = await Promise.all([
+    loadOnboardingMemory({ workspaceRoot }),
+    loadDay1GoalSelection({ workspaceRoot }),
+    loadOfficeHoursMemory({ workspaceRoot }),
+    buildOfficeHoursHistorySummary({ workspaceRoot, day: currentDay }),
+    loadDayProgress({ workspaceRoot }),
+    loadProofLedgerStrictForMorningVerdict({ workspaceRoot }),
+    loadGateLedger({ workspaceRoot }),
+    latestFirstValueSignal({ workspaceRoot }),
+    loadWorkHistorySnapshot({ workspaceRoot }),
+  ]);
+  const officeHoursMemorySummary = summarizeOfficeHoursMemory(officeHoursMemory, {
+    currentCycle: currentDay ?? undefined,
+  });
+  const evidenceOS = buildEvidenceOS({
+    dayProgress,
+    memory: officeHoursMemory,
+    workHistory,
+    day1GoalSelection,
+    currentDay,
+  });
+  const posthogSource = (digest.sources || []).find((source) => source?.id === "posthog") || null;
+  const programGateEvaluation = evaluateProgramGates({
+    proofLedger,
+    currentDay: currentDay || 1,
+    firstValue: firstValueSignal,
+    traffic: trafficSignalFromMorningSources({ digest, briefing }),
+    sources: {
+      posthogAvailable: posthogSource ? posthogSource.state === "ready" : null,
+    },
+    previousGates: gateLedger.gates,
+  });
+  const adaptiveRuleSignals = await assembleAdaptiveRuleSignals({
+    workspaceRoot,
+    day: currentDay,
+  });
+  return buildMorningBriefingVerdictContext({
+    onboardingMemory,
+    day1GoalSelection,
+    officeHoursHistory,
+    officeHoursMemorySummary,
+    officeHoursHistoryPrompt: formatOfficeHoursHistoryForPrompt(officeHoursHistory),
+    digest,
+    briefing,
+    proofLedger,
+    activeUsers: {
+      signal: firstValueSignal,
+      collectionStatus: activeUserSnapshotResult,
+    },
+    programGateEvaluation,
+    evidenceOS,
+    workHistory,
+    adaptiveRuleSignals,
+    currentDay,
+  });
+}
+
+async function runMorningBriefingVerdictProvider({
+  context,
+  preferredProvider = "",
+  provider: selectedProvider = "",
+  executionMode = MORNING_BRIEFING_VERDICT_EXECUTION_MODE,
+  runLog = null,
+} = {}) {
+  const provider = selectedProvider || pickMorningBriefingProvider(preferredProvider);
+  if (!provider) {
+    throw new Error("Morning briefing verdict requires Claude/Codex login.");
+  }
+  if (process.env.AGENTIC30_TEST_MORNING_BRIEFING_VERDICT_FAILURE === "1") {
+    throw new Error("Forced morning briefing verdict provider failure.");
+  }
+  const prompt = buildMorningBriefingVerdictPrompt(context);
+  const abortController = new AbortController();
+  let verdictText = "";
+  let timedOut = false;
+  await runWithSoftTimeout({
+    timeoutMs: MORNING_BRIEFING_VERDICT_PROVIDER_TIMEOUT_MS,
+    abortController,
+    onTimeout: () => {
+      timedOut = true;
+      telemetry.captureEvent("mac_sidecar_morning_briefing_verdict_timeout", {
+        provider,
+        timeout_ms: MORNING_BRIEFING_VERDICT_PROVIDER_TIMEOUT_MS,
+      });
+    },
+    onLateError: (error) => {
+      telemetry.captureException(error, {
+        operation: "morning_briefing_verdict_late",
+        provider,
+      });
+    },
+    operation: async () => {
+      await runProviderStream({
+        provider,
+        prompt,
+        workspaceRoot,
+        abortController,
+        sessionIdForMcp: null,
+        executionMode,
+        approvedToolExecution: false,
+        onTextDelta: (text) => {
+          if (!timedOut) verdictText += String(text || "");
+        },
+        onTextReplace: (text) => {
+          if (!timedOut) verdictText = String(text || "");
+        },
+      });
+    },
+  });
+  if (timedOut) {
+    throw new Error("Morning briefing verdict provider timed out.");
+  }
+  if (!verdictText.trim()) {
+    throw new Error("Morning briefing verdict provider returned empty output.");
+  }
+  const verdict = normalizeMorningBriefingLlmVerdict(verdictText, {
+    context,
+    provider,
+    generatedAt: new Date().toISOString(),
+  });
+  await runLog?.record?.("verdict_provider", "validated", {
+    provider,
+    executionMode,
+    state: verdict.state,
+    primaryActionId: verdict.primaryActionId,
+    evidenceCount: verdict.evidence.length,
+    contextRefs: verdict.contextRefs,
+  });
+  return verdict;
 }
 
 async function collectMorningBriefingExternalSignals({ gate, preferredProvider = "", progress = null } = {}) {
@@ -7004,6 +7422,36 @@ function isOfficeHoursStructuredRequest(request = null) {
   if (!request || typeof request !== "object") return false;
   if (isOfficeHoursStructuredInputMode(request.generation?.mode)) return true;
   return String(request.title || "").trim().toLowerCase() === "office hours";
+}
+
+function createOfficeHoursStructuredInputToolState() {
+  return {
+    pendingOutputSeen: false,
+    contractError: null,
+  };
+}
+
+function recordOfficeHoursStructuredInputToolEvent(toolState, event = {}) {
+  if (!toolState || !isOfficeHoursStructuredInputToolEvent(event)) return null;
+  const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+  const output = extractCodexStructuredInputToolOutputFromPayload(payload);
+  if (!output) return null;
+  if (isAnsweredCodexStructuredInputToolOutput(output)) {
+    toolState.contractError = new Error(
+      "Office Hours structured input contract violation: agentic30_request_user_input returned questions with answers/responses in office_hours_question mode; expected pending_user_input.",
+    );
+    return { kind: "answered", output };
+  }
+  if (isPendingCodexStructuredInputToolOutput(output)) {
+    toolState.pendingOutputSeen = true;
+    return { kind: "pending", output };
+  }
+  return { kind: "unhandled", output };
+}
+
+function assertOfficeHoursPendingUserInputAttached(session, toolState) {
+  if (!toolState?.pendingOutputSeen || session?.pendingUserInput) return;
+  throw new Error("structured input tool returned pending_user_input but no pending request was attachable");
 }
 
 async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMessage, {
@@ -7584,6 +8032,7 @@ async function runOfficeHours(session, {
     // the interview succeeded — without this guard the locked-Day1 failure
     // branch below would misfire.
     let officeHoursStructuredInputAsked = false;
+    const officeHoursStructuredInputToolState = createOfficeHoursStructuredInputToolState();
     // Claude's blocking-continue model also means the status copy table cannot
     // be pinned for the whole run: questions 2..N are generated inside this
     // same call and would keep reading "첫 질문 …". Select the table per emit —
@@ -7678,8 +8127,16 @@ async function runOfficeHours(session, {
             elapsed_ms: Math.max(0, Math.round(performance.now() - runStartedAt)),
             continuation: false,
           });
+          const structuredInputCapture = recordOfficeHoursStructuredInputToolEvent(
+            officeHoursStructuredInputToolState,
+            toolEvent,
+          );
           officeHoursStructuredInputAsked = true;
-          if (isSuccessfulStructuredInputToolEvent(toolEvent)) {
+          if (
+            structuredInputCapture?.kind !== "pending"
+            && structuredInputCapture?.kind !== "answered"
+            && isSuccessfulStructuredInputToolEvent(toolEvent)
+          ) {
             officeHoursStructuredInputAnswered = true;
           }
         }
@@ -7739,7 +8196,11 @@ async function runOfficeHours(session, {
       mergeProviderRuntime(session.runtime, result.runtime),
       officeHoursRuntime,
     );
+    if (officeHoursStructuredInputToolState.contractError) {
+      throw officeHoursStructuredInputToolState.contractError;
+    }
     await syncPendingUserInputRequests();
+    assertOfficeHoursPendingUserInputAttached(session, officeHoursStructuredInputToolState);
     assistantMessage.state = "final";
     session.status = session.pendingUserInput ? "awaiting_input" : "idle";
     session.error = null;
@@ -13731,6 +14192,17 @@ async function runNewsMarketRadarProviderResearch({
       researchSource: routeLabel,
     });
   }
+  if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
+    const stubText = buildStrategyReportStubProviderText(prompt);
+    if (stubText) {
+      return {
+        text: stubText,
+        provider,
+        researchSource: routeLabel,
+        exaResearchRoute: redactExaResearchRoute(route),
+      };
+    }
+  }
   const text = await runWithMarketResearchProviderBudget(async () => (
     provider === "claude"
       ? await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: route.mcpConfig })
@@ -13757,6 +14229,16 @@ async function runNewsMarketRadarProviderSynthesis({
   const authState = getProviderAuthState(candidate);
   if (!authState.available) {
     throw new Error(`${providerLabel(candidate)} 합성 사용 불가: ${authState.message || authState.source || "설정되지 않음"}`);
+  }
+  if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
+    const stubText = buildStrategyReportStubProviderText(prompt);
+    if (stubText) {
+      return {
+        text: stubText,
+        provider: candidate,
+        researchSource: `${providerLabel(candidate)} synthesis`,
+      };
+    }
   }
   const text = candidate === "claude"
     ? await runNewsMarketRadarClaudeSynthesis({ prompt })
@@ -13809,6 +14291,84 @@ function providerLabel(provider) {
   case "codex": return "Codex";
   default: return "Provider";
   }
+}
+
+function buildStrategyReportStubProviderText(prompt = "") {
+  const value = String(prompt || "");
+  if (/Adversarial strategy review for Agentic30/i.test(value)) {
+    return JSON.stringify({
+      verdict: "pass",
+      confidence: 0.91,
+      findings: [
+        "UI E2E stub adversarial pass confirmed alias-shaped canvas blocks before final verification.",
+      ],
+      requiredChanges: [],
+    });
+  }
+  if (
+    /Exa public research pass for Agentic30 strategy report/i.test(value)
+    || /Multidimensional final verification for Agentic30 strategy report/i.test(value)
+  ) {
+    return JSON.stringify({
+      report: buildStrategyReportStubContent(),
+    });
+  }
+  return "";
+}
+
+function buildStrategyReportStubContent() {
+  return {
+    commandLine: "strategy@agentic30 ~/code/agentic30 $ synthesize dynamic-strategy --from exa SPEC ICP VALUES",
+    diagnosisKicker: "Verified business diagnosis",
+    diagnosisTitle: "Agentic30은 sidecar E2E에서 paid ask와 first_value 증거 루프를 갱신하는 macOS evidence assistant입니다.",
+    diagnosisLead: "Stub provider가 실제 sidecar WebSocket refresh 경로를 통해 alias-shaped Business Model Canvas를 반환하고, sidecar 정규화가 canonical canvas id로 확정합니다.",
+    positioningStatement: "Agentic30은 혼자 일하는 개발자가 매일 프로젝트 기록을 paid ask와 first_value 실험으로 바꾸는 macOS evidence assistant입니다.",
+    judgement: "전략 판단은 코딩 생산성이 아니라 첫 고객 행동 증거를 매일 닫는 루프에 계속 집중하는 것입니다.",
+    generatedBadge: "동적 리서치",
+    analysisBasisLabel: "SPEC.md + ICP.md + VALUES.md + Exa public evidence",
+    canvasMeta: { text: "9 blocks from sidecar E2E stub" },
+    matrixMeta: { label: "positioning from sidecar E2E stub" },
+    swotMeta: { note: "SWOT from sidecar E2E stub" },
+    summaryTiles: [
+      { id: "primary-icp", label: "Primary ICP", title: "전업 1인 개발자", detail: "첫 매출 전, macOS와 AI 코딩 도구를 쓰며 기록 제출 의향이 있습니다." },
+      { id: "wedge", label: "Wedge", title: "Local evidence loop", detail: "업무 기록에서 오늘의 paid ask와 first_value 목표를 만듭니다." },
+      { id: "proof-target", label: "Proof target", title: "고객 행동 증거", detail: "인터뷰 원문, 유료 ask, activation, Go/No-Go 결정을 연결합니다." },
+    ],
+    criteriaRows: [
+      { id: "product-shape", label: "제품 형태", value: "SwiftUI macOS 메뉴바 앱 + 로컬 Node sidecar + 선택적 Exa 공개 근거 리서치입니다." },
+      { id: "core-pain", label: "핵심 고통", value: "AI 코딩으로 만들 수는 있지만 누구에게 얼마로 팔지 모릅니다." },
+      { id: "differentiator", label: "차별 기준", value: "정적 강의가 아니라 로컬 실행 기록에서 adaptive Day 과제와 evidence gate를 생성합니다." },
+      { id: "stage", label: "현재 단계", value: "private pilot evidence와 외부 ICP 반응을 추적하는 단계입니다." },
+    ],
+    canvasBlocks: [
+      { id: "partners", number: "08", eyebrow: "Partners", title: "핵심 파트너", tone: "blue", bullets: ["Claude / Codex / Cursor / Gemini AI coding provider 생태계", "PostHog, GitHub, Cloudflare activation evidence"] },
+      { id: "activities", number: "07", eyebrow: "Activities", title: "핵심 활동", tone: "accent", bullets: ["Foundation Day 0-3 dogfood와 private pilot 반복", "프로젝트/업무/인터뷰/BIP/PostHog 기록에서 다음 과제 생성"] },
+      { id: "resources", number: "06", eyebrow: "Resources", title: "핵심 자원", tone: "sky", bullets: ["로컬 실행 로그와 proof-ledger", "SPEC / ICP / VALUES 전략 문서"] },
+      { id: "valueProposition", number: "02", eyebrow: "Value proposition", title: "가치 제안", tone: "accent", bullets: ["오늘 보낼 paid ask와 측정할 first_value를 좁힙니다.", "혼자 판단하는 편향을 transcript, BIP, PostHog 숫자로 교정합니다."] },
+      { id: "relationships", number: "04", eyebrow: "Relationships", title: "고객 관계", tone: "accent", bullets: ["메뉴바 상주 assistant의 매일 체크인", "private pilot에서 맞춤 작업과 강한 피드백 루프"] },
+      { id: "channels", number: "03", eyebrow: "Channels", title: "채널", tone: "blue", bullets: ["Threads / Discord / indie founder 커뮤니티", "직접 사이드프로젝트를 가진 1인 개발자 referral"] },
+      { id: "customer_segments", number: "01", label: "Customer segments", title: "고객 세그먼트", tone: "accent", items: ["전업 1인 개발자, 첫 매출 전, macOS 사용자", "AI 코딩 도구 사용 경험이 있는 builder"] },
+      { id: "비용 구조", number: "09", label: "비용 구조", title: "비용 구조", tone: "magenta", bullets: ["provider execution 비용과 macOS 배포/지원 비용", "리서치/검증 패스의 시간 비용"] },
+      { id: "pilotPayments", number: "05", title: "Pilot paid conversion", tone: "accent", bullets: ["pilot 유료 ask", "월 구독형 개인 evidence assistant"] },
+    ],
+    competitors: [
+      { id: "agentic30", title: "Agentic30", tag: "Adaptive PMF evidence loop", body: "내 프로젝트 기록을 읽어 오늘의 유료 ask와 증거 gate를 만듭니다.", gap: "검증 과제: 유료 pilot에서 first_value를 반복 입증해야 합니다.", x: 0.78, y: 0.22, adaptiveScore: 92, evidenceScore: 84, sourceLabel: "SPEC / ICP / Exa", sourceURL: "https://agentic30.com", sourceDisplay: "agentic30.com", verifiedAt: "2026-06", scoreRationale: "로컬 기록 기반 adaptive 과제와 evidence gate가 함께 있습니다.", category: "agentic30", isAgentic30: true, labelPlacement: "leading" },
+      { id: "cursor", title: "Cursor", tag: "AI coding workspace", body: "빌드 속도는 높지만 PMF 증거 루프는 제품 밖에 있습니다.", gap: "Agentic30은 코딩 생산성 대신 고객 행동 증거를 닫습니다.", x: 0.72, y: 0.72, adaptiveScore: 80, evidenceScore: 35, sourceLabel: "Public docs", sourceURL: "https://cursor.com", sourceDisplay: "cursor.com", verifiedAt: "2026-06", scoreRationale: "코딩 적응성은 강하지만 paid ask 추적은 핵심 제품이 아닙니다.", category: "aiBuild", isAgentic30: false, labelPlacement: "trailing" },
+      { id: "indiefounders", title: "IndieFounders", tag: "Founder community", body: "창업자 네트워크와 학습 콘텐츠는 있으나 로컬 evidence loop는 약합니다.", gap: "Agentic30은 커뮤니티가 아니라 매일 실행 기록에 붙습니다.", x: 0.04, y: 0.95, adaptiveScore: 4, evidenceScore: 5, sourceLabel: "Public site", sourceURL: "https://indiefounders.net", sourceDisplay: "indiefounders.net", verifiedAt: "2026-06", scoreRationale: "커뮤니티 증거는 있으나 제품 실행 자동화는 제한적입니다.", category: "community", isAgentic30: false, labelPlacement: "leading" },
+    ],
+    swotGroups: [
+      { id: "strengths", title: "Strengths", tag: "내부 강점", tone: "accent", bullets: ["로컬 기록 기반 맥락", "매일 evidence gate로 이어지는 루프"] },
+      { id: "weaknesses", title: "Weaknesses", tag: "내부 약점", tone: "magenta", bullets: ["초기 데이터 밀도가 낮음", "macOS 한정 배포"] },
+      { id: "opportunities", title: "Opportunities", tag: "외부 기회", tone: "sky", bullets: ["AI coding tool 보급", "1인 개발자 monetization 니즈"] },
+      { id: "threats", title: "Threats", tag: "외부 위협", tone: "blue", bullets: ["대형 coding IDE의 workflow 흡수", "전략 리포트만으로 보이는 위험"] },
+    ],
+    swotMatrixColumnCount: 2,
+    swotMatrixRows: [["strengths", "weaknesses"], ["opportunities", "threats"]],
+    sourceRefs: [
+      { id: "cursor", sourceType: "public_web", title: "Cursor", url: "https://cursor.com", domain: "cursor.com", excerpt: "AI coding workspace reference" },
+      { id: "indiefounders", sourceType: "public_web", title: "IndieFounders", url: "https://indiefounders.net", domain: "indiefounders.net", excerpt: "Founder community reference" },
+    ],
+  };
 }
 
 async function runNewsMarketRadarClaudeResearch({

@@ -529,7 +529,7 @@ test("normalizePosthogDrilldownMeasurements renders small-sample aggregate deter
         { path: "/blog/paddle-guide", pageviews: 79, activeUsers: 59 },
         { path: "/", pageviews: 26, activeUsers: 17 },
       ],
-      instrumentationGaps: ["가입·activation 이벤트가 없어 목표 전환 판단은 제한적입니다."],
+      instrumentationGaps: ["가입·검증 행동 이벤트가 없어 목표 전환 판단은 제한적입니다."],
     },
   });
 
@@ -537,10 +537,10 @@ test("normalizePosthogDrilldownMeasurements renders small-sample aggregate deter
   assert.equal(drilldown.title, "PostHog · 계측·활성 공백");
   assert.equal(drilldown.subtitle, "표본 작음 · 리텐션 단정 보류");
   assert.equal(drilldown.kpis[2].valueLabel, "미계측");
-  assert.equal(drilldown.kpis[2].deltaLabel, "activation 없음");
+  assert.equal(drilldown.kpis[2].deltaLabel, "검증 행동 없음");
   assert.equal(drilldown.kpis[2].direction, "flat");
   assert.equal(drilldown.kpis[2].flag, false);
-  assert.equal(drilldown.kpis[2].vsLabel, "코호트 n=9 · activation 계측 없음");
+  assert.equal(drilldown.kpis[2].vsLabel, "코호트 n=9 · 검증 행동 계측 없음");
   assert.equal(drilldown.kpis[3].valueLabel, "미계측");
   assert.equal(drilldown.kpis[3].deltaLabel, "이벤트 없음");
   assert.equal(drilldown.chart, null);
@@ -711,11 +711,17 @@ test("buildMorningBriefingExternalDigestPrompt appends drilldown shape for selec
   assert.match(cloudflare, /"previousTotals"/);
   assert.match(cloudflare, /"hourly"/);
   assert.match(cloudflare, /httpRequestsAdaptiveGroups/);
+  assert.match(cloudflare, /cloudflare-api cloudflare_api mcp__cloudflare_api execute/);
+  assert.match(cloudflare, /mcp__cloudflare_api\.execute/);
+  assert.match(cloudflare, /mcp__cloudflare-api__execute/);
+  assert.match(cloudflare, /mcp__cloudflare_api__execute/);
   assert.match(cloudflare, /path: "\/graphql"/);
   assert.match(cloudflare, /query\(\$zone: String!, \$start: Time!, \$end: Time!\)/);
   assert.match(cloudflare, /sum \{ requests pageViews threats \}/);
   assert.match(cloudflare, /Never sum hourly uniq\.uniques/);
   assert.match(cloudflare, /Remove dimensions entirely/);
+  assert.doesNotMatch(cloudflare, /execute\/search/);
+  assert.doesNotMatch(cloudflare, /search\/graphql_query/);
   assert.doesNotMatch(cloudflare, /\/client\/v4\/graphql/);
   assert.doesNotMatch(cloudflare, /sum \{[^}]*visits/);
   assert.doesNotMatch(cloudflare, /사람 방문, 지난 24시간/);

@@ -31,76 +31,75 @@ enum OnboardingWorkMode: String, Codable, CaseIterable, Hashable {
     }
 }
 
-enum OnboardingRole: String, Codable, CaseIterable, Hashable {
-    case developer
-    case designer
-    case productManager = "product_manager"
-    case marketerBusiness = "marketer_business"
-    case generalist
-    case student
+enum OnboardingFocusArea: String, Codable, CaseIterable, Hashable {
+    case development
+    case design
+    case productPlanning = "product_planning"
+    case customerAcquisition = "customer_acquisition"
+    case salesMonetization = "sales_monetization"
 
-    static let onboardingChoices: [OnboardingRole] = [
-        .developer,
-        .designer,
-        .productManager,
-        .marketerBusiness,
-        .generalist,
+    static let onboardingQuestion = "요즘 어디에 시간을 가장 많이 쓰고 있나요?"
+    static let onboardingSubtitle = "어디에 집중하고 있는지에 따라, 지금 필요한 도움을 더 정확히 드립니다."
+
+    static let onboardingChoices: [OnboardingFocusArea] = [
+        .development,
+        .design,
+        .productPlanning,
+        .customerAcquisition,
+        .salesMonetization,
     ]
 
     var displayTitle: String {
         switch self {
-        case .developer: return "개발자"
-        case .designer: return "디자이너"
-        case .productManager: return "기획자 / PM"
-        case .marketerBusiness: return "마케터 / 비즈니스"
-        case .generalist: return "그 외 / 여러 역할"
-        case .student: return "학생"
+        case .development: return "개발"
+        case .design: return "디자인"
+        case .productPlanning: return "제품 기획"
+        case .customerAcquisition: return "고객 확보"
+        case .salesMonetization: return "판매 / 수익화"
         }
     }
 
     var displayDescription: String {
         switch self {
-        case .developer: return "앱, 웹 등 프로덕트를 직접 구현합니다"
-        case .designer: return "브랜드, UI/UX, 프로덕트 디자인을 다룹니다"
-        case .productManager: return "제품과 서비스의 기획 및 운영을 리드합니다"
-        case .marketerBusiness: return "제품의 성장과 비즈니스 전략을 고민합니다"
-        case .generalist: return "위 직군에 속하지 않거나 다양한 역할을 겸합니다"
-        case .student: return "학업과 병행하며 제품을 만듭니다"
+        case .development: return "앱·웹 등 제품을 직접 구현하고 있습니다."
+        case .design: return "화면, UX, 브랜드, 사용 흐름을 다듬고 있습니다."
+        case .productPlanning: return "문제 정의, 기능 우선순위, 제품 방향을 정리하고 있습니다."
+        case .customerAcquisition: return "사용자를 찾고, 홍보하고, 유입 채널을 실험하고 있습니다."
+        case .salesMonetization: return "가격, 결제, 유료 제안, 매출 전환을 실험하고 있습니다."
         }
     }
 }
 
-enum OnboardingProjectStage: String, Codable, CaseIterable, Hashable {
-    case ideaOnly = "idea_only"
-    case building
-    case firstUsers = "first_users_5"
-    case preRevenue = "pre_revenue"
-    case postRevenue = "post_revenue"
+enum OnboardingProductBottleneck: String, Codable, CaseIterable, Hashable {
+    case problemDefinition = "problem_definition"
+    case firstActiveUsers = "first_active_users"
+    case repeatUsage = "repeat_usage"
+    case pricingOffer = "pricing_offer"
 
-    static let onboardingChoices: [OnboardingProjectStage] = [
-        .ideaOnly,
-        .building,
-        .firstUsers,
-        .preRevenue,
+    static let onboardingQuestion = "지금 제품을 만들거나 키우는 과정에서 가장 큰 병목은 어디인가요?"
+
+    static let onboardingChoices: [OnboardingProductBottleneck] = [
+        .problemDefinition,
+        .firstActiveUsers,
+        .repeatUsage,
+        .pricingOffer,
     ]
 
     var displayTitle: String {
         switch self {
-        case .ideaOnly: return "무엇을 만들어야 할지 모르겠다"
-        case .building: return "첫 사용자를 찾지 못하고 있다"
-        case .firstUsers: return "사용자는 있지만 유료 전환 전이다"
-        case .preRevenue: return "가격·제안 실험이 막혀 있다"
-        case .postRevenue: return "이미 매출이 있고 더 키우고 싶다"
+        case .problemDefinition: return "누구의 어떤 문제를 풀어야 할지 모르겠다."
+        case .firstActiveUsers: return "제품은 있지만 첫 활성 사용자를 찾지 못하고 있다."
+        case .repeatUsage: return "사용자는 있지만 반복 사용으로 이어지지 않는다."
+        case .pricingOffer: return "쓰는 사람은 있지만 결제 제안·가격 설정이 막혀 있다."
         }
     }
 
     var displayDescription: String {
         switch self {
-        case .ideaOnly: return "누구의 어떤 문제를 풀지부터 좁혀야 합니다"
-        case .building: return "처음 써보는 사람을 찾거나 붙잡는 일이 막혀 있습니다"
-        case .firstUsers: return "사용은 있지만 가격을 물어보거나 결제까지 가지 못했습니다"
-        case .preRevenue: return "얼마를 받을지, 누구에게 어떻게 제안할지 정해야 합니다"
-        case .postRevenue: return "다시 쓰게 만들고 더 많은 사람에게 알리는 일이 중요합니다"
+        case .problemDefinition: return "대상 사용자와 반복 통증을 좁히는 증거가 먼저 필요합니다"
+        case .firstActiveUsers: return "처음 가치를 느끼는 사용자를 찾고 활성 행동을 만들어야 합니다"
+        case .repeatUsage: return "다시 돌아오게 만드는 이유와 사용 리듬을 확인해야 합니다"
+        case .pricingOffer: return "누구에게 얼마를 어떻게 제안할지 검증해야 합니다"
         }
     }
 }
@@ -154,8 +153,8 @@ struct OnboardingContext: Codable, Hashable {
     var goal: String
     var customWorkMode: String
     var workMode: OnboardingWorkMode
-    var role: OnboardingRole
-    var projectStage: OnboardingProjectStage
+    var focusArea: OnboardingFocusArea
+    var productBottleneck: OnboardingProductBottleneck
     var isolationLevel: OnboardingIsolationLevel
     var isolationLevels: [OnboardingIsolationLevel]
     var completedAt: String
@@ -166,8 +165,8 @@ struct OnboardingContext: Codable, Hashable {
         case goal
         case customWorkMode = "custom_work_mode"
         case workMode = "work_mode"
-        case role
-        case projectStage = "project_stage"
+        case focusArea = "focus_area"
+        case productBottleneck = "product_bottleneck"
         case isolationLevel = "isolation_level"
         case isolationLevels = "isolation_levels"
         case completedAt = "completed_at"
@@ -179,8 +178,8 @@ struct OnboardingContext: Codable, Hashable {
         goal: String = "",
         customWorkMode: String = "",
         workMode: OnboardingWorkMode,
-        role: OnboardingRole,
-        projectStage: OnboardingProjectStage,
+        focusArea: OnboardingFocusArea,
+        productBottleneck: OnboardingProductBottleneck,
         isolationLevel: OnboardingIsolationLevel,
         isolationLevels: [OnboardingIsolationLevel]? = nil,
         completedAt: String
@@ -190,8 +189,8 @@ struct OnboardingContext: Codable, Hashable {
         self.goal = goal.trimmedContextAnswer
         self.customWorkMode = customWorkMode.trimmedContextAnswer
         self.workMode = workMode
-        self.role = role
-        self.projectStage = projectStage
+        self.focusArea = focusArea
+        self.productBottleneck = productBottleneck
         self.isolationLevel = isolationLevel
         let levels: [OnboardingIsolationLevel]
         if let isolationLevels, !isolationLevels.isEmpty {
@@ -210,8 +209,8 @@ struct OnboardingContext: Codable, Hashable {
         goal = try container.decodeIfPresent(String.self, forKey: .goal)?.trimmedContextAnswer ?? ""
         customWorkMode = try container.decodeIfPresent(String.self, forKey: .customWorkMode)?.trimmedContextAnswer ?? ""
         workMode = try container.decodeIfPresent(OnboardingWorkMode.self, forKey: .workMode) ?? .fullTimeSolo
-        role = try container.decode(OnboardingRole.self, forKey: .role)
-        projectStage = try container.decode(OnboardingProjectStage.self, forKey: .projectStage)
+        focusArea = try container.decode(OnboardingFocusArea.self, forKey: .focusArea)
+        productBottleneck = try container.decode(OnboardingProductBottleneck.self, forKey: .productBottleneck)
         isolationLevel = try container.decode(OnboardingIsolationLevel.self, forKey: .isolationLevel)
         isolationLevels = try container.decodeIfPresent([OnboardingIsolationLevel].self, forKey: .isolationLevels) ?? [isolationLevel]
         if isolationLevels.isEmpty {
@@ -226,8 +225,8 @@ struct OnboardingContext: Codable, Hashable {
         goal: String = "",
         customWorkMode: String = "",
         workMode: OnboardingWorkMode = .fullTimeSolo,
-        role: OnboardingRole,
-        projectStage: OnboardingProjectStage,
+        focusArea: OnboardingFocusArea,
+        productBottleneck: OnboardingProductBottleneck,
         isolationLevel: OnboardingIsolationLevel,
         isolationLevels: [OnboardingIsolationLevel]? = nil
     ) -> OnboardingContext {
@@ -237,8 +236,8 @@ struct OnboardingContext: Codable, Hashable {
             goal: goal,
             customWorkMode: customWorkMode,
             workMode: workMode,
-            role: role,
-            projectStage: projectStage,
+            focusArea: focusArea,
+            productBottleneck: productBottleneck,
             isolationLevel: isolationLevel,
             isolationLevels: isolationLevels,
             completedAt: ISO8601DateFormatter().string(from: Date())
@@ -252,8 +251,8 @@ struct OnboardingContext: Codable, Hashable {
             "goal": goal,
             "custom_work_mode": customWorkMode,
             "work_mode": workMode.rawValue,
-            "role": role.rawValue,
-            "project_stage": projectStage.rawValue,
+            "focus_area": focusArea.rawValue,
+            "product_bottleneck": productBottleneck.rawValue,
             "isolation_level": isolationLevel.rawValue,
             "isolation_levels": isolationLevels.map(\.rawValue),
             "completed_at": completedAt,
@@ -273,7 +272,7 @@ struct OnboardingContext: Codable, Hashable {
             ? workMode.rawValue
             : "\(workMode.rawValue)(\(customWorkMode))"
         lines.append(
-            "유저 컨텍스트: \(workModeContext) · \(role.rawValue) · \(projectStage.rawValue) · \(isolationLevels.map(\.rawValue).joined(separator: ","))."
+            "유저 컨텍스트: \(workModeContext) · \(focusArea.rawValue) · \(productBottleneck.rawValue) · \(isolationLevels.map(\.rawValue).joined(separator: ","))."
         )
         switch workMode {
         case .fullTimeSolo:
@@ -290,15 +289,15 @@ struct OnboardingContext: Codable, Hashable {
             }
         }
 
-        switch projectStage {
-        case .firstUsers, .preRevenue, .postRevenue:
-            lines.append(
-                "[R1] 수익화·마케팅·리텐션 조언 비중을 높여주세요. Foundation 단계 제안은 피하세요."
-            )
-        case .ideaOnly, .building:
-            lines.append(
-                "[R1] Foundation 단계(문제 정의·인터뷰·랜딩 검증) 조언 비중을 높여주세요."
-            )
+        switch productBottleneck {
+        case .problemDefinition:
+            lines.append("[R1] 문제 정의·인터뷰·타깃 세분화 조언 비중을 높여주세요.")
+        case .firstActiveUsers:
+            lines.append("[R1] 첫 활성 사용자 획득과 activation 증거 조언 비중을 높여주세요.")
+        case .repeatUsage:
+            lines.append("[R1] 반복 사용·리텐션·이탈 신호 조언 비중을 높여주세요.")
+        case .pricingOffer:
+            lines.append("[R1] 결제 제안·가격 설정·지불 의사 검증 조언 비중을 높여주세요.")
         }
 
         if isolationLevels.contains(.projectFolder) {
@@ -320,10 +319,17 @@ struct OnboardingContext: Codable, Hashable {
             lines.append("[R2] 기록이 없다는 전제로, 오늘 만들 첫 problem memo 또는 인터뷰 입력부터 요구하세요.")
         }
 
-        if role != .developer {
-            lines.append(
-                "[R3] 기술 용어 비중을 30% 줄이세요. 코드 스니펫 대신 자연어 설명을 우선하세요."
-            )
+        switch focusArea {
+        case .development:
+            lines.append("[R3] 구현 흐름, 기술 trade-off, 다음 코드/배포 단계를 구체적으로 제안하세요.")
+        case .design:
+            lines.append("[R3] 화면, UX, 브랜드, 사용 흐름 관점의 판단 기준을 먼저 제안하세요.")
+        case .productPlanning:
+            lines.append("[R3] 문제 정의, 기능 우선순위, 제품 방향을 정리하는 방식으로 제안하세요.")
+        case .customerAcquisition:
+            lines.append("[R3] 사용자 탐색, 홍보, 유입 채널 실험 중심으로 제안하세요.")
+        case .salesMonetization:
+            lines.append("[R3] 가격, 결제, 유료 제안, 매출 전환 실험 중심으로 제안하세요.")
         }
 
         return lines.joined(separator: "\n")
@@ -340,8 +346,8 @@ struct WorkspaceOnboardingMemory: Codable, Hashable {
 
     struct Answers: Codable, Hashable {
         var timeBudget: Answer
-        var primaryRole: Answer
-        var biggestBlocker: Answer
+        var primaryFocus: Answer
+        var primaryBottleneck: Answer
         var existingRecords: Answer
     }
 
@@ -355,8 +361,8 @@ struct WorkspaceOnboardingMemory: Codable, Hashable {
         var detail: String
     }
 
-    static let schema = "agentic30.memory.onboarding.v1"
-    static let schemaVersion = 1
+    static let schema = "agentic30.memory.onboarding.v3"
+    static let schemaVersion = 3
 
     var schemaVersion: Int
     var schema: String
@@ -402,17 +408,17 @@ struct WorkspaceOnboardingMemory: Codable, Hashable {
             answer: intakeStore?.commitmentLevel?.rawValue ?? context.customWorkMode.nonEmptyValue ?? context.workMode.rawValue,
             detail: intakeStore?.commitmentLevel?.displayTitle ?? context.customWorkMode.nonEmptyValue ?? context.workMode.displayTitle
         )
-        let roleAnswer = answer(
-            id: "primary_role",
-            question: "하루 중 가장 많이 쓰는 역할",
-            answer: context.role.rawValue,
-            detail: context.role.displayTitle
+        let focusAnswer = answer(
+            id: "primary_focus",
+            question: OnboardingFocusArea.onboardingQuestion,
+            answer: context.focusArea.rawValue,
+            detail: context.focusArea.displayTitle
         )
         let blockerAnswer = answer(
-            id: "biggest_blocker",
-            question: "현재 가장 큰 막힘",
-            answer: context.projectStage.rawValue,
-            detail: context.projectStage.displayTitle
+            id: "primary_bottleneck",
+            question: OnboardingProductBottleneck.onboardingQuestion,
+            answer: context.productBottleneck.rawValue,
+            detail: context.productBottleneck.displayTitle
         )
         let records = context.isolationLevels.map(\.rawValue).joined(separator: ",")
         let recordsDetail = context.isolationLevels.map(\.displayTitle).joined(separator: ", ")
@@ -429,8 +435,8 @@ struct WorkspaceOnboardingMemory: Codable, Hashable {
             projectPath: trimmedRoot,
             answers: Answers(
                 timeBudget: timeAnswer,
-                primaryRole: roleAnswer,
-                biggestBlocker: blockerAnswer,
+                primaryFocus: focusAnswer,
+                primaryBottleneck: blockerAnswer,
                 existingRecords: recordAnswer
             ),
             onboardingContext: context,
@@ -448,8 +454,8 @@ struct WorkspaceOnboardingMemory: Codable, Hashable {
             "projectPath": projectPath,
             "answers": [
                 "timeBudget": answers.timeBudget.payload,
-                "primaryRole": answers.primaryRole.payload,
-                "biggestBlocker": answers.biggestBlocker.payload,
+                "primaryFocus": answers.primaryFocus.payload,
+                "primaryBottleneck": answers.primaryBottleneck.payload,
                 "existingRecords": answers.existingRecords.payload,
             ],
             "onboardingContext": onboardingContext.bridgePayload,
@@ -823,42 +829,42 @@ struct OnboardingContextQuestionResponses: Codable, Hashable {
         self.goal = goal
     }
 
-    var inferredProjectStage: OnboardingProjectStage {
+    var inferredProductBottleneck: OnboardingProductBottleneck {
         let haystack = "\(businessDescription) \(currentStage) \(goal)".lowercased()
-        // Specific pre-revenue / pricing terms first so they don't get swallowed
-        // by the broader "revenue" match below ("pre-revenue", "수익화" before "revenue").
-        if haystack.contains("pre-revenue")
-            || haystack.contains("prerevenue")
-            || haystack.contains("price")
+        if haystack.contains("repeat")
+            || haystack.contains("retained")
+            || haystack.contains("retention")
+            || haystack.contains("churn")
+            || haystack.contains("재방문")
+            || haystack.contains("반복")
+            || haystack.contains("리텐션")
+            || haystack.contains("이탈") {
+            return .repeatUsage
+        }
+        if haystack.contains("price")
             || haystack.contains("pricing")
             || haystack.contains("가격")
-            || haystack.contains("수익화") {
-            return .preRevenue
-        }
-        if haystack.contains("revenue")
-            || haystack.contains("매출")
             || haystack.contains("결제")
-            || haystack.contains("유료") {
-            return .postRevenue
+            || haystack.contains("유료")
+            || haystack.contains("제안")
+            || haystack.contains("수익화") {
+            return .pricingOffer
         }
-        if haystack.contains("user")
-            || haystack.contains("customer")
+        if haystack.contains("active")
+            || haystack.contains("activation")
+            || haystack.contains("first user")
+            || haystack.contains("첫 사용자")
+            || haystack.contains("활성")
             || haystack.contains("사용자")
             || haystack.contains("고객") {
-            return .firstUsers
+            return .firstActiveUsers
         }
-        if haystack.contains("build")
-            || haystack.contains("mvp")
-            || haystack.contains("만드는")
-            || haystack.contains("개발") {
-            return .building
-        }
-        return .ideaOnly
+        return .problemDefinition
     }
 
     func makeContext(
         workMode: OnboardingWorkMode = .fullTimeSolo,
-        role: OnboardingRole = .developer,
+        focusArea: OnboardingFocusArea = .development,
         isolationLevel: OnboardingIsolationLevel = .projectFolder
     ) -> OnboardingContext {
         OnboardingContext.make(
@@ -866,8 +872,8 @@ struct OnboardingContextQuestionResponses: Codable, Hashable {
             currentStage: currentStage,
             goal: goal,
             workMode: workMode,
-            role: role,
-            projectStage: inferredProjectStage,
+            focusArea: focusArea,
+            productBottleneck: inferredProductBottleneck,
             isolationLevel: isolationLevel
         )
     }

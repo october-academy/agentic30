@@ -145,11 +145,114 @@ struct LongRunningCompletionNotifierTests {
         #expect(!shouldNotify(attemptId: nil))
         #expect(!shouldNotify(attemptId: " "))
     }
+
+    @Test func classifiesSelectedFailedMorningBriefingSourceAsFailedCompletion() throws {
+        let payload = """
+        {
+          "schemaVersion": 3,
+          "generatedAt": "2026-06-16T07:31:57.570Z",
+          "day": 3,
+          "summary": { "title": "밤사이 신호 요약" },
+          "sync": {
+            "sources": [
+              { "id": "git", "label": "git", "state": "ready", "selected": true, "detail": "git ok" },
+              { "id": "posthog", "label": "PostHog", "state": "ready", "selected": true, "detail": "PostHog ok" },
+              { "id": "cloudflare", "label": "Cloudflare", "state": "failed", "selected": true, "detail": "Cloudflare MCP 도구를 사용할 수 없어 집계 트래픽을 계산하지 못했습니다." }
+            ],
+            "readyCount": 2,
+            "syncedAt": "2026-06-16T07:31:57.570Z",
+            "syncedAtLabel": "16:31"
+          },
+          "status": { "state": "ready", "detail": "소스 2개에서 밤사이 신호를 모았어요." }
+        }
+        """
+        let briefing = try JSONDecoder().decode(MorningBriefing.self, from: Data(payload.utf8))
+
+        let classification = MorningBriefingCompletionClassifier.classify(
+            topLevelStatus: MorningBriefingStatus(
+                state: "ready",
+                detail: "소스 2개에서 밤사이 신호를 모았어요.",
+                reason: "manual",
+                runId: "run-1",
+                snapshot: false,
+                failedSources: [
+                    MorningBriefingStatusFailedSource(
+                        id: "cloudflare",
+                        label: "Cloudflare",
+                        detail: "Cloudflare MCP 도구를 사용할 수 없어 집계 트래픽을 계산하지 못했습니다."
+                    )
+                ]
+            ),
+            briefing: briefing
+        )
+
+        #expect(classification.isCollectingSnapshot == false)
+        #expect(classification.outcome == .failed)
+        #expect(classification.detail == "Cloudflare 수집을 완료하지 못했어요. 브리핑에서 연결 상태를 확인하세요.")
+        #expect(classification.detail?.contains("MCP") == false)
+    }
+
+    @Test func classifiesMorningBriefingSuccessWithVerdictInsteadOfSummaryTitle() throws {
+        let payload = """
+        {
+          "schemaVersion": 2,
+          "generatedAt": "2026-06-16T07:31:57.570Z",
+          "day": 3,
+          "summary": {
+            "title": "밤사이 신호 요약",
+            "statement": "밤사이 제품 지표와 고객 증거를 정리했어요."
+          },
+          "customerEvidenceVerdict": {
+            "state": "instrumentation_gap",
+            "title": "고객 행동 근거를 먼저 확인하세요.",
+            "body": "오늘은 늘어난 방문이 검증 행동으로 이어지는지 봅니다.",
+            "evidence": ["Cloudflare visits 64 집계가 있습니다.", "PostHog conversions 0 집계가 있습니다."],
+            "primaryActionId": "task",
+            "verdictProvider": "codex",
+            "verdictGeneratedAt": "2026-06-16T07:32:00.000Z",
+            "contextRefs": ["onboarding", "day1_goal", "office_hours", "cloudflare", "github", "posthog"]
+          },
+          "status": { "state": "ready", "detail": "소스 2개에서 밤사이 신호를 모았어요." }
+        }
+        """
+        let briefing = try JSONDecoder().decode(MorningBriefing.self, from: Data(payload.utf8))
+
+        let classification = MorningBriefingCompletionClassifier.classify(
+            topLevelStatus: MorningBriefingStatus(state: "ready", snapshot: false),
+            briefing: briefing
+        )
+
+        #expect(classification.outcome == .success)
+        #expect(classification.detail == "고객 행동 근거를 먼저 확인하세요.")
+        #expect(classification.detail != "밤사이 신호 요약")
+    }
+
+    @Test func classifiesMorningBriefingFailureWithoutRawInternalDetail() {
+        let classification = MorningBriefingCompletionClassifier.classify(
+            topLevelStatus: MorningBriefingStatus(
+                state: "failed",
+                detail: "external MCP digest succeeded",
+                snapshot: false
+            ),
+            briefing: nil
+        )
+
+        #expect(classification.outcome == .failed)
+        #expect(classification.detail == "브리핑을 끝내지 못했어요. 열어서 연결 상태를 확인하세요.")
+        #expect(classification.detail?.contains("external MCP digest succeeded") == false)
+    }
 }
 
 // MARK: - Notification payload routing tests
 
 struct OfficeHoursQuestionReadyNotificationTests {
+
+    @Test func notificationCopyUsesFixedActionText() {
+        #expect(OfficeHoursQuestionReadyNotification.notificationTitle(from: "첫 질문 준비 완료") == "첫 질문 준비 완료")
+        #expect(OfficeHoursQuestionReadyNotification.notificationBody(from: "첫 질문 준비 완료") == "열어서 첫 질문에 답하고 Office Hours를 시작하세요.")
+        #expect(OfficeHoursQuestionReadyNotification.notificationTitle(from: "다음 질문 준비 완료") == "다음 질문 준비 완료")
+        #expect(OfficeHoursQuestionReadyNotification.notificationBody(from: "다음 질문 준비 완료") == "열어서 다음 질문에 답하고 Office Hours를 이어가세요.")
+    }
 
     @Test func parsesSessionIdFromUserInfo() {
         let parsed = OfficeHoursQuestionReadyNotification(
@@ -215,8 +318,8 @@ struct McpOauthConnectedNotificationTests {
         )
 
         #expect(parsed?.server == "posthog")
-        #expect(parsed?.notificationTitle == "PostHog MCP 연결 완료")
-        #expect(parsed?.notificationBody == "AI 실행에서 바로 사용할 수 있어요.")
+        #expect(parsed?.notificationTitle == "PostHog 연동 완료")
+        #expect(parsed?.notificationBody == "다음 브리핑에서 제품 지표를 함께 볼 수 있어요.")
     }
 
     @Test func userInfoIncludesCommonSettingsRouteAndLegacyServer() throws {
@@ -235,7 +338,8 @@ struct McpOauthConnectedNotificationTests {
         )
 
         #expect(parsed?.server == "cloudflare")
-        #expect(parsed?.notificationTitle == "Cloudflare MCP 연결 완료")
+        #expect(parsed?.notificationTitle == "Cloudflare 연동 완료")
+        #expect(parsed?.notificationBody == "다음 브리핑에서 트래픽 신호를 함께 볼 수 있어요.")
     }
 
     @Test func rejectsForeignOrUnsupportedIdentifiers() {
@@ -341,6 +445,24 @@ struct LongRunningCompletionNotificationTests {
 
         let route = try #require(AgenticAppRoute(notificationUserInfo: notification.userInfo))
         #expect(route.destination == .document(path: "/Users/october/project/ICP.md"))
+    }
+
+    @Test func notificationBodyRejectsRawInternalDetails() {
+        let blockedScan = LongRunningCompletionNotification(
+            kind: .workspaceScan,
+            outcome: .blocked,
+            detail: "Codex auth is required."
+        )
+        let failedBriefing = LongRunningCompletionNotification(
+            kind: .morningBriefing,
+            outcome: .failed,
+            detail: "external MCP digest succeeded"
+        )
+
+        #expect(blockedScan.notificationBody == "Codex 로그인이 필요해 워크스페이스 분석을 멈췄어요.")
+        #expect(blockedScan.notificationBody.contains("auth") == false)
+        #expect(failedBriefing.notificationBody == "브리핑을 끝내지 못했어요. 열어서 연결 상태를 확인하세요.")
+        #expect(failedBriefing.notificationBody.contains("external MCP digest succeeded") == false)
     }
 
     @Test func rejectsForeignIdentifiersAndBadPayloads() {

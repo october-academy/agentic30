@@ -2658,20 +2658,20 @@ private struct OpenDesignNewsShell: View {
             normalizeSelection()
             prepare()
         }
-        .onChange(of: snapshot.lanes.map(\.id)) { _, laneIDs in
+        .onChange(of: snapshot.lanes.map { $0.id }) { _, laneIDs in
             normalizeSelection(laneIDs: laneIDs)
         }
-        .onChange(of: snapshot.cardIDs) { _, _ in
+        .onChange(of: Set(snapshot.lanes.flatMap { lane in lane.cards.map { $0.id } })) { _, _ in
             normalizeSelection()
         }
     }
 
     private func normalizeSelection(laneIDs: [String]? = nil) {
-        let availableStreamIDs = Set(newsMarketRadarStreamItems(snapshot: snapshot, userState: userState).map(\.id))
+        let availableStreamIDs = Set(newsMarketRadarStreamItems(snapshot: snapshot, userState: userState).map { $0.id })
         if !availableStreamIDs.contains(userState.selectedStreamID) {
             userState.selectedStreamID = NewsMarketRadarUserState.defaultStreamID
         }
-        let valueFilterIDs = Set(newsMarketRadarValueFilters.map(\.id))
+        let valueFilterIDs = Set(newsMarketRadarValueFilters.map { $0.id })
         if !valueFilterIDs.contains(userState.selectedValueFilter) {
             userState.selectedValueFilter = NewsMarketRadarUserState.defaultValueFilter
         }
@@ -2890,6 +2890,16 @@ private struct NewsMarketRadarMainView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     if presentationState.primaryContent == .exaConfiguration {
                         NewsMarketRadarExaConfigurationState(openSettings: openSettings)
+                    } else if presentationState.primaryContent == .progress,
+                              let progressStatus = presentationState.progressStatus {
+                        OpenDesignColdLoadingStateView(
+                            title: "시장 신호를 모으는 중",
+                            detail: "카드가 준비되면 뉴스 스트림에 표시됩니다.",
+                            rows: newsMarketRadarLoadingRows(status: progressStatus),
+                            accessibilityIdentifier: "opendesign.reference.news.progress",
+                            spinnerAccessibilityLabel: "시장 리서치 진행 중",
+                            maxWidth: 780
+                        )
                     } else {
                         if presentationState.showsProgress,
                            let progressStatus = presentationState.progressStatus {
@@ -2949,6 +2959,10 @@ private struct NewsMarketRadarHeader: View {
     let refresh: () -> Void
     let openSettings: () -> Void
 
+    private var lastUpdatedAt: Date? {
+        newsMarketRadarLastUpdatedAt(snapshot)
+    }
+
     var body: some View {
         HStack(spacing: 16) {
             HStack(spacing: 14) {
@@ -2978,13 +2992,15 @@ private struct NewsMarketRadarHeader: View {
                             newsHeaderDivider
                             newsHeaderMeta("\(visibleCount) 표시")
                             newsHeaderDivider
-                            newsHeaderMeta(snapshot.generatedAt.map(relativeNewsDate(_:)) ?? "갱신 없음")
+                            newsHeaderMeta(openDesignLastUpdatedLabel(lastUpdatedAt))
+                                .accessibilityIdentifier("news.last-updated")
                         }
 
-                        Text("카드 \(snapshot.cardCount) · 안 읽음 \(userState.unreadCount(in: snapshot)) · 저장 \(userState.savedCount(in: snapshot)) · 표시 \(visibleCount)")
+                        Text("카드 \(snapshot.cardCount) · \(openDesignLastUpdatedLabel(lastUpdatedAt))")
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(OpenDesignDayColor.muted)
                             .lineLimit(1)
+                            .accessibilityIdentifier("news.last-updated.compact")
                     }
                 }
                 .frame(minWidth: 0, alignment: .leading)
@@ -3109,7 +3125,6 @@ struct NewsMarketRadarCardDisplayPayload: Hashable {
     let confidence: String
     let evidenceStrength: String?
     let whyItMatters: String?
-    let suggestedHypothesisUpdate: String?
     let suggestedDocTargets: [String]
     let relatedDays: [Int]
     let relatedAnswerIds: [String]
@@ -3242,7 +3257,6 @@ nonisolated func newsMarketRadarCardDisplayPayload(
         confidence: card.confidence,
         evidenceStrength: card.evidenceStrength?.nonEmpty,
         whyItMatters: card.whyItMatters?.nonEmpty,
-        suggestedHypothesisUpdate: card.suggestedHypothesisUpdate?.nonEmpty,
         suggestedDocTargets: (card.suggestedDocTargets ?? []).compactMap(\.nonEmpty),
         relatedDays: card.relatedDays ?? [],
         relatedAnswerIds: (card.relatedAnswerIds ?? []).compactMap(\.nonEmpty),
@@ -3368,6 +3382,42 @@ nonisolated func newsMarketRadarPreparingStatus() -> NewsMarketRadarStatus {
     )
 }
 
+nonisolated func newsMarketRadarLoadingRows(status: NewsMarketRadarStatus) -> [OpenDesignLoadingCardRow] {
+    newsMarketRadarProgressSteps.map { step in
+        OpenDesignLoadingCardRow(
+            id: step.id,
+            title: step.title,
+            state: newsMarketRadarLoadingState(for: step, status: status),
+            detail: step.isCurrent(status) ? status.progressDetail : step.fallbackDetail,
+            iconID: newsMarketRadarLoadingIconID(step.id)
+        )
+    }
+}
+
+nonisolated private func newsMarketRadarLoadingState(
+    for step: NewsMarketRadarProgressStep,
+    status: NewsMarketRadarStatus
+) -> String {
+    if step.isComplete(status) { return "ready" }
+    if step.isCurrent(status) { return "collecting" }
+    return "waiting"
+}
+
+nonisolated private func newsMarketRadarLoadingIconID(_ stepID: String) -> String {
+    switch stepID {
+    case "checking_exa_route", "running_provider_research":
+        return "exa"
+    case "loading_workspace_evidence":
+        return "workspace"
+    case "building_research_prompt", "normalizing_cards":
+        return "news"
+    case "saving_results":
+        return "saving"
+    default:
+        return "news"
+    }
+}
+
 nonisolated private func newsMarketRadarStatusNeedsExaConfiguration(_ status: NewsMarketRadarStatus) -> Bool {
     ["exa_api_key_missing", "exa_mcp_missing"].contains(status.reason ?? "")
 }
@@ -3410,6 +3460,10 @@ private func newsMarketRadarSourceGroups(snapshot: NewsMarketRadarSnapshot) -> [
             if lhs.count == rhs.count { return lhs.title < rhs.title }
             return lhs.count > rhs.count
         }
+}
+
+private func newsMarketRadarLastUpdatedAt(_ snapshot: NewsMarketRadarSnapshot) -> Date? {
+    snapshot.status.lastSuccessAt ?? snapshot.generatedAt
 }
 
 nonisolated private func newsNormalizedSourceType(_ sourceType: String) -> String {
@@ -3542,8 +3596,14 @@ private struct NewsMarketRadarRunningIndicator: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "play.circle.fill")
-                .font(.system(size: 11, weight: .bold))
+            OpenDesignRotatingStatusIcon(
+                accessibilityLabel: "리서치 진행 중",
+                size: 11,
+                frameSize: 14,
+                color: OpenDesignDayColor.sky,
+                isAccessibilityHidden: true
+            )
+            .accessibilityIdentifier("opendesign.reference.news.running.spinner")
             Text("리서치 진행 중")
             if let ordinal = status.progressOrdinal {
                 Text(ordinal)
@@ -3629,51 +3689,59 @@ private struct NewsMarketRadarProgressState: View {
     let status: NewsMarketRadarStatus
     let showsWaitingForCardsNote: Bool
 
+    private var title: String {
+        if let ordinal = status.progressOrdinal {
+            return "리서치 진행 중 \(ordinal)"
+        }
+        return "리서치 진행 중"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(OpenDesignDayColor.sky)
+                OpenDesignRotatingStatusIcon(accessibilityLabel: "리서치 진행 중")
+                    .accessibilityIdentifier("opendesign.reference.news.progress.spinner")
+
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
-                        Text(status.progressTitle)
-                            .font(.system(size: 17, weight: .bold, design: .rounded))
-                            .foregroundStyle(OpenDesignDayColor.fg)
-                        if let ordinal = status.progressOrdinal {
-                            newsPill(ordinal, tone: .sky)
-                        }
-                    }
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+
                     Text(status.progressDetail)
                         .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .layoutPriority(1)
+
                 Spacer(minLength: 0)
+
                 VStack(alignment: .trailing, spacing: 5) {
                     if let elapsed = status.elapsedLabel {
                         newsPill(elapsed, tone: .muted)
                     }
                     if let researchSource = status.researchSource?.nonEmpty {
                         Text(researchSource)
-                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                            .foregroundStyle(OpenDesignDayColor.sky)
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.muted)
                             .lineLimit(1)
                     }
                 }
+                .frame(maxWidth: 180, alignment: .trailing)
             }
-
-            NewsMarketRadarProgressChecklist(status: status)
 
             if showsWaitingForCardsNote {
                 Text("카드가 준비되면 표시됩니다")
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(OpenDesignDayColor.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 36)
             }
         }
-        .padding(18)
-        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.sky.opacity(0.36), radius: 10))
+        .padding(14)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
+        .accessibilityElement(children: .combine)
         .accessibilityIdentifier("opendesign.reference.news.progress")
     }
 }
@@ -3685,9 +3753,7 @@ private struct NewsMarketRadarProgressChecklist: View {
         VStack(alignment: .leading, spacing: 7) {
             ForEach(newsMarketRadarProgressSteps) { step in
                 HStack(spacing: 8) {
-                    Image(systemName: icon(for: step))
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(tone(for: step).color)
+                    progressIcon(for: step)
                         .frame(width: 16)
                     Text(step.title)
                         .font(.system(size: 11.5, weight: step.isCurrent(status) ? .bold : .medium))
@@ -3701,9 +3767,25 @@ private struct NewsMarketRadarProgressChecklist: View {
         .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 8))
     }
 
+    @ViewBuilder
+    private func progressIcon(for step: NewsMarketRadarProgressStep) -> some View {
+        if step.isCurrent(status) {
+            OpenDesignInlineSpinner(
+                accessibilityLabel: "\(step.title) 진행 중",
+                size: 12,
+                lineWidth: 1.5,
+                accentColor: tone(for: step).color
+            )
+            .accessibilityIdentifier("opendesign.reference.news.progress.step.spinner.\(step.id)")
+        } else {
+            Image(systemName: icon(for: step))
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(tone(for: step).color)
+        }
+    }
+
     private func icon(for step: NewsMarketRadarProgressStep) -> String {
         if step.isComplete(status) { return "checkmark.circle.fill" }
-        if step.isCurrent(status) { return "play.circle.fill" }
         return "circle"
     }
 
@@ -3767,11 +3849,6 @@ private struct NewsMarketRadarCardView: View {
                         toggleRead: toggleRead,
                         toggleSaved: toggleSaved
                     )
-                    newsPill(newsImpactLabel(payload.impact), tone: newsImpactTone(payload.impact))
-                    newsPill(newsConfidenceLabel(payload.confidence), tone: newsConfidenceTone(payload.confidence))
-                    if let evidenceStrength = payload.evidenceStrength {
-                        newsPill("근거 \(newsConfidenceLabel(evidenceStrength))", tone: newsConfidenceTone(evidenceStrength))
-                    }
                 }
             }
 
@@ -3782,52 +3859,14 @@ private struct NewsMarketRadarCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                NewsMarketRadarDetailRow(
-                    icon: "link",
-                    title: "출처",
-                    values: ["\(payload.sourceRefs.count)개"]
-                )
-                if !payload.relatedDays.isEmpty {
-                    NewsMarketRadarDetailRow(
-                        icon: "calendar",
-                        title: "관련 일차",
-                        values: payload.relatedDays.map { "\($0)일차" }
-                    )
-                }
-                if !payload.relatedAnswerIds.isEmpty {
+            if !payload.relatedAnswerIds.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
                     NewsMarketRadarDetailRow(
                         icon: "bubble.left.and.bubble.right",
                         title: "관련 답변",
                         values: payload.relatedAnswerIds
                     )
                 }
-                if !payload.suggestedDocTargets.isEmpty {
-                    NewsMarketRadarDetailRow(
-                        icon: "doc.text",
-                        title: "문서 대상",
-                        values: payload.suggestedDocTargets
-                    )
-                }
-            }
-
-            if let update = payload.suggestedHypothesisUpdate {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 7) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 10, weight: .bold))
-                        Text("가설 갱신 제안")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                    }
-                    .foregroundStyle(OpenDesignDayColor.accent)
-                    Text(update)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                        .lineSpacing(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(12)
-                .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.accentLine, radius: 8))
             }
 
             if !visibleSourceRefs.isEmpty {
@@ -3983,7 +4022,7 @@ private struct NewsMarketRadarMetaPanelView: View {
                     newsMetaRow("카드", "\(snapshot.cardCount)", tone: .accent)
                     newsMetaRow("안 읽음", "\(userState.unreadCount(in: snapshot))", tone: .amber)
                     newsMetaRow("저장", "\(userState.savedCount(in: snapshot))", tone: .sky)
-                    newsMetaRow("마지막 성공", snapshot.status.lastSuccessAt.map(relativeNewsDate(_:)) ?? "없음", tone: .muted)
+                    newsMetaRow("마지막 업데이트", openDesignUpdatedAtText(newsMarketRadarLastUpdatedAt(snapshot)), tone: .muted)
                     if let researchSource = snapshot.status.researchSource?.nonEmpty {
                         newsMetaRow("소스", researchSource, tone: .sky)
                     }
@@ -4192,36 +4231,11 @@ private func newsStatusDisplayLabel(_ snapshot: NewsMarketRadarSnapshot) -> Stri
     return "리서치 중"
 }
 
-private func newsImpactLabel(_ impact: String) -> String {
-    switch impact {
-    case "strengthens": return "강화"
-    case "weakens": return "약화"
-    case "mixed": return "상충"
-    default: return "불확실"
-    }
-}
-
 private func newsImpactTone(_ impact: String) -> OpenDesignReferenceTone {
     switch impact {
     case "strengthens": return .accent
     case "weakens": return .rose
     case "mixed": return .amber
-    default: return .muted
-    }
-}
-
-private func newsConfidenceLabel(_ confidence: String) -> String {
-    switch confidence {
-    case "strong": return "강함"
-    case "medium": return "보통"
-    default: return "약함"
-    }
-}
-
-private func newsConfidenceTone(_ confidence: String) -> OpenDesignReferenceTone {
-    switch confidence {
-    case "strong": return .accent
-    case "medium": return .sky
     default: return .muted
     }
 }

@@ -1144,12 +1144,12 @@ function isAgentic30IcpContext(hypothesis, primaryUser) {
 }
 
 function defaultSelfOptionLabel(onboardingContext) {
-  const role = String(onboardingContext?.role || "").trim();
-  if (role === "designer") return "나 같은 디자이너";
-  if (role === "product_manager") return "나 같은 PM";
-  if (role === "marketer_business") return "나 같은 마케터/비즈니스 담당자";
-  if (role === "generalist") return "나처럼 여러 역할을 맡은 사람";
-  if (role === "student") return "나 같은 학생";
+  const focusArea = String(onboardingContext?.focus_area || onboardingContext?.focusArea || "").trim();
+  if (focusArea === "development") return "나처럼 직접 개발하는 사람";
+  if (focusArea === "design") return "나처럼 디자인을 다듬는 사람";
+  if (focusArea === "product_planning") return "나처럼 제품 방향을 정리하는 사람";
+  if (focusArea === "customer_acquisition") return "나처럼 고객 확보에 집중하는 사람";
+  if (focusArea === "sales_monetization") return "나처럼 판매/수익화를 실험하는 사람";
   return "나 또는 우리 팀";
 }
 

@@ -9,6 +9,7 @@ import { buildAuthEnv } from "./auth-context.mjs";
 import { buildQmdGuidance, buildQmdMcpConfig } from "./qmd-support.mjs";
 import { projectDocPath } from "./project-doc-paths.mjs";
 import {
+  buildPendingUserInputToolOutput,
   createUserInputRequest,
   deleteUserInputArtifacts,
   waitForUserInputResponse,
@@ -237,6 +238,11 @@ export async function runProviderStream({
       process.env.AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST === "1"
       && executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE
     ) {
+      if (process.env.AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_RESULT_ONLY === "1") {
+        emitStubOfficeHoursMcpResultOnly({ provider, onToolEvent });
+        onRunEvent?.({ phase: "provider.stub_response", provider });
+        return { runtime: sessionRuntime };
+      }
       const stubRequest = await createStubOfficeHoursUserInputRequest({ sessionIdForMcp });
       if (stubRequest) {
         onRunEvent?.({
@@ -1365,6 +1371,7 @@ export function isProviderAuthRequiredError(error) {
     || message.includes("cursor_api_key를 설정하거나")
     || message.includes("cursor provider를 사용하려면 cursor_api_key")
     || message.includes("acp claude 모드를 사용하려면 anthropic_api_key")
+    || message.includes("acp codex mode requires codex_api_key or openai_api_key")
     || message.includes("gcloud auth application-default login")
     || message.includes("google cloud sdk가 설치되어 있지 않습니다")
     || message.includes("invalid authentication credentials")
@@ -2204,6 +2211,65 @@ export function resolveGeminiThinkingLevel(model = "") {
 function buildStubResponse(prompt) {
   const contexts = extractStubContextFiles(prompt);
   const value = String(prompt || "");
+  if (value.includes("MORNING_BRIEFING_VERDICT_JSON")) {
+    const numberFor = (pattern, fallback = 0) => {
+      const match = value.match(pattern);
+      const number = Number(match?.[1]);
+      return Number.isFinite(number) ? number : fallback;
+    };
+    const commits = numberFor(/\bcommits[=\s:]+(\d+)/i, 0);
+    const visits = numberFor(/\b(?:visits|uniqueVisitors)[=\s:]+(\d+)/i, 0);
+    const conversions = numberFor(/\bconversions[=\s:]+(\d+)/i, 0);
+    return JSON.stringify({
+      state: conversions > 0 ? "healthy" : (visits > 0 ? "traffic_without_activation" : "build_without_customer_evidence"),
+      title: conversions > 0
+        ? "고객 행동 근거가 잡혔고 다음 공백을 좁힐 차례예요."
+        : "빌드와 유입은 보이지만 고객 행동 근거가 아직 얇아요.",
+      body: conversions > 0
+        ? "Day 1 목표와 Office Hours 약속 기준으로 확인된 행동을 다음 질문과 실험으로 좁히면 됩니다."
+        : "Day 1 목표와 Office Hours 약속 기준으로 Cloudflare 유입 이후 PostHog 첫 핵심 행동까지 연결되는지 먼저 확인해야 합니다.",
+      primaryActionId: conversions > 0 ? "experiment" : "task",
+      evidence: [
+        `GitHub commits ${commits} 집계가 있습니다.`,
+        `Cloudflare visits ${visits} 집계가 있습니다.`,
+        `PostHog conversions ${conversions} 집계가 있습니다.`,
+      ],
+    });
+  }
+  if (
+    process.env.AGENTIC30_TEST_STUB_MORNING_BRIEFING_EXTERNAL_DIGEST === "ready"
+    && value.includes("Agentic30 Day 2+ Office Hours source digest")
+  ) {
+    const sourcesLine = value.match(/^Sources:\s*(.+)$/im)?.[1] || "";
+    const wanted = sourcesLine
+      .split(",")
+      .map((source) => source.trim().toLowerCase())
+      .filter(Boolean);
+    return JSON.stringify({
+      sources: wanted.map((source) => {
+        if (source === "cloudflare") {
+          return {
+            id: "cloudflare",
+            state: "ready",
+            counts: { visits: 64, uniqueVisitors: 64, pageviews: 128, requests: 512, threats: 0 },
+            highlights: ["Cloudflare 순 방문 64명 · 요청 512건"],
+            summary: "Cloudflare 순 방문 64명",
+            goalSignals: ["랜딩 방문이 유지됨"],
+            evidenceGaps: ["방문 이후 핵심 행동 연결 필요"],
+          };
+        }
+        return {
+          id: "posthog",
+          state: "ready",
+          counts: { events: 26, activeUsers: 1, conversions: 0, signups: 0 },
+          highlights: ["PostHog 활성 사용자 1명 · 전환 0건"],
+          summary: "PostHog 활성 사용자 1명",
+          goalSignals: ["첫 핵심 행동 사용자 1명"],
+          evidenceGaps: ["전환 0건"],
+        };
+      }),
+    });
+  }
   if (/Agentic30 Day 1 STEP Office Hours|Office Hours를 시작한다/i.test(value)) {
     return [
       "Office Hours 질문을 선택지 카드로 준비했습니다.",
@@ -2444,6 +2510,66 @@ async function createStubOfficeHoursUserInputRequest({ sessionIdForMcp } = {}) {
         textMode: "short",
       },
     ],
+  });
+}
+
+function emitStubOfficeHoursMcpResultOnly({ provider, onToolEvent } = {}) {
+  const requestId = "stub-office-hours-result-only";
+  const question = {
+    questionId: "office_hours_demand_evidence",
+    header: "수요 증거",
+    question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
+    options: [
+      {
+        label: "아직 보내지 못했다",
+        description: "실제 고객 행동 증거는 아직 없고, 오늘 바로 외부 행동을 만들어야 합니다.",
+      },
+      {
+        label: "실제 결제/계약이 있었다",
+        description: "돈이 이미 움직였으므로 가장 강한 수요 증거입니다.",
+      },
+    ],
+    multiSelect: false,
+    allowFreeText: true,
+    requiresFreeText: false,
+    textMode: "short",
+  };
+  const generation = {
+    mode: "office_hours_tool",
+    signalId: "office_hours_demand_evidence",
+    signalLabel: "Office Hours 수요 증거",
+  };
+  const toolCallKey = "stub-office-hours-result-only-call";
+  onToolEvent?.({
+    phase: "use",
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    toolCallKey,
+    payload: {
+      requestedToolName: CODEX_STRUCTURED_INPUT_TOOL,
+      providerMode: provider || "codex",
+      arguments: {
+        title: "Office Hours",
+        generation,
+        questions: [question],
+      },
+    },
+  });
+  onToolEvent?.({
+    phase: "result",
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    toolCallKey,
+    payload: {
+      requestedToolName: CODEX_STRUCTURED_INPUT_TOOL,
+      providerMode: provider || "codex",
+      result: {
+        type: "text",
+        text: JSON.stringify(buildPendingUserInputToolOutput({
+          requestId,
+          title: "Office Hours",
+          questions: [question],
+        })),
+      },
+    },
   });
 }
 

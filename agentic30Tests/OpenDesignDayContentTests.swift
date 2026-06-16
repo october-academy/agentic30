@@ -728,7 +728,6 @@ struct OpenDesignDayContentTests {
                             impact: impacts[cardID] ?? "high",
                             confidence: "medium",
                             whyItMatters: nil,
-                            suggestedHypothesisUpdate: nil,
                             suggestedDocTargets: nil,
                             relatedDays: nil,
                             relatedAnswerIds: nil,
@@ -1234,6 +1233,72 @@ struct OpenDesignDayContentTests {
         #expect(strategyResearchStatusMessage(failed, isPreparing: false).contains("summaryTiles"))
     }
 
+    @Test func strategyColdLoadingOnlyAppearsWhenDynamicReportHasNoContent() {
+        let refreshing = StrategyReportStatus(
+            state: "refreshing",
+            lastSuccessAt: nil,
+            stale: false,
+            error: nil,
+            reason: "manual",
+            researchSource: "Codex Exa MCP",
+            stage: "running_exa_research",
+            progressText: "Codex Exa MCP로 공개 근거를 검색하는 중",
+            elapsedMs: 1200,
+            stepIndex: 3,
+            stepCount: 6,
+            partialFailures: nil,
+            startedAt: nil,
+            completedAt: nil,
+            durationMs: nil
+        )
+        let emptyRefreshing = StrategyReportSnapshot(
+            schemaVersion: 1,
+            promptProfile: nil,
+            contentLocale: "ko-KR",
+            generatedAt: nil,
+            nextRefreshAfter: nil,
+            contextFingerprint: nil,
+            status: refreshing,
+            workspaceEvidenceRefs: [],
+            report: nil
+        )
+        let generatedRefreshing = StrategyReportSnapshot(
+            schemaVersion: 1,
+            promptProfile: nil,
+            contentLocale: "ko-KR",
+            generatedAt: nil,
+            nextRefreshAfter: nil,
+            contextFingerprint: nil,
+            status: refreshing,
+            workspaceEvidenceRefs: [],
+            report: Self.makeStrategyReportContentForDisplayTest()
+        )
+
+        #expect(strategyReportShowsColdLoading(snapshot: emptyRefreshing, isPreparing: false, dynamicActivated: true))
+        #expect(strategyReportShowsColdLoading(snapshot: emptyRefreshing, isPreparing: true, dynamicActivated: true))
+        #expect(!strategyReportShowsColdLoading(snapshot: emptyRefreshing, isPreparing: false, dynamicActivated: false))
+        #expect(!strategyReportShowsColdLoading(snapshot: generatedRefreshing, isPreparing: false, dynamicActivated: true))
+
+        let rows = strategyReportLoadingRows(status: refreshing, isPreparing: false)
+        #expect(rows.map(\.id) == [
+            "checking_exa_route",
+            "loading_strategy_context",
+            "running_exa_research",
+            "running_adversarial_review",
+            "running_multidimensional_review",
+            "saving_results",
+        ])
+        #expect(rows[0].state == "ready")
+        #expect(rows[1].state == "ready")
+        #expect(rows[2].state == "collecting")
+        #expect(rows[2].detail == "Codex Exa MCP로 공개 근거를 검색하는 중")
+        #expect(rows[3].state == "waiting")
+
+        let preparingRows = strategyReportLoadingRows(status: StrategyReportSnapshot.empty.status, isPreparing: true)
+        #expect(preparingRows.first?.state == "collecting")
+        #expect(preparingRows.first?.detail == "캐시와 진행 상태를 불러오는 중")
+    }
+
     @Test func strategyCanvasReferenceContainsNineBlocksAndEighteenPositions() {
         #expect(OpenDesignStrategyCanvasReference.canvasBlocks.map(\.id) == [
             "partners",
@@ -1363,6 +1428,40 @@ struct OpenDesignDayContentTests {
         #expect(ozFounderCamp.labelPlacement == .belowLeading)
         #expect(cofounder.labelPlacement == .trailing)
         #expect(founderPal.labelPlacement == .leading)
+    }
+
+    @Test func strategyMatrixLayoutKeepsEdgeCompetitorsInsideBoard() {
+        let boardSize = CGSize(width: 1000, height: 430)
+
+        let lowerLeadingEdge = OpenDesignStrategyMatrixLayoutPolicy.layout(
+            x: 0.04,
+            y: 0.95,
+            preferredLabelPlacement: .leading,
+            boardSize: boardSize
+        )
+        #expect(abs(Double(lowerLeadingEdge.point.x - 115)) < 0.0001)
+        #expect(abs(Double(lowerLeadingEdge.point.y - 389)) < 0.0001)
+        #expect(lowerLeadingEdge.labelPlacement == .aboveTrailing)
+
+        let upperTrailingEdge = OpenDesignStrategyMatrixLayoutPolicy.layout(
+            x: 0.98,
+            y: 0.03,
+            preferredLabelPlacement: .trailing,
+            boardSize: boardSize
+        )
+        #expect(abs(Double(upperTrailingEdge.point.x - 885)) < 0.0001)
+        #expect(abs(Double(upperTrailingEdge.point.y - 41)) < 0.0001)
+        #expect(upperTrailingEdge.labelPlacement == .belowLeading)
+
+        let normalPlacement = OpenDesignStrategyMatrixLayoutPolicy.layout(
+            x: 0.40,
+            y: 0.50,
+            preferredLabelPlacement: .leading,
+            boardSize: boardSize
+        )
+        #expect(abs(Double(normalPlacement.point.x - 400)) < 0.0001)
+        #expect(abs(Double(normalPlacement.point.y - 215)) < 0.0001)
+        #expect(normalPlacement.labelPlacement == .leading)
     }
 
     @Test func strategyCanvasReferenceContainsSWOTAndStrategicJudgement() {
@@ -1498,6 +1597,17 @@ struct OpenDesignDayContentTests {
         #expect(preparing.primaryContent == .progress)
         #expect(preparing.progressTitle == "리서치 준비 중")
         #expect(preparing.suppressesEmptyStream)
+        let preparingRows = newsMarketRadarLoadingRows(status: preparing.progressStatus!)
+        #expect(preparingRows.map(\.id) == [
+            "checking_exa_route",
+            "loading_workspace_evidence",
+            "building_research_prompt",
+            "running_provider_research",
+            "normalizing_cards",
+            "saving_results",
+        ])
+        #expect(preparingRows.first?.state == "collecting")
+        #expect(preparingRows.first?.detail == "리서치 준비 중")
 
         let refreshing = newsMarketRadarPresentationState(
             snapshot: makeNewsRadarSnapshot(state: "refreshing", cardIDs: []),
@@ -1506,6 +1616,25 @@ struct OpenDesignDayContentTests {
         )
         #expect(refreshing.primaryContent == .progress)
         #expect(refreshing.suppressesEmptyStream)
+        let stagedStatus = NewsMarketRadarStatus(
+            state: "refreshing",
+            lastSuccessAt: nil,
+            stale: false,
+            error: nil,
+            reason: "manual",
+            researchSource: "Codex Exa MCP",
+            stage: "running_provider_research",
+            progressText: "Codex 웹 검색 도구로 공개 근거를 검색하는 중",
+            elapsedMs: 1200,
+            stepIndex: 4,
+            stepCount: 6,
+            partialFailures: nil
+        )
+        let stagedRows = newsMarketRadarLoadingRows(status: stagedStatus)
+        #expect(stagedRows[0].state == "ready")
+        #expect(stagedRows[3].state == "collecting")
+        #expect(stagedRows[3].detail == "Codex 웹 검색 도구로 공개 근거를 검색하는 중")
+        #expect(stagedRows[4].state == "waiting")
 
         let cachedRefresh = newsMarketRadarPresentationState(
             snapshot: makeNewsRadarSnapshot(state: "refreshing", cardIDs: ["cached-card"]),
@@ -1697,7 +1826,6 @@ struct OpenDesignDayContentTests {
             impact: "strengthens",
             confidence: "strong",
             whyItMatters: "Why it matters",
-            suggestedHypothesisUpdate: "Update the channel hypothesis",
             suggestedDocTargets: ["ICP.md", "SPEC.md"],
             relatedDays: [2, 5, 27],
             relatedAnswerIds: ["answer-1", "answer-2"],
@@ -1713,7 +1841,6 @@ struct OpenDesignDayContentTests {
         #expect(payload.confidence == "strong")
         #expect(payload.evidenceStrength == "strong")
         #expect(payload.whyItMatters == "Why it matters")
-        #expect(payload.suggestedHypothesisUpdate == "Update the channel hypothesis")
         #expect(payload.suggestedDocTargets == ["ICP.md", "SPEC.md"])
         #expect(payload.relatedDays == [2, 5, 27])
         #expect(payload.relatedAnswerIds == ["answer-1", "answer-2"])
@@ -3601,6 +3728,63 @@ struct OpenDesignDayContentTests {
         #expect(OfficeHoursTranscriptScrollPolicy.postLayoutRepinDelays.allSatisfy { $0 > 0 && $0 <= 1.5 })
     }
 
+    @Test func commitmentAutoScrollStartsWhenBarBecomesRenderable() {
+        let previous = Self.commitmentAutoScrollState(
+            interviewComplete: false,
+            shouldRenderBar: false
+        )
+        let current = Self.commitmentAutoScrollState()
+
+        #expect(OfficeHoursCommitmentAutoScrollPolicy.shouldScroll(from: previous, to: current))
+    }
+
+    @Test func commitmentAutoScrollStartsWhenGateTargetsCurrentStep() {
+        let previous = Self.commitmentAutoScrollState(commitmentGateStep: nil)
+        let current = Self.commitmentAutoScrollState(commitmentGateStep: "interview")
+
+        #expect(OfficeHoursCommitmentAutoScrollPolicy.shouldScroll(from: previous, to: current))
+    }
+
+    @Test func commitmentAutoScrollStartsWhenFinalLoaderDisappears() {
+        let previous = Self.commitmentAutoScrollState(activeLoaderRequestID: "question-6")
+        let current = Self.commitmentAutoScrollState(activeLoaderRequestID: nil)
+
+        #expect(OfficeHoursCommitmentAutoScrollPolicy.shouldScroll(from: previous, to: current))
+    }
+
+    @Test func commitmentAutoScrollStartsWhenCandidatesResolveReady() {
+        let previous = Self.commitmentAutoScrollState(
+            candidatesResolved: false,
+            candidatesGenerating: true
+        )
+        let current = Self.commitmentAutoScrollState(
+            candidatesResolved: true,
+            candidatesGenerating: false
+        )
+
+        #expect(OfficeHoursCommitmentAutoScrollPolicy.shouldScroll(from: previous, to: current))
+    }
+
+    @Test func commitmentAutoScrollStartsWhenCandidatesResolveEmptyFallback() {
+        let previous = Self.commitmentAutoScrollState(
+            candidatesResolved: false,
+            candidatesGenerating: false
+        )
+        let current = Self.commitmentAutoScrollState(
+            candidatesResolved: true,
+            candidatesGenerating: false
+        )
+
+        #expect(OfficeHoursCommitmentAutoScrollPolicy.shouldScroll(from: previous, to: current))
+    }
+
+    @Test func commitmentAutoScrollDoesNotRunAfterStepIsDone() {
+        let previous = Self.commitmentAutoScrollState()
+        let current = Self.commitmentAutoScrollState(stepStatus: .done)
+
+        #expect(!OfficeHoursCommitmentAutoScrollPolicy.shouldScroll(from: previous, to: current))
+    }
+
     @Test func officeHoursBannerPresentationSuppressesScheduledInterventionWhenDebtExists() {
         let presentation = OfficeHoursBannerPresentation.resolve(
             memory: OfficeHoursMemorySummary(compiledTruth: "Cycle 1. 마지막 약속: DM 보내기.", openThreads: ["DM 보내기"]),
@@ -3812,6 +3996,32 @@ struct OpenDesignDayContentTests {
             overdueDebts: overdueDebts,
             provenEvidence: [],
             dayStates: [:]
+        )
+    }
+
+    private static func commitmentAutoScrollState(
+        sessionID: String? = "session-1",
+        day: Int = 2,
+        stepID: String = "interview",
+        stepStatus: DayStepStatus? = .active,
+        interviewComplete: Bool = true,
+        shouldRenderBar: Bool = true,
+        activeLoaderRequestID: String? = nil,
+        commitmentGateStep: String? = nil,
+        candidatesResolved: Bool = false,
+        candidatesGenerating: Bool = false
+    ) -> OfficeHoursCommitmentAutoScrollState {
+        OfficeHoursCommitmentAutoScrollState(
+            sessionID: sessionID,
+            day: day,
+            stepID: stepID,
+            stepStatus: stepStatus,
+            interviewComplete: interviewComplete,
+            shouldRenderBar: shouldRenderBar,
+            activeLoaderRequestID: activeLoaderRequestID,
+            commitmentGateStep: commitmentGateStep,
+            candidatesResolved: candidatesResolved,
+            candidatesGenerating: candidatesGenerating
         )
     }
 

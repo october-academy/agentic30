@@ -33,10 +33,10 @@ test("onboarding memory is canonical under .agentic30/memory and redacts secret-
       workspaceRoot: root,
       memory: {
         onboardingContext: {
-          role: "developer",
+          focus_area: "development",
           work_mode: "side_project",
           custom_work_mode: "하루 1~2시간",
-          project_stage: "building",
+          product_bottleneck: "first_active_users",
           isolation_levels: ["project_folder", "work_log"],
         },
         readSources: [
@@ -56,8 +56,86 @@ test("onboarding memory is canonical under .agentic30/memory and redacts secret-
     const raw = await fs.readFile(memoryPath, "utf8");
     assert.equal(raw.includes("SHOULD_NOT_PERSIST"), false);
     const loaded = await loadOnboardingMemory({ workspaceRoot: root });
-    assert.equal(loaded.onboardingContext.role, "developer");
+    assert.equal(loaded.schemaVersion, 3);
+    assert.equal(loaded.schema, "agentic30.memory.onboarding.v3");
+    assert.equal(loaded.onboardingContext.focus_area, "development");
+    assert.equal(loaded.onboardingContext.role, undefined);
+    assert.equal(loaded.answers.primaryFocus.id, "primary_focus");
+    assert.equal(loaded.answers.primaryFocus.answer, "development");
+    assert.equal(loaded.onboardingContext.product_bottleneck, "first_active_users");
+    assert.equal(loaded.onboardingContext.project_stage, undefined);
+    assert.equal(loaded.answers.primaryBottleneck.id, "primary_bottleneck");
+    assert.equal(loaded.answers.primaryBottleneck.answer, "first_active_users");
     assert.equal(loaded.readSources[0].id, "notion");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("onboarding memory does not promote legacy project_stage into product_bottleneck", async () => {
+  const root = await tempWorkspace();
+  try {
+    await saveOnboardingMemory({
+      workspaceRoot: root,
+      memory: {
+        onboardingContext: {
+          focus_area: "development",
+          project_stage: "building",
+          isolation_levels: ["project_folder"],
+        },
+      },
+      now: new Date("2026-06-09T00:00:00.000Z"),
+    });
+
+    const loaded = await loadOnboardingMemory({ workspaceRoot: root });
+    assert.equal(loaded.onboardingContext.project_stage, undefined);
+    assert.equal(loaded.onboardingContext.product_bottleneck, "");
+    assert.equal(loaded.answers.primaryBottleneck.answer, "");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("onboarding memory does not promote legacy role into focus_area", async () => {
+  const root = await tempWorkspace();
+  try {
+    await saveOnboardingMemory({
+      workspaceRoot: root,
+      memory: {
+        onboardingContext: {
+          role: "developer",
+          product_bottleneck: "first_active_users",
+          isolation_levels: ["project_folder"],
+        },
+      },
+      now: new Date("2026-06-09T00:00:00.000Z"),
+    });
+
+    const loaded = await loadOnboardingMemory({ workspaceRoot: root });
+    assert.equal(loaded.onboardingContext.role, undefined);
+    assert.equal(loaded.onboardingContext.focus_area, "");
+    assert.equal(loaded.answers.primaryFocus.answer, "");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy onboarding memory schema is ignored on load", async () => {
+  const root = await tempWorkspace();
+  try {
+    const memoryPath = resolveOnboardingMemoryPath(root);
+    await fs.mkdir(path.dirname(memoryPath), { recursive: true });
+    await fs.writeFile(memoryPath, JSON.stringify({
+      schemaVersion: 1,
+      schema: "agentic30.memory.onboarding.v1",
+      onboardingContext: {
+        role: "developer",
+        project_stage: "building",
+      },
+    }));
+
+    const loaded = await loadOnboardingMemory({ workspaceRoot: root });
+    assert.equal(loaded, null);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

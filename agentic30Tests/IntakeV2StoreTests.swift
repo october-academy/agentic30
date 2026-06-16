@@ -22,8 +22,8 @@ final class IntakeV2StoreTests: XCTestCase {
     func test_initialState_isEmpty() {
         let store = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertNil(store.workmode)
-        XCTAssertNil(store.role)
-        XCTAssertNil(store.stuck)
+        XCTAssertNil(store.focusArea)
+        XCTAssertNil(store.bottleneck)
         XCTAssertNil(store.commitmentLevel)
         XCTAssertEqual(store.evidenceLevels, [])
         XCTAssertNil(store.folderURL)
@@ -34,8 +34,8 @@ final class IntakeV2StoreTests: XCTestCase {
     func test_setAnswers_persistsAcrossInstances() {
         let store1 = IntakeV2Store(defaults: suiteDefaults)
         store1.selectCommitmentLevel(.fullTimeSixHours)
-        store1.role = .marketerBusiness
-        store1.stuck = .ideaOnly
+        store1.focusArea = .salesMonetization
+        store1.bottleneck = .problemDefinition
         store1.toggleEvidenceLevel(.workLog)
         store1.toggleEvidenceLevel(.paymentResponses)
         store1.folderURL = URL(fileURLWithPath: "/Users/test/Projects")
@@ -45,28 +45,67 @@ final class IntakeV2StoreTests: XCTestCase {
         let store2 = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertEqual(store2.workmode, .fullTimeSolo)
         XCTAssertEqual(store2.commitmentLevel, .fullTimeSixHours)
-        XCTAssertEqual(store2.role, .marketerBusiness)
-        XCTAssertEqual(store2.stuck, .ideaOnly)
+        XCTAssertEqual(store2.focusArea, .salesMonetization)
+        XCTAssertEqual(store2.bottleneck, .problemDefinition)
         XCTAssertEqual(store2.evidenceLevels, [.workLog, .paymentResponses])
         XCTAssertEqual(store2.folderURL?.path, "/Users/test/Projects")
     }
 
-    func test_onboardingRoleChoices_excludeLegacyStudentStatus() {
+    func test_onboardingFocusAreaChoices_matchCurrentSurveyCopy() {
         XCTAssertEqual(
-            OnboardingRole.onboardingChoices,
-            [.developer, .designer, .productManager, .marketerBusiness, .generalist]
+            OnboardingFocusArea.onboardingChoices,
+            [.development, .design, .productPlanning, .customerAcquisition, .salesMonetization]
         )
-        XCTAssertFalse(OnboardingRole.onboardingChoices.contains(.student))
-        XCTAssertTrue(OnboardingRole.allCases.contains(.student))
+        XCTAssertEqual(
+            OnboardingFocusArea.onboardingChoices.map(\.rawValue),
+            ["development", "design", "product_planning", "customer_acquisition", "sales_monetization"]
+        )
+        XCTAssertEqual(OnboardingFocusArea.onboardingQuestion, "요즘 어디에 시간을 가장 많이 쓰고 있나요?")
+        XCTAssertEqual(OnboardingFocusArea.onboardingSubtitle, "어디에 집중하고 있는지에 따라, 지금 필요한 도움을 더 정확히 드립니다.")
+        XCTAssertEqual(
+            OnboardingFocusArea.onboardingChoices.map(\.displayTitle),
+            ["개발", "디자인", "제품 기획", "고객 확보", "판매 / 수익화"]
+        )
+        XCTAssertEqual(
+            OnboardingFocusArea.onboardingChoices.map(\.displayDescription),
+            [
+                "앱·웹 등 제품을 직접 구현하고 있습니다.",
+                "화면, UX, 브랜드, 사용 흐름을 다듬고 있습니다.",
+                "문제 정의, 기능 우선순위, 제품 방향을 정리하고 있습니다.",
+                "사용자를 찾고, 홍보하고, 유입 채널을 실험하고 있습니다.",
+                "가격, 결제, 유료 제안, 매출 전환을 실험하고 있습니다.",
+            ]
+        )
+    }
+
+    func test_onboardingProductBottleneckChoices_matchCurrentSurveyCopy() {
+        XCTAssertEqual(
+            OnboardingProductBottleneck.onboardingChoices,
+            [.problemDefinition, .firstActiveUsers, .repeatUsage, .pricingOffer]
+        )
+        XCTAssertEqual(
+            OnboardingProductBottleneck.onboardingChoices.map(\.rawValue),
+            ["problem_definition", "first_active_users", "repeat_usage", "pricing_offer"]
+        )
+        XCTAssertEqual(OnboardingProductBottleneck.onboardingQuestion, "지금 제품을 만들거나 키우는 과정에서 가장 큰 병목은 어디인가요?")
+        XCTAssertEqual(
+            OnboardingProductBottleneck.onboardingChoices.map(\.displayTitle),
+            [
+                "누구의 어떤 문제를 풀어야 할지 모르겠다.",
+                "제품은 있지만 첫 활성 사용자를 찾지 못하고 있다.",
+                "사용자는 있지만 반복 사용으로 이어지지 않는다.",
+                "쓰는 사람은 있지만 결제 제안·가격 설정이 막혀 있다.",
+            ]
+        )
     }
 
     func test_stepCompletion_flags() {
         let store = IntakeV2Store(defaults: suiteDefaults)
-        XCTAssertFalse(store.isRoleComplete)
-        store.role = .designer
-        XCTAssertTrue(store.isRoleComplete)
+        XCTAssertFalse(store.isFocusAreaComplete)
+        store.focusArea = .design
+        XCTAssertTrue(store.isFocusAreaComplete)
         XCTAssertFalse(store.isFullyComplete)
-        store.stuck = .building
+        store.bottleneck = .firstActiveUsers
         store.selectCommitmentLevel(.dailyTwoToFour)
         store.toggleEvidenceLevel(.community)
         XCTAssertTrue(store.isFullyComplete)
@@ -90,8 +129,8 @@ final class IntakeV2StoreTests: XCTestCase {
 
     func test_onboardingContextMapper_combinesEvidenceAndFolder() {
         let store = IntakeV2Store(defaults: suiteDefaults)
-        store.role = .developer
-        store.stuck = .firstUsers
+        store.focusArea = .development
+        store.bottleneck = .pricingOffer
         store.selectCommitmentLevel(.dailyOneToTwo)
         store.toggleEvidenceLevel(.workLog)
         store.toggleEvidenceLevel(.paymentResponses)
@@ -107,8 +146,8 @@ final class IntakeV2StoreTests: XCTestCase {
 
     func test_onboardingContextMapper_requiresEvidenceButNotFolder() {
         let store = IntakeV2Store(defaults: suiteDefaults)
-        store.role = .developer
-        store.stuck = .ideaOnly
+        store.focusArea = .development
+        store.bottleneck = .problemDefinition
         store.selectCommitmentLevel(.irregular)
         XCTAssertNil(IntakeV2OnboardingContextMapper.makeContext(from: store))
 
@@ -126,10 +165,25 @@ final class IntakeV2StoreTests: XCTestCase {
         let store = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertTrue(store.restoreFailed, "corrupt UserDefaults should set restoreFailed=true (eng D6 critical gap)")
         XCTAssertNil(store.workmode)
-        XCTAssertNil(store.role)
-        XCTAssertNil(store.stuck)
+        XCTAssertNil(store.focusArea)
+        XCTAssertNil(store.bottleneck)
         XCTAssertNil(store.commitmentLevel)
         XCTAssertEqual(store.evidenceLevels, [])
+    }
+
+    func test_legacyV2Draft_isIgnored() {
+        let legacyJSON = """
+        {"focusArea":"development","bottleneck":"problem_definition","commitmentLevel":"daily_two_to_four","evidenceLevels":["community"]}
+        """.data(using: .utf8)!
+        suiteDefaults.set(legacyJSON, forKey: "agentic30.intakeV2.state.v2")
+
+        let store = IntakeV2Store(defaults: suiteDefaults)
+
+        XCTAssertNil(store.focusArea)
+        XCTAssertNil(store.bottleneck)
+        XCTAssertNil(store.commitmentLevel)
+        XCTAssertEqual(store.evidenceLevels, [])
+        XCTAssertFalse(store.restoreFailed)
     }
 
     func test_reset_clearsStateAndStorage() {
@@ -151,12 +205,16 @@ final class IntakeV2StoreTests: XCTestCase {
 
     func test_clearPersistedDraft_removesOnlyIntakeDraftKeys() {
         suiteDefaults.set(Data([0x01]), forKey: IntakeV2Store.stateDefaultsKey)
+        suiteDefaults.set(Data([0x02]), forKey: "agentic30.intakeV2.state.v2")
+        suiteDefaults.set(Data([0x04]), forKey: "agentic30.intakeV2.state.v1")
         suiteDefaults.set(Data([0x03]), forKey: IntakeV2SourceManager.sourcesDefaultsKey)
         suiteDefaults.set("/tmp/workspace", forKey: "agentic30.workspaceRoot")
 
         IntakeV2Store.clearPersistedDraft(defaults: suiteDefaults)
 
         XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
+        XCTAssertNil(suiteDefaults.data(forKey: "agentic30.intakeV2.state.v2"))
+        XCTAssertNil(suiteDefaults.data(forKey: "agentic30.intakeV2.state.v1"))
         XCTAssertEqual(suiteDefaults.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey), Data([0x03]))
         XCTAssertEqual(suiteDefaults.string(forKey: "agentic30.workspaceRoot"), "/tmp/workspace")
     }

@@ -8,8 +8,8 @@ import {
   resolveAgentic30MemoryDir,
 } from "./news-market-radar.mjs";
 
-export const ONBOARDING_MEMORY_SCHEMA_VERSION = 1;
-export const ONBOARDING_MEMORY_SCHEMA = "agentic30.memory.onboarding.v1";
+export const ONBOARDING_MEMORY_SCHEMA_VERSION = 3;
+export const ONBOARDING_MEMORY_SCHEMA = "agentic30.memory.onboarding.v3";
 export const OFFICE_HOURS_TURN_LOG_SCHEMA_VERSION = 2;
 export const OFFICE_HOURS_TURN_LOG_SCHEMA = "agentic30.memory.office_hours_turns.v2";
 export const SOURCE_READ_LOG_SCHEMA_VERSION = 1;
@@ -70,6 +70,7 @@ export async function loadOnboardingMemory({
   if (!workspaceRoot) return null;
   try {
     const raw = JSON.parse(await fsImpl.readFile(resolveOnboardingMemoryPath(workspaceRoot), "utf8"));
+    if (raw?.schema && raw.schema !== ONBOARDING_MEMORY_SCHEMA) return null;
     return normalizeOnboardingMemory(raw, { now });
   } catch {
     return null;
@@ -512,8 +513,8 @@ function normalizeOnboardingContext(value = {}) {
     goal: cleanString(source.goal, MAX_LONG_TEXT),
     custom_work_mode: cleanString(source.custom_work_mode ?? source.customWorkMode, MAX_TEXT),
     work_mode: cleanString(source.work_mode ?? source.workMode, MAX_TEXT),
-    role: cleanString(source.role, MAX_TEXT),
-    project_stage: cleanString(source.project_stage ?? source.projectStage, MAX_TEXT),
+    focus_area: cleanString(source.focus_area ?? source.focusArea, MAX_TEXT),
+    product_bottleneck: cleanString(source.product_bottleneck ?? source.productBottleneck, MAX_TEXT),
     isolation_level: cleanString(source.isolation_level ?? source.isolationLevel, MAX_TEXT),
     isolation_levels: normalizeStringArray(source.isolation_levels ?? source.isolationLevels, 20, MAX_TEXT),
     completed_at: cleanString(source.completed_at ?? source.completedAt, MAX_TEXT),
@@ -534,17 +535,17 @@ function normalizeOnboardingAnswers(value = {}, context = { payload: {} }) {
       "하루에 얼마나 시간을 쓸 수 있는지",
       payload.custom_work_mode || payload.work_mode,
     ),
-    primaryRole: normalizeAnswer(
-      source.primaryRole ?? source.primary_role,
-      "primary_role",
-      "하루 중 가장 많이 쓰는 역할",
-      payload.role,
+    primaryFocus: normalizeAnswer(
+      source.primaryFocus ?? source.primary_focus,
+      "primary_focus",
+      "요즘 어디에 시간을 가장 많이 쓰고 있나요?",
+      payload.focus_area,
     ),
-    biggestBlocker: normalizeAnswer(
-      source.biggestBlocker ?? source.biggest_blocker,
-      "biggest_blocker",
-      "현재 가장 큰 막힘",
-      payload.project_stage,
+    primaryBottleneck: normalizeAnswer(
+      source.primaryBottleneck ?? source.primary_bottleneck,
+      "primary_bottleneck",
+      "지금 제품을 만들거나 키우는 과정에서 가장 큰 병목은 어디인가요?",
+      payload.product_bottleneck,
     ),
     existingRecords: normalizeAnswer(
       source.existingRecords ?? source.existing_records,
@@ -815,9 +816,9 @@ function makeSourceReadLog({ now = new Date() } = {}) {
 function summarizeOnboardingForHistory(onboarding) {
   if (!onboarding) return null;
   const answers = onboarding.answers || {};
-  const role = answers.primaryRole?.answer || onboarding.onboardingContext?.role || "";
+  const focusArea = answers.primaryFocus?.answer || onboarding.onboardingContext?.focus_area || "";
   const timeBudget = answers.timeBudget?.answer || onboarding.onboardingContext?.custom_work_mode || onboarding.onboardingContext?.work_mode || "";
-  const blocker = answers.biggestBlocker?.answer || onboarding.onboardingContext?.project_stage || "";
+  const blocker = answers.primaryBottleneck?.answer || onboarding.onboardingContext?.product_bottleneck || "";
   const records = answers.existingRecords?.answer || normalizeStringArray(onboarding.onboardingContext?.isolation_levels).join(", ");
   const projectPath = onboarding.projectPath || "";
   const readSources = (onboarding.readSources || [])
@@ -830,13 +831,13 @@ function summarizeOnboardingForHistory(onboarding) {
     .filter(Boolean)
     .slice(0, 12);
   const summary = [
-    role ? `역할=${role}` : "",
+    focusArea ? `집중영역=${focusArea}` : "",
     timeBudget ? `시간=${timeBudget}` : "",
     blocker ? `막힘=${blocker}` : "",
     records ? `기록=${records}` : "",
     projectPath ? `프로젝트=${projectPath}` : "",
   ].filter(Boolean).join(" · ");
-  return { role, timeBudget, blocker, records, projectPath, readSources, summary };
+  return { focusArea, timeBudget, blocker, records, projectPath, readSources, summary };
 }
 
 function formatCurriculumAnswerForHistory(record) {

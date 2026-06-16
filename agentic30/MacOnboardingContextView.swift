@@ -6,8 +6,8 @@ struct MacOnboardingContextView: View {
     @State private var sceneIndex = 0
     @State private var selectedWorkMode: OnboardingWorkMode?
     @State private var customWorkMode = ""
-    @State private var selectedRole: OnboardingRole?
-    @State private var selectedProjectStage: OnboardingProjectStage?
+    @State private var selectedFocusArea: OnboardingFocusArea?
+    @State private var selectedProductBottleneck: OnboardingProductBottleneck?
     @State private var selectedIsolationLevels: Set<OnboardingIsolationLevel> = [.projectFolder]
     @State private var primaryIsolationLevel: OnboardingIsolationLevel = .projectFolder
     @FocusState private var customWorkModeFocused: Bool
@@ -125,7 +125,7 @@ struct MacOnboardingContextView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(Color(red: 0.96, green: 0.90, blue: 0.66))
-                Text("Stuck point")
+                Text("Bottleneck")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundStyle(MacOnboardingTheme.visualText)
             }
@@ -211,9 +211,9 @@ struct MacOnboardingContextView: View {
 
     private var currentTitle: String {
         switch sceneIndex {
-        case 0: return "가장 자주 하는 역할은 무엇인가요?"
+        case 0: return OnboardingFocusArea.onboardingQuestion
         case 1: return "현재 어떤 상황에서 제품을 만들고 있나요?"
-        case 2: return "현재 가장 큰 막힘은 무엇인가요?"
+        case 2: return OnboardingProductBottleneck.onboardingQuestion
         case 3: return "어떤 기록을 연결할 수 있나요?"
         default: return ""
         }
@@ -221,9 +221,9 @@ struct MacOnboardingContextView: View {
 
     private var currentSubtitle: String {
         switch sceneIndex {
-        case 0: return "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다."
+        case 0: return OnboardingFocusArea.onboardingSubtitle
         case 1: return "지금의 시간 제약과 책임 범위에 맞춰 오늘 할 일을 정합니다."
-        case 2: return "막힌 지점에 맞춰 먼저 볼 문제를 정합니다."
+        case 2: return "병목에 맞춰 먼저 볼 문제를 정합니다."
         case 3: return "프로젝트와 실행 기록을 읽어 오늘의 과제를 개인화합니다."
         default: return ""
         }
@@ -249,15 +249,15 @@ struct MacOnboardingContextView: View {
         switch sceneIndex {
         case 0:
             VStack(spacing: 6) {
-                ForEach(OnboardingRole.onboardingChoices, id: \.self) { role in
+                ForEach(OnboardingFocusArea.onboardingChoices, id: \.self) { focusArea in
                     optionRow(
-                        title: role.displayTitle,
-                        description: role.displayDescription,
-                        selected: selectedRole == role,
-                        accent: roleAccent,
-                        identifier: "onboardingContext.option.\(role.rawValue)"
+                        title: focusArea.displayTitle,
+                        description: focusArea.displayDescription,
+                        selected: selectedFocusArea == focusArea,
+                        accent: focusAreaAccent,
+                        identifier: "onboardingContext.option.\(focusArea.rawValue)"
                     ) {
-                        selectedRole = role
+                        selectedFocusArea = focusArea
                     }
                 }
             }
@@ -278,15 +278,15 @@ struct MacOnboardingContextView: View {
             }
         case 2:
             VStack(spacing: 5) {
-                ForEach(OnboardingProjectStage.onboardingChoices, id: \.self) { stage in
+                ForEach(OnboardingProductBottleneck.onboardingChoices, id: \.self) { bottleneck in
                     optionRow(
-                        title: stage.displayTitle,
-                        description: stage.displayDescription,
-                        selected: selectedProjectStage == stage,
-                        accent: stageAccent,
-                        identifier: "onboardingContext.option.\(stage.rawValue)"
+                        title: bottleneck.displayTitle,
+                        description: bottleneck.displayDescription,
+                        selected: selectedProductBottleneck == bottleneck,
+                        accent: bottleneckAccent,
+                        identifier: "onboardingContext.option.\(bottleneck.rawValue)"
                     ) {
-                        selectedProjectStage = stage
+                        selectedProductBottleneck = bottleneck
                     }
                 }
             }
@@ -310,8 +310,8 @@ struct MacOnboardingContextView: View {
     }
 
     private var workModeAccent: Color { Color(red: 0.82, green: 0.99, blue: 0.69) }
-    private var roleAccent: Color { Color(red: 0.82, green: 0.99, blue: 0.69) }
-    private var stageAccent: Color { Color(red: 0.82, green: 0.99, blue: 0.69) }
+    private var focusAreaAccent: Color { Color(red: 0.82, green: 0.99, blue: 0.69) }
+    private var bottleneckAccent: Color { Color(red: 0.82, green: 0.99, blue: 0.69) }
     private var isolationAccent: Color { Color(red: 0.66, green: 0.78, blue: 0.91) }
 
     private var trimmedCustomWorkMode: String {
@@ -480,14 +480,14 @@ struct MacOnboardingContextView: View {
 
     private var primaryButtonEnabled: Bool {
         switch sceneIndex {
-        case 0: return selectedRole != nil
+        case 0: return selectedFocusArea != nil
         case 1:
             guard let selectedWorkMode else { return false }
             if selectedWorkMode == .exploring {
                 return !trimmedCustomWorkMode.isEmpty
             }
             return true
-        case 2: return selectedProjectStage != nil
+        case 2: return selectedProductBottleneck != nil
         case 3: return !selectedIsolationLevels.isEmpty
         default: return false
         }
@@ -506,8 +506,8 @@ struct MacOnboardingContextView: View {
                 "from_step": sceneIndex,
                 "to_step": nextIndex,
                 "selected_work_mode": selectedWorkMode?.rawValue ?? "none",
-                "selected_role": selectedRole?.rawValue ?? "none",
-                "selected_project_stage": selectedProjectStage?.rawValue ?? "none",
+                "selected_focus_area": selectedFocusArea?.rawValue ?? "none",
+                "selected_product_bottleneck": selectedProductBottleneck?.rawValue ?? "none",
             ])
             sceneIndex = nextIndex
             return
@@ -515,8 +515,8 @@ struct MacOnboardingContextView: View {
 
         guard
             let workMode = selectedWorkMode,
-            let role = selectedRole,
-            let stage = selectedProjectStage
+            let focusArea = selectedFocusArea,
+            let bottleneck = selectedProductBottleneck
         else { return }
         let levels = Array(selectedIsolationLevels).sorted { $0.rawValue < $1.rawValue }
         let primaryLevel = selectedIsolationLevels.contains(primaryIsolationLevel)
@@ -526,8 +526,8 @@ struct MacOnboardingContextView: View {
         let context = OnboardingContext.make(
             customWorkMode: workMode == .exploring ? trimmedCustomWorkMode : "",
             workMode: workMode,
-            role: role,
-            projectStage: stage,
+            focusArea: focusArea,
+            productBottleneck: bottleneck,
             isolationLevel: primaryLevel,
             isolationLevels: levels
         )

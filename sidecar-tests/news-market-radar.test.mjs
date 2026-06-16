@@ -9,6 +9,7 @@ import {
   NEWS_MARKET_RADAR_LANE_CONCURRENCY,
   NEWS_MARKET_RADAR_PROGRESS_STEPS,
   NEWS_MARKET_RADAR_PROMPT_PROFILE,
+  NEWS_MARKET_RADAR_REFRESH_INTERVAL_MS,
   appendCurriculumAnswer,
   buildMarketRadarResearchContext,
   buildMarketRadarLaneResearchContext,
@@ -19,6 +20,7 @@ import {
   buildNewsMarketRadarProgressStatus,
   collectWorkspaceEvidence,
   formatNewsMarketRadarProviderTimeout,
+  isNewsMarketRadarAutoRefreshDue,
   loadCurriculumAnswerLog,
   loadNewsMarketRadarSnapshot,
   normalizeNewsMarketRadarProviderTimeout,
@@ -42,6 +44,38 @@ async function withTmpWorkspace(fn) {
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
+}
+
+function testExaRoute() {
+  return {
+    provider: "codex",
+    source: "provider_mcp",
+    label: "Codex Exa MCP",
+    serverName: "exa",
+    mcpConfig: {
+      type: "http",
+      url: "https://mcp.exa.ai/mcp",
+    },
+  };
+}
+
+function testLaneResearchResult(laneId = "icp") {
+  return {
+    lanes: [{
+      id: laneId,
+      cards: [{
+        id: `${laneId}-card`,
+        title: `${laneId} evidence`,
+        summary: "Fresh public evidence for the selected lane.",
+        impact: "strengthens",
+        sourceRefs: [
+          { url: `https://example.com/${laneId}/pricing`, title: "Pricing" },
+          { url: `https://other.example/${laneId}/review`, title: "Review" },
+        ],
+      }],
+    }],
+    researchSource: "Codex Exa MCP",
+  };
 }
 
 function countCards(snapshot) {
@@ -226,7 +260,7 @@ test("provider prompt requires Korean user-facing Market Radar copy", () => {
   });
 
   assert.match(prompt, /All user-facing prose in the JSON must be Korean/);
-  assert.match(prompt, /card title, summary, whyItMatters, suggestedHypothesisUpdate, and sourceRefs\.excerpt in Korean/);
+  assert.match(prompt, /card title, summary, whyItMatters, and sourceRefs\.excerpt in Korean/);
   assert.match(prompt, /Adaptive source policy/);
   assert.match(prompt, /Context\.adaptiveProfile\.querySeeds/);
   assert.match(prompt, /fixed persona, geography, tool-stack, or platform assumptions/);
@@ -481,10 +515,10 @@ test("news market radar self-source logic does not hard-code dogfood product lit
 });
 
 test("provider timeout is long enough for Exa research and has a user-readable label", () => {
-  assert.equal(normalizeNewsMarketRadarProviderTimeout(""), 480_000);
+  assert.equal(normalizeNewsMarketRadarProviderTimeout(""), 900_000);
   assert.equal(normalizeNewsMarketRadarProviderTimeout("1000"), 30_000);
-  assert.equal(normalizeNewsMarketRadarProviderTimeout("900000"), 600_000);
-  assert.equal(formatNewsMarketRadarProviderTimeout(480_000), "8m");
+  assert.equal(normalizeNewsMarketRadarProviderTimeout("1500000"), 1_200_000);
+  assert.equal(formatNewsMarketRadarProviderTimeout(900_000), "15m");
   assert.equal(formatNewsMarketRadarProviderTimeout(45_000), "45s");
 });
 
@@ -969,6 +1003,173 @@ test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async 
   });
 });
 
+test("Market Radar auto refresh due check uses persisted refresh timestamps", () => {
+  const now = new Date("2026-05-20T12:00:00.000Z");
+  assert.equal(isNewsMarketRadarAutoRefreshDue(null, { now }), true);
+  assert.equal(isNewsMarketRadarAutoRefreshDue({
+    generatedAt: now.toISOString(),
+    nextRefreshAfter: new Date(now.getTime() + 60_000).toISOString(),
+    status: { state: "ready", reason: "daily" },
+  }, { now }), false);
+  assert.equal(isNewsMarketRadarAutoRefreshDue({
+    generatedAt: new Date(now.getTime() - NEWS_MARKET_RADAR_REFRESH_INTERVAL_MS - 1).toISOString(),
+    nextRefreshAfter: null,
+    status: { state: "ready", reason: "daily" },
+  }, { now }), true);
+  assert.equal(isNewsMarketRadarAutoRefreshDue({
+    generatedAt: now.toISOString(),
+    nextRefreshAfter: new Date(now.getTime() + NEWS_MARKET_RADAR_REFRESH_INTERVAL_MS).toISOString(),
+    status: { state: "idle", reason: "not_loaded" },
+  }, { now }), true);
+});
+
+test("daily auto refresh reuses a fresh ready snapshot even when workspace context changed", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    let calls = 0;
+    const first = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => {
+        calls += 1;
+        return testLaneResearchResult(laneId);
+      },
+    });
+
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo AI app founders");
+    const second = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "daily",
+      force: false,
+      now: new Date("2026-05-20T01:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => {
+        calls += 1;
+        return testLaneResearchResult(laneId);
+      },
+    });
+
+    assert.equal(calls, 5);
+    assert.equal(first.status.state, "ready");
+    assert.equal(second.status.state, "ready");
+    assert.equal(second.generatedAt, first.generatedAt);
+    assert.equal(second.contextFingerprint, first.contextFingerprint);
+  });
+});
+
+test("daily auto refresh does not retry a recent failed snapshot before the 24-hour gate", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    let calls = 0;
+    const first = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async () => {
+        calls += 1;
+        throw new Error("provider unavailable");
+      },
+    });
+    const second = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "daily",
+      force: false,
+      now: new Date(Date.parse("2026-05-20T00:00:00.000Z") + NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS + 60_000),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => {
+        calls += 1;
+        return testLaneResearchResult(laneId);
+      },
+    });
+
+    assert.equal(calls, 5);
+    assert.equal(first.status.state, "failed");
+    assert.equal(second.status.state, "failed");
+    assert.equal(second.generatedAt, first.generatedAt);
+  });
+});
+
+test("expired daily auto refresh runs provider research again", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    let calls = 0;
+    const first = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => {
+        calls += 1;
+        return testLaneResearchResult(laneId);
+      },
+    });
+    const second = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "daily",
+      force: false,
+      now: new Date(Date.parse("2026-05-20T00:00:00.000Z") + NEWS_MARKET_RADAR_REFRESH_INTERVAL_MS + 1),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => {
+        calls += 1;
+        return testLaneResearchResult(laneId);
+      },
+    });
+
+    assert.equal(calls, 10);
+    assert.equal(first.status.state, "ready");
+    assert.equal(second.status.state, "ready");
+    assert.notEqual(second.generatedAt, first.generatedAt);
+  });
+});
+
+test("manual forced refresh bypasses the daily auto refresh gate", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    let calls = 0;
+    const first = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => {
+        calls += 1;
+        return testLaneResearchResult(laneId);
+      },
+    });
+    const second = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T00:01:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => {
+        calls += 1;
+        return testLaneResearchResult(laneId);
+      },
+    });
+
+    assert.equal(calls, 10);
+    assert.equal(first.status.state, "ready");
+    assert.equal(second.status.state, "ready");
+    assert.notEqual(second.generatedAt, first.generatedAt);
+  });
+});
+
 test("refresh runs every Market Radar lane with bounded concurrency", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
@@ -1043,12 +1244,12 @@ test("refresh groups duplicate all-lane timeout failures and persists diagnostic
         },
       }],
       providerResearcher: async () => {
-        throw new Error("공개 근거 검색이 8m 안에 끝나지 않았습니다");
+        throw new Error("공개 근거 검색이 15m 안에 끝나지 않았습니다");
       },
     });
 
     assert.equal(snapshot.status.state, "failed");
-    assert.match(snapshot.status.error, /공개 근거 검색이 8m 안에 끝나지 않았습니다 \(5개 가설 모두 실패\)/);
+    assert.match(snapshot.status.error, /공개 근거 검색이 15m 안에 끝나지 않았습니다 \(5개 가설 모두 실패\)/);
     assert.doesNotMatch(snapshot.status.error, /\|/);
     assert.equal(snapshot.status.partialFailures.length, 5);
     assert.equal(snapshot.status.researchSource, "Codex Exa MCP");
@@ -1082,7 +1283,7 @@ test("refresh reuses recent failed daily snapshot during failed auto-refresh coo
       exaResearchRoutes: [route],
       providerResearcher: async () => {
         calls += 1;
-        throw new Error("공개 근거 검색이 8m 안에 끝나지 않았습니다");
+        throw new Error("공개 근거 검색이 15m 안에 끝나지 않았습니다");
       },
     });
     const second = await refreshNewsMarketRadar({

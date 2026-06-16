@@ -25,19 +25,25 @@ function tailToolSegment(name = "") {
 export function describeMorningBriefingToolEvent(event = {}) {
   if (event?.phase !== "use") return null;
   const name = String(event.toolName || "").trim();
-  if (!name) return null;
-  if (/^toolsearch$/i.test(name)) return "MCP 도구 검색";
-  const lower = name.toLowerCase();
+  const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
+  const namespace = String(payload.namespace || "").trim();
+  const server = String(payload.server || "").trim();
+  const tool = String(payload.tool || payload.requestedToolName || "").trim();
+  const displayName = name || tool;
+  const combined = [name, namespace, server, tool].filter(Boolean).join(" ");
+  if (!combined) return null;
+  if (/^tool[-_ ]?search$/i.test(displayName) || /^tool[-_ ]?search$/i.test(tool)) return "MCP 도구 검색";
+  const lower = combined.toLowerCase();
   if (lower.includes("posthog")) {
     if (lower.includes("execute-sql") || lower.includes("query")) return "PostHog 집계 쿼리 실행";
-    return `PostHog 도구 호출 · ${tailToolSegment(name)}`;
+    return `PostHog 도구 호출 · ${tailToolSegment(displayName)}`;
   }
   if (lower.includes("cloudflare")) {
     if (lower.includes("graphql")) return "Cloudflare GraphQL Analytics 조회";
     if (lower.includes("execute")) return "Cloudflare Analytics 조회";
-    return `Cloudflare 도구 호출 · ${tailToolSegment(name)}`;
+    return `Cloudflare 도구 호출 · ${tailToolSegment(displayName)}`;
   }
-  if (lower.startsWith("mcp__")) return `MCP 도구 호출 · ${tailToolSegment(name)}`;
+  if (lower.includes("mcp__")) return `MCP 도구 호출 · ${tailToolSegment(displayName)}`;
   return null;
 }
 

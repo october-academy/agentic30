@@ -451,7 +451,7 @@ function buildPosthogActions({ funnel, instrumentationGaps = [] } = {}) {
     actions.push({
       kind: "message",
       badge: "계측",
-      title: "가입·activation 이벤트 보강",
+      title: "가입·검증 행동 이벤트 보강",
       body: "가입, 온보딩 완료, 첫 세션 성공 같은 목표 이벤트를 명시적으로 계측하세요.\n현재 전환 판단은 이벤트 부재와 실제 전환 부재를 분리하지 못합니다.",
       why: instrumentationGaps[0],
       applyLabel: "큐에 추가",
@@ -489,7 +489,7 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
     : delta > 0 ? "up" : "down";
   const retentionDelta = latest && previous
     ? !activationObserved
-      ? "activation 없음"
+      ? "검증 행동 없음"
       : latestSmall || previousSmall
       ? "표본 작음"
       : delta === 0
@@ -509,7 +509,7 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
     ? data.instrumentationGaps
     : [
         ...(signupObserved ? [] : ["가입 이벤트가 없어 실제 가입 0건과 계측 공백을 분리할 수 없습니다."]),
-        ...(data.funnel?.activationInstrumentation === "observed" ? [] : ["명시적 activation 이벤트가 없어 목표 전환 판단은 제한적입니다."]),
+        ...(data.funnel?.activationInstrumentation === "observed" ? [] : ["명시적 검증 행동 이벤트가 없어 목표 전환 판단은 제한적입니다."]),
       ];
   const shouldRenderRetention = retentionEvidenceStrong;
   const title = shouldRenderRetention ? "PostHog · 리텐션·이탈 드릴다운" : "PostHog · 계측·활성 공백";
@@ -517,12 +517,12 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
     ? "최신 관측 완료 코호트 기준"
     : latestSmall || previousSmall
       ? "표본 작음 · 리텐션 단정 보류"
-      : "activation/signup 이벤트 확인 필요";
+      : "검증 행동/가입 이벤트 확인 필요";
   const retentionValueLabel = shouldRenderRetention && latest ? formatPercent(latest.pct) : "미계측";
   const retentionVsLabel = shouldRenderRetention
     ? retentionVs
     : latest
-      ? `코호트 n=${latest.cohortSize} · activation 계측 ${activationObserved ? "관측" : "없음"}`
+      ? `코호트 n=${latest.cohortSize} · 검증 행동 계측 ${activationObserved ? "관측" : "없음"}`
       : "유효 코호트 없음";
 
   return normalizeMorningBriefingDrilldown("posthog", {
@@ -531,7 +531,7 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
     syncPills: [
       shouldRenderRetention && latest ? `Day-1 ${formatPercent(latest.pct)} · n=${latest.cohortSize}` : "Day-1 리텐션 미계측",
       `기간 이벤트 ${data.totals.events} · 활성 ${data.totals.activeUsers}`,
-      activationObserved ? "activation 이벤트 관측" : "activation 이벤트 없음",
+      activationObserved ? "검증 행동 이벤트 관측" : "검증 행동 이벤트 없음",
       latestSmall ? `표본 작음 · 기준 n<${MIN_COHORT_N_FOR_DIRECTION}` : "",
     ].filter(Boolean),
     kpis: [
@@ -616,7 +616,7 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
       progress: {
         label: shouldRenderRetention ? "Day-1 리텐션" : "Day-1 리텐션",
         valueLabel: shouldRenderRetention && latest ? `${formatPercent(latest.pct)} · n=${latest.cohortSize}` : "코호트 없음",
-        sub: !activationObserved ? "activation 없음" : latestSmall ? "표본 작음" : latest ? `${latest.returnedDay1}/${latest.cohortSize} 복귀` : null,
+        sub: !activationObserved ? "검증 행동 없음" : latestSmall ? "표본 작음" : latest ? `${latest.returnedDay1}/${latest.cohortSize} 복귀` : null,
         ratio: shouldRenderRetention && latest ? Math.min(1, latest.pct / 100) : 0,
       },
       rows: [
@@ -1669,7 +1669,7 @@ export async function collectGithubDrilldown({
     drafts: [],
     draftsEmpty: {
       title: "코드 신호는 충분해요 — 고객 증거로 이동",
-      detail: "gh CLI와 git 로그 기준, 빌드·배포 쪽에서 오늘 막힌 신호는 없습니다. 다음 판단은 새 커밋보다 다운로드/설치/activation 또는 사용자 확인 질문에서 나와야 합니다.",
+      detail: "gh CLI와 git 로그 기준, 빌드·배포 쪽에서 오늘 막힌 신호는 없습니다. 다음 판단은 새 커밋보다 다운로드/설치/검증 행동 또는 사용자 확인 질문에서 나와야 합니다.",
       evidence: "근거: gh CLI · git log",
     },
     maintenance,
@@ -1737,7 +1737,7 @@ const EXTERNAL_DRILLDOWN_SHAPE = {
         activationInstrumentation: "missing",
       },
       paths: [{ path: "/", pageviews: 0, activeUsers: 0 }],
-      instrumentationGaps: ["가입·activation 이벤트가 확인되지 않음"],
+      instrumentationGaps: ["가입·검증 행동 이벤트가 확인되지 않음"],
     },
   },
 };

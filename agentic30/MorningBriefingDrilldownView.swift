@@ -72,20 +72,72 @@ struct MorningBriefingDrilldownView: View {
         }
     }
 
-    private var sourceTone: Color {
-        switch drilldown.id {
+    private func sourceTone(for id: String) -> Color {
+        switch id {
         case "cloudflare": return OpenDesignDayColor.amber
         case "posthog": return OpenDesignDayColor.violet
         default: return OpenDesignDayColor.fg
         }
     }
 
-    private var sourceBadge: String {
-        switch drilldown.id {
+    private var sourceTone: Color {
+        sourceTone(for: drilldown.id)
+    }
+
+    private func nextSourceBadgeTone(for id: String) -> Color {
+        switch id {
+        case "cloudflare": return OpenDesignDayColor.amber
+        case "posthog": return OpenDesignDayColor.violet
+        default: return OpenDesignDayColor.accent
+        }
+    }
+
+    private func sourceBadgeAssetName(for id: String) -> String? {
+        switch id {
+        case "cloudflare": return "BrandCloudflare"
+        case "github": return "BrandGitHub"
+        case "posthog": return "BrandPostHog"
+        default: return nil
+        }
+    }
+
+    private func sourceBadgeFallbackText(for id: String) -> String {
+        switch id {
         case "cloudflare": return "CF"
         case "posthog": return "PH"
         default: return "GH"
         }
+    }
+
+    private func sourceBadgeView(id: String, size: CGFloat, corner: CGFloat) -> some View {
+        sourceBadgeView(id: id, size: size, corner: corner, tone: sourceTone(for: id))
+    }
+
+    private func sourceBadgeView(id: String, size: CGFloat, corner: CGFloat, tone: Color) -> some View {
+        return ZStack {
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(tone.opacity(0.14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                        .stroke(tone.opacity(0.4), lineWidth: 1)
+                )
+
+            if let assetName = sourceBadgeAssetName(for: id) {
+                Image(assetName)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .padding(size * 0.18)
+                    .accessibilityHidden(true)
+            } else {
+                Text(sourceBadgeFallbackText(for: id))
+                    .font(.system(size: max(size * 0.39, 11), weight: .bold, design: .monospaced))
+                    .foregroundStyle(tone)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(sourceDisplayName(id)))
     }
 
     private func deltaColor(_ direction: String?) -> Color {
@@ -420,22 +472,11 @@ struct MorningBriefingDrilldownView: View {
 
     private var mainHeader: some View {
         HStack(spacing: 14) {
-            Text(sourceBadge)
-                .font(.system(size: 17, weight: .bold, design: .monospaced))
-                .foregroundStyle(sourceTone)
+            sourceBadgeView(id: drilldown.id, size: 44, corner: 11)
                 // Per-source leaf identifier: container identifiers on the
                 // screen-sized swap views don't surface in the accessibility
                 // tree, so UI tests key off this badge instead.
                 .accessibilityIdentifier("morningBriefing.drilldown.head.\(drilldown.id)")
-                .frame(width: 44, height: 44)
-                .background(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .fill(sourceTone.opacity(0.14))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                .stroke(sourceTone.opacity(0.4), lineWidth: 1)
-                        )
-                )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(drilldown.title ?? "")
@@ -1391,18 +1432,7 @@ struct MorningBriefingDrilldownView: View {
                         onSelectSource(nextID)
                     } label: {
                         HStack(spacing: 12) {
-                            Text(nextID == "cloudflare" ? "CF" : nextID == "posthog" ? "PH" : "GH")
-                                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                                .foregroundStyle(toneColor(nextID == "cloudflare" ? "amber" : nextID == "posthog" ? "violet" : "accent"))
-                                .frame(width: 36, height: 36)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                        .fill(toneColor(nextID == "cloudflare" ? "amber" : nextID == "posthog" ? "violet" : "accent").opacity(0.14))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                                .stroke(toneColor(nextID == "cloudflare" ? "amber" : nextID == "posthog" ? "violet" : "accent").opacity(0.4), lineWidth: 1)
-                                        )
-                                )
+                            sourceBadgeView(id: nextID, size: 36, corner: 11, tone: nextSourceBadgeTone(for: nextID))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("\(sourceDisplayName(nextID)) 드릴다운")
                                     .font(.system(size: 12.5, weight: .semibold))

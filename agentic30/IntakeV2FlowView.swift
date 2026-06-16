@@ -2,7 +2,6 @@ import SwiftUI
 import AppKit
 
 // MARK: - Intake V2 Flow — review decisions 2026-05-14
-// Boot intro → onboarding: Role → Blocker → Commitment → Evidence → Folder pick
 // then source connect → ready analyze (boot.log + first Decide) → post-onboarding Records banner
 //
 // Design decisions reflected:
@@ -484,7 +483,7 @@ enum IntakeV2Step: Int, CaseIterable {
     // OS-product intro
     case bootIntro = 1
     // Intake (user answers)
-    case role, stuck, commitment, evidence, folderPick
+    case focusArea, bottleneck, commitment, evidence, folderPick
     // OS-product setup + analysis
     case connectShowcase, readyAnalyze
 
@@ -571,27 +570,27 @@ struct IntakeV2FlowView: View {
             IntakeV2BootIntroView(
                 backDisabled: true,
                 onBack: {},
-                onNext: { navigate(to: .role) },
+                onNext: { navigate(to: .focusArea) },
                 progressNamespace: progressNamespace
             )
-        case .role:
-            IntakeV2RoleView(
+        case .focusArea:
+            IntakeV2FocusAreaView(
                 store: store,
                 onBack: { navigate(to: .bootIntro) },
-                onNext: { navigate(to: .stuck) },
+                onNext: { navigate(to: .bottleneck) },
                 progressNamespace: progressNamespace
             )
-        case .stuck:
-            IntakeV2StuckView(
+        case .bottleneck:
+            IntakeV2BottleneckView(
                 store: store,
-                onBack: { navigate(to: .role) },
+                onBack: { navigate(to: .focusArea) },
                 onNext: { navigate(to: .commitment) },
                 progressNamespace: progressNamespace
             )
         case .commitment:
             IntakeV2CommitmentView(
                 store: store,
-                onBack: { navigate(to: .stuck) },
+                onBack: { navigate(to: .bottleneck) },
                 onNext: { navigate(to: .evidence) },
                 progressNamespace: progressNamespace
             )
