@@ -8,6 +8,7 @@ import {
   cloudflareSourceSignalFromMeasurements,
   collectGithubDrilldown,
   ensureMorningBriefingDrilldowns,
+  normalizeCardSparkline,
   normalizeCloudflareDrilldownMeasurements,
   normalizeMorningBriefingDrilldown,
   normalizeMorningBriefingDrilldowns,
@@ -23,6 +24,32 @@ const WINDOW = {
   untilIso: "2026-06-10T00:00:00.000Z",
   label: "2026-06-09 00:00 -> 2026-06-10 now",
 };
+
+test("normalizeCardSparkline defaults missing values to zero and drops invalid numbers", () => {
+  const points = normalizeCardSparkline([
+    { label: "00", value: 2, at: WINDOW.startIso },
+    { label: "03" },
+    { label: "06", value: null },
+    { label: "09", value: -1 },
+    { label: "12", value: Number.POSITIVE_INFINITY },
+    { label: "15", value: Number.NaN },
+    { label: "18", value: 4 },
+  ]);
+
+  assert.deepEqual(
+    points.map((point) => ({ label: point.label, value: point.value, at: point.at ?? null })),
+    [
+      { label: "00", value: 2, at: WINDOW.startIso },
+      { label: "03", value: 0, at: null },
+      { label: "06", value: 0, at: null },
+      { label: "18", value: 4, at: null },
+    ],
+  );
+  assert.equal(
+    normalizeCardSparkline(Array.from({ length: 10 }, (_, index) => ({ label: String(index), value: index }))).length,
+    8,
+  );
+});
 
 function gitSourceFixture() {
   return {
@@ -131,6 +158,7 @@ test("collectGithubDrilldown builds kpis, buckets, lists, scan, and maintenance 
     drilldown.cardSparkline.map((point) => point.value),
     drilldown.chart.bars.map((bar) => bar.value),
   );
+  assert.equal(drilldown.cardSparkline[0].at, WINDOW.startIso);
 
   const mergedRow = drilldown.listRows.find((row) => row.kind === "merged");
   assert.match(mergedRow.title, /#41/);
@@ -558,6 +586,25 @@ test("normalizePosthogDrilldownMeasurements renders small-sample aggregate deter
   assert.equal(drilldown.webSignals[0].time, "유입 1위");
 });
 
+test("normalizePosthogDrilldownMeasurements defaults missing successful totals to zero", () => {
+  const drilldown = normalizePosthogDrilldownMeasurements({
+    measurements: {
+      totals: {
+        startIso: "2026-06-10T00:00:00.000Z",
+        untilIso: "2026-06-11T00:00:00.000Z",
+      },
+      cohorts: [],
+      paths: [],
+      instrumentationGaps: [],
+    },
+  });
+
+  assert.ok(drilldown);
+  assert.equal(drilldown.collectionFailed, undefined);
+  assert.equal(drilldown.kpis.find((kpi) => kpi.label === "활성 사용자").valueLabel, "0명");
+  assert.equal(drilldown.kpis.find((kpi) => kpi.label === "이벤트").valueLabel, "0");
+});
+
 test("normalizePosthogDrilldownMeasurements rejects contract violations", () => {
   const valid = {
     totals: { events: 1, activeUsers: 1, topEvents: [] },
@@ -632,6 +679,8 @@ test("normalizeCloudflareDrilldownMeasurements uses period totals, not summed ho
   assert.equal(drilldown.chart.bars.length, 12, "24 hourly buckets are compressed for the 12-bar UI");
   assert.equal(drilldown.cardSparkline.length, 8, "card sparkline uses the shared compact card bucket count");
   assert.deepEqual(drilldown.cardSparkline.slice(0, 2).map((point) => point.value), [16, 17]);
+  assert.equal(drilldown.cardSparkline[0].label, "00");
+  assert.equal(drilldown.cardSparkline[0].at, "2026-06-12T00:00:00.000Z");
   assert.ok(drilldown.chart.bars.some((bar) => bar.label === "21" && bar.value === 37));
   assert.match(drilldown.chart.subtitle, /피크 21-23시 구간 · 37명/, "peak subtitle brackets the true 2h peak range, not just the start hour");
   assert.equal(Object.hasOwn(drilldown.chart.bars[0], "endLabel"), false, "endLabel stays server-side and never reaches the emitted bar");
@@ -645,6 +694,52 @@ test("normalizeCloudflareDrilldownMeasurements uses period totals, not summed ho
   assert.equal(source.counts.pageviews, 174);
   assert.equal(Object.hasOwn(source.counts, "pageViews"), false);
   assert.equal(source.selected, true);
+});
+
+test("normalizeCloudflareDrilldownMeasurements zero-fills card buckets before the first observed hour", () => {
+  const drilldown = normalizeCloudflareDrilldownMeasurements({
+    measurements: {
+      totals: {
+        startIso: "2026-06-12T00:00:00.000Z",
+        untilIso: "2026-06-13T00:00:00.000Z",
+        uniqueVisitors: 10,
+        pageviews: 10,
+        requests: 30,
+        threats: 0,
+      },
+      previousTotals: {
+        startIso: "2026-06-11T00:00:00.000Z",
+        untilIso: "2026-06-12T00:00:00.000Z",
+        uniqueVisitors: 0,
+        pageviews: 0,
+        requests: 0,
+        threats: 0,
+      },
+      hourly: [],
+      cardHourly: [
+        {
+          datetimeIso: "2026-06-12T06:00:00.000Z",
+          uniqueVisitors: 10,
+          pageviews: 10,
+          requests: 30,
+        },
+      ],
+      cardWindow: {
+        startIso: "2026-06-12T00:00:00.000Z",
+        untilIso: "2026-06-13T00:00:00.000Z",
+      },
+    },
+  });
+
+  assert.equal(drilldown.cardSparkline.length, 8);
+  assert.deepEqual(
+    drilldown.cardSparkline.slice(0, 3).map((point) => [point.label, point.value, point.at]),
+    [
+      ["00", 0, "2026-06-12T00:00:00.000Z"],
+      ["03", 0, "2026-06-12T03:00:00.000Z"],
+      ["06", 10, "2026-06-12T06:00:00.000Z"],
+    ],
+  );
 });
 
 test("normalizeCloudflareDrilldownMeasurements keeps path table only with eyeball filter evidence", () => {

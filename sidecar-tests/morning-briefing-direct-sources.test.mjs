@@ -245,6 +245,8 @@ test("collectCloudflareDirectDrilldown builds KPIs, 2h buckets, and path table f
   assert.match(drilldown.chart.footnote, /서로 더하지 않습니다/);
   assert.equal(drilldown.cardSparkline.length, 8);
   assert.deepEqual(drilldown.cardSparkline.slice(0, 2).map((point) => point.value), [8, 5]);
+  assert.equal(drilldown.cardSparkline[0].label, "00");
+  assert.equal(drilldown.cardSparkline[0].at, WINDOW.startIso);
 
   assert.equal(drilldown.table.length, 2);
   assert.equal(drilldown.table[0].code, "/landing");

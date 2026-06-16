@@ -946,6 +946,191 @@ test("refresh persists provider result and missing Exa route returns stale cache
   });
 });
 
+test("zero-card refresh persists explicit empty-result failure", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    const first = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => testLaneResearchResult(laneId),
+    });
+
+    const second = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T01:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => ({
+        researchSource: "Codex Exa MCP",
+        lane: {
+          id: laneId,
+          cards: [],
+        },
+      }),
+    });
+    const loaded = await loadNewsMarketRadarSnapshot({
+      workspaceRoot: root,
+      exaConfigured: true,
+      now: new Date("2026-05-20T01:01:00.000Z"),
+    });
+
+    assert.equal(first.status.state, "ready");
+    assert.equal(second.status.state, "failed");
+    assert.equal(second.status.reason, "empty_result");
+    assert.equal(second.status.stale, false);
+    assert.equal(second.status.lastSuccessAt, null);
+    assert.equal(second.generatedAt, "2026-05-20T01:00:00.000Z");
+    assert.equal(countCards(second), 0);
+    assert.equal(loaded.status.state, "failed");
+    assert.equal(loaded.status.reason, "empty_result");
+    assert.equal(loaded.status.stale, false);
+    assert.equal(countCards(loaded), 0);
+  });
+});
+
+test("all-lane research failure does not preserve previous cardful Market Radar cache", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    const first = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => testLaneResearchResult(laneId),
+    });
+
+    const second = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T01:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => {
+        throw new Error(`provider failed for ${laneId}`);
+      },
+    });
+    const loaded = await loadNewsMarketRadarSnapshot({
+      workspaceRoot: root,
+      exaConfigured: true,
+      now: new Date("2026-05-20T01:01:00.000Z"),
+    });
+
+    assert.equal(first.status.state, "ready");
+    assert.equal(second.status.state, "failed");
+    assert.equal(second.status.reason, "manual");
+    assert.match(second.status.error, /완료된 가설 리서치가 없습니다/);
+    assert.equal(second.status.stale, false);
+    assert.equal(second.status.lastSuccessAt, null);
+    assert.ok(second.status.partialFailures.length > 0);
+    assert.equal(countCards(second), 0);
+    assert.equal(loaded.status.state, "failed");
+    assert.equal(countCards(loaded), 0);
+  });
+});
+
+test("load marks cardless ready cache as failed even when cardful run exists", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    const cardful = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => testLaneResearchResult(laneId),
+    });
+    await fs.writeFile(resolveNewsMarketRadarCachePath(root), JSON.stringify({
+      schemaVersion: 1,
+      updatedAt: "2026-05-20T01:00:00.000Z",
+      snapshot: {
+        schemaVersion: 1,
+        promptProfile: NEWS_MARKET_RADAR_PROMPT_PROFILE,
+        generatedAt: "2026-05-20T01:00:00.000Z",
+        nextRefreshAfter: "2026-05-21T01:00:00.000Z",
+        status: {
+          state: "ready",
+          lastSuccessAt: "2026-05-20T01:00:00.000Z",
+          stale: false,
+          reason: "manual",
+          researchSource: "Codex Exa MCP",
+        },
+        lanes: [
+          { id: "icp", cards: [] },
+          { id: "problem", cards: [] },
+          { id: "alternatives_pricing", cards: [] },
+          { id: "channel", cards: [] },
+          { id: "platform", cards: [] },
+        ],
+      },
+    }));
+
+    const loaded = await loadNewsMarketRadarSnapshot({
+      workspaceRoot: root,
+      exaConfigured: true,
+      exaResearchSource: "Codex Exa MCP",
+      now: new Date("2026-05-20T01:01:00.000Z"),
+    });
+
+    assert.equal(cardful.status.state, "ready");
+    assert.equal(loaded.status.state, "failed");
+    assert.equal(loaded.status.reason, "empty_result");
+    assert.equal(loaded.status.stale, false);
+    assert.equal(loaded.status.lastSuccessAt, null);
+    assert.equal(loaded.generatedAt, "2026-05-20T01:00:00.000Z");
+    assert.equal(countCards(loaded), 0);
+  });
+});
+
+test("load marks cardless ready cache as failed when no cardful run exists", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.dirname(resolveNewsMarketRadarCachePath(root)), { recursive: true });
+    await fs.writeFile(resolveNewsMarketRadarCachePath(root), JSON.stringify({
+      schemaVersion: 1,
+      updatedAt: "2026-05-20T01:00:00.000Z",
+      snapshot: {
+        schemaVersion: 1,
+        promptProfile: NEWS_MARKET_RADAR_PROMPT_PROFILE,
+        generatedAt: "2026-05-20T01:00:00.000Z",
+        nextRefreshAfter: "2026-05-21T01:00:00.000Z",
+        status: {
+          state: "ready",
+          lastSuccessAt: "2026-05-20T01:00:00.000Z",
+          stale: false,
+          reason: "manual",
+          researchSource: "Codex Exa MCP",
+        },
+        lanes: [
+          { id: "icp", cards: [] },
+          { id: "problem", cards: [] },
+          { id: "alternatives_pricing", cards: [] },
+          { id: "channel", cards: [] },
+          { id: "platform", cards: [] },
+        ],
+      },
+    }));
+
+    const loaded = await loadNewsMarketRadarSnapshot({
+      workspaceRoot: root,
+      exaConfigured: true,
+      exaResearchSource: "Codex Exa MCP",
+      now: new Date("2026-05-20T01:01:00.000Z"),
+    });
+
+    assert.equal(loaded.status.state, "failed");
+    assert.equal(loaded.status.reason, "empty_result");
+    assert.match(loaded.status.error, /표시할 수 있는 공개 근거 카드/);
+    assert.equal(countCards(loaded), 0);
+  });
+});
+
 test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
@@ -1540,7 +1725,7 @@ test("snapshot normalization generates unique source ids for same-domain URLs", 
   assert.ok(ids.every((id) => id.startsWith("web-docs.anthropic.com-")));
 });
 
-test("refresh falls back to deterministic merge when final synthesis fails", async () => {
+test("refresh fails explicitly when final synthesis throws", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
     await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
@@ -1564,8 +1749,8 @@ test("refresh falls back to deterministic merge when final synthesis fails", asy
           id: laneId,
           cards: [{
             id: `${laneId}-card`,
-            title: `${laneId} fallback 신호`,
-            summary: "합성이 실패해도 deterministic merge가 저장됩니다.",
+            title: `${laneId} 합성 실패 신호`,
+            summary: "합성이 실패하면 deterministic merge로 대체하지 않습니다.",
             impact: "strengthens",
             sourceRefs: [
               { url: `https://example.com/${laneId}`, title: "A" },
@@ -1579,9 +1764,57 @@ test("refresh falls back to deterministic merge when final synthesis fails", asy
       },
     });
 
-    assert.equal(snapshot.status.state, "ready");
-    assert.equal(countCards(snapshot), snapshot.lanes.length);
-    assert.equal(snapshot.lanes.find((lane) => lane.id === "platform").cards.length, 1);
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.status.reason, "synthesis_failed");
+    assert.match(snapshot.status.error, /최종 합성에 실패했습니다/);
+    assert.equal(snapshot.status.stale, false);
+    assert.equal(snapshot.status.lastSuccessAt, null);
+    assert.equal(countCards(snapshot), 0);
+  });
+});
+
+test("refresh fails explicitly when final synthesis returns zero cards", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    const snapshot = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => ({
+        lane: {
+          id: laneId,
+          cards: [{
+            id: `${laneId}-card`,
+            title: `${laneId} 빈 합성 신호`,
+            summary: "빈 합성 결과는 deterministic merge로 대체하지 않습니다.",
+            impact: "strengthens",
+            sourceRefs: [
+              { url: `https://example.com/${laneId}`, title: "A" },
+              { url: `https://other.example/${laneId}`, title: "B" },
+            ],
+          }],
+        },
+      }),
+      providerSynthesizer: async () => ({
+        lanes: [
+          { id: "icp", cards: [] },
+          { id: "problem", cards: [] },
+          { id: "alternatives_pricing", cards: [] },
+          { id: "channel", cards: [] },
+          { id: "platform", cards: [] },
+        ],
+      }),
+    });
+
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.status.reason, "empty_result");
+    assert.match(snapshot.status.error, /표시할 수 있는 공개 근거 카드/);
+    assert.equal(snapshot.status.stale, false);
+    assert.equal(snapshot.status.lastSuccessAt, null);
+    assert.equal(countCards(snapshot), 0);
   });
 });
 

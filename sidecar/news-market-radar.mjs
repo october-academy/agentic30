@@ -94,6 +94,7 @@ const SELF_REFERENCE_STOP_TERMS = new Set([
 
 const MARKET_RADAR_BUYING_SIGNAL_PATTERN = /(pricing|price|reviews?|alternatives?|compare|comparison|vs|plans?|lifetime|deal|checkout|purchase|buying|budget|결제|가격|리뷰|대안|구매|예산|요금)/i;
 const MARKET_RADAR_URL_PATTERN = /https?:\/\/[^\s<>"')\]]+/gi;
+const NEWS_MARKET_RADAR_EMPTY_RESULT_ERROR = "리서치가 완료됐지만 표시할 수 있는 공개 근거 카드를 만들지 못했습니다.";
 
 export const NEWS_MARKET_RADAR_PROGRESS_STEPS = Object.freeze([
   {
@@ -479,22 +480,15 @@ export async function loadNewsMarketRadarSnapshot({
   const raw = await readJsonFile(cachePath, fsImpl);
   const configured = exaConfigured || Boolean(String(exaApiKey || "").trim());
   if (raw?.snapshot) {
-    const rawPromptProfile = cleanString(
-      raw.snapshot?.promptProfile || raw.snapshot?.prompt_profile || "",
-      120,
-    );
-    const snapshot = normalizeNewsMarketRadarSnapshot(raw.snapshot, {
+    const snapshot = normalizeStoredNewsMarketRadarSnapshot(raw.snapshot, {
       now,
-      fallbackStatus: statusForSnapshot(raw.snapshot.status, now),
-    });
-    const exaNormalized = normalizeLegacyExaApiKeyMissingSnapshot(snapshot, {
       configured,
       exaResearchSource,
     });
-    return normalizeLegacyPromptProfileSnapshot(exaNormalized, {
-      configured,
-      rawPromptProfile,
-    });
+    if (isCardlessReadyNewsMarketRadarSnapshot(snapshot)) {
+      return failedCardlessNewsMarketRadarSnapshot(snapshot);
+    }
+    return snapshot;
   }
   return makeEmptyNewsMarketRadarSnapshot({
     now,
@@ -503,6 +497,55 @@ export async function loadNewsMarketRadarSnapshot({
     reason: configured ? "not_loaded" : "exa_mcp_missing",
     researchSource: configured ? exaResearchSource : null,
   });
+}
+
+function normalizeStoredNewsMarketRadarSnapshot(
+  rawSnapshot,
+  {
+    now = new Date(),
+    configured = false,
+    exaResearchSource = "",
+  } = {},
+) {
+  const rawPromptProfile = cleanString(
+    rawSnapshot?.promptProfile || rawSnapshot?.prompt_profile || "",
+    120,
+  );
+  const snapshot = normalizeNewsMarketRadarSnapshot(rawSnapshot, {
+    now,
+    fallbackStatus: statusForSnapshot(rawSnapshot?.status, now),
+  });
+  const exaNormalized = normalizeLegacyExaApiKeyMissingSnapshot(snapshot, {
+    configured,
+    exaResearchSource,
+  });
+  return normalizeLegacyPromptProfileSnapshot(exaNormalized, {
+    configured,
+    rawPromptProfile,
+  });
+}
+
+function isCardlessReadyNewsMarketRadarSnapshot(snapshot = {}) {
+  return snapshot?.status?.state === "ready" && countNewsMarketRadarCards(snapshot) === 0;
+}
+
+function failedCardlessNewsMarketRadarSnapshot(current, statusOverrides = {}) {
+  const currentStatus = current?.status || {};
+  return {
+    ...current,
+    lanes: NEWS_LANE_IDS.map(makeEmptyLane),
+    status: {
+      ...currentStatus,
+      state: "failed",
+      lastSuccessAt: null,
+      stale: false,
+      error: NEWS_MARKET_RADAR_EMPTY_RESULT_ERROR,
+      reason: "empty_result",
+      researchSource: currentStatus.researchSource || null,
+      partialFailures: currentStatus.partialFailures || [],
+      ...statusOverrides,
+    },
+  };
 }
 
 function normalizeLegacyExaApiKeyMissingSnapshot(
@@ -795,22 +838,18 @@ export async function refreshNewsMarketRadar({
 
   if (successfulLaneResults.length === 0) {
     const completedAt = new Date().toISOString();
-    const noLaneSucceeded = {
-      ...(hasSnapshotCards(previous) ? previous : makeEmptyNewsMarketRadarSnapshot({ now })),
+    const noLaneSucceeded = failedCardlessNewsMarketRadarSnapshot({
+      ...makeEmptyNewsMarketRadarSnapshot({ now }),
       contextFingerprint,
-      status: {
-        state: "failed",
-        lastSuccessAt: previous.status?.lastSuccessAt || null,
-        stale: hasSnapshotCards(previous),
-        error: `완료된 가설 리서치가 없습니다. ${summarizePartialFailureErrors(partialFailures)}`,
-        reason,
-        researchSource,
-        partialFailures,
-        startedAt: researchStartedAt,
-        completedAt,
-        durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(researchStartedAt)),
-      },
-    };
+    }, {
+      error: `완료된 가설 리서치가 없습니다. ${summarizePartialFailureErrors(partialFailures)}`,
+      reason,
+      researchSource,
+      partialFailures,
+      startedAt: researchStartedAt,
+      completedAt,
+      durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(researchStartedAt)),
+    });
     return persistNewsMarketRadarSnapshot({
       workspaceRoot,
       snapshot: noLaneSucceeded,
@@ -837,6 +876,31 @@ export async function refreshNewsMarketRadar({
     adaptiveProfile: context.adaptiveProfile,
     contextFingerprint,
   });
+  if (countNewsMarketRadarCards(deterministicSnapshot) === 0) {
+    const completedAt = new Date().toISOString();
+    const emptyResult = failedCardlessNewsMarketRadarSnapshot({
+      ...deterministicSnapshot,
+      contextFingerprint,
+    }, {
+      researchSource,
+      partialFailures,
+      startedAt: researchStartedAt,
+      completedAt,
+      durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(researchStartedAt)),
+    });
+    return persistNewsMarketRadarSnapshot({
+      workspaceRoot,
+      snapshot: emptyResult,
+      rawProviderResult: {
+        mode: "parallel_lane_research",
+        laneResults,
+        synthesisResult: null,
+        synthesisError: "empty_result",
+      },
+      now,
+      adaptiveProfile: context.adaptiveProfile,
+    });
+  }
 
   let finalSnapshot = deterministicSnapshot;
   let rawSynthesisResult = null;
@@ -879,9 +943,13 @@ export async function refreshNewsMarketRadar({
         selfReferenceProfile,
         adaptiveProfile: context.adaptiveProfile,
       });
+      if (
+        countNewsMarketRadarCards(finalSnapshot) === 0
+      ) {
+        synthesisError = "empty_result";
+      }
     } catch (error) {
       synthesisError = formatMarketRadarError(error);
-      finalSnapshot = deterministicSnapshot;
     }
   }
 
@@ -890,6 +958,36 @@ export async function refreshNewsMarketRadar({
     researchSource,
   });
   const completedAt = new Date().toISOString();
+  if (synthesisError) {
+    const failedSynthesisSnapshot = failedCardlessNewsMarketRadarSnapshot(
+      synthesisError === "empty_result"
+        ? { ...finalSnapshot, contextFingerprint }
+        : { ...makeEmptyNewsMarketRadarSnapshot({ now }), contextFingerprint },
+      {
+        error: synthesisError === "empty_result"
+          ? NEWS_MARKET_RADAR_EMPTY_RESULT_ERROR
+          : `최종 합성에 실패했습니다. ${synthesisError}`,
+        reason: synthesisError === "empty_result" ? "empty_result" : "synthesis_failed",
+        researchSource,
+        partialFailures,
+        startedAt: researchStartedAt,
+        completedAt,
+        durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(researchStartedAt)),
+      },
+    );
+    return persistNewsMarketRadarSnapshot({
+      workspaceRoot,
+      snapshot: failedSynthesisSnapshot,
+      rawProviderResult: {
+        mode: "parallel_lane_research",
+        laneResults,
+        synthesisResult: rawSynthesisResult,
+        synthesisError,
+      },
+      now,
+      adaptiveProfile: context.adaptiveProfile,
+    });
+  }
   return persistNewsMarketRadarSnapshot({
     workspaceRoot,
     snapshot: {
@@ -2126,7 +2224,14 @@ function normalizePartialFailures(value) {
 }
 
 function hasSnapshotCards(snapshot = {}) {
-  return (snapshot.lanes || []).some((lane) => Array.isArray(lane.cards) && lane.cards.length > 0);
+  return countNewsMarketRadarCards(snapshot) > 0;
+}
+
+function countNewsMarketRadarCards(snapshot = {}) {
+  return (snapshot.lanes || []).reduce(
+    (sum, lane) => sum + (Array.isArray(lane.cards) ? lane.cards.length : 0),
+    0,
+  );
 }
 
 function rawProviderResultResearchSource(rawProviderResult = {}) {

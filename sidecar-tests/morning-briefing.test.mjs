@@ -28,6 +28,16 @@ import {
 
 const NOW = new Date("2026-06-10T09:00:00+09:00");
 const PREVIOUS_METRICS = Object.freeze({ cloudflare: 41, github: 6, posthog: 25 });
+const DAY_ONE_CARD_LABELS = Object.freeze([
+  "어제 00시",
+  "어제 03시",
+  "어제 06시",
+  "어제 09시",
+  "어제 12시",
+  "어제 15시",
+  "어제 18시",
+  "어제 21시",
+]);
 
 function previousHistory(metrics = PREVIOUS_METRICS) {
   return [{ date: "2026-06-09", generatedAt: "2026-06-09T09:00:00", metrics }];
@@ -166,17 +176,13 @@ test("buildMorningBriefingCards computes deltas against previous metrics", () =>
   assert.equal(cloudflare.metric.direction, "up");
   assert.equal(cloudflare.metric.deltaLabel, "▲ 56%");
   assert.equal(cloudflare.metric.versusLabel, "어제 41");
-  assert.deepEqual(cloudflare.spark, [38, 41, 64]);
+  assert.deepEqual(cloudflare.spark, Array(8).fill(0));
   assert.deepEqual(
     cloudflare.sparkPoints.map((point) => point.value),
     cloudflare.spark,
   );
-  assert.equal(cloudflare.sparkPoints[0].timeLabel, "06-08 09:30");
-  assert.equal(cloudflare.sparkPoints[1].timeLabel, "어제");
-  assert.equal(cloudflare.sparkPoints[2].timeLabel, "오늘 09:00");
-  assert.ok(cloudflare.sparkPoints[0].at);
-  assert.equal(cloudflare.sparkPoints[1].at, null);
-  assert.ok(cloudflare.sparkPoints[2].at);
+  assert.equal(cloudflare.sparkPoints[0].timeLabel, "어제 00시");
+  assert.equal(cloudflare.sparkPoints[0].at, digestFixture().window.startIso);
 
   const github = cards[1];
   assert.equal(github.metric.value, 9);
@@ -204,11 +210,20 @@ test("buildMorningBriefing derives source card sparklines from shared cardSparkl
   assert.deepEqual(cloudflare.spark, [2, 4, 8, 5, 3, 7, 9, 6]);
   assert.deepEqual(
     cloudflare.sparkPoints.map((point) => point.timeLabel),
-    ["00시", "03시", "06시", "09시", "12시", "15시", "18시", "21시"],
+    DAY_ONE_CARD_LABELS,
   );
   assert.deepEqual(
     cloudflare.sparkPoints.map((point) => point.at),
-    [null, null, null, null, null, null, null, null],
+    [
+      "2026-06-09T00:00:00.000Z",
+      "2026-06-09T03:00:00.000Z",
+      "2026-06-09T06:00:00.000Z",
+      "2026-06-09T09:00:00.000Z",
+      "2026-06-09T12:00:00.000Z",
+      "2026-06-09T15:00:00.000Z",
+      "2026-06-09T18:00:00.000Z",
+      "2026-06-09T21:00:00.000Z",
+    ],
   );
   assert.equal(briefing.drilldowns.cloudflare.chart.bars.length, 12);
 
@@ -221,11 +236,13 @@ test("buildMorningBriefing derives source card sparklines from shared cardSparkl
   assert.deepEqual(briefing.drilldowns.github.chart.bars.map((bar) => bar.label), ["00", "05", "09"]);
 
   const posthog = briefing.cards.find((card) => card.id === "posthog");
-  assert.deepEqual(posthog.spark, [11]);
-  assert.equal(posthog.sparkPoints.length, 1);
+  assert.deepEqual(posthog.spark, Array(8).fill(0));
+  assert.equal(posthog.sparkPoints.length, 8);
+  assert.equal(posthog.sparkPoints[0].timeLabel, "어제 00시");
+  assert.equal(posthog.sparkPoints[0].at, briefing.window.startIso);
 });
 
-test("buildMorningBriefingCards falls back to persisted history when no cardSparkline exists", () => {
+test("buildMorningBriefingCards uses aligned zero buckets when no cardSparkline exists", () => {
   const cards = buildMorningBriefingCards({
     digest: digestFixture(),
     previousMetrics: PREVIOUS_METRICS,
@@ -246,26 +263,29 @@ test("buildMorningBriefingCards falls back to persisted history when no cardSpar
   });
   const posthog = cards.find((card) => card.id === "posthog");
 
-  assert.deepEqual(posthog.spark, [25, 11]);
+  assert.deepEqual(posthog.spark, Array(8).fill(0));
   assert.deepEqual(
     posthog.sparkPoints.map((point) => point.value),
     posthog.spark,
   );
+  assert.equal(posthog.sparkPoints[0].timeLabel, "어제 00시");
+  assert.equal(posthog.sparkPoints[0].at, digestFixture().window.startIso);
 });
 
-test("buildMorningBriefingCards fails when previous metrics lack sparkline history", () => {
-  assert.throws(
-    () => buildMorningBriefingCards({
-      digest: digestFixture({ cloudflareVisits: 289, gitCommits: 78, posthogActive: 1 }),
-      previousMetrics: { cloudflare: 289, github: 78, posthog: 1 },
-      history: [],
-      generatedAt: "2026-06-10T09:00:00",
-    }),
-    /Morning briefing sparkline history missing for cloudflare/,
-  );
+test("buildMorningBriefingCards does not require persisted history for sparklines", () => {
+  const cards = buildMorningBriefingCards({
+    digest: digestFixture({ cloudflareVisits: 289, gitCommits: 78, posthogActive: 1 }),
+    previousMetrics: { cloudflare: 289, github: 78, posthog: 1 },
+    history: [],
+    generatedAt: "2026-06-10T09:00:00",
+  });
+  const readyCards = cards.filter((card) => card.state === "ready");
+  assert.ok(readyCards.length >= 3);
+  assert.ok(readyCards.every((card) => card.sparkPoints.length === 8));
+  assert.ok(readyCards.every((card) => card.sparkPoints[0].timeLabel === "어제 00시"));
 });
 
-test("buildMorningBriefingCards uses explicit history without duplicate previous metric", () => {
+test("buildMorningBriefingCards keeps history out of compact card sparklines", () => {
   const cards = buildMorningBriefingCards({
     digest: digestFixture(),
     previousMetrics: { cloudflare: 41 },
@@ -274,40 +294,44 @@ test("buildMorningBriefingCards uses explicit history without duplicate previous
   });
   const cloudflare = cards.find((card) => card.id === "cloudflare");
 
-  assert.deepEqual(cloudflare.spark, [41, 64]);
+  assert.deepEqual(cloudflare.spark, Array(8).fill(0));
   assert.deepEqual(
     cloudflare.sparkPoints.map((point) => point.value),
-    [41, 64],
+    Array(8).fill(0),
   );
 });
 
-test("buildMorningBriefingCards labels spark points by local date across the UTC boundary", () => {
-  const originalTZ = process.env.TZ;
-  process.env.TZ = "Asia/Seoul";
-  try {
-    const cards = buildMorningBriefingCards({
-      digest: digestFixture({ cloudflareVisits: 288, gitCommits: 30, posthogActive: 0 }),
-      previousMetrics: { cloudflare: 303, github: 78, posthog: 1 },
-      history: [
-        {
-          date: "2026-06-14",
-          generatedAt: "2026-06-14T12:42:00.000Z",
-          metrics: { cloudflare: 303, github: 78, posthog: 1 },
-        },
-      ],
-      generatedAt: "2026-06-14T18:38:00.000Z",
-    });
+test("buildMorningBriefingCards anchors the first spark point to the briefing window start", () => {
+  const digest = digestFixture({ cloudflareVisits: 288, gitCommits: 30, posthogActive: 0 });
+  digest.window = {
+    startIso: "2026-06-14T15:00:00.000Z",
+    untilIso: "2026-06-16T11:41:00.000Z",
+    label: "2026-06-15 00:00 -> 2026-06-16 now",
+  };
+  const cards = buildMorningBriefingCards({
+    digest,
+    previousMetrics: { cloudflare: 303, github: 78, posthog: 1 },
+    history: [],
+    generatedAt: "2026-06-16T11:41:00.000Z",
+  });
 
-    const cloudflare = cards.find((card) => card.id === "cloudflare");
-    assert.equal(cloudflare.sparkPoints[0].timeLabel, "어제 21:42");
-    assert.equal(cloudflare.sparkPoints[1].timeLabel, "오늘 03:38");
-  } finally {
-    if (originalTZ === undefined) {
-      delete process.env.TZ;
-    } else {
-      process.env.TZ = originalTZ;
-    }
+  const readyCards = cards.filter((card) => card.state === "ready");
+  const labels = [
+    "어제 00시",
+    "어제 05시",
+    "어제 11시",
+    "어제 16시",
+    "어제 22시",
+    "오늘 03시",
+    "오늘 09시",
+    "오늘 15시",
+  ];
+  assert.ok(readyCards.every((card) => card.sparkPoints[0].timeLabel === "어제 00시"));
+  assert.ok(readyCards.every((card) => card.sparkPoints.some((point) => point.timeLabel.startsWith("오늘 "))));
+  for (const card of readyCards) {
+    assert.deepEqual(card.sparkPoints.map((point) => point.timeLabel), labels);
   }
+  assert.ok(readyCards.every((card) => card.sparkPoints[0].at === digest.window.startIso));
 });
 
 test("buildMorningBriefingCards rejects legacy Cloudflare pageViews counts", () => {
@@ -357,6 +381,30 @@ test("buildMorningBriefingCards renders failed Cloudflare collection separately 
   assert.equal(cloudflare.metric.value, null);
   assert.equal(cloudflare.noteTone, "warn");
   assert.equal(cloudflare.note, "Cloudflare Analytics 집계를 완료하지 못했어요 — MCP 연결은 정상이에요.");
+});
+
+test("buildMorningBriefing keeps collection failure distinct from zero-value sparklines", () => {
+  const briefing = buildMorningBriefing({
+    digest: digestFixture({ posthogActive: 0 }),
+    day: 12,
+    drilldowns: {
+      posthog: {
+        collectionFailed: true,
+        title: "PostHog · 측정 수집 실패",
+        kpis: [{ label: "활성 사용자", valueLabel: "수집 실패" }],
+        signals: [{ time: "수집 실패", text: "PostHog query failed" }],
+      },
+    },
+    now: NOW,
+  });
+
+  const posthog = briefing.cards.find((card) => card.id === "posthog");
+  assert.equal(briefing.drilldowns.posthog.collectionFailed, true);
+  assert.equal(posthog.state, "failed");
+  assert.equal(posthog.metric.value, null);
+  assert.deepEqual(posthog.spark, []);
+  assert.deepEqual(posthog.sparkPoints, []);
+  assert.equal(posthog.noteTone, "warn");
 });
 
 test("buildMorningBriefingSummary leads with the biggest drop", () => {
@@ -517,8 +565,9 @@ test("buildMorningBriefing assembles the full payload", () => {
   assert.equal(briefing.customerEvidenceVerdict.state, "healthy");
   assert.equal(briefing.evidenceFunnel.steps.length, 5);
   assert.deepEqual(briefing.metrics, { cloudflare: 64, github: 9, posthog: 11 });
-  assert.deepEqual(briefing.cards[0].sparkPoints.map((point) => point.value), [41, 64]);
-  assert.equal(briefing.cards[0].sparkPoints[1].at, briefing.generatedAt);
+  assert.deepEqual(briefing.cards[0].sparkPoints.map((point) => point.value), Array(8).fill(0));
+  assert.equal(briefing.cards[0].sparkPoints[0].timeLabel, "어제 00시");
+  assert.equal(briefing.cards[0].sparkPoints[0].at, digest.window.startIso);
   assert.deepEqual(briefing.historyDates, ["2026-06-09"]);
 });
 
@@ -674,6 +723,10 @@ test("loadMorningBriefingStore hydrates cached card sparklines from cardSparklin
         current: {
           day: 2,
           generatedAt: "2026-06-10T00:00:00.000Z",
+          window: {
+            startIso: "2026-06-09T00:00:00.000Z",
+            untilIso: "2026-06-10T00:00:00.000Z",
+          },
           cards: [
             {
               id: "cloudflare",
@@ -705,11 +758,12 @@ test("loadMorningBriefingStore hydrates cached card sparklines from cardSparklin
     );
 
     const store = await loadMorningBriefingStore({ workspaceRoot: dir });
-    assert.deepEqual(store.current.cards[0].spark, [3, 7]);
+    assert.deepEqual(store.current.cards[0].spark, [3, 7, 0, 0, 0, 0, 0, 0]);
     assert.deepEqual(
       store.current.cards[0].sparkPoints.map((point) => point.timeLabel),
-      ["00시", "03시"],
+      DAY_ONE_CARD_LABELS,
     );
+    assert.equal(store.current.cards[0].sparkPoints[0].at, "2026-06-09T00:00:00.000Z");
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

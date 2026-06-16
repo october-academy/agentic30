@@ -2957,7 +2957,7 @@ struct ReviewDayDashboardMetric: Codable, Hashable, Identifiable {
     }
 }
 
-struct StrategyReportSnapshot: Codable, Hashable {
+nonisolated struct StrategyReportSnapshot: Codable, Hashable {
     let schemaVersion: Int
     let promptProfile: String?
     let contentLocale: String?
@@ -2997,7 +2997,10 @@ struct StrategyReportSnapshot: Codable, Hashable {
     )
 
     var hasReport: Bool {
-        report != nil
+        if case .some = report {
+            return true
+        }
+        return false
     }
 
     var statusLabel: String {
@@ -3011,7 +3014,7 @@ struct StrategyReportSnapshot: Codable, Hashable {
     }
 }
 
-struct StrategyReportStatus: Codable, Hashable {
+nonisolated struct StrategyReportStatus: Codable, Hashable {
     let state: String
     let lastSuccessAt: Date?
     let stale: Bool?
@@ -3029,7 +3032,7 @@ struct StrategyReportStatus: Codable, Hashable {
     let durationMs: Int?
 }
 
-struct StrategyReportPartialFailure: Codable, Hashable, Identifiable {
+nonisolated struct StrategyReportPartialFailure: Codable, Hashable, Identifiable {
     let laneId: String
     let laneTitle: String
     let error: String
@@ -3039,7 +3042,7 @@ struct StrategyReportPartialFailure: Codable, Hashable, Identifiable {
     }
 }
 
-struct StrategyReportContent: Codable, Hashable {
+nonisolated struct StrategyReportContent: Codable, Hashable {
     let commandLine: String
     let diagnosisKicker: String
     let diagnosisTitle: String
@@ -3065,20 +3068,20 @@ struct StrategyReportContent: Codable, Hashable {
     let generatedAt: Date?
 }
 
-struct StrategyReportSummaryTile: Codable, Hashable, Identifiable {
+nonisolated struct StrategyReportSummaryTile: Codable, Hashable, Identifiable {
     let id: String
     let label: String
     let title: String
     let detail: String
 }
 
-struct StrategyReportCriterionRow: Codable, Hashable, Identifiable {
+nonisolated struct StrategyReportCriterionRow: Codable, Hashable, Identifiable {
     let id: String
     let label: String
     let value: String
 }
 
-struct StrategyReportCanvasBlock: Codable, Hashable, Identifiable {
+nonisolated struct StrategyReportCanvasBlock: Codable, Hashable, Identifiable {
     let id: String
     let number: String
     let eyebrow: String
@@ -3087,7 +3090,7 @@ struct StrategyReportCanvasBlock: Codable, Hashable, Identifiable {
     let tone: String
 }
 
-struct StrategyReportCompetitor: Codable, Hashable, Identifiable {
+nonisolated struct StrategyReportCompetitor: Codable, Hashable, Identifiable {
     let id: String
     let title: String
     let tag: String
@@ -3107,7 +3110,7 @@ struct StrategyReportCompetitor: Codable, Hashable, Identifiable {
     let labelPlacement: String
 }
 
-struct StrategyReportSWOTGroup: Codable, Hashable, Identifiable {
+nonisolated struct StrategyReportSWOTGroup: Codable, Hashable, Identifiable {
     let id: String
     let title: String
     let tag: String
@@ -3115,7 +3118,7 @@ struct StrategyReportSWOTGroup: Codable, Hashable, Identifiable {
     let bullets: [String]
 }
 
-struct StrategyReportSourceRef: Codable, Hashable, Identifiable {
+nonisolated struct StrategyReportSourceRef: Codable, Hashable, Identifiable {
     let id: String?
     let sourceType: String
     let title: String
@@ -3130,7 +3133,7 @@ struct StrategyReportSourceRef: Codable, Hashable, Identifiable {
     }
 }
 
-struct NewsMarketRadarSnapshot: Codable, Hashable {
+nonisolated struct NewsMarketRadarSnapshot: Codable, Hashable {
     let schemaVersion: Int
     let generatedAt: Date?
     let nextRefreshAfter: Date?
@@ -3175,7 +3178,7 @@ struct NewsMarketRadarSnapshot: Codable, Hashable {
     }
 }
 
-struct NewsMarketRadarStatus: Codable, Hashable {
+nonisolated struct NewsMarketRadarStatus: Codable, Hashable {
     let state: String
     let lastSuccessAt: Date?
     let stale: Bool?
@@ -3190,7 +3193,7 @@ struct NewsMarketRadarStatus: Codable, Hashable {
     let partialFailures: [NewsMarketRadarPartialFailure]?
 }
 
-struct NewsMarketRadarPartialFailure: Codable, Hashable, Identifiable {
+nonisolated struct NewsMarketRadarPartialFailure: Codable, Hashable, Identifiable {
     let laneId: String
     let laneTitle: String
     let error: String
@@ -3200,7 +3203,7 @@ struct NewsMarketRadarPartialFailure: Codable, Hashable, Identifiable {
     }
 }
 
-struct NewsMarketRadarLane: Codable, Hashable, Identifiable {
+nonisolated struct NewsMarketRadarLane: Codable, Hashable, Identifiable {
     let id: String
     let title: String
     let hypothesis: String
@@ -3228,7 +3231,7 @@ struct NewsMarketRadarLane: Codable, Hashable, Identifiable {
     }
 }
 
-struct NewsMarketRadarCard: Codable, Hashable, Identifiable {
+nonisolated struct NewsMarketRadarCard: Codable, Hashable, Identifiable {
     let id: String
     let title: String
     let summary: String
@@ -3242,7 +3245,7 @@ struct NewsMarketRadarCard: Codable, Hashable, Identifiable {
     let evidenceStrength: String?
 }
 
-struct NewsMarketRadarSourceRef: Codable, Hashable, Identifiable {
+nonisolated struct NewsMarketRadarSourceRef: Codable, Hashable, Identifiable {
     let id: String?
     let sourceType: String
     let title: String

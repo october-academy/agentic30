@@ -2702,12 +2702,6 @@ private struct NewsMarketRadarSidebarView: View {
                 Text("Market Radar")
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.fg)
-                Spacer(minLength: 0)
-                Text(newsStatusDisplayLabel(snapshot))
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(newsStatusTone(snapshot.status).color)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
             }
 
             Button(action: openSearch) {
@@ -2975,13 +2969,10 @@ private struct NewsMarketRadarHeader: View {
                     .overlay(Circle().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text("시장 리서치 레이더")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(OpenDesignDayColor.fg)
-                            .lineLimit(1)
-                        newsPill(newsStatusDisplayLabel(snapshot), tone: newsStatusTone(snapshot.status))
-                    }
+                    Text("시장 리서치 레이더")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .lineLimit(1)
 
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 8) {
@@ -3011,9 +3002,7 @@ private struct NewsMarketRadarHeader: View {
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
-                    if let progressStatus {
-                        NewsMarketRadarRunningIndicator(status: progressStatus)
-                    } else {
+                    if progressStatus == nil {
                         OpenDesignNewsActionButton(
                             icon: "arrow.clockwise",
                             title: "새로고침",
@@ -3028,9 +3017,7 @@ private struct NewsMarketRadarHeader: View {
 
                 if snapshot.status.needsExaConfiguration {
                     OpenDesignNewsActionButton(icon: "key.fill", title: "Exa 설정", tone: .accent, action: openSettings)
-                } else if let progressStatus {
-                    NewsMarketRadarRunningIndicator(status: progressStatus)
-                } else {
+                } else if progressStatus == nil {
                     OpenDesignNewsActionButton(
                         icon: "arrow.clockwise",
                         title: "새로고침",
@@ -3589,34 +3576,6 @@ private struct NewsMarketRadarCardActions: View {
             .buttonStyle(.plain)
             .help(isSaved ? "저장 해제" : "저장")
         }
-    }
-}
-
-private struct NewsMarketRadarRunningIndicator: View {
-    let status: NewsMarketRadarStatus
-
-    var body: some View {
-        HStack(spacing: 6) {
-            OpenDesignRotatingStatusIcon(
-                accessibilityLabel: "리서치 진행 중",
-                size: 11,
-                frameSize: 14,
-                color: OpenDesignDayColor.sky,
-                isAccessibilityHidden: true
-            )
-            .accessibilityIdentifier("opendesign.reference.news.running.spinner")
-            Text("리서치 진행 중")
-            if let ordinal = status.progressOrdinal {
-                Text(ordinal)
-                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-            }
-        }
-        .font(.system(size: 11.5, weight: .bold))
-        .foregroundStyle(OpenDesignDayColor.sky)
-        .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(referenceRounded(fill: OpenDesignReferenceTone.sky.dim, stroke: OpenDesignReferenceTone.sky.line, radius: 8))
-        .accessibilityLabel("리서치 진행 중")
     }
 }
 
@@ -4194,22 +4153,22 @@ private func newsPill(_ text: String, tone: OpenDesignReferenceTone) -> some Vie
         .background(Capsule().fill(tone.dim).overlay(Capsule().stroke(tone.line, lineWidth: 1)))
 }
 
-private struct NewsMarketRadarProgressStep: Identifiable {
+nonisolated private struct NewsMarketRadarProgressStep: Identifiable {
     let id: String
     let order: Int
     let title: String
     let fallbackDetail: String
 
-    func isCurrent(_ status: NewsMarketRadarStatus) -> Bool {
+    nonisolated func isCurrent(_ status: NewsMarketRadarStatus) -> Bool {
         status.resolvedProgressStepIndex == order
     }
 
-    func isComplete(_ status: NewsMarketRadarStatus) -> Bool {
+    nonisolated func isComplete(_ status: NewsMarketRadarStatus) -> Bool {
         guard let current = status.resolvedProgressStepIndex else { return false }
         return order < current
     }
 
-    func isPending(_ status: NewsMarketRadarStatus) -> Bool {
+    nonisolated func isPending(_ status: NewsMarketRadarStatus) -> Bool {
         guard let current = status.resolvedProgressStepIndex else { return true }
         return order > current
     }
@@ -4259,7 +4218,7 @@ private func relativeNewsDate(_ date: Date) -> String {
     return "\(Int(elapsed / 86_400))d"
 }
 
-private func newsElapsedLabel(_ elapsedMs: Int) -> String {
+nonisolated private func newsElapsedLabel(_ elapsedMs: Int) -> String {
     let seconds = max(0, elapsedMs / 1000)
     if seconds < 60 { return "\(seconds)초 경과" }
     let minutes = seconds / 60
@@ -4277,15 +4236,15 @@ private extension String {
 }
 
 private extension NewsMarketRadarStatus {
-    var isRefreshing: Bool {
+    nonisolated var isRefreshing: Bool {
         state == "refreshing"
     }
 
-    var needsExaConfiguration: Bool {
+    nonisolated var needsExaConfiguration: Bool {
         ["exa_api_key_missing", "exa_mcp_missing"].contains(reason ?? "")
     }
 
-    var resolvedProgressStep: NewsMarketRadarProgressStep? {
+    nonisolated var resolvedProgressStep: NewsMarketRadarProgressStep? {
         if let stage = stage?.nonEmpty,
            let step = newsMarketRadarProgressSteps.first(where: { $0.id == stage }) {
             return step
@@ -4294,7 +4253,7 @@ private extension NewsMarketRadarStatus {
         return newsMarketRadarProgressSteps.first(where: { $0.order == index })
     }
 
-    var resolvedProgressStepIndex: Int? {
+    nonisolated var resolvedProgressStepIndex: Int? {
         if let stepIndex,
            stepIndex > 0 {
             return stepIndex
@@ -4303,7 +4262,7 @@ private extension NewsMarketRadarStatus {
         return newsMarketRadarProgressSteps.first(where: { $0.id == stage })?.order
     }
 
-    var progressOrdinal: String? {
+    nonisolated var progressOrdinal: String? {
         guard isRefreshing else { return nil }
         let count = stepCount ?? newsMarketRadarProgressSteps.count
         guard let index = resolvedProgressStepIndex,
@@ -4312,15 +4271,15 @@ private extension NewsMarketRadarStatus {
         return "\(index)/\(count)"
     }
 
-    var progressTitle: String {
+    nonisolated var progressTitle: String {
         resolvedProgressStep?.title ?? "리서치 준비"
     }
 
-    var progressDetail: String {
+    nonisolated var progressDetail: String {
         progressText?.nonEmpty ?? resolvedProgressStep?.fallbackDetail ?? "Market Radar 리서치를 준비하는 중"
     }
 
-    var elapsedLabel: String? {
+    nonisolated var elapsedLabel: String? {
         guard let elapsedMs else { return nil }
         return newsElapsedLabel(elapsedMs)
     }

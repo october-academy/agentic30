@@ -2696,7 +2696,7 @@ enum OpenDesignStrategyCanvasReference {
             "한국어 시장 빈자리가 있습니다. 영어권 startup school과 범용 콘텐츠는 로컬 실행 맥락이 약합니다.",
             "private pilot evidence를 축적하면 강의가 아닌 제품으로 포지셔닝할 수 있습니다.",
             "Cursor/Replit/Lovable가 빌드 속도를 올릴수록 고객 증거와 수익 판단 OS의 필요가 더 선명해집니다.",
-        ], tone: .accent),
+        ], tone: .sky),
         OpenDesignStrategySWOTGroup(id: "threats", title: "Threats", tag: "외부 위협", bullets: [
             "코딩 도구가 planning/PMF 기능을 흡수하면 차별 서사가 약해질 수 있습니다.",
             "커뮤니티와 강의 프로그램은 신뢰, 네트워크, accountability를 이미 갖고 있습니다.",
@@ -2846,7 +2846,7 @@ struct OpenDesignStrategyDisplayContent: Hashable {
                     title: $0.title,
                     tag: $0.tag,
                     bullets: $0.bullets,
-                    tone: Self.strategyTone($0.tone)
+                    tone: Self.swotTone(id: $0.id, fallback: Self.strategyTone($0.tone))
                 )
             },
             swotMatrixColumnCount: report.swotMatrixColumnCount ?? 2,
@@ -2918,6 +2918,21 @@ struct OpenDesignStrategyDisplayContent: Hashable {
             return .rose
         default:
             return .accent
+        }
+    }
+
+    private static func swotTone(id: String, fallback: OpenDesignStrategyTone) -> OpenDesignStrategyTone {
+        switch id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "strengths":
+            return .accent
+        case "weaknesses":
+            return .amber
+        case "opportunities":
+            return .sky
+        case "threats":
+            return .rose
+        default:
+            return fallback
         }
     }
 
@@ -6104,7 +6119,7 @@ nonisolated func strategyReportShowsColdLoading(
     isPreparing: Bool,
     dynamicActivated: Bool
 ) -> Bool {
-    dynamicActivated && snapshot.report == nil && (isPreparing || snapshot.status.state == "refreshing")
+    dynamicActivated && !snapshot.hasReport && (isPreparing || snapshot.status.state == "refreshing")
 }
 
 nonisolated func strategyReportShowsLoadingCards(
@@ -7282,7 +7297,7 @@ private struct StrategyMatrixCompetitorButton: View {
             Button(action: select) {
                 labelText(isEmphasized: isEmphasized, visuals: visuals)
                     .padding(.horizontal, 6)
-                    .frame(width: labelWidth, height: 24, alignment: labelPlacement.alignment)
+                    .frame(height: 24)
                     .background(
                         Capsule()
                             .fill(labelCapsuleFill(visuals: visuals))
@@ -7296,6 +7311,7 @@ private struct StrategyMatrixCompetitorButton: View {
                             .opacity(showsCapsule ? 1 : 0)
                     )
                     .shadow(color: isEmphasized ? visuals.foreground.opacity(0.24) : Color.clear, radius: competitor.isAgentic30 ? 12 : 7)
+                    .frame(width: labelWidth, height: 24, alignment: labelPlacement.alignment)
             }
             .buttonStyle(OpenDesignInteractiveButtonStyle())
             .contentShape(Capsule())

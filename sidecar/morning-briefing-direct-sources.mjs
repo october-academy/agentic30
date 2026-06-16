@@ -204,8 +204,10 @@ export async function collectPosthogDirectDrilldown({
   if (!resolved?.tokenValid) return null;
   const host = posthogHost(resolved.region);
   const token = resolved.token;
-  const untilMs = finiteNumber(window.untilMs) ?? Date.parse(window.untilIso || "") ?? Date.now();
-  const startMs = finiteNumber(window.startMs) ?? (untilMs - 86_400_000);
+  const parsedUntilMs = Date.parse(window.untilIso || "");
+  const untilMs = finiteNumber(window.untilMs) ?? (Number.isFinite(parsedUntilMs) ? parsedUntilMs : Date.now());
+  const parsedStartMs = Date.parse(window.startIso || "");
+  const startMs = finiteNumber(window.startMs) ?? (Number.isFinite(parsedStartMs) ? parsedStartMs : untilMs - 86_400_000);
   const spanMs = untilMs - startMs;
   const start = utcSqlDateTime(startMs);
   const until = utcSqlDateTime(untilMs);
@@ -459,14 +461,17 @@ export async function collectCloudflareDirectDrilldown({
   const zone = pickCloudflareZone(zones, env);
   if (!zone?.id) return null;
 
-  const rawUntilMs = finiteNumber(window.untilMs) ?? Date.parse(window.untilIso || "") ?? Date.now();
+  const parsedUntilMs = Date.parse(window.untilIso || "");
+  const rawUntilMs = finiteNumber(window.untilMs) ?? (Number.isFinite(parsedUntilMs) ? parsedUntilMs : Date.now());
   // Floor the window end to the hour. httpRequests1hGroups buckets are hourly
   // and filtered by their bucket-start datetime, so an unaligned end (e.g.
   // 04:18Z) pulls in the in-progress 04:00 bucket whole — its requests/uniques
   // keep climbing on every re-query of the *same* window. Flooring drops the
   // live partial hour so the totals are reproducible (cost: up to ~1h of lag).
   const untilMs = Math.floor(rawUntilMs / HOUR_MS) * HOUR_MS;
-  const requestedStartMs = finiteNumber(window.startMs) ?? (untilMs - 86_400_000);
+  const parsedStartMs = Date.parse(window.startIso || "");
+  const requestedStartMs = finiteNumber(window.startMs)
+    ?? (Number.isFinite(parsedStartMs) ? parsedStartMs : untilMs - 86_400_000);
   // Cloudflare adaptive analytics are used for the OD "지난 24시간" drilldown and
   // can reject wider path queries. Keep the traffic drilldown on the trailing
   // 24h window even when the broader morning briefing window starts yesterday.

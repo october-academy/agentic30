@@ -4,6 +4,7 @@ import path from "node:path";
 import { atomicWriteJson } from "./atomic-store.mjs";
 import {
   CARD_SPARK_BUCKET_COUNT,
+  buildCardSparklineBuckets,
   ensureMorningBriefingDrilldowns,
   normalizeMorningBriefingDrilldowns,
 } from "./morning-briefing-drilldown.mjs";
@@ -15,6 +16,8 @@ export const MORNING_BRIEFING_HISTORY_LIMIT = 14;
 export const MORNING_BRIEFING_TOTAL_DAYS = 30;
 
 const CARD_ORDER = Object.freeze(["cloudflare", "github", "posthog"]);
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
 const RUN_LOG_FIELD_LIMIT = 80;
 const RUN_LOG_ARRAY_LIMIT = 20;
 const RUN_LOG_STRING_LIMIT = 260;
@@ -289,6 +292,36 @@ function normalizeSparkPointLabel(label = "") {
   return cleaned;
 }
 
+function monthDayHourLabel(atMs, hourLabel = "") {
+  if (!Number.isFinite(atMs)) return normalizeSparkPointLabel(hourLabel);
+  const date = new Date(atMs);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  return `${month}/${day} ${normalizeSparkPointLabel(hourLabel)}`;
+}
+
+function relativeSparkPointLabel(bucket = {}, window = {}) {
+  const windowStartMs = finiteNumber(window?.startMs) ?? Date.parse(String(window?.startIso || ""));
+  const windowUntilMs = finiteNumber(window?.untilMs) ?? Date.parse(String(window?.untilIso || ""));
+  const bucketStartMs = finiteNumber(bucket?.start) ?? Date.parse(String(bucket?.at || ""));
+  const hourLabel = normalizeSparkPointLabel(bucket?.label);
+  if (
+    !Number.isFinite(windowStartMs)
+    || !Number.isFinite(windowUntilMs)
+    || !Number.isFinite(bucketStartMs)
+    || windowUntilMs <= windowStartMs
+  ) {
+    return monthDayHourLabel(bucketStartMs, hourLabel);
+  }
+  if (windowUntilMs - windowStartMs > 2 * DAY_MS) {
+    return monthDayHourLabel(bucketStartMs, hourLabel);
+  }
+  const dayIndex = Math.floor((bucketStartMs - windowStartMs) / DAY_MS);
+  if (dayIndex === 0) return `어제 ${hourLabel}`;
+  if (dayIndex === 1) return `오늘 ${hourLabel}`;
+  return monthDayHourLabel(bucketStartMs, hourLabel);
+}
+
 function firstIsoValue(record = {}) {
   for (const key of ["at", "datetimeIso", "timestamp", "date"]) {
     const iso = toIso(record?.[key]);
@@ -301,8 +334,8 @@ function sparkSamplesFromCardSparkline(entries = []) {
   if (!Array.isArray(entries)) return null;
   const samples = entries
     .map((entry, index) => {
-      const value = finiteNumber(entry?.value);
-      if (value === null) return null;
+      const value = finiteNumber(entry?.value) ?? 0;
+      if (value < 0) return null;
       return {
         value,
         timeLabel: normalizeSparkPointLabel(entry?.label || `값 ${index + 1}`),
@@ -310,25 +343,63 @@ function sparkSamplesFromCardSparkline(entries = []) {
       };
     })
     .filter(Boolean);
-  return samples.length >= 2 ? samples.slice(0, CARD_SPARK_BUCKET_COUNT) : null;
+  return samples.slice(0, CARD_SPARK_BUCKET_COUNT);
 }
 
-function sparkFromCardSparkline(drilldown = {}) {
+function bucketIndexForSparkSample(sample = {}, buckets = [], sampleIndex = 0, sampleCount = 0) {
+  const atMs = Date.parse(String(sample.at || ""));
+  if (Number.isFinite(atMs)) {
+    const byTime = buckets.findIndex((bucket) => atMs >= bucket.start && atMs < bucket.end);
+    if (byTime >= 0) return byTime;
+  }
+  const label = normalizeSparkPointLabel(sample.timeLabel);
+  const byLabel = buckets.findIndex((bucket) => normalizeSparkPointLabel(bucket.label) === label);
+  if (byLabel >= 0) return byLabel;
+  return sampleCount === buckets.length && buckets[sampleIndex] ? sampleIndex : -1;
+}
+
+function sparkFromCardSparkline(drilldown = {}, window = {}) {
+  if (drilldown?.collectionFailed) return null;
+  const buckets = buildCardSparklineBuckets({ window });
+  if (buckets.length < 2) return null;
   const samples = sparkSamplesFromCardSparkline(drilldown?.cardSparkline);
-  if (!samples) return null;
+  const values = buckets.map(() => 0);
+  for (const [index, sample] of (samples || []).entries()) {
+    const bucketIndex = bucketIndexForSparkSample(sample, buckets, index, samples.length);
+    if (bucketIndex >= 0) values[bucketIndex] = sample.value;
+  }
+  const sparkPoints = buckets.map((bucket, index) => ({
+    value: values[index],
+    timeLabel: relativeSparkPointLabel(bucket, window),
+    at: firstIsoValue(bucket),
+  }));
   return {
-    spark: samples.map((sample) => sample.value),
-    sparkPoints: samples,
+    spark: values,
+    sparkPoints,
   };
 }
 
 function hydrateBriefingCardSparklines(briefing = null) {
   if (!briefing || typeof briefing !== "object" || !Array.isArray(briefing.cards)) return briefing ?? null;
   const drilldowns = briefing.drilldowns && typeof briefing.drilldowns === "object" ? briefing.drilldowns : {};
+  const window = briefing.window && typeof briefing.window === "object" ? briefing.window : {};
   let changed = false;
   const cards = briefing.cards.map((card) => {
+    const drilldown = drilldowns[card?.id];
+    if (drilldown?.collectionFailed) {
+      changed = true;
+      return {
+        ...card,
+        state: "failed",
+        metric: card?.metric ? { ...card.metric, value: null, deltaLabel: null, direction: null, versusLabel: null } : card?.metric,
+        spark: [],
+        sparkPoints: [],
+        note: failedSourceDetail(card?.id, card?.note),
+        noteTone: "warn",
+      };
+    }
     if (!card || card.state !== "ready") return card;
-    const cardSpark = sparkFromCardSparkline(drilldowns[card.id]);
+    const cardSpark = sparkFromCardSparkline(drilldown, window);
     if (!cardSpark) return card;
     changed = true;
     return {
@@ -551,8 +622,10 @@ export function buildMorningBriefingCards({
   history = [],
   generatedAt = null,
   drilldowns = {},
+  window = null,
 } = {}) {
   const safeDrilldowns = drilldowns && typeof drilldowns === "object" ? drilldowns : {};
+  const sparkWindow = window && typeof window === "object" ? window : digest.window || {};
   const byId = sourceById(digest.sources || []);
   const metrics = extractMorningBriefingMetrics({ sources: digest.sources || [] });
   const cards = [];
@@ -570,6 +643,7 @@ export function buildMorningBriefingCards({
     history,
     generatedAt,
     drilldown: safeDrilldowns.cloudflare,
+    sparkWindow,
     rows: countRows(cloudflare?.counts, [
       ["pageviews", "페이지뷰"],
       ["requests", "요청"],
@@ -598,6 +672,7 @@ export function buildMorningBriefingCards({
     history,
     generatedAt,
     drilldown: safeDrilldowns.github,
+    sparkWindow,
     rows: [
       ...countRows(gh?.counts, [
         ["prs", "PR 업데이트"],
@@ -624,6 +699,7 @@ export function buildMorningBriefingCards({
     history,
     generatedAt,
     drilldown: safeDrilldowns.posthog,
+    sparkWindow,
     rows: countRows(posthog?.counts, [
       ["events", "이벤트"],
       ["conversions", "전환"],
@@ -645,26 +721,15 @@ function buildCard({
   history,
   generatedAt,
   drilldown = null,
+  sparkWindow = {},
   rows = [],
 }) {
-  const ready = state === "ready";
-  const failed = state === "failed";
+  const collectionFailed = Boolean(drilldown?.collectionFailed);
+  const ready = state === "ready" && !collectionFailed;
+  const failed = state === "failed" || collectionFailed;
   const delta = ready ? deltaFor(metricValue, previousMetrics?.[id]) : null;
-  const sourceSpark = ready ? sparkFromCardSparkline(drilldown) : null;
-  if (ready && !sourceSpark) {
-    assertSparklineHistoryAvailable({
-      history,
-      cardId: id,
-      previousValue: previousMetrics?.[id],
-    });
-  }
-  const fallbackSpark = ready && !sourceSpark
-    ? {
-        spark: sparkFrom(history, id, metricValue),
-        sparkPoints: sparkPointsFrom(history, id, metricValue, { generatedAt }),
-      }
-    : null;
-  const cardSpark = sourceSpark || fallbackSpark || { spark: [], sparkPoints: [] };
+  const sourceSpark = ready ? sparkFromCardSparkline(drilldown, sparkWindow) : null;
+  const cardSpark = sourceSpark || { spark: [], sparkPoints: [] };
   const note = cleanString(
     ready
       ? (source?.evidenceGaps?.[0] || source?.goalSignals?.[0] || source?.highlights?.[0] || "")
@@ -677,7 +742,7 @@ function buildCard({
     id,
     label,
     subtitle,
-    state: ready ? "ready" : (state || "missing"),
+    state: failed ? "failed" : ready ? "ready" : (state || "missing"),
     metric: {
       value: ready ? finiteNumber(metricValue) ?? 0 : null,
       unit: metricUnit,
@@ -996,6 +1061,7 @@ export function buildMorningBriefing({
     history: metricHistory,
     generatedAt,
     drilldowns: normalizedDrilldowns,
+    window,
   });
   const anomaly = detectMorningBriefingAnomaly({ digest, cards });
   const evidenceFunnel = buildMorningBriefingEvidenceFunnel({ digest });

@@ -1186,6 +1186,7 @@ struct OpenDesignDayContentTests {
         #expect(dynamic.competitors.first?.isAgentic30 == true)
         #expect(dynamic.competitors.first { $0.id == "cursor" }?.category == .aiBuild)
         #expect(dynamic.swotGroups.map(\.id) == ["strengths", "weaknesses", "opportunities", "threats"])
+        #expect(dynamic.swotGroups.map(\.tone) == [.accent, .amber, .sky, .rose])
         #expect(dynamic.positioningStatement.contains("paid ask"))
         #expect(dynamic.searchableCopy.contains("동적 리서치"))
     }
@@ -1475,6 +1476,7 @@ struct OpenDesignDayContentTests {
             "Opportunities",
             "Threats",
         ])
+        #expect(OpenDesignStrategyCanvasReference.swotGroups.map(\.tone) == [.accent, .amber, .sky, .rose])
         #expect(OpenDesignStrategyCanvasReference.swotMatrixColumnCount == 2)
         #expect(OpenDesignStrategyCanvasReference.swotMatrixRows == [
             ["strengths", "weaknesses"],
@@ -1651,6 +1653,14 @@ struct OpenDesignDayContentTests {
         #expect(cachedRefresh.primaryContent == .cards)
         #expect(cachedRefresh.showsProgress)
         #expect(!cachedRefresh.suppressesEmptyStream)
+
+        let failedWithCachedCards = newsMarketRadarPresentationState(
+            snapshot: makeNewsRadarSnapshot(state: "failed", reason: "empty_result", cardIDs: ["cached-card"]),
+            userState: NewsMarketRadarUserState(),
+            isPreparing: false
+        )
+        #expect(failedWithCachedCards.primaryContent == .cards)
+        #expect(!failedWithCachedCards.showsProgress)
 
         let exaMissing = newsMarketRadarPresentationState(
             snapshot: makeNewsRadarSnapshot(state: "failed", reason: "exa_api_key_missing", cardIDs: []),

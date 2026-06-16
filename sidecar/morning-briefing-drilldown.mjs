@@ -153,21 +153,32 @@ function isoValue(record = {}) {
   return null;
 }
 
-function normalizeCardSparkline(values = []) {
-  return (Array.isArray(values) ? values : [])
+const CardSparkPointSchema = z.object({
+  label: z.string().max(30).default(""),
+  value: z.number().finite().nonnegative().default(0),
+  at: z.string().datetime().optional(),
+  tip: z.string().max(100).nullable().default(null),
+}).strict();
+
+const CardSparklineSchema = z.array(CardSparkPointSchema)
+  .default([])
+  .transform((points) => points.slice(0, CARD_SPARK_BUCKET_COUNT));
+
+export function normalizeCardSparkline(values = []) {
+  const points = (Array.isArray(values) ? values : [])
     .map((point) => {
-      const value = finiteNumber(point?.value);
-      if (value === null) return null;
-      const at = isoValue(point);
-      return {
+      if (!point || typeof point !== "object") return null;
+      const parsed = CardSparkPointSchema.safeParse({
         label: cleanString(point?.label, 30),
-        value: Math.max(0, value),
-        ...(at ? { at } : {}),
+        value: point?.value === null ? undefined : point?.value,
+        ...(isoValue(point) ? { at: isoValue(point) } : {}),
         tip: cleanString(point?.tip, 100) || null,
-      };
+      });
+      return parsed.success ? parsed.data : null;
     })
-    .filter(Boolean)
-    .slice(0, CARD_SPARK_BUCKET_COUNT);
+    .filter(Boolean);
+  const parsed = CardSparklineSchema.safeParse(points);
+  return parsed.success ? parsed.data : [];
 }
 
 function normalizeChart(chart) {
@@ -352,8 +363,8 @@ const PosthogDrilldownMeasurementsSchema = z.object({
     startIso: z.string().max(40).optional(),
     untilIso: z.string().max(40).optional(),
     windowLabel: z.string().max(120).optional(),
-    events: z.number().int().nonnegative(),
-    activeUsers: z.number().int().nonnegative(),
+    events: z.number().int().nonnegative().default(0),
+    activeUsers: z.number().int().nonnegative().default(0),
     conversions: z.number().int().nonnegative().default(0),
     signups: z.number().int().nonnegative().default(0),
     signupInstrumentation: z.enum(["observed", "missing", "unknown"]).default("unknown"),
@@ -750,7 +761,7 @@ const CloudflareMetricTotalsSchema = z.object({
 
 const CloudflareHourlySchema = z.object({
   datetimeIso: z.string().datetime(),
-  uniqueVisitors: z.number().int().nonnegative(),
+  uniqueVisitors: z.number().int().nonnegative().default(0),
   pageviews: z.number().int().nonnegative().default(0),
   requests: z.number().int().nonnegative().default(0),
 }).strict();
@@ -815,7 +826,8 @@ export function buildCardSparklineBuckets({
     return {
       start,
       end,
-      label: localHourLabel(new Date(start).toISOString(), { timeZone }) || hourLabel(start),
+      label: String(Math.floor((start - bounds.startMs) / HOUR_MS) % 24).padStart(2, "0"),
+      at: new Date(start).toISOString(),
     };
   });
 }
@@ -830,7 +842,6 @@ function bucketIndexForTimestamp(ts, buckets = []) {
 }
 
 function buildCloudflareCardSparkline({ hourly = [], window = {}, timeZone = undefined } = {}) {
-  if (!Array.isArray(hourly) || !hourly.length) return [];
   const buckets = buildCardSparklineBuckets({ window, timeZone });
   if (!buckets.length) return [];
   const values = buckets.map(() => ({
@@ -848,10 +859,10 @@ function buildCloudflareCardSparkline({ hourly = [], window = {}, timeZone = und
     values[index].pageviews += finiteNumber(row?.pageviews) ?? 0;
     values[index].requests += finiteNumber(row?.requests) ?? 0;
   }
-  if (!values.some((bucket) => bucket.observed)) return [];
   return buckets.map((bucket, index) => ({
     label: bucket.label,
     value: values[index].uniqueVisitors,
+    at: bucket.at,
     tip: `${bucket.label}시 구간 · 순 방문 ${values[index].uniqueVisitors}명 · PV ${values[index].pageviews} · 요청 ${values[index].requests}`,
   }));
 }
@@ -1273,6 +1284,7 @@ function buildCommitBuckets({ commits = [], deploys = [], window }) {
   return buckets.map((bucket) => ({
     label: hourLabel(bucket.start),
     value: bucket.count,
+    at: new Date(bucket.start).toISOString(),
     tone: bucket.deploy ? "violet" : null,
     tip: bucket.deploy
       ? `${hourLabel(bucket.start)}시 구간 · ${bucket.count} 커밋 · 배포 ${bucket.deploy}`
