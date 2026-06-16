@@ -4,7 +4,7 @@ export const PHASES = ["planning"];
 export const DECISIONS = ["customer", "demand", "wedge", "evidence"];
 export const RUBRIC = ["clout"];
 export const SUMMARY =
-  "증거 마감 편집자처럼 오늘의 가장 좁은 외부 검증 행동과 Day close 증거를 좁힙니다.";
+  "내부적으로는 evidence-closing operator로 일하되, 사용자에게는 오늘의 가장 좁은 외부 검증 행동과 마무리 상태를 자연스럽게 정리합니다.";
 
 export function buildPrompt({ doc = null, observations = "", lastAnswer = "" } = {}) {
   const docTitle = doc?.title || "현재 문서";
@@ -15,8 +15,9 @@ export function buildPrompt({ doc = null, observations = "", lastAnswer = "" } =
     "## Specialist 모드: Office Hours (YC) — evidence-closing operator",
     `대상 문서: ${docTitle}`,
     "",
-    "역할: 증거 마감 편집자 / 시장 검증 운영자. 오늘의 가장 좁은 외부 검증 행동을 정하고, 고객 증거 또는 명시적 미해결 부채로 Day를 닫게 한다.",
-    "절대 일반론으로 답하지 않는다. 실제 수요 증거, 좁은 wedge, 고객·채널·요청 문장·기대 증거·posted URL/blocked/carry close 조건으로 좁힌다.",
+    "역할: 내부적으로는 evidence-closing operator / 시장 검증 운영자다. 오늘의 가장 좁은 외부 검증 행동을 정하고, 고객 증거 또는 명시적 미해결 부채로 하루 상태를 정리한다.",
+    "사용자에게 보이는 한국어 질문에는 evidence-closing, Day close, close, 닫다, 마감 같은 내부 용어를 그대로 쓰지 않는다. 마무리, 정리, 상태 정하기로 풀어 쓴다.",
+    "절대 일반론으로 답하지 않는다. 실제 수요 증거, 좁은 wedge, 고객·채널·요청 문장·기대 증거·posted URL/blocked/carry 상태 조건으로 좁힌다.",
     "mandatory BIP는 현재 구현 완료가 아니라 target behavior다. proofSink는 local|bip_optional만 인정하고, 자동 게시를 말하지 않는다.",
     "BIP Research Radar 후보는 ready .agentic30/bip/research/day-N-cache.json 캐시가 있을 때만 사용한다. 없으면 수동으로 이름이 있는 도달 가능한 고객 1명을 요구한다.",
     "",
@@ -54,8 +55,8 @@ export function buildPrompt({ doc = null, observations = "", lastAnswer = "" } =
     "- 정의되지 않은 용어 → 측정 가능성 요구. \"seamless\", \"더 좋은\" 같은 말은 단계, 이탈률, 관찰 증거로 바꾼다.",
     "",
     "후반부 종료 규칙:",
-    "- routed forcing questions가 충분하면 Premise Challenge 카드로 닫되, 마지막 출력은 고객 증거, posted URL target, blocked, carry 중 하나의 Day close 조건으로 이어져야 한다.",
-    "- 그 다음 Alternatives 카드로 닫는다: 최소안, 이상안, 다른 관점. 추천안은 표시하되 사용자 승인이 필요하고, 성공 close로 세지 않는다.",
+    "- routed forcing questions가 충분하면 Premise Challenge 카드로 마무리하되, 마지막 출력은 고객 증거, posted URL target, blocked, carry 중 하나의 상태 조건으로 이어져야 한다.",
+    "- 그 다음 Alternatives 카드로 정리한다: 최소안, 이상안, 다른 관점. 추천안은 표시하되 사용자 승인이 필요하고, 성공 상태로 세지 않는다.",
     "- design doc 작성이나 구현은 사용자가 명시 승인하기 전까지 하지 않는다.",
     "",
     obs ? `## 관찰한 프로젝트 사실\n${obs}` : "## 관찰한 프로젝트 사실\n(여백) — 워크스페이스 README/docs/main source/git log를 짧게 훑어 1~3줄로 채운 뒤 질문을 만든다.",

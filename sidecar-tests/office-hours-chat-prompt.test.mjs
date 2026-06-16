@@ -68,7 +68,15 @@ test("office-hours chat system prompt routes Codex forcing questions through str
   assert.match(prompt, /`evidenceTarget`/);
   assert.match(prompt, /`failureMode`/);
   assert.match(prompt, /OH-S1-SIGNUP-GOAL/);
+  assert.match(prompt, /OH-S1-CLOSING-JARGON/);
   assert.match(prompt, /active users completing the chosen 핵심 행동/);
+  assert.match(prompt, /evidence-closing operator \/ 증거 마감 시스템/);
+  assert.match(prompt, /internal operating concepts only/);
+  assert.match(prompt, /Never translate them literally into user-visible Korean/);
+  assert.match(prompt, /마무리, 정리, or 상태 정하기/);
+  assert.match(prompt, /어떻게 마무리할까요\?/);
+  assert.match(prompt, /완료, 보류, 내일로 넘김 중 어떤 상태로 정리할까요\?/);
+  assert.match(prompt, /오늘 실행할 가장 작은 행동을 어떻게 정리할까요\?/);
   assert.match(prompt, /Self-check before calling the structured-input tool/);
   assert.match(prompt, /전제 확인/);
   assert.match(prompt, /office_hours_alternatives/);

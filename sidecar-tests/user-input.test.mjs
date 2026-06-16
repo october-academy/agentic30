@@ -123,7 +123,7 @@ test("extractCodexStructuredInputToolOutputFromPayload parses nested Codex resul
     questions: [
       {
         header: "오늘 외부 행동",
-        question: "박조은님께 아직 보내지 못한 프로젝트 기록 요청을 오늘 어떤 확인 가능한 행동으로 닫을까요?",
+        question: "박조은님께 아직 보내지 못한 프로젝트 기록 요청을 오늘 어떤 확인 가능한 행동으로 마무리할까요?",
         options: [
           {
             label: "지금 바로 요청 보내기",

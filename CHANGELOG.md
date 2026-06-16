@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### 추가
+- **humanize-korean skill 번들**: sidecar release bundle에 `sidecar/skills/humanize-korean` 룰북과 레퍼런스를 포함하고, Xcode sidecar build input에도 `sidecar/skills`를 추가해 skill 변경이 번들 재생성을 유발하도록 했습니다.
+
+### 수정
+- **Office Hours 한국어 카피 정리**: 구조화 질문 카드의 사용자 노출 문구에서 `닫다`/`마감`/`close` 계열 내부 용어를 `마무리`/`정리`/`상태 정하기`로 바꾸고, S1 카피가 남으면 명시 오류로 실패하도록 했습니다.
+
 ## [1.0.27] - 2026-06-17
 
 ### 수정

@@ -21,6 +21,7 @@ import {
   stripTrailingRubricFocusMetadata,
 } from "../sidecar/office-hours-structured-input.mjs";
 import {
+  humanizeOfficeHoursVisibleText,
   inspectOfficeHoursUiCopyRequest,
   normalizeOfficeHoursUiCopyRequest,
 } from "../sidecar/office-hours-copy-rules.mjs";
@@ -244,7 +245,7 @@ test("prepareOfficeHoursStructuredInputRequest accepts explicit active-user-defi
   assert.equal(prepared.generation.signalId, "get_users_active_user_definition");
 });
 
-test("Office Hours Korean UI-copy contract detects awkward visible copy without hard-coded rewrites", () => {
+test("Office Hours Korean UI-copy contract detects awkward visible copy before rewrite", () => {
   const request = {
     title: "Office Hours",
     generation: { mode: OFFICE_HOURS_TOOL_MODE, signalId: "office_hours_channel" },
@@ -265,6 +266,10 @@ test("Office Hours Korean UI-copy contract detects awkward visible copy without 
             label: "랜딩/가입 구간을 내가 직접 통과해보며 이탈 지점 찾기",
             description: "activation action 전 이탈을 찾는다.",
           },
+          {
+            label: "오늘 요청을 닫기",
+            description: "오늘 요청을 어떤 방식으로 지금 닫을까요?",
+          },
         ],
       },
     ],
@@ -278,13 +283,135 @@ test("Office Hours Korean UI-copy contract detects awkward visible copy without 
   );
   assert.ok(issues.some((issue) => issue.ruleId === "OH-S1-SIGNUP-GOAL"));
   assert.ok(issues.some((issue) => issue.ruleId === "OH-S1-COLLECTIVE"));
+  assert.ok(issues.some((issue) => issue.ruleId === "OH-S1-CLOSING-JARGON"));
   assert.ok(issues.some((issue) => issue.ruleId === "OH-S2-INTERNAL-RISK"));
   assert.ok(issues.some((issue) => issue.ruleId === "OH-S2-POST-SIGNUP"));
+});
 
-  // The contract gate is intentionally non-mutating: prompt/schema contract
-  // should make the model write better copy, not replace labels with fixed
-  // screenshot-specific strings in sidecar code.
-  assert.equal(normalizeOfficeHoursUiCopyRequest(request), request);
+test("Office Hours Korean UI-copy humanizer rewrites S1 visible copy and preserves metadata", () => {
+  const request = {
+    title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_day3_customer_evidence_next_action",
+      signalLabel: "Office Hours Day 3 고객 증거 다음 행동",
+    },
+    questions: [
+      {
+        questionId: "office_hours_day3_customer_evidence_next_action",
+        header: "오늘 발송 행동",
+        question: "Day 3에 박조은님께 아직 보내지 못한 프로젝트 기록 요청을 오늘 어떤 확인 가능한 행동으로 닫을까요?",
+        helperText: "API/MCP 로그와 https://example.com/proof 는 그대로 둡니다.",
+        options: [
+          {
+            label: "오늘 요청을 닫기",
+            description: "가입자 100명 목표를 위해 activation action 전 이 요청부터 닫을까요?",
+            nextIntent: "send_project_record_request",
+            risk: "API/MCP 연결 여부는 metadata에서 그대로 유지합니다.",
+            evidenceTarget: "박조은님, Day 3, https://example.com/proof, API/MCP",
+            mapsTo: "customer evidence",
+            failureMode: "요청을 보내지 않으면 증거가 없습니다.",
+          },
+          {
+            label: "보류",
+            description: "막힌 이유를 남기고 내일 이어갑니다.",
+          },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    ],
+  };
+
+  const normalized = normalizeOfficeHoursUiCopyRequest(request);
+  assert.equal(normalized.generation.signalId, request.generation.signalId);
+  assert.equal(normalized.generation.signalLabel, request.generation.signalLabel);
+  assert.equal(normalized.questions[0].questionId, request.questions[0].questionId);
+  assert.equal(
+    normalized.questions[0].question,
+    "Day 3에 박조은님께 아직 보내지 못한 프로젝트 기록 요청을 오늘 어떤 확인 가능한 행동으로 마무리할까요?",
+  );
+  assert.equal(
+    normalized.questions[0].helperText,
+    "API/MCP 로그와 https://example.com/proof 는 그대로 둡니다.",
+  );
+  assert.equal(normalized.questions[0].options[0].label, "오늘 요청을 마무리하기");
+  assert.equal(
+    normalized.questions[0].options[0].description,
+    "활성 사용자 100명 목표를 위해 핵심 행동 전 이 요청부터 마무리할까요?",
+  );
+  assert.equal(normalized.questions[0].options[0].nextIntent, "send_project_record_request");
+  assert.equal(normalized.questions[0].options[0].evidenceTarget, "박조은님, Day 3, https://example.com/proof, API/MCP");
+  assert.equal(normalized.questions[0].allowFreeText, true);
+  assert.equal(normalized.questions[0].requiresFreeText, false);
+  assert.equal(
+    inspectOfficeHoursUiCopyRequest(normalized).some((issue) => issue.severity === "S1"),
+    false,
+  );
+});
+
+test("Office Hours Korean UI-copy humanizer fails explicitly when S1 copy remains", () => {
+  assert.throws(() => normalizeOfficeHoursUiCopyRequest({
+    title: "Office Hours",
+    generation: { mode: OFFICE_HOURS_TOOL_MODE, signalId: "office_hours_channel" },
+    questions: [
+      {
+        header: "채널 증거",
+        question: "`ICP` 기준으로 오늘 연락할 사람은 누구인가요?",
+        options: [
+          {
+            label: "고객 후보",
+            description: "실제 이름을 씁니다.",
+          },
+          {
+            label: "보류",
+            description: "아직 모릅니다.",
+          },
+        ],
+      },
+    ],
+  }), /S1 issues remain after rewrite/);
+});
+
+test("Office Hours Korean UI-copy humanizer does not rewrite deadline wording", () => {
+  assert.equal(
+    humanizeOfficeHoursVisibleText("오늘 마감일은 6월 4일까지입니다. API/MCP 기록은 그대로 둡니다."),
+    "오늘 마감일은 6월 4일까지입니다. API/MCP 기록은 그대로 둡니다.",
+  );
+});
+
+test("Office Hours Korean UI-copy contract allows natural closing copy", () => {
+  const request = {
+    title: "Office Hours",
+    generation: { mode: OFFICE_HOURS_TOOL_MODE, signalId: "office_hours_close_state" },
+    questions: [
+      {
+        header: "상태 정리",
+        question: "오늘 요청을 어떻게 마무리할까요?",
+        options: [
+          {
+            label: "완료",
+            description: "오늘 필요한 행동이 끝났고 기록할 증거가 있습니다.",
+          },
+          {
+            label: "보류",
+            description: "막힌 이유를 남기고 다시 볼 상태로 둡니다.",
+          },
+          {
+            label: "내일로 넘김",
+            description: "내일 이어서 할 가장 작은 행동을 정합니다.",
+          },
+        ],
+      },
+    ],
+  };
+
+  const issues = inspectOfficeHoursUiCopyRequest(request);
+  assert.equal(
+    issues.some((issue) => issue.ruleId === "OH-S1-CLOSING-JARGON"),
+    false,
+  );
+  assert.deepEqual(normalizeOfficeHoursUiCopyRequest(request), request);
 });
 
 test("officeHoursStructuredInputChannel maps each provider to its asking mechanism", () => {
