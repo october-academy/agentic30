@@ -6,13 +6,15 @@
 // workspace .agentic30/ pair:
 //   - day-progress.json          -> is this day's interview step still active?
 //   - memory/office-hours-turns  -> which questions were already answered (day-scoped)
-// These helpers rebuild an in-progress interview from that pair so an app
-// relaunch continues at question k+1 instead of restarting at question 1.
+// These helpers expose the durable answered turns. Relaunch must only continue
+// locally when memory/office-hours-pending.json also contains the already
+// generated, not-yet-answered card; answered turns alone are not a provider
+// restart fallback.
 //
 // Pure functions only — index.mjs owns session mutation, transcript seeding,
 // and telemetry. The interview step id is kind-scoped: Day 1 closes through
 // `first_interview`, Day 2+ standard days run the goal-driven digest flow and
-// close through `interview`. Unknown kinds fail closed to a fresh start.
+// close through `interview`. Unknown kinds fail closed to no resume turns.
 //
 // This module also owns the PAST-DAY SNAPSHOT policy: the Day timeline scopes
 // the live Office Hours screen by day, and the Mac auto-start fires for
@@ -41,8 +43,9 @@ const RESUME_INTERVIEW_STEP_BY_KIND = Object.freeze({
   standard: "interview",
 });
 
-// Returns the already-answered turns to resume from, or [] for a normal fresh
-// start. Resume requires ALL of: the day resolves, the day's kind maps to an
+// Returns already-answered turns for local transcript seeding / same-process
+// retry logic, or [] when the day is not an active interview. Selection
+// requires ALL of: the day resolves, the day's kind maps to an
 // interview step (day1 -> first_interview, standard -> interview), that step is
 // still "active" (not yet closed through the interview gate), and the turn log
 // holds completed Q/A turns recorded for that day.

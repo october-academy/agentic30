@@ -72,6 +72,17 @@ export async function createUserInputRequest(
   return validatedRequest;
 }
 
+export async function writeUserInputRequest(appSupportPath, request) {
+  const validatedRequest = parseStructuredPromptRequestOutput(request);
+  await ensureUserInputDirs(appSupportPath);
+  await fs.writeFile(
+    requestFilePath(appSupportPath, validatedRequest.sessionId, validatedRequest.requestId),
+    JSON.stringify(validatedRequest, null, 2),
+    "utf8",
+  );
+  return validatedRequest;
+}
+
 export function buildPendingUserInputToolOutput(request = {}) {
   return parseCodexStructuredInputToolOutput({
     status: "pending_user_input",

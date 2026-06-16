@@ -9,16 +9,22 @@ import { appendCommitment } from "../sidecar/office-hours-memory.mjs";
 import {
   appendOfficeHoursTurn,
   buildOfficeHoursHistorySummary,
+  clearOfficeHoursPendingQuestion,
+  fingerprintOfficeHoursTurns,
   formatOfficeHoursHistoryForPrompt,
   loadDayMemory,
   loadDayRollup,
+  loadOfficeHoursPendingQuestion,
+  loadOfficeHoursPendingQuestions,
   loadOfficeHoursTurnLog,
   loadOnboardingMemory,
   refreshDayMemory,
   reviseOfficeHoursTurn,
   resolveDayMemoryPath,
   resolveDayRollupPath,
+  resolveOfficeHoursPendingPath,
   resolveOnboardingMemoryPath,
+  saveOfficeHoursPendingQuestion,
   saveOnboardingMemory,
 } from "../sidecar/workspace-memory.mjs";
 
@@ -274,6 +280,124 @@ function makePromptSnapshot({
     },
   };
 }
+
+test("office hours pending question memory round-trips by day and clears by request", async () => {
+  const root = await tempWorkspace();
+  try {
+    await appendOfficeHoursTurn({
+      workspaceRoot: root,
+      turn: {
+        day: 3,
+        sessionId: "session-a",
+        requestId: "answered-1",
+        questionText: "첫 질문",
+        responseText: "첫 답변",
+      },
+      now: new Date("2026-06-16T00:00:00.000Z"),
+    });
+    const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot: root });
+    const saved = await saveOfficeHoursPendingQuestion({
+      workspaceRoot: root,
+      day: 3,
+      source: "office_hours_day_3",
+      request: makePromptSnapshot({
+        requestId: "pending-2",
+        sessionId: "session-a",
+        question: "둘째 질문?",
+      }),
+      turnLog,
+      now: new Date("2026-06-16T00:01:00.000Z"),
+    });
+
+    const filePath = resolveOfficeHoursPendingPath(root);
+    assert.ok(filePath.endsWith(path.join(".agentic30", "memory", "office-hours-pending.json")));
+    assert.equal(saved.pendingByDay["3"].request.requestId, "pending-2");
+    assert.equal(saved.pendingByDay["3"].answeredTurnCount, 1);
+    assert.equal(saved.pendingByDay["3"].turnFingerprint, fingerprintOfficeHoursTurns(turnLog.turns, 3).fingerprint);
+
+    const loaded = await loadOfficeHoursPendingQuestion({ workspaceRoot: root, day: 3 });
+    assert.equal(loaded.source, "office_hours_day_3");
+    assert.equal(loaded.request.questions[0].question, "둘째 질문?");
+    assert.equal(loaded.request.sessionId, "session-a");
+
+    await clearOfficeHoursPendingQuestion({
+      workspaceRoot: root,
+      day: 3,
+      requestId: "other-request",
+    });
+    assert.notEqual(await loadOfficeHoursPendingQuestion({ workspaceRoot: root, day: 3 }), null);
+
+    await clearOfficeHoursPendingQuestion({
+      workspaceRoot: root,
+      day: 3,
+      requestId: "pending-2",
+    });
+    assert.equal(await loadOfficeHoursPendingQuestion({ workspaceRoot: root, day: 3 }), null);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("office hours pending memory ignores malformed entries and fingerprints stale turns", async () => {
+  const root = await tempWorkspace();
+  try {
+    const pendingPath = resolveOfficeHoursPendingPath(root);
+    await fs.mkdir(path.dirname(pendingPath), { recursive: true });
+    await fs.writeFile(pendingPath, JSON.stringify({
+      schemaVersion: 1,
+      schema: "agentic30.memory.office_hours_pending.v1",
+      pendingByDay: {
+        3: {
+          day: 3,
+          source: "office_hours_day_3",
+          request: {
+            requestId: "bad",
+            sessionId: "session-a",
+            toolName: "agentic30_request_user_input",
+            createdAt: "2026-06-16T00:00:00.000Z",
+            questions: [],
+          },
+          answeredTurnCount: 1,
+          turnFingerprint: "stale",
+        },
+        4: {
+          day: 4,
+          source: "office_hours_day_4",
+          request: makePromptSnapshot({
+            requestId: "pending-4",
+            sessionId: "session-b",
+            question: "넷째 날 질문?",
+          }),
+          answeredTurnCount: 0,
+          turnFingerprint: fingerprintOfficeHoursTurns([], 4).fingerprint,
+        },
+      },
+    }, null, 2), "utf8");
+
+    const loaded = await loadOfficeHoursPendingQuestions({ workspaceRoot: root });
+    assert.equal(loaded.pendingByDay["3"], undefined);
+    assert.equal(loaded.pendingByDay["4"].request.requestId, "pending-4");
+
+    const before = fingerprintOfficeHoursTurns([], 4);
+    await appendOfficeHoursTurn({
+      workspaceRoot: root,
+      turn: {
+        day: 4,
+        requestId: "answered-4",
+        questionText: "넷째 날 질문?",
+        responseText: "답변",
+      },
+      now: new Date("2026-06-16T00:02:00.000Z"),
+    });
+    const afterLog = await loadOfficeHoursTurnLog({ workspaceRoot: root });
+    const after = fingerprintOfficeHoursTurns(afterLog.turns, 4);
+    assert.equal(before.count, 0);
+    assert.equal(after.count, 1);
+    assert.notEqual(before.fingerprint, after.fingerprint);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 test("office hours v2 turns persist prompt snapshots and submissions while legacy turns still load", async () => {
   const root = await tempWorkspace();

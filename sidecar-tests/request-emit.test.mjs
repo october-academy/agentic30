@@ -14,7 +14,9 @@ import { saveDay1GoalSelection } from "../sidecar/day1-goal-state.mjs";
 import {
   appendOfficeHoursTurn,
   loadDayMemory,
+  loadOfficeHoursPendingQuestion,
   loadOfficeHoursTurnLog,
+  saveOfficeHoursPendingQuestion,
   saveOnboardingMemory,
 } from "../sidecar/workspace-memory.mjs";
 import {
@@ -899,6 +901,503 @@ test("office_hours Day 3 answer persists to memory before the next Codex card", 
         turn.requestId === pending.requestId && turn.responseText === "아직 보내지 못했다"
       ),
       true,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_start restores a pending Day 3 card from workspace memory after restart", async () => {
+  const firstHarness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+    },
+  });
+  let firstWs;
+  let secondHarness;
+  let secondWs;
+  let keepWorkspace = false;
+  let firstHarnessClosed = false;
+  const context = [
+    "Office Hours mode: Startup",
+    "Office Hours day: 3",
+    "Expected question count: 2",
+    "Yesterday briefing: 고객 행동 증거 공백",
+    "Goal text: Support leads will pay to avoid missed Slack escalations.",
+  ].join("\n");
+
+  try {
+    await initGitRepo(firstHarness.workspacePath);
+    firstWs = await connectAndCollect(firstHarness);
+
+    firstWs.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 3,
+    }));
+    const firstCreated = await waitForEvent(firstWs.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    firstWs.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: firstCreated.session.id,
+      context,
+      visiblePrompt: "Test Day 3 pending restore",
+      source: "office_hours_day_3",
+      day: 3,
+      selectedSources: ["git"],
+    }));
+
+    const firstPending = await waitForPendingOfficeHoursPrompt(firstWs, firstCreated.session.id);
+    submitStructuredAnswer(firstWs, firstCreated.session.id, firstPending, {
+      selectedOptions: [],
+      freeText: "아직 보내지 못했다",
+    });
+    const pendingBeforeRestart = await waitForPendingOfficeHoursPrompt(
+      firstWs,
+      firstCreated.session.id,
+      firstPending.requestId,
+    );
+    assert.notEqual(pendingBeforeRestart.requestId, firstPending.requestId);
+    const distinctPendingBeforeRestart = {
+      ...pendingBeforeRestart,
+      questions: [
+        {
+          ...pendingBeforeRestart.questions[0],
+          questionId: "office_hours_day3_customer_evidence_next_action",
+          question: "박조은님에게 보낼 프로젝트 기록 요청은 지금 어떤 확인 가능한 증거로 남아 있나요?",
+        },
+      ],
+      generation: {
+        ...(pendingBeforeRestart.generation || {}),
+        signalId: "office_hours_day3_customer_evidence_next_action",
+        signalLabel: "Office Hours Day 3 고객 증거 다음 행동",
+      },
+    };
+    await saveOfficeHoursPendingQuestion({
+      workspaceRoot: firstHarness.workspacePath,
+      day: 3,
+      source: "office_hours_day_3",
+      request: distinctPendingBeforeRestart,
+      turnLog: await loadOfficeHoursTurnLog({ workspaceRoot: firstHarness.workspacePath }),
+    });
+    const savedPending = await loadOfficeHoursPendingQuestion({
+      workspaceRoot: firstHarness.workspacePath,
+      day: 3,
+    });
+    assert.equal(savedPending?.request?.requestId, distinctPendingBeforeRestart.requestId);
+    assert.equal(
+      savedPending?.request?.questions?.[0]?.question,
+      distinctPendingBeforeRestart.questions[0].question,
+    );
+    assert.equal(savedPending?.answeredTurnCount, 1);
+    await seedStandardInterviewActiveProgress(firstHarness.workspacePath, 3);
+
+    firstWs.close();
+    firstWs = null;
+    keepWorkspace = true;
+    await firstHarness.close({ cleanup: false });
+    firstHarnessClosed = true;
+
+    secondHarness = await spawnSidecar({
+      workspacePath: firstHarness.workspacePath,
+      appSupportPath: firstHarness.appSupportPath,
+      tempRoot: firstHarness.tempRoot,
+      extraEnv: {
+        AGENTIC30_TEST_STUB_PROVIDER: "",
+        CODEX_API_KEY: "",
+        OPENAI_API_KEY: "",
+      },
+    });
+    secondWs = await connectAndCollect(secondHarness);
+
+    secondWs.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 3,
+    }));
+    const secondCreated = await waitForEvent(secondWs.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    const restoreMarker = secondWs.events.length;
+    secondWs.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: secondCreated.session.id,
+      context,
+      visiblePrompt: "Test Day 3 pending restore",
+      source: "office_hours_day_3",
+      day: 3,
+      selectedSources: ["git"],
+    }));
+
+    const restoredUpdate = await waitForEvent(secondWs.events, (event) =>
+      secondWs.events.indexOf(event) >= restoreMarker
+        && event.type === "session_updated"
+        && event.session?.id === secondCreated.session.id
+        && event.session?.status === "awaiting_input"
+        && event.session?.pendingUserInput?.requestId === distinctPendingBeforeRestart.requestId
+    );
+    const restoredStatus = await waitForEvent(secondWs.events, (event) =>
+      secondWs.events.indexOf(event) >= restoreMarker
+        && event.type === "office_hours_status"
+        && event.sessionId === secondCreated.session.id
+        && event.stage === "question_ready"
+        && event.requestId === distinctPendingBeforeRestart.requestId
+    );
+    assert.equal(restoredStatus.stage, "question_ready");
+    assert.equal(restoredUpdate.session.pendingUserInput.sessionId, secondCreated.session.id);
+    assert.equal(
+      restoredUpdate.session.pendingUserInput.questions[0].question,
+      distinctPendingBeforeRestart.questions[0].question,
+    );
+    assert.equal(
+      restoredUpdate.session.messages.filter((message) => message.officeHoursSeededTurn === true).length,
+      2,
+    );
+    assert.equal(
+      secondWs.events.slice(restoreMarker).some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === secondCreated.session.id
+          && event.stage === "provider_starting"
+      ),
+      false,
+      "pending card restore must not start a provider run",
+    );
+
+    submitStructuredAnswer(secondWs, secondCreated.session.id, restoredUpdate.session.pendingUserInput, {
+      selectedOptions: [],
+      freeText: "오늘 박조은님에게 프로젝트 기록 요청을 보내겠다",
+    });
+    await waitForEvent(secondWs.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === secondCreated.session.id
+        && event.session?.pendingUserInput == null
+        && event.session?.runtime?.officeHours?.completedByExpectedCount === true
+    );
+    assert.equal(
+      await loadOfficeHoursPendingQuestion({ workspaceRoot: secondHarness.workspacePath, day: 3 }),
+      null,
+    );
+    const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot: secondHarness.workspacePath });
+    assert.equal(
+      turnLog.turns.some((turn) =>
+        turn.day === 3
+          && turn.sessionId === secondCreated.session.id
+          && turn.requestId === distinctPendingBeforeRestart.requestId
+          && /프로젝트 기록 요청/.test(turn.responseText)
+      ),
+      true,
+    );
+    keepWorkspace = false;
+  } finally {
+    firstWs?.close();
+    secondWs?.close();
+    if (secondHarness) {
+      await secondHarness.close();
+    } else if (firstHarnessClosed) {
+      await fs.rm(firstHarness.tempRoot, { recursive: true, force: true });
+    } else {
+      await firstHarness.close({ cleanup: !keepWorkspace });
+    }
+  }
+});
+
+test("office_hours_start fails explicitly when a pending Day 3 snapshot is stale after restart", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_PROVIDER: "",
+      CODEX_API_KEY: "",
+      OPENAI_API_KEY: "",
+    },
+  });
+  let ws;
+  const context = [
+    "Office Hours mode: Startup",
+    "Office Hours day: 3",
+    "Expected question count: 3",
+    "Goal text: Support leads will pay to avoid missed Slack escalations.",
+  ].join("\n");
+
+  try {
+    await initGitRepo(harness.workspacePath);
+    await seedStandardInterviewActiveProgress(harness.workspacePath, 3);
+    await appendOfficeHoursTurn({
+      workspaceRoot: harness.workspacePath,
+      turn: makeOfficeHoursTurn({
+        day: 3,
+        index: 1,
+        requestId: "day3-q1",
+        question: "Q1: 어떤 고객에게 요청했나요?",
+        answer: "박조은님에게 요청하려고 한다",
+      }),
+    });
+    const pendingRequest = makeOfficeHoursPromptSnapshot({
+      sessionId: "prior-session",
+      requestId: "day3-q2-pending",
+      questionId: "day3_q2",
+      question: "Q2: 그 요청은 어떤 확인 가능한 증거로 남나요?",
+    });
+    await saveOfficeHoursPendingQuestion({
+      workspaceRoot: harness.workspacePath,
+      day: 3,
+      source: "office_hours_day_3",
+      request: pendingRequest,
+      turnLog: await loadOfficeHoursTurnLog({ workspaceRoot: harness.workspacePath }),
+    });
+    await appendOfficeHoursTurn({
+      workspaceRoot: harness.workspacePath,
+      turn: makeOfficeHoursTurn({
+        day: 3,
+        index: 99,
+        requestId: "day3-extra-turn",
+        question: "Q-extra: stale marker",
+        answer: "pending 생성 후 추가된 답변",
+      }),
+    });
+
+    ws = await connectAndCollect(harness);
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 3,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context,
+      visiblePrompt: "Test stale pending failure",
+      source: "office_hours_day_3",
+      day: 3,
+      selectedSources: ["git"],
+    }));
+
+    const failedUpdate = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "error"
+        && /답변 기록/.test(event.session?.error || "")
+    );
+    assert.equal(failedUpdate.session.pendingUserInput, null);
+    await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "failed"
+        && /다시 생성하지 않았습니다/.test(event.detail || "")
+    );
+    const errorEvent = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "error"
+        && event.sessionId === created.session.id
+        && event.errorKind === "office_hours_pending_state_unrecoverable"
+    );
+    assert.equal(errorEvent.recoverable, false);
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "provider_starting"
+      ),
+      false,
+      "stale pending state must not fall through to a provider restart",
+    );
+    assert.equal(
+      (await loadOfficeHoursPendingQuestion({ workspaceRoot: harness.workspacePath, day: 3 }))?.request?.requestId,
+      "day3-q2-pending",
+      "stale pending snapshot is left in memory for inspection instead of being cleared",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_start fails explicitly when pending Day 3 snapshot points at a done interview", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_PROVIDER: "",
+      CODEX_API_KEY: "",
+      OPENAI_API_KEY: "",
+    },
+  });
+  let ws;
+  const context = [
+    "Office Hours mode: Startup",
+    "Office Hours day: 3",
+    "Expected question count: 3",
+    "Goal text: Support leads will pay to avoid missed Slack escalations.",
+  ].join("\n");
+
+  try {
+    await initGitRepo(harness.workspacePath);
+    await seedStandardInterviewDoneProgress(harness.workspacePath, 3);
+    const pendingRequest = makeOfficeHoursPromptSnapshot({
+      sessionId: "prior-session",
+      requestId: "day3-done-pending",
+      questionId: "day3_done_pending",
+      question: "이미 끝난 인터뷰에 남아 있던 pending 질문",
+    });
+    await saveOfficeHoursPendingQuestion({
+      workspaceRoot: harness.workspacePath,
+      day: 3,
+      source: "office_hours_day_3",
+      request: pendingRequest,
+      turnLog: await loadOfficeHoursTurnLog({ workspaceRoot: harness.workspacePath }),
+    });
+
+    ws = await connectAndCollect(harness);
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 3,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context,
+      visiblePrompt: "Test done pending failure",
+      source: "office_hours_day_3",
+      day: 3,
+      selectedSources: ["git"],
+    }));
+
+    await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "error"
+        && /day-progress 상태/.test(event.session?.error || "")
+    );
+    await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "error"
+        && event.sessionId === created.session.id
+        && event.errorKind === "office_hours_pending_state_unrecoverable"
+        && event.recoverable === false
+    );
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "provider_starting"
+      ),
+      false,
+      "done stale pending state must not fall through to provider restart",
+    );
+    assert.equal(
+      (await loadOfficeHoursPendingQuestion({ workspaceRoot: harness.workspacePath, day: 3 }))?.request?.requestId,
+      "day3-done-pending",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_start fails explicitly when answered Day 3 turns exist but pending snapshot is missing", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_PROVIDER: "",
+      CODEX_API_KEY: "",
+      OPENAI_API_KEY: "",
+    },
+  });
+  let ws;
+  const context = [
+    "Office Hours mode: Startup",
+    "Office Hours day: 3",
+    "Expected question count: 3",
+    "Goal text: Support leads will pay to avoid missed Slack escalations.",
+  ].join("\n");
+
+  try {
+    await initGitRepo(harness.workspacePath);
+    await seedStandardInterviewActiveProgress(harness.workspacePath, 3);
+    await appendOfficeHoursTurn({
+      workspaceRoot: harness.workspacePath,
+      turn: makeOfficeHoursTurn({
+        day: 3,
+        index: 1,
+        requestId: "missing-pending-q1",
+        question: "Q1: 어떤 고객에게 요청했나요?",
+        answer: "박조은님에게 요청하려고 한다",
+      }),
+    });
+
+    ws = await connectAndCollect(harness);
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 3,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context,
+      visiblePrompt: "Test missing pending failure",
+      source: "office_hours_day_3",
+      day: 3,
+      selectedSources: ["git"],
+    }));
+
+    await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "error"
+        && /pending 질문 스냅샷/.test(event.session?.error || "")
+    );
+    const errorEvent = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "error"
+        && event.sessionId === created.session.id
+        && event.errorKind === "office_hours_pending_state_unrecoverable"
+    );
+    assert.equal(errorEvent.recoverable, false);
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "provider_starting"
+      ),
+      false,
+      "missing pending snapshot must not use answered turns as a provider restart fallback",
+    );
+    assert.equal(
+      await loadOfficeHoursPendingQuestion({ workspaceRoot: harness.workspacePath, day: 3 }),
+      null,
     );
   } finally {
     ws?.close();
@@ -2120,22 +2619,28 @@ function assertStatusOrder(actualStages, expectedStages) {
   }
 }
 
-async function spawnSidecar({ extraEnv = {} } = {}) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-request-emit-"));
-  const workspacePath = path.join(tempRoot, "workspace");
-  const appSupportPath = path.join(tempRoot, "app-support");
-  const ghConfigPath = path.join(tempRoot, "gh-config");
-  const homePath = path.join(tempRoot, "home");
-  await fs.mkdir(workspacePath, { recursive: true });
-  await fs.mkdir(appSupportPath, { recursive: true });
+async function spawnSidecar({
+  extraEnv = {},
+  tempRoot = null,
+  workspacePath = null,
+  appSupportPath = null,
+  cleanupOnClose = true,
+} = {}) {
+  const root = tempRoot || await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-request-emit-"));
+  const workspace = workspacePath || path.join(root, "workspace");
+  const appSupport = appSupportPath || path.join(root, "app-support");
+  const ghConfigPath = path.join(root, "gh-config");
+  const homePath = path.join(root, "home");
+  await fs.mkdir(workspace, { recursive: true });
+  await fs.mkdir(appSupport, { recursive: true });
   await fs.mkdir(ghConfigPath, { recursive: true });
   await fs.mkdir(homePath, { recursive: true });
 
-  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", workspacePath], {
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", workspace], {
     cwd: packageRoot,
     env: {
       ...process.env,
-      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_APP_SUPPORT_PATH: appSupport,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
       HOME: homePath,
@@ -2182,15 +2687,18 @@ async function spawnSidecar({ extraEnv = {} } = {}) {
   return {
     port: ready.port,
     authToken: ready.authToken,
-    workspacePath,
-    appSupportPath,
-    async close() {
+    tempRoot: root,
+    workspacePath: workspace,
+    appSupportPath: appSupport,
+    async close({ cleanup = cleanupOnClose } = {}) {
       child.kill("SIGTERM");
       await new Promise((resolve) => {
         child.once("exit", resolve);
         setTimeout(resolve, 2_000);
       });
-      await fs.rm(tempRoot, { recursive: true, force: true });
+      if (cleanup) {
+        await fs.rm(root, { recursive: true, force: true });
+      }
     },
   };
 }
@@ -2432,6 +2940,62 @@ async function seedDay1DoneProgress(workspacePath) {
   );
 }
 
+async function seedStandardInterviewActiveProgress(workspacePath, day = 3) {
+  const dayNumber = Number.parseInt(String(day || ""), 10);
+  const agentic30Dir = path.join(workspacePath, ".agentic30");
+  await fs.mkdir(agentic30Dir, { recursive: true });
+  await fs.writeFile(
+    path.join(agentic30Dir, "day-progress.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      schema: "agentic30.day_progress.v1",
+      challengeStartedAt: localDateString(new Date()),
+      days: {
+        [String(dayNumber)]: {
+          day: dayNumber,
+          kind: "standard",
+          steps: {
+            scan: "done",
+            retro: "done",
+            goal: "done",
+            interview: "active",
+            execution: "pending",
+          },
+        },
+      },
+    }, null, 2),
+    "utf8",
+  );
+}
+
+async function seedStandardInterviewDoneProgress(workspacePath, day = 3) {
+  const dayNumber = Number.parseInt(String(day || ""), 10);
+  const agentic30Dir = path.join(workspacePath, ".agentic30");
+  await fs.mkdir(agentic30Dir, { recursive: true });
+  await fs.writeFile(
+    path.join(agentic30Dir, "day-progress.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      schema: "agentic30.day_progress.v1",
+      challengeStartedAt: localDateString(new Date()),
+      days: {
+        [String(dayNumber)]: {
+          day: dayNumber,
+          kind: "standard",
+          steps: {
+            scan: "done",
+            retro: "done",
+            goal: "done",
+            interview: "done",
+            execution: "pending",
+          },
+        },
+      },
+    }, null, 2),
+    "utf8",
+  );
+}
+
 function makeCompletedOfficeHoursTurn(index) {
   const requestId = `completed-day1-${index}`;
   const question = `완료 질문 ${index}`;
@@ -2480,6 +3044,83 @@ function makeCompletedOfficeHoursTurn(index) {
       },
     ],
     occurredAt: `2026-06-13T03:1${Math.min(index, 9)}:00.000Z`,
+  };
+}
+
+function makeOfficeHoursPromptSnapshot({
+  sessionId = "prior-office-hours-session",
+  requestId = "office-hours-request",
+  questionId = "office_hours_question",
+  question = "어떤 확인 가능한 고객 행동 증거가 있나요?",
+  createdAt = "2026-06-15T03:00:00.000Z",
+} = {}) {
+  return {
+    requestId,
+    sessionId,
+    toolName: "agentic30_request_user_input",
+    title: "Office Hours",
+    createdAt,
+    questions: [
+      {
+        questionId,
+        header: "Office Hours",
+        question,
+        options: [
+          {
+            label: "확인 가능한 증거가 있다",
+            description: "실명 고객의 행동으로 확인된 증거",
+          },
+          {
+            label: "아직 없다",
+            description: "아직 확인 가능한 고객 행동이 없다",
+          },
+        ],
+        multiSelect: false,
+        allowFreeText: true,
+        requiresFreeText: false,
+        textMode: "short",
+      },
+    ],
+    generation: {
+      mode: "office_hours_tool",
+      signalId: questionId,
+      signalLabel: "Office Hours 질문",
+    },
+  };
+}
+
+function makeOfficeHoursTurn({
+  day = 3,
+  index = 1,
+  sessionId = "prior-office-hours-session",
+  requestId = `day${day}-q${index}`,
+  question = `Day ${day} 질문 ${index}`,
+  answer = `Day ${day} 답변 ${index}`,
+} = {}) {
+  const minute = String(Math.min(Math.max(index, 0), 58)).padStart(2, "0");
+  const promptSnapshot = makeOfficeHoursPromptSnapshot({
+    sessionId,
+    requestId,
+    questionId: `day${day}_q${index}`,
+    question,
+    createdAt: `2026-06-15T03:${minute}:00.000Z`,
+  });
+  return {
+    day,
+    sessionId,
+    requestId,
+    mode: "office_hours_tool",
+    questionText: question,
+    responseText: answer,
+    promptSnapshot,
+    submissions: [
+      {
+        question,
+        selectedOptions: [],
+        freeText: answer,
+      },
+    ],
+    occurredAt: `2026-06-15T03:${String(Number(minute) + 1).padStart(2, "0")}:00.000Z`,
   };
 }
 

@@ -377,11 +377,15 @@ import {
 import {
   appendOfficeHoursTurn,
   buildOfficeHoursHistorySummary,
+  clearOfficeHoursPendingQuestion,
+  fingerprintOfficeHoursTurns,
   formatOfficeHoursHistoryForPrompt,
+  loadOfficeHoursPendingQuestion,
   loadOfficeHoursTurnLog,
   loadOnboardingMemory,
   refreshDayMemory,
   reviseOfficeHoursTurn,
+  saveOfficeHoursPendingQuestion,
   saveOnboardingMemory,
 } from "./workspace-memory.mjs";
 import { emitInlineHintTriggerForFeatureAppearance } from "./curriculum-hint-eligibility.mjs";
@@ -439,6 +443,7 @@ import {
   isAnsweredCodexStructuredInputToolOutput,
   isPendingCodexStructuredInputToolOutput,
   listUserInputRequests,
+  writeUserInputRequest,
   writeUserInputResponse,
 } from "./user-input.mjs";
 import {
@@ -1841,28 +1846,35 @@ async function handleClientMessage(socket, payload) {
             terminal: officeHoursTerminalAnswered,
           }),
         );
-        await appendOfficeHoursTurn({
-          workspaceRoot,
-          turn: {
-            day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day),
-            sessionId: session.id,
+        try {
+          await appendOfficeHoursTurn({
+            workspaceRoot,
+            turn: {
+              day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day),
+              sessionId: session.id,
+              requestId,
+              mode: answeredGeneration?.mode || "office_hours_structured_input",
+              signalId: answeredGeneration?.signalId || "",
+              signalLabel: answeredGeneration?.signalLabel || "",
+              questionText: officeHoursStructuredQuestionText,
+              responseText: userResponseText,
+              responseDescription: userResponseDescription,
+              promptSnapshot: pendingUserInput,
+              submissions: response.responses,
+              ...(officeHoursTerminalAnswered ? { terminal: true } : {}),
+            },
+          });
+          await clearOfficeHoursPendingQuestionForSession(
+            session,
             requestId,
-            mode: answeredGeneration?.mode || "office_hours_structured_input",
-            signalId: answeredGeneration?.signalId || "",
-            signalLabel: answeredGeneration?.signalLabel || "",
-            questionText: officeHoursStructuredQuestionText,
-            responseText: userResponseText,
-            responseDescription: userResponseDescription,
-            promptSnapshot: pendingUserInput,
-            submissions: response.responses,
-            ...(officeHoursTerminalAnswered ? { terminal: true } : {}),
-          },
-        }).catch((error) => {
+            "answer_submitted",
+          );
+        } catch (error) {
           telemetry.captureException(error, {
             operation: "office_hours_turn_append",
             session_id: session.id,
           });
-        });
+        }
         await refreshOfficeHoursRuntimePromptSnapshots(session).catch((error) => {
           reportError(error, {
             operation: "office_hours_prompt_snapshot_refresh",
@@ -7266,6 +7278,392 @@ function emitOfficeHoursQuestionCapCompleted(session, progress = {}, requestId =
   });
 }
 
+function isOfficeHoursPendingRestoreSource(source = "") {
+  const normalized = String(source || "").trim();
+  if (!normalized || normalized === "manual" || normalized === "slash_command") return false;
+  return normalized === "day1_interview_goal_locked"
+    || normalized === "day1_interview_goal_locked_retry"
+    || /^office_hours_day_\d+(?:_retry)?$/.test(normalized)
+    || /^office_hours_screen_day_\d+$/.test(normalized);
+}
+
+function officeHoursInterviewStepForDay(dayProgress = null, day = null) {
+  const dayNumber = normalizeOfficeHoursDay(day);
+  if (!dayNumber) return "";
+  const dayState = dayProgress?.days?.[String(dayNumber)];
+  if (dayState?.kind === "day1") return "first_interview";
+  if (dayState?.kind === "standard") return "interview";
+  return "";
+}
+
+function isOfficeHoursInterviewActiveForDay(dayProgress = null, day = null) {
+  const dayNumber = normalizeOfficeHoursDay(day);
+  if (!dayNumber) return false;
+  const step = officeHoursInterviewStepForDay(dayProgress, dayNumber);
+  if (!step) return false;
+  return dayProgress?.days?.[String(dayNumber)]?.steps?.[step] === "active";
+}
+
+function normalizeOfficeHoursQuestionIdentity(value = "") {
+  return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function officeHoursPendingQuestionAlreadyAnswered(turnLog = null, day = null, request = null) {
+  const dayNumber = normalizeOfficeHoursDay(day);
+  if (!dayNumber || !request) return false;
+  const requestId = String(request.requestId || "").trim();
+  const questionText = normalizeOfficeHoursQuestionIdentity(
+    buildOfficeHoursStructuredQuestionTranscriptText(request),
+  );
+  if (!requestId && !questionText) return false;
+  return (Array.isArray(turnLog?.turns) ? turnLog.turns : []).some((turn) => {
+    if (normalizeOfficeHoursDay(turn?.day) !== dayNumber) return false;
+    if (requestId && String(turn?.requestId || "").trim() === requestId) return true;
+    return questionText
+      && normalizeOfficeHoursQuestionIdentity(turn?.questionText) === questionText;
+  });
+}
+
+function formatOfficeHoursPendingStateFailure(reason = "", { requestId = "" } = {}) {
+  const suffix = requestId ? ` (${requestId})` : "";
+  switch (reason) {
+    case "pending_load_failed":
+      return "Office Hours 질문 상태를 읽지 못했습니다. 질문을 다시 생성하지 않았습니다.";
+    case "pending_snapshot_missing":
+      return "Office Hours pending 질문 스냅샷이 없어 이어갈 수 없습니다. 질문을 다시 생성하지 않았습니다.";
+    case "interview_not_active":
+      return `Office Hours pending 질문과 day-progress 상태가 맞지 않습니다${suffix}. 질문을 다시 생성하지 않았습니다.`;
+    case "malformed_request":
+      return `저장된 Office Hours pending 질문 형식이 올바르지 않습니다${suffix}. 질문을 다시 생성하지 않았습니다.`;
+    case "turn_fingerprint_changed":
+      return `Office Hours 답변 기록이 pending 질문 생성 당시와 달라졌습니다${suffix}. 질문을 다시 생성하지 않았습니다.`;
+    case "question_already_answered":
+      return `저장된 Office Hours pending 질문은 이미 답변된 질문입니다${suffix}. 질문을 다시 생성하지 않았습니다.`;
+    case "write_request_failed":
+      return `저장된 Office Hours pending 질문을 현재 세션에 붙이지 못했습니다${suffix}. 질문을 다시 생성하지 않았습니다.`;
+    default:
+      return "Office Hours pending 질문 상태가 유효하지 않습니다. 질문을 다시 생성하지 않았습니다.";
+  }
+}
+
+async function failOfficeHoursPendingQuestionState(session, {
+  runKey = "",
+  day = null,
+  source = "",
+  context = "",
+  selectedSources = [],
+  requestId = "",
+  reason = "",
+  error = null,
+} = {}) {
+  if (!session?.id) return;
+  const message = formatOfficeHoursPendingStateFailure(reason, { requestId });
+  const failedRuntime = buildOfficeHoursRuntime(context, source, day, selectedSources);
+  const expected = parseExpectedOfficeHoursQuestionCount(failedRuntime.context);
+  if (expected > 0) {
+    failedRuntime.expectedQuestionCount = expected;
+  }
+  session.runtime = attachOfficeHoursRuntime(session.runtime, failedRuntime);
+  if (!session.title || session.title === "New Session") {
+    session.title = "Office Hours";
+  }
+  session.status = "error";
+  session.error = message;
+  session.pendingUserInput = null;
+  touch(session);
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
+  emitOfficeHoursStatus(session, {
+    stage: "failed",
+    detail: message,
+    progressText: message,
+    requestId: requestId || null,
+  });
+  broadcast({
+    type: "error",
+    sessionId: session.id,
+    message,
+    errorKind: "office_hours_pending_state_unrecoverable",
+    recoverable: false,
+  });
+  telemetry.captureEvent("mac_sidecar_office_hours_pending_question_failed", {
+    session_id: session.id,
+    provider: session.provider,
+    request_id: requestId || "",
+    day: normalizeOfficeHoursDay(day) || 0,
+    reason,
+    source: String(source || ""),
+  });
+  if (error) {
+    telemetry.captureException(error, {
+      operation: "office_hours_pending_question_fail",
+      session_id: session.id,
+      request_id: requestId || "",
+      reason,
+    });
+  }
+  const activeRun = state.activeRuns.get(session.id);
+  if (activeRun?.runKey === runKey) {
+    state.activeRuns.delete(session.id);
+  }
+}
+
+async function persistOfficeHoursPendingQuestion(session = null, request = null, reason = "") {
+  if (!session?.runtime?.officeHours || !isOfficeHoursStructuredRequest(request)) return;
+  const day = normalizeOfficeHoursDay(session.runtime.officeHours.day);
+  if (!day) return;
+  try {
+    const preparedRequest = prepareOfficeHoursStructuredInputRequest({
+      ...request,
+      sessionId: session.id,
+    });
+    await saveOfficeHoursPendingQuestion({
+      workspaceRoot,
+      day,
+      source: session.runtime.officeHours.source || "",
+      request: preparedRequest,
+      turnLog: await loadOfficeHoursTurnLog({ workspaceRoot }),
+    });
+    telemetry.captureEvent("mac_sidecar_office_hours_pending_question_saved", {
+      session_id: session.id,
+      provider: session.provider,
+      request_id: preparedRequest.requestId,
+      day,
+      reason,
+    });
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "office_hours_pending_question_save",
+      session_id: session?.id || "",
+      request_id: request?.requestId || "",
+      reason,
+    });
+  }
+}
+
+async function clearOfficeHoursPendingQuestionForSession(session = null, requestId = "", reason = "") {
+  const day = normalizeOfficeHoursDay(session?.runtime?.officeHours?.day);
+  if (!day) return;
+  try {
+    await clearOfficeHoursPendingQuestion({
+      workspaceRoot,
+      day,
+      requestId,
+    });
+    telemetry.captureEvent("mac_sidecar_office_hours_pending_question_cleared", {
+      session_id: session?.id || "",
+      provider: session?.provider || "",
+      request_id: requestId || "",
+      day,
+      reason,
+    });
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "office_hours_pending_question_clear",
+      session_id: session?.id || "",
+      request_id: requestId || "",
+      reason,
+    });
+  }
+}
+
+async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
+  runtimeDay = null,
+  source = "",
+  context = "",
+  selectedSources = [],
+  runKey = "",
+} = {}) {
+  const day = normalizeOfficeHoursDay(runtimeDay);
+  if (!session?.id || !day || !isOfficeHoursPendingRestoreSource(source)) return false;
+  if (session.runtime?.officeHours?.active === true) return false;
+
+  let pending = null;
+  let turnLog = null;
+  let dayProgress = null;
+  try {
+    [pending, turnLog, dayProgress] = await Promise.all([
+      loadOfficeHoursPendingQuestion({ workspaceRoot, day }),
+      loadOfficeHoursTurnLog({ workspaceRoot }),
+      Promise.resolve(state.dayProgress ?? loadDayProgress({ workspaceRoot })),
+    ]);
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "office_hours_pending_question_restore_load",
+      session_id: session.id,
+      day,
+    });
+    await failOfficeHoursPendingQuestionState(session, {
+      runKey,
+      day,
+      source,
+      context,
+      selectedSources,
+      reason: "pending_load_failed",
+      error,
+    });
+    return true;
+  }
+
+  const resumeTurns = selectOfficeHoursResumeTurns({
+    turnLog,
+    day,
+    dayProgress,
+    source,
+  });
+
+  if (!pending) {
+    if (resumeTurns.length && shouldSeedOfficeHoursResumeTranscript(session)) {
+      await failOfficeHoursPendingQuestionState(session, {
+        runKey,
+        day,
+        source,
+        context,
+        selectedSources,
+        reason: "pending_snapshot_missing",
+      });
+      return true;
+    }
+    return false;
+  }
+
+  if (!isOfficeHoursInterviewActiveForDay(dayProgress, day)) {
+    await failOfficeHoursPendingQuestionState(session, {
+      runKey,
+      day,
+      source,
+      context,
+      selectedSources,
+      requestId: pending?.request?.requestId || "",
+      reason: "interview_not_active",
+    });
+    return true;
+  }
+
+  let request = null;
+  try {
+    request = prepareOfficeHoursStructuredInputRequest({
+      ...pending.request,
+      sessionId: session.id,
+    });
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "office_hours_pending_question_restore_prepare",
+      session_id: session.id,
+      day,
+    });
+    await failOfficeHoursPendingQuestionState(session, {
+      runKey,
+      day,
+      source,
+      context,
+      selectedSources,
+      requestId: pending?.request?.requestId || "",
+      reason: "malformed_request",
+      error,
+    });
+    return true;
+  }
+
+  const currentTurnState = fingerprintOfficeHoursTurns(turnLog?.turns || [], day);
+  if (
+    currentTurnState.count !== pending.answeredTurnCount
+    || currentTurnState.fingerprint !== pending.turnFingerprint
+  ) {
+    await failOfficeHoursPendingQuestionState(session, {
+      runKey,
+      day,
+      source,
+      context,
+      selectedSources,
+      requestId: request.requestId,
+      reason: "turn_fingerprint_changed",
+    });
+    return true;
+  }
+
+  if (officeHoursPendingQuestionAlreadyAnswered(turnLog, day, request)) {
+    await failOfficeHoursPendingQuestionState(session, {
+      runKey,
+      day,
+      source,
+      context,
+      selectedSources,
+      requestId: request.requestId,
+      reason: "question_already_answered",
+    });
+    return true;
+  }
+
+  const restoredRuntime = buildOfficeHoursRuntime(context, source, day, selectedSources);
+  const expected = parseExpectedOfficeHoursQuestionCount(restoredRuntime.context);
+  if (expected > 0) {
+    restoredRuntime.expectedQuestionCount = expected;
+  }
+  restoredRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
+    resumeTurns,
+    session.id,
+  );
+  restoredRuntime.promptSnapshots = buildOfficeHoursRuntimePromptSnapshots(
+    session,
+    resumeTurns,
+    day,
+  );
+
+  let requestForSession = null;
+  try {
+    requestForSession = await writeUserInputRequest(appSupportPath, request);
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "office_hours_pending_question_restore_write_request",
+      session_id: session.id,
+      request_id: request.requestId,
+      day,
+    });
+    await failOfficeHoursPendingQuestionState(session, {
+      runKey,
+      day,
+      source,
+      context,
+      selectedSources,
+      requestId: request.requestId,
+      reason: "write_request_failed",
+      error,
+    });
+    return true;
+  }
+  const seeded = seedOfficeHoursTranscriptFromTurns(session, resumeTurns);
+  session.runtime = attachOfficeHoursRuntime(session.runtime, restoredRuntime);
+  if (!session.title || session.title === "New Session") {
+    session.title = "Office Hours";
+  }
+  session.status = "awaiting_input";
+  session.error = null;
+  session.pendingUserInput = requestForSession;
+  touch(session);
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
+  emitOfficeHoursStatus(session, {
+    stage: "question_ready",
+    requestId: requestForSession.requestId,
+    copy: selectOfficeHoursStatusCopy({ firstQuestionAnswered: resumeTurns.length > 0 }),
+  });
+  telemetry.captureEvent("mac_sidecar_office_hours_pending_question_restored", {
+    session_id: session.id,
+    provider: session.provider,
+    request_id: requestForSession.requestId,
+    day,
+    resumed_turns: restoredRuntime.resumedTurns,
+    day_turns: resumeTurns.length,
+    seeded,
+  });
+  const activeRun = state.activeRuns.get(session.id);
+  if (activeRun?.runKey === runKey) {
+    state.activeRuns.delete(session.id);
+  }
+  return true;
+}
+
 async function abortActiveOfficeHoursRunAtQuestionCap(session) {
   const activeRun = session?.id ? state.activeRuns.get(session.id) : null;
   if (!activeRun) return;
@@ -7488,6 +7886,7 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
     mode: payload.generation?.mode || "",
     source,
   });
+  await persistOfficeHoursPendingQuestion(session, request, "inline_structured_card");
   return request;
 }
 
@@ -7553,11 +7952,6 @@ async function runOfficeHours(session, {
 } = {}) {
   if (state.activeRuns.has(session.id)) {
     throw new Error("This session is already running.");
-  }
-
-  const authState = getProviderAuthState(session.provider);
-  if (!authState.available) {
-    throw new Error(authState.message);
   }
 
   const abortController = new AbortController();
@@ -7665,6 +8059,15 @@ async function runOfficeHours(session, {
     if (snapshotRun?.runKey === runKey) {
       state.activeRuns.delete(session.id);
     }
+    return;
+  }
+  if (await restoreOfficeHoursPendingQuestionIfAvailable(session, {
+    runtimeDay,
+    source,
+    context,
+    selectedSources: normalizedSelectedSources,
+    runKey,
+  })) {
     return;
   }
   // Completed current-day (or otherwise day-scoped) interviews are snapshots
@@ -7810,6 +8213,14 @@ async function runOfficeHours(session, {
     }
     throw error;
   }
+  const authState = getProviderAuthState(session.provider);
+  if (!authState.available) {
+    const activeRun = state.activeRuns.get(session.id);
+    if (activeRun?.runKey === runKey) {
+      state.activeRuns.delete(session.id);
+    }
+    throw new Error(authState.message);
+  }
   await ensureDay2OfficeHoursInterviewProgress({ day: runtimeDay, context });
   const officeHoursRuntime = buildOfficeHoursRuntime(context, source, runtimeDay, normalizedSelectedSources);
   const visiblePrompt = String(originalPrompt || "Office Hours").trim() || "Office Hours";
@@ -7835,13 +8246,10 @@ async function runOfficeHours(session, {
       };
     }
 
-    // Interview resume (Day 1 first_interview + Day 2+ standard interview): a
-    // relaunch kills the in-flight provider conversation and boot wipes
-    // sessions.json, but the answered turns survive in
-    // .agentic30/memory/office-hours-turns.json and day-progress.json still
-    // holds the day's interview step active. Rebuild from that pair instead of
-    // starting over at question 1. Fail-open: any error means a normal fresh
-    // start.
+    // Same-process resume support (answer revision / retry). Relaunch
+    // hydration from answered turns without a pending question snapshot is
+    // handled before the provider path and fails explicitly; do not use this
+    // block as a startup fallback.
     let officeHoursResumeTurns = [];
     try {
       officeHoursResumeTurns = selectOfficeHoursResumeTurns({
@@ -7850,7 +8258,19 @@ async function runOfficeHours(session, {
         dayProgress: state.dayProgress ?? (await loadDayProgress({ workspaceRoot })),
         source,
       });
-    } catch {
+    } catch (error) {
+      if (session.runtime?.officeHours?.active !== true && isOfficeHoursPendingRestoreSource(source)) {
+        await failOfficeHoursPendingQuestionState(session, {
+          runKey,
+          day: runtimeDay,
+          source,
+          context,
+          selectedSources: normalizedSelectedSources,
+          reason: "pending_load_failed",
+          error,
+        });
+        return;
+      }
       officeHoursResumeTurns = [];
     }
     const officeHoursExpectedQuestionCount = parseExpectedOfficeHoursQuestionCount(officeHoursRuntime.context);
@@ -7860,6 +8280,21 @@ async function runOfficeHours(session, {
       // the "Expected question count" line surviving the head-keeping 16k clamp
       // after the cycle/resume preambles are prepended.
       officeHoursRuntime.expectedQuestionCount = officeHoursExpectedQuestionCount;
+    }
+    if (
+      officeHoursResumeTurns.length
+      && session.runtime?.officeHours?.active !== true
+      && shouldSeedOfficeHoursResumeTranscript(session)
+    ) {
+      await failOfficeHoursPendingQuestionState(session, {
+        runKey,
+        day: runtimeDay,
+        source,
+        context,
+        selectedSources: normalizedSelectedSources,
+        reason: "pending_snapshot_missing",
+      });
+      return;
     }
     // All questions already answered — the founder quit between the last answer
     // and the commitment close. The interview's only remaining work is the
@@ -15767,6 +16202,11 @@ async function suppressOfficeHoursRequestAfterQuestionCap(session, request, acti
   await deleteUserInputArtifacts(appSupportPath, request.sessionId || session.id, request.requestId);
   state.resolvedUserInputIds.add(request.requestId);
   activeRequestIds?.delete?.(request.requestId);
+  await clearOfficeHoursPendingQuestionForSession(
+    session,
+    request.requestId,
+    "question_cap_reached",
+  );
   session.pendingUserInput = null;
   session.status = "idle";
   session.error = null;
@@ -15821,6 +16261,11 @@ async function syncPendingUserInputRequests() {
         if (session.pendingUserInput?.requestId === request.requestId) {
           session.pendingUserInput = null;
         }
+        await clearOfficeHoursPendingQuestionForSession(
+          session,
+          request.requestId,
+          "malformed_pending_request",
+        );
         session.status = "error";
         session.error = message;
         touch(session);
@@ -15844,6 +16289,11 @@ async function syncPendingUserInputRequests() {
     touch(session);
     changedSessions.add(session.id);
     if (isOfficeHoursStructuredRequest(session.pendingUserInput)) {
+      await persistOfficeHoursPendingQuestion(
+        session,
+        session.pendingUserInput,
+        "sync_pending_user_input_requests",
+      );
       const requestCreatedAtMs = Date.parse(request.createdAt || "");
       const requestReadyLatencyMs = Number.isFinite(requestCreatedAtMs)
         ? Math.max(0, Date.now() - requestCreatedAtMs)

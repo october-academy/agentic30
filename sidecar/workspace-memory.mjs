@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { atomicWriteJson, withFileLock } from "./atomic-store.mjs";
@@ -12,6 +13,8 @@ export const ONBOARDING_MEMORY_SCHEMA_VERSION = 3;
 export const ONBOARDING_MEMORY_SCHEMA = "agentic30.memory.onboarding.v3";
 export const OFFICE_HOURS_TURN_LOG_SCHEMA_VERSION = 2;
 export const OFFICE_HOURS_TURN_LOG_SCHEMA = "agentic30.memory.office_hours_turns.v2";
+export const OFFICE_HOURS_PENDING_SCHEMA_VERSION = 1;
+export const OFFICE_HOURS_PENDING_SCHEMA = "agentic30.memory.office_hours_pending.v1";
 export const SOURCE_READ_LOG_SCHEMA_VERSION = 1;
 export const SOURCE_READ_LOG_SCHEMA = "agentic30.memory.source_read_log.v1";
 export const DAY_MEMORY_SCHEMA_VERSION = 1;
@@ -32,6 +35,10 @@ export function resolveOnboardingMemoryPath(workspaceRoot) {
 
 export function resolveOfficeHoursTurnLogPath(workspaceRoot) {
   return path.join(resolveAgentic30MemoryDir(workspaceRoot), "office-hours-turns.json");
+}
+
+export function resolveOfficeHoursPendingPath(workspaceRoot) {
+  return path.join(resolveAgentic30MemoryDir(workspaceRoot), "office-hours-pending.json");
 }
 
 export function resolveSourceReadLogPath(workspaceRoot) {
@@ -225,6 +232,131 @@ export async function loadOfficeHoursTurnLog({
   } catch {
     return makeOfficeHoursTurnLog({ now });
   }
+}
+
+export async function saveOfficeHoursPendingQuestion({
+  workspaceRoot,
+  day,
+  source = "",
+  request,
+  turnLog = null,
+  now = new Date(),
+} = {}) {
+  assertWorkspace(workspaceRoot, "office_hours_pending_save");
+  const dayNumber = clampInt(day, 1, 400, null);
+  if (!dayNumber) throw new Error("office_hours_pending_save: day must be 1-400.");
+  const prompt = normalizeStructuredPromptSnapshot(request, { now });
+  if (!prompt) {
+    throw new Error("office_hours_pending_save requires a structured prompt snapshot.");
+  }
+  const currentTurnLog = turnLog || await loadOfficeHoursTurnLog({ workspaceRoot, now });
+  const turnState = fingerprintOfficeHoursTurns(currentTurnLog?.turns || [], dayNumber);
+  const entry = normalizeOfficeHoursPendingEntry({
+    day: dayNumber,
+    source,
+    request: prompt,
+    answeredTurnCount: turnState.count,
+    turnFingerprint: turnState.fingerprint,
+    createdAt: prompt.createdAt,
+    updatedAt: now.toISOString(),
+  }, { now });
+  if (!entry) {
+    throw new Error("office_hours_pending_save could not normalize pending entry.");
+  }
+  const filePath = resolveOfficeHoursPendingPath(workspaceRoot);
+  return withFileLock(filePath, async () => {
+    const previous = await loadOfficeHoursPendingQuestions({ workspaceRoot, now });
+    const pendingByDay = {
+      ...(previous.pendingByDay || {}),
+      [String(dayNumber)]: entry,
+    };
+    const payload = {
+      schemaVersion: OFFICE_HOURS_PENDING_SCHEMA_VERSION,
+      schema: OFFICE_HOURS_PENDING_SCHEMA,
+      updatedAt: now.toISOString(),
+      pendingByDay,
+    };
+    await atomicWriteJson(filePath, payload);
+    return payload;
+  });
+}
+
+export async function clearOfficeHoursPendingQuestion({
+  workspaceRoot,
+  day,
+  requestId = "",
+  now = new Date(),
+} = {}) {
+  assertWorkspace(workspaceRoot, "office_hours_pending_clear");
+  const dayNumber = clampInt(day, 1, 400, null);
+  if (!dayNumber) return await loadOfficeHoursPendingQuestions({ workspaceRoot, now });
+  const filePath = resolveOfficeHoursPendingPath(workspaceRoot);
+  return withFileLock(filePath, async () => {
+    const previous = await loadOfficeHoursPendingQuestions({ workspaceRoot, now });
+    const pendingByDay = { ...(previous.pendingByDay || {}) };
+    const existing = pendingByDay[String(dayNumber)];
+    const targetRequestId = cleanString(requestId, 180);
+    if (existing && (!targetRequestId || existing.request?.requestId === targetRequestId)) {
+      delete pendingByDay[String(dayNumber)];
+    }
+    const payload = {
+      schemaVersion: OFFICE_HOURS_PENDING_SCHEMA_VERSION,
+      schema: OFFICE_HOURS_PENDING_SCHEMA,
+      updatedAt: now.toISOString(),
+      pendingByDay,
+    };
+    await atomicWriteJson(filePath, payload);
+    return payload;
+  });
+}
+
+export async function loadOfficeHoursPendingQuestion({
+  workspaceRoot,
+  day,
+  fsImpl = fs,
+  now = new Date(),
+} = {}) {
+  const dayNumber = clampInt(day, 1, 400, null);
+  if (!dayNumber) return null;
+  const payload = await loadOfficeHoursPendingQuestions({ workspaceRoot, fsImpl, now });
+  return payload.pendingByDay[String(dayNumber)] || null;
+}
+
+export async function loadOfficeHoursPendingQuestions({
+  workspaceRoot,
+  fsImpl = fs,
+  now = new Date(),
+} = {}) {
+  if (!workspaceRoot) {
+    return makeOfficeHoursPendingLog({ now });
+  }
+  try {
+    const raw = JSON.parse(await fsImpl.readFile(resolveOfficeHoursPendingPath(workspaceRoot), "utf8"));
+    if (raw?.schema && raw.schema !== OFFICE_HOURS_PENDING_SCHEMA) {
+      return makeOfficeHoursPendingLog({ now });
+    }
+    return normalizeOfficeHoursPendingLog(raw, { now });
+  } catch {
+    return makeOfficeHoursPendingLog({ now });
+  }
+}
+
+export function fingerprintOfficeHoursTurns(turns = [], day = null) {
+  const dayNumber = clampInt(day, 1, 400, null);
+  const items = (Array.isArray(turns) ? turns : [])
+    .filter((turn) => !dayNumber || clampInt(turn?.day, 1, 400, null) === dayNumber)
+    .map((turn) => ({
+      requestId: cleanString(turn?.requestId ?? turn?.request_id, 180),
+      questionText: cleanString(turn?.questionText ?? turn?.question_text ?? turn?.question, MAX_LONG_TEXT),
+      responseText: cleanString(turn?.responseText ?? turn?.response_text ?? turn?.answer, MAX_LONG_TEXT),
+      terminal: turn?.terminal === true,
+    }))
+    .filter((turn) => turn.questionText && turn.responseText);
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify(items))
+    .digest("hex")
+    .slice(0, 32);
+  return { count: items.length, fingerprint };
 }
 
 export async function appendSourceReadLog({
@@ -464,7 +596,7 @@ export function formatOfficeHoursHistoryForPrompt(history) {
   if (!history || typeof history !== "object") return "";
   const lines = [
     "[Agentic30 Memory — .agentic30/memory]",
-    "Memory map: onboarding=.agentic30/memory/onboarding.json, rollup=.agentic30/memory/day-rollup.json, day detail=.agentic30/memory/days/day-N.json, live Q&A=.agentic30/memory/office-hours-turns.json, commitments=.agentic30/memory/office-hours-ledger.json.",
+    "Memory map: onboarding=.agentic30/memory/onboarding.json, rollup=.agentic30/memory/day-rollup.json, day detail=.agentic30/memory/days/day-N.json, live Q&A=.agentic30/memory/office-hours-turns.json, pending card=.agentic30/memory/office-hours-pending.json, commitments=.agentic30/memory/office-hours-ledger.json.",
     "탐색 순서: 1) day-rollup으로 Day 1..N 누적 요약을 훑는다. 2) open/missed/evidence=0인 day를 우선한다. 3) 필요한 day-N 상세의 질문/답변/약속만 참조한다. 4) 최근 상세를 제외하고는 요약을 우선해 prompt budget을 아낀다.",
   ];
   const onboarding = history.onboarding || {};
@@ -804,12 +936,64 @@ function makeOfficeHoursTurnLog({ now = new Date() } = {}) {
   };
 }
 
+function makeOfficeHoursPendingLog({ now = new Date() } = {}) {
+  return {
+    schemaVersion: OFFICE_HOURS_PENDING_SCHEMA_VERSION,
+    schema: OFFICE_HOURS_PENDING_SCHEMA,
+    updatedAt: now.toISOString(),
+    pendingByDay: {},
+  };
+}
+
 function makeSourceReadLog({ now = new Date() } = {}) {
   return {
     schemaVersion: SOURCE_READ_LOG_SCHEMA_VERSION,
     schema: SOURCE_READ_LOG_SCHEMA,
     updatedAt: now.toISOString(),
     reads: [],
+  };
+}
+
+function normalizeOfficeHoursPendingLog(value = {}, { now = new Date() } = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const rawEntries = source.pendingByDay ?? source.pending_by_day ?? source.days ?? {};
+  const pendingByDay = {};
+  if (rawEntries && typeof rawEntries === "object" && !Array.isArray(rawEntries)) {
+    for (const [dayKey, entry] of Object.entries(rawEntries)) {
+      const normalized = normalizeOfficeHoursPendingEntry({
+        ...(entry && typeof entry === "object" && !Array.isArray(entry) ? entry : {}),
+        day: entry?.day ?? dayKey,
+      }, { now });
+      if (normalized) {
+        pendingByDay[String(normalized.day)] = normalized;
+      }
+    }
+  }
+  return {
+    schemaVersion: OFFICE_HOURS_PENDING_SCHEMA_VERSION,
+    schema: OFFICE_HOURS_PENDING_SCHEMA,
+    updatedAt: normalizeIsoDate(source.updatedAt ?? source.updated_at, now),
+    pendingByDay,
+  };
+}
+
+function normalizeOfficeHoursPendingEntry(value = {}, { now = new Date() } = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const day = clampInt(source.day ?? source.officeHoursDay ?? source.office_hours_day, 1, 400, null);
+  if (!day) return null;
+  const request = normalizeStructuredPromptSnapshot(
+    source.request ?? source.pendingUserInput ?? source.pending_user_input ?? source.prompt,
+    { now },
+  );
+  if (!request) return null;
+  return {
+    day,
+    source: cleanString(source.source, 160),
+    request,
+    answeredTurnCount: clampInt(source.answeredTurnCount ?? source.answered_turn_count, 0, MAX_TURNS, 0),
+    turnFingerprint: cleanString(source.turnFingerprint ?? source.turn_fingerprint, 160),
+    createdAt: normalizeIsoDate(source.createdAt ?? source.created_at ?? request.createdAt, now),
+    updatedAt: normalizeIsoDate(source.updatedAt ?? source.updated_at, now),
   };
 }
 
