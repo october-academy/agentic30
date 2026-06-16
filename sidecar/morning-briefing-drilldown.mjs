@@ -16,6 +16,7 @@ import {
 // back to the inline card highlights instead of inventing numbers.
 
 export const MORNING_BRIEFING_DRILLDOWN_IDS = Object.freeze(["cloudflare", "github", "posthog"]);
+export const CARD_SPARK_BUCKET_COUNT = 8;
 
 const KPI_LIMIT = 4;
 const BAR_LIMIT = 12;
@@ -142,6 +143,31 @@ function normalizePoints(values = []) {
     })
     .filter(Boolean)
     .slice(-POINT_LIMIT);
+}
+
+function isoValue(record = {}) {
+  for (const key of ["at", "datetimeIso", "timestamp", "date"]) {
+    const ts = Date.parse(String(record?.[key] || ""));
+    if (Number.isFinite(ts)) return new Date(ts).toISOString();
+  }
+  return null;
+}
+
+function normalizeCardSparkline(values = []) {
+  return (Array.isArray(values) ? values : [])
+    .map((point) => {
+      const value = finiteNumber(point?.value);
+      if (value === null) return null;
+      const at = isoValue(point);
+      return {
+        label: cleanString(point?.label, 30),
+        value: Math.max(0, value),
+        ...(at ? { at } : {}),
+        tip: cleanString(point?.tip, 100) || null,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, CARD_SPARK_BUCKET_COUNT);
 }
 
 function normalizeChart(chart) {
@@ -633,6 +659,7 @@ export function normalizeMorningBriefingDrilldown(id, raw) {
   if (!raw || typeof raw !== "object") return null;
   const kpis = normalizeKpis(raw.kpis);
   const chart = normalizeChart(raw.chart);
+  const cardSparkline = normalizeCardSparkline(raw.cardSparkline);
   const table = normalizeTable(raw.table);
   const listRows = normalizeListRows(raw.listRows);
   const scan = normalizeScanCells(raw.scan);
@@ -668,6 +695,7 @@ export function normalizeMorningBriefingDrilldown(id, raw) {
       .slice(0, 4),
     kpis,
     kpisMeta: cleanString(raw.kpisMeta, 60) || null,
+    cardSparkline,
     chart,
     table,
     listRows,
@@ -727,6 +755,11 @@ const CloudflareHourlySchema = z.object({
   requests: z.number().int().nonnegative().default(0),
 }).strict();
 
+const CardSparkWindowSchema = z.object({
+  startIso: z.string().datetime(),
+  untilIso: z.string().datetime(),
+}).strict();
+
 const CloudflarePathSchema = z.object({
   path: z.string().min(1).max(160),
   value: z.number().int().nonnegative(),
@@ -737,6 +770,8 @@ const CloudflareDrilldownMeasurementsSchema = z.object({
   totals: CloudflareMetricTotalsSchema,
   previousTotals: CloudflareMetricTotalsSchema,
   hourly: z.array(CloudflareHourlySchema).max(96).default([]),
+  cardHourly: z.array(CloudflareHourlySchema).max(96).default([]),
+  cardWindow: CardSparkWindowSchema.optional(),
   zoneName: z.string().max(120).optional(),
   pathTable: z.array(CloudflarePathSchema).max(TABLE_LIMIT).default([]),
   pathTableUsesEyeballFilter: z.boolean().default(false),
@@ -754,7 +789,71 @@ function parseCloudflareMeasurements(raw = {}) {
   return {
     ...parsed.data,
     hourly: [...parsed.data.hourly].sort((a, b) => Date.parse(a.datetimeIso) - Date.parse(b.datetimeIso)),
+    cardHourly: [...parsed.data.cardHourly].sort((a, b) => Date.parse(a.datetimeIso) - Date.parse(b.datetimeIso)),
   };
+}
+
+function windowBounds(window = {}) {
+  const startMs = finiteNumber(window?.startMs) ?? Date.parse(String(window?.startIso || ""));
+  const untilMs = finiteNumber(window?.untilMs) ?? Date.parse(String(window?.untilIso || ""));
+  if (!Number.isFinite(startMs) || !Number.isFinite(untilMs) || untilMs <= startMs) return null;
+  return { startMs, untilMs };
+}
+
+export function buildCardSparklineBuckets({
+  window = {},
+  count = CARD_SPARK_BUCKET_COUNT,
+  timeZone = undefined,
+} = {}) {
+  const bounds = windowBounds(window);
+  const safeCount = Math.max(2, Math.round(finiteNumber(count) ?? CARD_SPARK_BUCKET_COUNT));
+  if (!bounds) return [];
+  const bucketMs = Math.max(1, Math.ceil((bounds.untilMs - bounds.startMs) / safeCount));
+  return Array.from({ length: safeCount }, (_, index) => {
+    const start = bounds.startMs + index * bucketMs;
+    const end = index === safeCount - 1 ? bounds.untilMs : Math.min(bounds.untilMs, start + bucketMs);
+    return {
+      start,
+      end,
+      label: localHourLabel(new Date(start).toISOString(), { timeZone }) || hourLabel(start),
+    };
+  });
+}
+
+function bucketIndexForTimestamp(ts, buckets = []) {
+  if (!Number.isFinite(ts) || !buckets.length) return -1;
+  const first = buckets[0];
+  const last = buckets[buckets.length - 1];
+  if (ts < first.start || ts >= last.end) return -1;
+  const index = buckets.findIndex((bucket) => ts >= bucket.start && ts < bucket.end);
+  return index >= 0 ? index : -1;
+}
+
+function buildCloudflareCardSparkline({ hourly = [], window = {}, timeZone = undefined } = {}) {
+  if (!Array.isArray(hourly) || !hourly.length) return [];
+  const buckets = buildCardSparklineBuckets({ window, timeZone });
+  if (!buckets.length) return [];
+  const values = buckets.map(() => ({
+    uniqueVisitors: 0,
+    pageviews: 0,
+    requests: 0,
+    observed: false,
+  }));
+  for (const row of hourly) {
+    const ts = Date.parse(String(row?.datetimeIso || ""));
+    const index = bucketIndexForTimestamp(ts, buckets);
+    if (index < 0) continue;
+    values[index].observed = true;
+    values[index].uniqueVisitors = Math.max(values[index].uniqueVisitors, finiteNumber(row?.uniqueVisitors) ?? 0);
+    values[index].pageviews += finiteNumber(row?.pageviews) ?? 0;
+    values[index].requests += finiteNumber(row?.requests) ?? 0;
+  }
+  if (!values.some((bucket) => bucket.observed)) return [];
+  return buckets.map((bucket, index) => ({
+    label: bucket.label,
+    value: values[index].uniqueVisitors,
+    tip: `${bucket.label}시 구간 · 순 방문 ${values[index].uniqueVisitors}명 · PV ${values[index].pageviews} · 요청 ${values[index].requests}`,
+  }));
 }
 
 function compactCloudflareRange(totals) {
@@ -887,6 +986,11 @@ export function normalizeCloudflareDrilldownMeasurements(raw = {}, { timeZone = 
   const requestsDelta = deltaLabelFor(totals.requests, previous.requests);
   const threatDelta = deltaLabelFor(totals.threats, previous.threats);
   const bars = buildCloudflareHourlyBars(data.hourly, { timeZone });
+  const cardSparkline = buildCloudflareCardSparkline({
+    hourly: data.cardHourly.length ? data.cardHourly : data.hourly,
+    window: data.cardWindow || { startIso: totals.startIso, untilIso: totals.untilIso },
+    timeZone,
+  });
   const peak = bars.reduce((best, bar) => (bar.value > (best?.value ?? -1) ? bar : best), null);
   const { table, downloads, filteredAssets } = cloudflarePathRows(data);
   return normalizeMorningBriefingDrilldown("cloudflare", {
@@ -929,6 +1033,7 @@ export function normalizeCloudflareDrilldownMeasurements(raw = {}, { timeZone = 
       },
     ],
     kpisMeta: "기간 전체 고유 방문자 기준",
+    cardSparkline,
     chart: bars.length
       ? {
           kind: "bars",
@@ -1147,8 +1252,8 @@ function buildCommitBuckets({ commits = [], deploys = [], window }) {
   const startMs = finiteNumber(window?.startMs);
   const untilMs = finiteNumber(window?.untilMs);
   if (startMs === null || untilMs === null || untilMs <= startMs) return [];
-  const bucketMs = Math.max(1, Math.ceil((untilMs - startMs) / 8));
-  const buckets = Array.from({ length: 8 }, (_, index) => ({
+  const bucketMs = Math.max(1, Math.ceil((untilMs - startMs) / CARD_SPARK_BUCKET_COUNT));
+  const buckets = Array.from({ length: CARD_SPARK_BUCKET_COUNT }, (_, index) => ({
     start: startMs + index * bucketMs,
     count: 0,
     deploy: null,
@@ -1156,13 +1261,13 @@ function buildCommitBuckets({ commits = [], deploys = [], window }) {
   for (const commit of commits) {
     const ts = finiteNumber(commit?.ts) ?? Date.parse(String(commit?.at || ""));
     if (!Number.isFinite(ts) || ts < startMs || ts >= untilMs) continue;
-    const index = Math.min(7, Math.floor((ts - startMs) / bucketMs));
+    const index = Math.min(CARD_SPARK_BUCKET_COUNT - 1, Math.floor((ts - startMs) / bucketMs));
     buckets[index].count += 1;
   }
   for (const deploy of deploys) {
     const ts = Date.parse(String(deploy?.at || ""));
     if (!Number.isFinite(ts) || ts < startMs || ts >= untilMs) continue;
-    const index = Math.min(7, Math.floor((ts - startMs) / bucketMs));
+    const index = Math.min(CARD_SPARK_BUCKET_COUNT - 1, Math.floor((ts - startMs) / bucketMs));
     if (!buckets[index].deploy) buckets[index].deploy = shortTime(deploy.at);
   }
   return buckets.map((bucket) => ({
@@ -1633,6 +1738,11 @@ export async function collectGithubDrilldown({
   if (repoFacts && repoFacts.stargazerCount !== null) {
     metaRows.push({ key: "Stars", value: String(repoFacts.stargazerCount), tone: "amber" });
   }
+  const commitBuckets = buildCommitBuckets({
+    commits: commitEvents.map((event) => ({ ts: Date.parse(event.at) })),
+    deploys,
+    window,
+  });
 
   return normalizeMorningBriefingDrilldown("github", {
     title: "GitHub · 빌드·배포 · 레포 신호",
@@ -1648,13 +1758,14 @@ export async function collectGithubDrilldown({
     ].filter(Boolean),
     kpis,
     kpisMeta: repoFacts?.branch ? `${repoFacts.branch} 브랜치 기준` : null,
+    cardSparkline: commitBuckets,
     chart: {
       kind: "bars",
       title: `커밋, ${windowRangeLabel(window)}`,
       subtitle: deploys.length
         ? `배포 ${shortTime(deploys[0].at)} 포함 · 3시간 버킷`
         : "3시간 버킷",
-      bars: buildCommitBuckets({ commits: commitEvents.map((event) => ({ ts: Date.parse(event.at) })), deploys, window }),
+      bars: commitBuckets,
       legend: [
         { label: "커밋", tone: "accent" },
         ...(deploys.length ? [{ label: "배포 시점", tone: "violet" }] : []),

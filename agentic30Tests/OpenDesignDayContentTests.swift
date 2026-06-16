@@ -1278,6 +1278,8 @@ struct OpenDesignDayContentTests {
         #expect(strategyReportShowsColdLoading(snapshot: emptyRefreshing, isPreparing: true, dynamicActivated: true))
         #expect(!strategyReportShowsColdLoading(snapshot: emptyRefreshing, isPreparing: false, dynamicActivated: false))
         #expect(!strategyReportShowsColdLoading(snapshot: generatedRefreshing, isPreparing: false, dynamicActivated: true))
+        #expect(strategyReportShowsLoadingCards(snapshot: generatedRefreshing, isPreparing: false))
+        #expect(strategyReportShowsLoadingCards(snapshot: generatedRefreshing, isPreparing: true))
 
         let rows = strategyReportLoadingRows(status: refreshing, isPreparing: false)
         #expect(rows.map(\.id) == [
@@ -1291,6 +1293,8 @@ struct OpenDesignDayContentTests {
         #expect(rows[0].state == "ready")
         #expect(rows[1].state == "ready")
         #expect(rows[2].state == "collecting")
+        #expect(rows[0].iconID == "exa")
+        #expect(rows[2].iconID == "exa")
         #expect(rows[2].detail == "Codex Exa MCP로 공개 근거를 검색하는 중")
         #expect(rows[3].state == "waiting")
 
@@ -1607,6 +1611,7 @@ struct OpenDesignDayContentTests {
             "saving_results",
         ])
         #expect(preparingRows.first?.state == "collecting")
+        #expect(preparingRows.first?.iconID == "exa")
         #expect(preparingRows.first?.detail == "리서치 준비 중")
 
         let refreshing = newsMarketRadarPresentationState(
@@ -1633,6 +1638,8 @@ struct OpenDesignDayContentTests {
         let stagedRows = newsMarketRadarLoadingRows(status: stagedStatus)
         #expect(stagedRows[0].state == "ready")
         #expect(stagedRows[3].state == "collecting")
+        #expect(stagedRows[0].iconID == "exa")
+        #expect(stagedRows[3].iconID == "exa")
         #expect(stagedRows[3].detail == "Codex 웹 검색 도구로 공개 근거를 검색하는 중")
         #expect(stagedRows[4].state == "waiting")
 

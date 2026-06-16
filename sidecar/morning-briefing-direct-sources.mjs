@@ -471,17 +471,23 @@ export async function collectCloudflareDirectDrilldown({
   // can reject wider path queries. Keep the traffic drilldown on the trailing
   // 24h window even when the broader morning briefing window starts yesterday.
   const startMs = Math.floor(Math.max(requestedStartMs, untilMs - 86_400_000) / HOUR_MS) * HOUR_MS;
+  const cardStartMs = Math.floor(requestedStartMs / HOUR_MS) * HOUR_MS;
   const spanMs = untilMs - startMs;
   const toIso = (ms) => new Date(ms).toISOString();
 
   const analyticsQuery = `
-    query($zone: String!, $start: Time!, $end: Time!, $prevStart: Time!) {
+    query($zone: String!, $start: Time!, $end: Time!, $prevStart: Time!, $cardStart: Time!) {
       viewer { zones(filter: { zoneTag: $zone }) {
         totals: httpRequests1hGroups(limit: 1, filter: { datetime_geq: $start, datetime_lt: $end }) {
           sum { requests pageViews threats }
           uniq { uniques }
         }
         hourly: httpRequests1hGroups(limit: 96, filter: { datetime_geq: $start, datetime_lt: $end }, orderBy: [datetime_ASC]) {
+          dimensions { datetime }
+          sum { requests pageViews threats }
+          uniq { uniques }
+        }
+        cardHourly: httpRequests1hGroups(limit: 96, filter: { datetime_geq: $cardStart, datetime_lt: $end }, orderBy: [datetime_ASC]) {
           dimensions { datetime }
           sum { requests pageViews threats }
           uniq { uniques }
@@ -496,13 +502,20 @@ export async function collectCloudflareDirectDrilldown({
     fetchImpl,
     token,
     query: analyticsQuery,
-    variables: { zone: zone.id, start: toIso(startMs), end: toIso(untilMs), prevStart: toIso(startMs - spanMs) },
+    variables: {
+      zone: zone.id,
+      start: toIso(startMs),
+      end: toIso(untilMs),
+      prevStart: toIso(startMs - spanMs),
+      cardStart: toIso(cardStartMs),
+    },
   });
 
   const zoneData = analyticsData?.viewer?.zones?.[0] || {};
   const totalGroup = zoneData.totals?.[0] || null;
   const previousGroup = zoneData.previousTotals?.[0] || null;
   const hourlyGroups = zoneData.hourly || [];
+  const cardHourlyGroups = zoneData.cardHourly || [];
   if (!totalGroup) return null;
 
   const totalsFromGroup = (group, start, until) => ({
@@ -513,6 +526,16 @@ export async function collectCloudflareDirectDrilldown({
     requests: Math.max(0, Math.round(finiteNumber(group?.sum?.requests) ?? 0)),
     threats: Math.max(0, Math.round(finiteNumber(group?.sum?.threats) ?? 0)),
   });
+  const hourlyFromGroup = (group) => {
+    const ts = Date.parse(group?.dimensions?.datetime || "");
+    if (!Number.isFinite(ts)) return null;
+    return {
+      datetimeIso: new Date(ts).toISOString(),
+      uniqueVisitors: Math.max(0, Math.round(finiteNumber(group?.uniq?.uniques) ?? 0)),
+      pageviews: Math.max(0, Math.round(finiteNumber(group?.sum?.pageViews) ?? 0)),
+      requests: Math.max(0, Math.round(finiteNumber(group?.sum?.requests) ?? 0)),
+    };
+  };
 
   // Top paths come from the sampled adaptive dataset; not all plans expose it,
   // and a missing table section simply doesn't render — no invented rows.
@@ -555,16 +578,9 @@ export async function collectCloudflareDirectDrilldown({
     measurements: {
       totals: totalsFromGroup(totalGroup, startMs, untilMs),
       previousTotals: totalsFromGroup(previousGroup, startMs - spanMs, startMs),
-      hourly: hourlyGroups.map((group) => {
-        const ts = Date.parse(group?.dimensions?.datetime || "");
-        if (!Number.isFinite(ts)) return null;
-        return {
-          datetimeIso: new Date(ts).toISOString(),
-          uniqueVisitors: Math.max(0, Math.round(finiteNumber(group?.uniq?.uniques) ?? 0)),
-          pageviews: Math.max(0, Math.round(finiteNumber(group?.sum?.pageViews) ?? 0)),
-          requests: Math.max(0, Math.round(finiteNumber(group?.sum?.requests) ?? 0)),
-        };
-      }).filter(Boolean),
+      hourly: hourlyGroups.map(hourlyFromGroup).filter(Boolean),
+      cardHourly: (cardHourlyGroups.length ? cardHourlyGroups : hourlyGroups).map(hourlyFromGroup).filter(Boolean),
+      cardWindow: { startIso: toIso(cardStartMs), untilIso: toIso(untilMs) },
       zoneName: String(zone.name || ""),
       pathTable,
       pathTableUsesEyeballFilter,
@@ -575,7 +591,7 @@ export async function collectCloudflareDirectDrilldown({
 // ── Merge: direct numbers win, digest fills narrative ────────────────────────
 
 const DRILLDOWN_SECTION_KEYS = Object.freeze([
-  "syncPills", "kpis", "kpisMeta", "chart", "table", "listRows", "listMeta",
+  "syncPills", "kpis", "kpisMeta", "cardSparkline", "chart", "table", "listRows", "listMeta",
   "scan", "funnel", "signals", "webSignals", "webMeta", "drafts", "draftsEmpty",
   "maintenance",
 ]);

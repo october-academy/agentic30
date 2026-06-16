@@ -5667,7 +5667,10 @@ private struct OpenDesignStrategyPageView: View {
     }
 
     private var researchIsRefreshing: Bool {
-        strategyReportPreparingForDisplay || strategyReport.status.state == "refreshing"
+        strategyReportShowsLoadingCards(
+            snapshot: strategyReport,
+            isPreparing: strategyReportPreparingForDisplay
+        )
     }
 
     private var shouldShowStatusBanner: Bool {
@@ -5713,7 +5716,23 @@ private struct OpenDesignStrategyPageView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         header
-                        if shouldShowStatusBanner {
+                        if researchIsRefreshing {
+                            OpenDesignColdLoadingStateView(
+                                title: "전략 근거를 모으는 중",
+                                detail: strategyResearchStatusMessage(
+                                    strategyReport.status,
+                                    isPreparing: strategyReportPreparingForDisplay
+                                ),
+                                rows: strategyReportLoadingRows(
+                                    status: strategyReport.status,
+                                    isPreparing: strategyReportPreparingForDisplay
+                                ),
+                                accessibilityIdentifier: "strategy.loading",
+                                spinnerAccessibilityLabel: "전략 리서치 진행 중",
+                                maxWidth: 1180,
+                                fillsAvailableHeight: false
+                            )
+                        } else if shouldShowStatusBanner {
                             StrategyResearchStatusBanner(
                                 status: strategyReport.status,
                                 isPreparing: strategyReportPreparingForDisplay
@@ -6088,6 +6107,13 @@ nonisolated func strategyReportShowsColdLoading(
     dynamicActivated && snapshot.report == nil && (isPreparing || snapshot.status.state == "refreshing")
 }
 
+nonisolated func strategyReportShowsLoadingCards(
+    snapshot: StrategyReportSnapshot,
+    isPreparing: Bool
+) -> Bool {
+    isPreparing || snapshot.status.state == "refreshing"
+}
+
 nonisolated func strategyReportLoadingRows(
     status: StrategyReportStatus,
     isPreparing: Bool
@@ -6114,7 +6140,7 @@ nonisolated private struct StrategyReportProgressStep: Hashable, Identifiable {
 nonisolated private let strategyReportProgressSteps: [StrategyReportProgressStep] = [
     .init(id: "checking_exa_route", order: 1, title: "Exa 연결", fallbackDetail: "Exa MCP 연결을 확인하는 중", iconID: "exa"),
     .init(id: "loading_strategy_context", order: 2, title: "전략 근거", fallbackDetail: "전략 근거 문서를 읽는 중", iconID: "context"),
-    .init(id: "running_exa_research", order: 3, title: "공개 근거 검색", fallbackDetail: "Exa 공개 근거로 전략 리포트를 조사하는 중", iconID: "web"),
+    .init(id: "running_exa_research", order: 3, title: "공개 근거 검색", fallbackDetail: "Exa 공개 근거로 전략 리포트를 조사하는 중", iconID: "exa"),
     .init(id: "running_adversarial_review", order: 4, title: "약한 가정 리뷰", fallbackDetail: "적대적 리뷰로 약한 가정과 누락 근거를 찾는 중", iconID: "review"),
     .init(id: "running_multidimensional_review", order: 5, title: "섹션 검증", fallbackDetail: "다차원 리뷰와 최종 검증으로 섹션 품질을 맞추는 중", iconID: "strategy"),
     .init(id: "saving_results", order: 6, title: "저장", fallbackDetail: "전략 리포트를 로컬 캐시에 저장하는 중", iconID: "saving"),
@@ -6185,6 +6211,7 @@ struct OpenDesignColdLoadingStateView: View {
     let accessibilityIdentifier: String
     let spinnerAccessibilityLabel: String
     var maxWidth: CGFloat = 780
+    var fillsAvailableHeight: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -6219,7 +6246,7 @@ struct OpenDesignColdLoadingStateView: View {
         }
         .frame(maxWidth: maxWidth, alignment: .leading)
         .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: fillsAvailableHeight ? .infinity : nil)
         .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
@@ -6334,6 +6361,7 @@ nonisolated private func openDesignNormalizedLoadingIconID(_ id: String?) -> Str
 private func openDesignLoadingIconAssetName(_ id: String) -> String? {
     switch openDesignNormalizedLoadingIconID(id) {
     case "cloudflare": return "BrandCloudflare"
+    case "exa": return "BrandExa"
     case "github": return "BrandGitHub"
     case "posthog": return "BrandPostHog"
     default: return nil
@@ -6391,7 +6419,7 @@ struct OpenDesignInlineSpinner: View {
     let accentColor: Color
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var rotation: Double = 0
+    private let rotationDuration: TimeInterval = 0.86
 
     init(
         accessibilityLabel: String = "진행 중",
@@ -6408,36 +6436,26 @@ struct OpenDesignInlineSpinner: View {
     }
 
     var body: some View {
-        ZStack {
-            Circle()
-                .stroke(trackColor, lineWidth: lineWidth)
-            Circle()
-                .trim(from: 0.12, to: 0.72)
-                .stroke(
-                    accentColor,
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-                .rotationEffect(.degrees(rotation - 90))
+        TimelineView(.animation) { context in
+            let rotation = reduceMotion ? 0 : openDesignTimelineRotation(
+                at: context.date,
+                duration: rotationDuration
+            )
+            ZStack {
+                Circle()
+                    .stroke(trackColor, lineWidth: lineWidth)
+                Circle()
+                    .trim(from: 0.12, to: 0.72)
+                    .stroke(
+                        accentColor,
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(rotation - 90))
+            }
         }
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
-        .onAppear {
-            updateAnimation(reduceMotion: reduceMotion)
-        }
-        .onChange(of: reduceMotion) { _, newValue in
-            updateAnimation(reduceMotion: newValue)
-        }
-    }
-
-    private func updateAnimation(reduceMotion: Bool) {
-        rotation = 0
-        guard !reduceMotion else { return }
-        DispatchQueue.main.async {
-            withAnimation(.linear(duration: 0.86).repeatForever(autoreverses: false)) {
-                rotation = 360
-            }
-        }
     }
 }
 
@@ -6449,7 +6467,7 @@ struct OpenDesignRotatingStatusIcon: View {
     let isAccessibilityHidden: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var rotation: Double = 0
+    private let rotationDuration: TimeInterval = 1.1
 
     init(
         accessibilityLabel: String = "진행 중",
@@ -6466,30 +6484,26 @@ struct OpenDesignRotatingStatusIcon: View {
     }
 
     var body: some View {
-        Image(systemName: "arrow.triangle.2.circlepath")
-            .font(.system(size: size, weight: .semibold))
-            .foregroundStyle(color)
-            .rotationEffect(.degrees(rotation))
-            .frame(width: frameSize, height: frameSize)
-            .accessibilityLabel(accessibilityLabel)
-            .accessibilityHidden(isAccessibilityHidden)
-            .onAppear {
-                updateAnimation(reduceMotion: reduceMotion)
-            }
-            .onChange(of: reduceMotion) { _, newValue in
-                updateAnimation(reduceMotion: newValue)
-            }
-    }
-
-    private func updateAnimation(reduceMotion: Bool) {
-        rotation = 0
-        guard !reduceMotion else { return }
-        DispatchQueue.main.async {
-            withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
-                rotation = 360
-            }
+        TimelineView(.animation) { context in
+            let rotation = reduceMotion ? 0 : openDesignTimelineRotation(
+                at: context.date,
+                duration: rotationDuration
+            )
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(color)
+                .rotationEffect(.degrees(rotation))
         }
+        .frame(width: frameSize, height: frameSize)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHidden(isAccessibilityHidden)
     }
+}
+
+private func openDesignTimelineRotation(at date: Date, duration: TimeInterval) -> Double {
+    guard duration > 0 else { return 0 }
+    let elapsed = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: duration)
+    return (elapsed / duration) * 360
 }
 
 private struct OpenDesignStrategyHeaderButtonStyle: ButtonStyle {
@@ -7934,37 +7948,27 @@ private struct OpenDesignTaskRow: View {
 
 private struct OpenDesignTaskProgressSpinner: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var rotation: Double = 0
+    private let rotationDuration: TimeInterval = 2
 
     var body: some View {
-        ZStack {
-            Circle()
-                .stroke(OpenDesignDayColor.muted, lineWidth: 1.5)
-            Circle()
-                .trim(from: 0, to: 0.25)
-                .stroke(
-                    OpenDesignDayColor.accent,
-                    style: StrokeStyle(lineWidth: 1.5, lineCap: .butt)
-                )
-                .rotationEffect(.degrees(rotation - 90))
-        }
-        .frame(width: 12, height: 12)
-        .onAppear {
-            updateAnimation(reduceMotion: reduceMotion)
-        }
-        .onChange(of: reduceMotion) { _, newValue in
-            updateAnimation(reduceMotion: newValue)
-        }
-    }
-
-    private func updateAnimation(reduceMotion: Bool) {
-        rotation = 0
-        guard !reduceMotion else { return }
-        DispatchQueue.main.async {
-            withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
-                rotation = 360
+        TimelineView(.animation) { context in
+            let rotation = reduceMotion ? 0 : openDesignTimelineRotation(
+                at: context.date,
+                duration: rotationDuration
+            )
+            ZStack {
+                Circle()
+                    .stroke(OpenDesignDayColor.muted, lineWidth: 1.5)
+                Circle()
+                    .trim(from: 0, to: 0.25)
+                    .stroke(
+                        OpenDesignDayColor.accent,
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .butt)
+                    )
+                    .rotationEffect(.degrees(rotation - 90))
             }
         }
+        .frame(width: 12, height: 12)
     }
 }
 

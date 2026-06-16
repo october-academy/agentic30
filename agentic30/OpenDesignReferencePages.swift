@@ -2898,7 +2898,8 @@ private struct NewsMarketRadarMainView: View {
                             rows: newsMarketRadarLoadingRows(status: progressStatus),
                             accessibilityIdentifier: "opendesign.reference.news.progress",
                             spinnerAccessibilityLabel: "시장 리서치 진행 중",
-                            maxWidth: 780
+                            maxWidth: 780,
+                            fillsAvailableHeight: false
                         )
                     } else {
                         if presentationState.showsProgress,
@@ -10842,12 +10843,11 @@ private func providerInitial(_ title: String) -> String {
     title.first.map(String.init) ?? "A"
 }
 
-/// Brand-logo asset for a provider/runtime reference row; nil for rows without a
-/// brand mark (e.g. Exa), which render the initial-letter glyph instead.
 private func providerBrandImageName(forRowID id: String) -> String? {
     switch id {
     case "claude": return "BrandClaude"
     case "codex": return "BrandCodex"
+    case "exa": return "BrandExa"
     case "gemini": return "BrandGemini"
     case "node": return "BrandNodejs"
     default: return nil

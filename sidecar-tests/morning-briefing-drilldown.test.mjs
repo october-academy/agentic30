@@ -122,6 +122,15 @@ test("collectGithubDrilldown builds kpis, buckets, lists, scan, and maintenance 
   const total = drilldown.chart.bars.reduce((sum, bar) => sum + bar.value, 0);
   assert.equal(total, 4);
   assert.ok(drilldown.chart.bars.some((bar) => bar.tone === "violet"));
+  assert.equal(drilldown.cardSparkline.length, 8);
+  assert.deepEqual(
+    drilldown.cardSparkline.map((point) => point.label),
+    drilldown.chart.bars.map((bar) => bar.label),
+  );
+  assert.deepEqual(
+    drilldown.cardSparkline.map((point) => point.value),
+    drilldown.chart.bars.map((bar) => bar.value),
+  );
 
   const mergedRow = drilldown.listRows.find((row) => row.kind === "merged");
   assert.match(mergedRow.title, /#41/);
@@ -599,6 +608,16 @@ test("normalizeCloudflareDrilldownMeasurements uses period totals, not summed ho
         pageviews: value + 1,
         requests: value * 10,
       })),
+      cardHourly: hourlyValues.map((value, index) => ({
+        datetimeIso: new Date(Date.parse("2026-06-12T00:00:00.000Z") + index * 3_600_000).toISOString(),
+        uniqueVisitors: value,
+        pageviews: value + 1,
+        requests: value * 10,
+      })),
+      cardWindow: {
+        startIso: "2026-06-12T00:00:00.000Z",
+        untilIso: "2026-06-13T00:00:00.000Z",
+      },
       zoneName: "agentic30.dev",
       pathTable: [{ path: "/static/app.js", value: 93 }],
       pathTableUsesEyeballFilter: false,
@@ -611,6 +630,8 @@ test("normalizeCloudflareDrilldownMeasurements uses period totals, not summed ho
   assert.equal(drilldown.kpis.find((kpi) => kpi.label === "순 방문").valueLabel, "285");
   assert.equal(drilldown.kpis.find((kpi) => kpi.label === "순 방문").vsLabel, "직전 335");
   assert.equal(drilldown.chart.bars.length, 12, "24 hourly buckets are compressed for the 12-bar UI");
+  assert.equal(drilldown.cardSparkline.length, 8, "card sparkline uses the shared compact card bucket count");
+  assert.deepEqual(drilldown.cardSparkline.slice(0, 2).map((point) => point.value), [16, 17]);
   assert.ok(drilldown.chart.bars.some((bar) => bar.label === "21" && bar.value === 37));
   assert.match(drilldown.chart.subtitle, /피크 21-23시 구간 · 37명/, "peak subtitle brackets the true 2h peak range, not just the start hour");
   assert.equal(Object.hasOwn(drilldown.chart.bars[0], "endLabel"), false, "endLabel stays server-side and never reaches the emitted bar");

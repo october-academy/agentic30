@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { atomicWriteJson } from "./atomic-store.mjs";
 import {
+  CARD_SPARK_BUCKET_COUNT,
   ensureMorningBriefingDrilldowns,
   normalizeMorningBriefingDrilldowns,
 } from "./morning-briefing-drilldown.mjs";
@@ -296,14 +297,12 @@ function firstIsoValue(record = {}) {
   return null;
 }
 
-function sparkSamplesFromChartEntries(entries = [], { valueKeys = ["value"] } = {}) {
+function sparkSamplesFromCardSparkline(entries = []) {
   if (!Array.isArray(entries)) return null;
   const samples = entries
     .map((entry, index) => {
-      const value = valueKeys
-        .map((key) => finiteNumber(entry?.[key]))
-        .find((candidate) => candidate !== null);
-      if (value === null || value === undefined) return null;
+      const value = finiteNumber(entry?.value);
+      if (value === null) return null;
       return {
         value,
         timeLabel: normalizeSparkPointLabel(entry?.label || `값 ${index + 1}`),
@@ -311,13 +310,11 @@ function sparkSamplesFromChartEntries(entries = [], { valueKeys = ["value"] } = 
       };
     })
     .filter(Boolean);
-  return samples.length >= 2 ? samples.slice(-8) : null;
+  return samples.length >= 2 ? samples.slice(0, CARD_SPARK_BUCKET_COUNT) : null;
 }
 
-function sparkFromDrilldownChart(drilldown = {}) {
-  const chart = drilldown?.chart && typeof drilldown.chart === "object" ? drilldown.chart : {};
-  const barSamples = sparkSamplesFromChartEntries(chart.bars, { valueKeys: ["value"] });
-  const samples = barSamples || sparkSamplesFromChartEntries(chart.points, { valueKeys: ["value", "pct"] });
+function sparkFromCardSparkline(drilldown = {}) {
+  const samples = sparkSamplesFromCardSparkline(drilldown?.cardSparkline);
   if (!samples) return null;
   return {
     spark: samples.map((sample) => sample.value),
@@ -331,13 +328,13 @@ function hydrateBriefingCardSparklines(briefing = null) {
   let changed = false;
   const cards = briefing.cards.map((card) => {
     if (!card || card.state !== "ready") return card;
-    const chartSpark = sparkFromDrilldownChart(drilldowns[card.id]);
-    if (!chartSpark) return card;
+    const cardSpark = sparkFromCardSparkline(drilldowns[card.id]);
+    if (!cardSpark) return card;
     changed = true;
     return {
       ...card,
-      spark: chartSpark.spark,
-      sparkPoints: chartSpark.sparkPoints,
+      spark: cardSpark.spark,
+      sparkPoints: cardSpark.sparkPoints,
     };
   });
   return changed ? { ...briefing, cards } : briefing;
@@ -653,21 +650,21 @@ function buildCard({
   const ready = state === "ready";
   const failed = state === "failed";
   const delta = ready ? deltaFor(metricValue, previousMetrics?.[id]) : null;
-  const chartSpark = ready ? sparkFromDrilldownChart(drilldown) : null;
-  if (ready && !chartSpark) {
+  const sourceSpark = ready ? sparkFromCardSparkline(drilldown) : null;
+  if (ready && !sourceSpark) {
     assertSparklineHistoryAvailable({
       history,
       cardId: id,
       previousValue: previousMetrics?.[id],
     });
   }
-  const fallbackSpark = ready && !chartSpark
+  const fallbackSpark = ready && !sourceSpark
     ? {
         spark: sparkFrom(history, id, metricValue),
         sparkPoints: sparkPointsFrom(history, id, metricValue, { generatedAt }),
       }
     : null;
-  const cardSpark = chartSpark || fallbackSpark || { spark: [], sparkPoints: [] };
+  const cardSpark = sourceSpark || fallbackSpark || { spark: [], sparkPoints: [] };
   const note = cleanString(
     ready
       ? (source?.evidenceGaps?.[0] || source?.goalSignals?.[0] || source?.highlights?.[0] || "")

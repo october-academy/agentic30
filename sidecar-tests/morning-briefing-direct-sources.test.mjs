@@ -213,6 +213,7 @@ function stubCloudflareFetch({ failPaths = false, zones = [{ id: "zone-1", name:
           totals: [cloudflareTotals({ uniqueVisitors: 13, pageviews: 18, requests: 54 })],
           previousTotals: [cloudflareTotals({ uniqueVisitors: 7, pageviews: 8, requests: 24 })],
           hourly: cloudflareHours("2026-06-09T00:00:00.000Z", [2, 3, 8, 5]),
+          cardHourly: cloudflareHours("2026-06-09T00:00:00.000Z", [2, 3, 8, 5]),
         }] } },
       });
     },
@@ -242,6 +243,8 @@ test("collectCloudflareDirectDrilldown builds KPIs, 2h buckets, and path table f
   assert.deepEqual(drilldown.chart.bars.map((bar) => bar.value), [2, 3, 8, 5]);
   assert.doesNotMatch(drilldown.chart.subtitle, /합계/);
   assert.match(drilldown.chart.footnote, /서로 더하지 않습니다/);
+  assert.equal(drilldown.cardSparkline.length, 8);
+  assert.deepEqual(drilldown.cardSparkline.slice(0, 2).map((point) => point.value), [8, 5]);
 
   assert.equal(drilldown.table.length, 2);
   assert.equal(drilldown.table[0].code, "/landing");
@@ -277,9 +280,13 @@ test("collectCloudflareDirectDrilldown clamps wide briefing windows to trailing 
   const graphqlCalls = calls
     .filter((call) => call.url.endsWith("/graphql"))
     .map((call) => JSON.parse(call.options.body || "{}"));
-  assert.ok(graphqlCalls.every((body) => body.variables.start >= "2026-06-08T00:00:00.000Z"));
-  assert.ok(graphqlCalls.some((body) => body.variables.start === "2026-06-09T00:00:00.000Z"));
-  assert.ok(!graphqlCalls.some((body) => body.variables.start === "2026-06-08T00:00:00.000Z" && body.variables.end === "2026-06-10T00:00:00.000Z"));
+  const analyticsBody = graphqlCalls.find((body) => String(body.query).includes("cardHourly: httpRequests1hGroups"));
+  const pathsBody = graphqlCalls.find((body) => String(body.query).includes("httpRequestsAdaptiveGroups"));
+  assert.equal(analyticsBody.variables.start, "2026-06-09T00:00:00.000Z");
+  assert.equal(analyticsBody.variables.cardStart, "2026-06-08T00:00:00.000Z");
+  assert.equal(analyticsBody.variables.end, "2026-06-10T00:00:00.000Z");
+  assert.equal(pathsBody.variables.start, "2026-06-09T00:00:00.000Z");
+  assert.equal(pathsBody.variables.cardStart, undefined);
 });
 
 test("collectCloudflareDirectDrilldown selects the product-domain zone, not the first active one", async () => {

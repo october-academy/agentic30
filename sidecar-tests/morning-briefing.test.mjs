@@ -117,18 +117,20 @@ function digestFixture({
 }
 
 function drilldownChartFixture() {
+  const sharedLabels = ["00", "03", "06", "09", "12", "15", "18", "21"];
   return {
     cloudflare: {
+      cardSparkline: sharedLabels.map((label, index) => ({ label, value: [2, 4, 8, 5, 3, 7, 9, 6][index] })),
       chart: {
         kind: "bars",
-        bars: [
-          { label: "9", value: 3 },
-          { label: "10", value: 7 },
-          { label: "11", value: 5 },
-        ],
+        bars: Array.from({ length: 12 }, (_, index) => ({
+          label: String(index * 2).padStart(2, "0"),
+          value: index + 1,
+        })),
       },
     },
     github: {
+      cardSparkline: sharedLabels.map((label, index) => ({ label, value: [0, 1, 0, 3, 2, 0, 1, 2][index] })),
       chart: {
         kind: "bars",
         bars: [
@@ -190,7 +192,7 @@ test("buildMorningBriefingCards computes deltas against previous metrics", () =>
   assert.equal(posthog.noteTone, "warn");
 });
 
-test("buildMorningBriefing derives source card sparklines from drilldown chart bars first", () => {
+test("buildMorningBriefing derives source card sparklines from shared cardSparkline buckets", () => {
   const briefing = buildMorningBriefing({
     digest: digestFixture(),
     day: 12,
@@ -199,32 +201,35 @@ test("buildMorningBriefing derives source card sparklines from drilldown chart b
   });
 
   const cloudflare = briefing.cards.find((card) => card.id === "cloudflare");
-  assert.deepEqual(cloudflare.spark, [3, 7, 5]);
+  assert.deepEqual(cloudflare.spark, [2, 4, 8, 5, 3, 7, 9, 6]);
   assert.deepEqual(
     cloudflare.sparkPoints.map((point) => point.timeLabel),
-    ["09시", "10시", "11시"],
+    ["00시", "03시", "06시", "09시", "12시", "15시", "18시", "21시"],
   );
   assert.deepEqual(
     cloudflare.sparkPoints.map((point) => point.at),
-    [null, null, null],
+    [null, null, null, null, null, null, null, null],
   );
+  assert.equal(briefing.drilldowns.cloudflare.chart.bars.length, 12);
 
   const github = briefing.cards.find((card) => card.id === "github");
-  assert.deepEqual(github.spark, [0, 7, 1]);
+  assert.deepEqual(github.spark, [0, 1, 0, 3, 2, 0, 1, 2]);
   assert.deepEqual(
     github.sparkPoints.map((point) => point.timeLabel),
-    ["00시", "05시", "09시"],
+    cloudflare.sparkPoints.map((point) => point.timeLabel),
   );
+  assert.deepEqual(briefing.drilldowns.github.chart.bars.map((bar) => bar.label), ["00", "05", "09"]);
 
   const posthog = briefing.cards.find((card) => card.id === "posthog");
   assert.deepEqual(posthog.spark, [11]);
   assert.equal(posthog.sparkPoints.length, 1);
 });
 
-test("buildMorningBriefingCards derives source card sparklines from drilldown curve points when bars are absent", () => {
+test("buildMorningBriefingCards falls back to persisted history when no cardSparkline exists", () => {
   const cards = buildMorningBriefingCards({
     digest: digestFixture(),
-    history: [],
+    previousMetrics: PREVIOUS_METRICS,
+    history: previousHistory(),
     generatedAt: "2026-06-10T09:00:00",
     drilldowns: {
       posthog: {
@@ -241,13 +246,11 @@ test("buildMorningBriefingCards derives source card sparklines from drilldown cu
   });
   const posthog = cards.find((card) => card.id === "posthog");
 
-  assert.deepEqual(posthog.spark, [39, 44, 27]);
+  assert.deepEqual(posthog.spark, [25, 11]);
   assert.deepEqual(
-    posthog.sparkPoints.map((point) => point.timeLabel),
-    ["06-05 · 39%", "06-06 · 44%", "오늘 · 27%"],
+    posthog.sparkPoints.map((point) => point.value),
+    posthog.spark,
   );
-  assert.equal(posthog.sparkPoints[0].at, "2026-06-05T00:00:00.000Z");
-  assert.equal(posthog.sparkPoints[2].at, null);
 });
 
 test("buildMorningBriefingCards fails when previous metrics lack sparkline history", () => {
@@ -659,7 +662,7 @@ test("morning briefing run logs are JSONL and redact sensitive fields", async ()
   }
 });
 
-test("loadMorningBriefingStore hydrates cached card sparklines from drilldown charts", async () => {
+test("loadMorningBriefingStore hydrates cached card sparklines from cardSparkline buckets", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mb-cache-spark-"));
   try {
     const filePath = resolveMorningBriefingPath(dir);
@@ -681,11 +684,15 @@ test("loadMorningBriefingStore hydrates cached card sparklines from drilldown ch
           ],
           drilldowns: {
             cloudflare: {
+              cardSparkline: [
+                { label: "0", value: 3 },
+                { label: "3", value: 7 },
+              ],
               chart: {
                 kind: "bars",
                 bars: [
-                  { label: "9", value: 3 },
-                  { label: "10", value: 7 },
+                  { label: "9", value: 99 },
+                  { label: "10", value: 100 },
                 ],
               },
             },
@@ -701,7 +708,7 @@ test("loadMorningBriefingStore hydrates cached card sparklines from drilldown ch
     assert.deepEqual(store.current.cards[0].spark, [3, 7]);
     assert.deepEqual(
       store.current.cards[0].sparkPoints.map((point) => point.timeLabel),
-      ["09시", "10시"],
+      ["00시", "03시"],
     );
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

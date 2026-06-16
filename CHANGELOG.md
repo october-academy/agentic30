@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### 추가
+- **Morning Briefing 카드 스파크라인**: Cloudflare/GitHub drilldown이 카드용 8-bucket `cardSparkline`을 제공하고, Morning Briefing 카드가 차트 막대 대신 이 compact series를 사용하도록 정리했습니다.
+
+### 변경
+- **Strategy/News 로딩 카드**: 캐시된 결과가 있는 refresh 중에도 진행 카드를 compact하게 보여주고 Exa 브랜드 마커를 일관되게 표시합니다.
+
 ## [1.0.24] - 2026-06-16
 
 ### 추가
