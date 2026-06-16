@@ -472,13 +472,15 @@ private struct OfficeHoursIntroStageReveal<Content: View>: View {
 private struct OfficeHoursCommandTypewriterText: View {
     let text: String
     let reduceMotion: Bool
+    let completed: Bool
+    var onCompleted: () -> Void = {}
 
     @State private var visibleCount = 0
     @State private var isDone = false
     @State private var isCaretVisible = true
 
     private var visibleText: String {
-        reduceMotion ? text : String(text.prefix(visibleCount))
+        reduceMotion || completed ? text : String(text.prefix(visibleCount))
     }
 
     var body: some View {
@@ -497,11 +499,11 @@ private struct OfficeHoursCommandTypewriterText: View {
                 .fill(OpenDesignOfficeHoursColor.accent)
                 .frame(width: 6, height: 12)
                 .clipShape(RoundedRectangle(cornerRadius: 1, style: .continuous))
-                .opacity(reduceMotion || isDone || !isCaretVisible ? 0 : 1)
+                .opacity(reduceMotion || completed || isDone || !isCaretVisible ? 0 : 1)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text.trimmingCharacters(in: .whitespacesAndNewlines))
-        .task(id: text) {
+        .task(id: "\(text)::\(completed)") {
             await runTypewriter()
         }
         .task(id: isDone) {
@@ -510,6 +512,9 @@ private struct OfficeHoursCommandTypewriterText: View {
         .onChange(of: reduceMotion) { _, isReduced in
             visibleCount = isReduced ? text.count : 0
             isDone = isReduced
+            if isReduced {
+                onCompleted()
+            }
         }
     }
 
@@ -530,9 +535,12 @@ private struct OfficeHoursCommandTypewriterText: View {
 
     @MainActor
     private func runTypewriter() async {
-        guard !reduceMotion else {
+        guard !reduceMotion, !completed else {
             visibleCount = text.count
             isDone = true
+            if reduceMotion {
+                onCompleted()
+            }
             return
         }
         visibleCount = 0
@@ -553,6 +561,7 @@ private struct OfficeHoursCommandTypewriterText: View {
             visibleCount = index
         }
         isDone = true
+        onCompleted()
     }
 }
 
@@ -1896,6 +1905,16 @@ struct OfficeHoursPreviousCommitmentGate: Equatable {
 }
 
 struct OfficeHoursLoadingPolicy {
+    static func shouldStartLoading(for status: OfficeHoursLiveStatus?) -> Bool {
+        guard let stage = status?.stage else { return false }
+        return ["context_loaded", "specialist_routed", "provider_starting"].contains(stage)
+    }
+
+    static func shouldClearLoading(for status: OfficeHoursLiveStatus?) -> Bool {
+        guard let stage = status?.stage else { return false }
+        return ["question_ready", "completed", "failed", "aborted"].contains(stage)
+    }
+
     static func visibleLoading(
         for session: ChatSession,
         loading: OfficeHoursLoadingSnapshot?
@@ -1908,6 +1927,42 @@ struct OfficeHoursLoadingPolicy {
             return pendingRequestId == loading.requestId ? loading : nil
         }
         return session.status == .running ? loading : nil
+    }
+
+    static func pendingPromptRevealDelayNanoseconds(
+        reduceMotion: Bool,
+        session: ChatSession,
+        visibleLoading: OfficeHoursLoadingSnapshot?,
+        requestId: String,
+        remainingNanoseconds: UInt64
+    ) -> UInt64 {
+        guard !reduceMotion else { return 0 }
+        guard session.pendingUserInput?.requestId == requestId else { return 0 }
+        guard visibleLoading?.requestId == requestId else { return 0 }
+        return remainingNanoseconds
+    }
+}
+
+struct OfficeHoursCommandTypewriterPolicy {
+    static func key(session: ChatSession?, activeDay: Int) -> String {
+        if let sessionId = session?.id.trimmingCharacters(in: .whitespacesAndNewlines),
+           !sessionId.isEmpty {
+            return "session:\(sessionId)"
+        }
+        return "day:\(activeDay)"
+    }
+
+    static func shouldRenderCompleted(
+        session: ChatSession?,
+        activeDay: Int,
+        completedKeys: Set<String>
+    ) -> Bool {
+        let commandKey = key(session: session, activeDay: activeDay)
+        if completedKeys.contains(commandKey) { return true }
+        guard let session else { return false }
+        if session.pendingUserInput != nil { return true }
+        if session.runtime?.officeHours?.active == true { return true }
+        return !OfficeHoursTranscriptRow.rows(from: session.messages).isEmpty
     }
 }
 
@@ -1967,6 +2022,7 @@ struct OfficeHoursAutoStartPolicy {
         guard !realProjectSessionCreateRequested else { return false }
         guard session.status == .idle else { return false }
         guard session.pendingUserInput == nil else { return false }
+        guard session.runtime?.officeHours?.active != true else { return false }
         guard !startedSessionIDs.contains(session.id) else { return false }
         return true
     }
@@ -2148,6 +2204,7 @@ struct ContentView: View {
     @State private var officeHoursSubmittedPromptSnapshotsBySession: [String: [OfficeHoursSubmittedPromptSnapshot]] = [:]
     @State private var officeHoursActiveQuestionLoadersBySession: [String: OfficeHoursLoadingSnapshot] = [:]
     @State private var officeHoursReadyPromptRevealIDs: Set<String> = []
+    @State private var officeHoursCompletedCommandTypewriterKeys: Set<String> = []
     @State private var officeHoursRevisionInFlightSessionIDs: Set<String> = []
     @State private var officeHoursSubmittedRevisionDraftsByPrompt: [String: [String: AgenticViewModel.StructuredPromptSubmission]] = [:]
     @State private var editingOfficeHoursSubmittedFreeTextID: String?
@@ -4897,10 +4954,10 @@ struct ContentView: View {
                                 officeHoursCommitmentBar(session: session, activeDay: activeDay)
                             }
                         } else if viewModel.day1GoalSelection == nil {
-                            officeHoursTutorHead()
+                            officeHoursTutorHead(session: session, activeDay: activeDay)
                             officeHoursGoalSelectionBlock(session: session, day1Content: day1Content)
                         } else {
-                            officeHoursTutorHead()
+                            officeHoursTutorHead(session: session, activeDay: activeDay)
                             officeHoursIntroContextStack(
                                 idPrefix: "office-hours",
                                 activeDay: activeDay,
@@ -4943,6 +5000,7 @@ struct ContentView: View {
                     scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
                 }
                 .onChange(of: session?.pendingUserInput?.requestId) { _, _ in
+                    reconcileOfficeHoursActiveQuestionLoader(session: session)
                     scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
                 }
                 .onChange(of: session?.messages.count ?? 0) { _, _ in
@@ -5171,8 +5229,14 @@ struct ContentView: View {
         }
     }
 
-    private func officeHoursTutorHead() -> some View {
-        HStack(spacing: 8) {
+    private func officeHoursTutorHead(session: ChatSession?, activeDay: Int) -> some View {
+        let typewriterKey = OfficeHoursCommandTypewriterPolicy.key(session: session, activeDay: activeDay)
+        let completed = OfficeHoursCommandTypewriterPolicy.shouldRenderCompleted(
+            session: session,
+            activeDay: activeDay,
+            completedKeys: officeHoursCompletedCommandTypewriterKeys
+        )
+        return HStack(spacing: 8) {
             Text("office-hours@agentic30")
                 .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(OpenDesignOfficeHoursColor.accent)
@@ -5184,7 +5248,11 @@ struct ContentView: View {
                 .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
             OfficeHoursCommandTypewriterText(
                 text: " start startup --write-design-doc",
-                reduceMotion: reduceMotion
+                reduceMotion: reduceMotion,
+                completed: completed,
+                onCompleted: {
+                    officeHoursCompletedCommandTypewriterKeys.insert(typewriterKey)
+                }
             )
         }
         .frame(minHeight: 18, alignment: .leading)
@@ -5867,7 +5935,7 @@ struct ContentView: View {
         viewportHeight: CGFloat
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            officeHoursTutorHead()
+            officeHoursTutorHead(session: session, activeDay: activeDay)
                 .id(Self.officeHoursQuestionStageTopID)
             officeHoursIntroContextContent(activeDay: activeDay)
 
@@ -5920,9 +5988,15 @@ struct ContentView: View {
                         let revealID = officeHoursPromptRevealID(sessionID: session.id, requestID: prompt.requestId)
                         OfficeHoursMinimumLoading(
                             id: "\(session.id)-\(prompt.requestId)",
-                            durationNanoseconds: reduceMotion
-                                ? 0
-                                : officeHoursRemainingQuestionLoadingNanoseconds(for: session.id),
+                            durationNanoseconds: OfficeHoursLoadingPolicy.pendingPromptRevealDelayNanoseconds(
+                                reduceMotion: reduceMotion,
+                                session: session,
+                                visibleLoading: activeLoading,
+                                requestId: prompt.requestId,
+                                remainingNanoseconds: officeHoursRemainingQuestionLoadingNanoseconds(
+                                    startedAt: activeLoading?.startedAt
+                                )
+                            ),
                             onReadyChange: { isReady in
                                 if isReady {
                                     officeHoursReadyPromptRevealIDs.insert(revealID)
@@ -6323,7 +6397,24 @@ struct ContentView: View {
     }
 
     private func officeHoursActiveQuestionLoader(for session: ChatSession) -> OfficeHoursLoadingSnapshot? {
-        OfficeHoursLoadingPolicy.visibleLoading(
+        let liveStatus = viewModel.officeHoursLiveStatus(for: session.id)
+        if OfficeHoursLoadingPolicy.shouldClearLoading(for: liveStatus) {
+            return nil
+        }
+        if OfficeHoursLoadingPolicy.shouldStartLoading(for: liveStatus),
+           liveStatus?.sessionId == session.id {
+            let requestID = liveStatus?.requestId?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+                ?? officeHoursStartLoaderRequestID(for: session.id)
+            return OfficeHoursLoadingPolicy.visibleLoading(
+                for: session,
+                loading: OfficeHoursLoadingSnapshot(
+                    sessionId: session.id,
+                    requestId: requestID,
+                    startedAt: liveStatus?.updatedAt ?? Date()
+                )
+            )
+        }
+        return OfficeHoursLoadingPolicy.visibleLoading(
             for: session,
             loading: officeHoursActiveQuestionLoadersBySession[session.id]
         )
@@ -6382,10 +6473,25 @@ struct ContentView: View {
     }
 
     private func reconcileOfficeHoursActiveQuestionLoader(session: ChatSession?) {
-        guard let session,
-              officeHoursActiveQuestionLoadersBySession[session.id] != nil else {
+        guard let session else {
             return
         }
+        if let requestID = session.pendingUserInput?.requestId.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            officeHoursQuestionLoadingStartedAtBySession.removeValue(forKey: session.id)
+            officeHoursActiveQuestionLoadersBySession.removeValue(forKey: session.id)
+            officeHoursRevisionInFlightSessionIDs.remove(session.id)
+            officeHoursReadyPromptRevealIDs.insert(
+                officeHoursPromptRevealID(sessionID: session.id, requestID: requestID)
+            )
+            return
+        }
+        if OfficeHoursLoadingPolicy.shouldClearLoading(for: viewModel.officeHoursLiveStatus(for: session.id)) {
+            officeHoursQuestionLoadingStartedAtBySession.removeValue(forKey: session.id)
+            officeHoursActiveQuestionLoadersBySession.removeValue(forKey: session.id)
+            officeHoursRevisionInFlightSessionIDs.remove(session.id)
+            return
+        }
+        guard officeHoursActiveQuestionLoadersBySession[session.id] != nil else { return }
         if officeHoursActiveQuestionLoader(for: session) == nil {
             officeHoursActiveQuestionLoadersBySession.removeValue(forKey: session.id)
             officeHoursRevisionInFlightSessionIDs.remove(session.id)
@@ -7144,10 +7250,8 @@ struct ContentView: View {
         )
     }
 
-    private func officeHoursRemainingQuestionLoadingNanoseconds(for sessionID: String) -> UInt64 {
-        guard let startedAt = officeHoursQuestionLoadingStartedAtBySession[sessionID] else {
-            return UInt64(Self.officeHoursMinimumQuestionLoadingSeconds * 1_000_000_000)
-        }
+    private func officeHoursRemainingQuestionLoadingNanoseconds(startedAt: Date?) -> UInt64 {
+        guard let startedAt else { return 0 }
         let elapsed = max(0, Date().timeIntervalSince(startedAt))
         let remaining = max(0, Self.officeHoursMinimumQuestionLoadingSeconds - elapsed)
         return UInt64(remaining * 1_000_000_000)
@@ -8049,10 +8153,6 @@ struct ContentView: View {
         officeHoursSubmittedPromptSnapshotsBySession[session.id] = retained
         officeHoursClearSubmittedRevisionDraft(snapshot: snapshot, session: session)
         officeHoursCommitmentCandidateRequestedSessions.remove(session.id)
-        startOfficeHoursQuestionLoading(
-            sessionID: session.id,
-            requestID: "office-hours-revision-\(snapshot.requestId)"
-        )
     }
 
     private func officeHoursStructuredPrompt(
@@ -9068,7 +9168,9 @@ struct ContentView: View {
                     if lhs.submittedAt == rhs.submittedAt { return lhs.requestId < rhs.requestId }
                     return lhs.submittedAt < rhs.submittedAt
                 }.last?.id
-                let remainingLoadingNanoseconds = officeHoursRemainingQuestionLoadingNanoseconds(for: session.id)
+                let remainingLoadingNanoseconds = officeHoursRemainingQuestionLoadingNanoseconds(
+                    startedAt: officeHoursActiveQuestionLoader(for: session)?.startedAt
+                )
                 let targetID: String
                 if let latestSubmittedID, remainingLoadingNanoseconds > 0 {
                     targetID = latestSubmittedID
@@ -9498,8 +9600,9 @@ struct ContentView: View {
             return "다음 질문 생성 중"
         }
         if let prompt = session.pendingUserInput,
-           officeHoursQuestionLoadingStartedAtBySession[session.id] != nil,
-           officeHoursRemainingQuestionLoadingNanoseconds(for: session.id) > 0,
+           let activeLoader = officeHoursActiveQuestionLoader(for: session),
+           activeLoader.requestId == prompt.requestId,
+           officeHoursRemainingQuestionLoadingNanoseconds(startedAt: activeLoader.startedAt) > 0,
            !officeHoursPromptRevealIsReady(sessionID: session.id, requestID: prompt.requestId) {
             let completed = officeHoursCompletedQuestionCount(session: session)
             return completed == 0 ? "첫 질문 생성 중" : "다음 질문 생성 중"
@@ -9603,10 +9706,6 @@ struct ContentView: View {
         ) {
             pendingOfficeHoursStartDay = nil
             officeHoursStartedSessionIDs.insert(session.id)
-            startOfficeHoursQuestionLoading(
-                sessionID: session.id,
-                requestID: officeHoursStartLoaderRequestID(for: session.id)
-            )
         }
     }
 
@@ -9648,6 +9747,7 @@ struct ContentView: View {
         editingOfficeHoursSubmittedFreeTextID = nil
         editingOfficeHoursSubmittedFreeTextValue = ""
         officeHoursReadyPromptRevealIDs.removeAll()
+        officeHoursCompletedCommandTypewriterKeys.removeAll()
         _ = viewModel.createSession(
             provider: viewModel.selectedProvider,
             source: "office_hours_screen_day_\(day)_new_session",
@@ -9715,10 +9815,6 @@ struct ContentView: View {
             selectedSources: day >= 2 ? officeHoursSelectedSourceIDs() : []
         ) {
             officeHoursStartedSessionIDs.insert(session.id)
-            startOfficeHoursQuestionLoading(
-                sessionID: session.id,
-                requestID: officeHoursStartLoaderRequestID(for: session.id)
-            )
         }
     }
 
@@ -13260,7 +13356,6 @@ struct ContentView: View {
         let submissions = viewModel.structuredPromptSubmissions(for: prompt)
         if isOfficeHoursStructuredPrompt(prompt) {
             officeHoursRecordSubmittedPromptIfNeeded(prompt, submissions: submissions)
-            officeHoursStartQuestionLoading(for: prompt)
         }
 
         #if DEBUG
@@ -13279,20 +13374,6 @@ struct ContentView: View {
     private func isOfficeHoursStructuredPrompt(_ prompt: StructuredPromptRequest) -> Bool {
         prompt.generation?.mode?.hasPrefix("office_hours") == true
             || prompt.title?.caseInsensitiveCompare("Office Hours") == .orderedSame
-    }
-
-    private func officeHoursStartQuestionLoading(for prompt: StructuredPromptRequest) {
-        startOfficeHoursQuestionLoading(sessionID: prompt.sessionId, requestID: prompt.requestId)
-    }
-
-    private func startOfficeHoursQuestionLoading(sessionID: String, requestID: String) {
-        let startedAt = Date()
-        officeHoursQuestionLoadingStartedAtBySession[sessionID] = startedAt
-        officeHoursActiveQuestionLoadersBySession[sessionID] = OfficeHoursLoadingSnapshot(
-            sessionId: sessionID,
-            requestId: requestID,
-            startedAt: startedAt
-        )
     }
 
     private func officeHoursStartLoaderRequestID(for sessionID: String) -> String {

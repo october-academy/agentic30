@@ -591,6 +591,117 @@ struct OpenDesignDayContentTests {
         #expect(items.isEmpty)
     }
 
+    @Test func officeHoursLoadingPolicyStartsOnlyFromProviderWorkStagesAndClearsOnTerminalOrReady() {
+        let providerStages = ["context_loaded", "specialist_routed", "provider_starting"]
+        for stage in providerStages {
+            let status = makeOfficeHoursLiveStatus(stage: stage, requestId: "request")
+            #expect(OfficeHoursLoadingPolicy.shouldStartLoading(for: status))
+            #expect(!OfficeHoursLoadingPolicy.shouldClearLoading(for: status))
+        }
+
+        let clearStages = ["question_ready", "completed", "failed", "aborted"]
+        for stage in clearStages {
+            let status = makeOfficeHoursLiveStatus(stage: stage, requestId: "request")
+            #expect(!OfficeHoursLoadingPolicy.shouldStartLoading(for: status))
+            #expect(OfficeHoursLoadingPolicy.shouldClearLoading(for: status))
+        }
+
+        let restoredReady = makeOfficeHoursLiveStatus(stage: "question_ready", requestId: "cached-request")
+        #expect(!OfficeHoursLoadingPolicy.shouldStartLoading(for: restoredReady))
+    }
+
+    @Test func officeHoursPendingPromptRevealSkipsMinimumLoadingWithoutMatchingVisibleLoader() {
+        let prompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-2")
+        let session = makeChatSession(status: .awaitingInput, pendingUserInput: prompt)
+        let matchingLoading = OfficeHoursLoadingSnapshot(
+            sessionId: "session",
+            requestId: "request-2",
+            startedAt: Date(timeIntervalSince1970: 2)
+        )
+        let mismatchedLoading = OfficeHoursLoadingSnapshot(
+            sessionId: "session",
+            requestId: "request-1",
+            startedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        #expect(OfficeHoursLoadingPolicy.pendingPromptRevealDelayNanoseconds(
+            reduceMotion: false,
+            session: session,
+            visibleLoading: nil,
+            requestId: prompt.requestId,
+            remainingNanoseconds: 5_000_000_000
+        ) == 0)
+        #expect(OfficeHoursLoadingPolicy.pendingPromptRevealDelayNanoseconds(
+            reduceMotion: false,
+            session: session,
+            visibleLoading: mismatchedLoading,
+            requestId: prompt.requestId,
+            remainingNanoseconds: 5_000_000_000
+        ) == 0)
+        #expect(OfficeHoursLoadingPolicy.pendingPromptRevealDelayNanoseconds(
+            reduceMotion: false,
+            session: session,
+            visibleLoading: matchingLoading,
+            requestId: prompt.requestId,
+            remainingNanoseconds: 5_000_000_000
+        ) == 5_000_000_000)
+        #expect(OfficeHoursLoadingPolicy.pendingPromptRevealDelayNanoseconds(
+            reduceMotion: true,
+            session: session,
+            visibleLoading: matchingLoading,
+            requestId: prompt.requestId,
+            remainingNanoseconds: 5_000_000_000
+        ) == 0)
+    }
+
+    @Test func officeHoursCommandTypewriterPolicyKeepsRestoredAndRevealedSessionsComplete() {
+        let fresh = makeChatSession(id: "office-hours-session")
+        let key = OfficeHoursCommandTypewriterPolicy.key(session: fresh, activeDay: 4)
+        #expect(!OfficeHoursCommandTypewriterPolicy.shouldRenderCompleted(
+            session: fresh,
+            activeDay: 4,
+            completedKeys: []
+        ))
+        #expect(OfficeHoursCommandTypewriterPolicy.shouldRenderCompleted(
+            session: fresh,
+            activeDay: 4,
+            completedKeys: [key]
+        ))
+
+        let pending = makeChatSession(
+            id: "office-hours-session",
+            status: .awaitingInput,
+            pendingUserInput: makeOfficeHoursPrompt(sessionID: "office-hours-session")
+        )
+        #expect(OfficeHoursCommandTypewriterPolicy.shouldRenderCompleted(
+            session: pending,
+            activeDay: 4,
+            completedKeys: []
+        ))
+
+        let activeRuntime = makeChatSession(
+            id: "office-hours-session",
+            runtime: makeOfficeHoursRuntime(day: 4)
+        )
+        #expect(OfficeHoursCommandTypewriterPolicy.shouldRenderCompleted(
+            session: activeRuntime,
+            activeDay: 4,
+            completedKeys: []
+        ))
+
+        let restoredTranscript = makeChatSession(
+            id: "office-hours-session",
+            messages: [
+                makeChatMessage(id: "assistant", role: .assistant, content: "첫 질문입니다."),
+            ]
+        )
+        #expect(OfficeHoursCommandTypewriterPolicy.shouldRenderCompleted(
+            session: restoredTranscript,
+            activeDay: 4,
+            completedKeys: []
+        ))
+    }
+
     private func makeChatMessage(
         id: String,
         role: MessageRole,
@@ -641,7 +752,8 @@ struct OpenDesignDayContentTests {
         provider: AgentProvider = .codex,
         status: SessionStatus = .idle,
         messages: [ChatMessage] = [],
-        pendingUserInput: StructuredPromptRequest? = nil
+        pendingUserInput: StructuredPromptRequest? = nil,
+        runtime: ChatSessionRuntime? = nil
     ) -> ChatSession {
         ChatSession(
             id: id,
@@ -654,7 +766,27 @@ struct OpenDesignDayContentTests {
             error: nil,
             messages: messages,
             pendingUserInput: pendingUserInput,
-            runtime: nil
+            runtime: runtime
+        )
+    }
+
+    private func makeOfficeHoursRuntime(day: Int = 4) -> ChatSessionRuntime {
+        ChatSessionRuntime(
+            codexThreadId: nil,
+            codexThreadMeta: nil,
+            codexWarm: nil,
+            startupTiming: nil,
+            iddDocumentType: nil,
+            iddMode: nil,
+            officeHours: OfficeHoursRuntime(
+                active: true,
+                source: "office_hours_day_\(day)",
+                startedAt: nil,
+                context: nil,
+                day: day,
+                promptSnapshots: nil,
+                terminalAnswered: nil
+            )
         )
     }
 
@@ -683,6 +815,24 @@ struct OpenDesignDayContentTests {
                 ),
             ],
             generation: StructuredPromptGeneration(mode: "office_hours", docType: "day1_step")
+        )
+    }
+
+    private func makeOfficeHoursLiveStatus(
+        stage: String,
+        requestId: String? = nil,
+        sessionID: String = "session"
+    ) -> OfficeHoursLiveStatus {
+        OfficeHoursLiveStatus(
+            sessionId: sessionID,
+            stage: stage,
+            title: nil,
+            detail: nil,
+            progressText: nil,
+            messageId: nil,
+            requestId: requestId,
+            elapsedMs: nil,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
     }
 
@@ -798,6 +948,21 @@ struct OpenDesignDayContentTests {
         #expect(!OfficeHoursAutoStartPolicy.canAutoStart(
             in: fresh,
             startedSessionIDs: ["office-hours-session"],
+            realProjectTestBusy: false,
+            realProjectSessionCreateRequested: false
+        ))
+    }
+
+    @Test func officeHoursAutoStartPolicyBlocksRestoredActiveRuntimeSession() {
+        let restored = makeChatSession(
+            id: "office-hours-session",
+            status: .idle,
+            runtime: makeOfficeHoursRuntime(day: 4)
+        )
+
+        #expect(!OfficeHoursAutoStartPolicy.canAutoStart(
+            in: restored,
+            startedSessionIDs: [],
             realProjectTestBusy: false,
             realProjectSessionCreateRequested: false
         ))
