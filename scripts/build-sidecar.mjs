@@ -12,8 +12,10 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = path.resolve(__dirname, "..");
 const SIDECAR_DIR = path.join(PACKAGE_ROOT, "sidecar");
+const SIDECAR_SKILLS_DIR = path.join(SIDECAR_DIR, "skills");
 const BUILD_DIR = path.join(PACKAGE_ROOT, "sidecar-build");
 const DIST_DIR = path.join(BUILD_DIR, "sidecar");
+const DIST_SKILLS_DIR = path.join(DIST_DIR, "skills");
 const BUILD_STAMP = path.join(BUILD_DIR, ".build-stamp.json");
 const SOURCE_NODE_MODULES = path.join(PACKAGE_ROOT, "node_modules");
 const DIST_NODE_MODULES = path.join(DIST_DIR, "node_modules");
@@ -211,6 +213,12 @@ async function copyExternals() {
   for (const pkg of [...SIDECAR_CLI_PACKAGES, ...EXTERNAL_CLOSURE_PACKAGES]) {
     await copyPackageClosure(pkg, seen);
   }
+}
+
+async function copyBundledSkills() {
+  if (!existsSync(SIDECAR_SKILLS_DIR)) return;
+  await rm(DIST_SKILLS_DIR, { recursive: true, force: true });
+  await cp(SIDECAR_SKILLS_DIR, DIST_SKILLS_DIR, { recursive: true, dereference: true });
 }
 
 async function copyPackageClosure(pkg, seen) {
@@ -610,6 +618,8 @@ async function main() {
   await clean();
   console.log("[build-sidecar] bundling entry points with bun...");
   await bundle();
+  console.log("[build-sidecar] copying bundled skills...");
+  await copyBundledSkills();
   console.log("[build-sidecar] copying external packages...");
   await copyExternals();
   console.log("[build-sidecar] bundling Node.js runtime...");
