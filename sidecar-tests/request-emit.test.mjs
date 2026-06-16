@@ -1061,13 +1061,16 @@ test("office_hours_start restores a pending Day 3 card from workspace memory aft
       restoredUpdate.session.messages.filter((message) => message.officeHoursSeededTurn === true).length,
       2,
     );
-    assert.equal(
-      secondWs.events.slice(restoreMarker).some((event) =>
-        event.type === "office_hours_status"
-          && event.sessionId === secondCreated.session.id
-          && event.stage === "provider_starting"
-      ),
-      false,
+    const providerWorkStages = new Set(["provider_starting", "context_loaded", "specialist_routed"]);
+    assert.deepEqual(
+      secondWs.events.slice(restoreMarker)
+        .filter((event) =>
+          event.type === "office_hours_status"
+            && event.sessionId === secondCreated.session.id
+            && providerWorkStages.has(event.stage)
+        )
+        .map((event) => event.stage),
+      [],
       "pending card restore must not start a provider run",
     );
 
@@ -1106,6 +1109,115 @@ test("office_hours_start restores a pending Day 3 card from workspace memory aft
     } else {
       await firstHarness.close({ cleanup: !keepWorkspace });
     }
+  }
+});
+
+test("office_hours boot fails explicitly for detached pending card without recovering it", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-detached-oh-"));
+  const workspacePath = path.join(tempRoot, "workspace");
+  const appSupportPath = path.join(tempRoot, "app-support");
+  const sessionId = "detached-office-hours-session";
+  const requestId = "detached-office-hours-request";
+  let harness;
+  let ws;
+  try {
+    await fs.mkdir(workspacePath, { recursive: true });
+    await fs.mkdir(appSupportPath, { recursive: true });
+    await seedStandardInterviewActiveProgress(workspacePath, 3);
+    await appendOfficeHoursTurn({
+      workspaceRoot: workspacePath,
+      turn: {
+        day: 3,
+        sessionId,
+        requestId: "answered-before-detach",
+        mode: "office_hours_tool",
+        questionText: "박조은님께 보낸 요청 증거가 있나요?",
+        responseText: "아직 보내지 못했다",
+      },
+    });
+    const pendingRequest = makeOfficeHoursPromptSnapshot({
+      sessionId,
+      requestId,
+      questionId: "office_hours_day3_detached_next_action",
+      question: "박조은님께 오늘 보낼 요청은 어떤 확인 가능한 행동으로 정리할까요?",
+      createdAt: "2026-06-16T15:24:57.057Z",
+    });
+    await saveOfficeHoursPendingQuestion({
+      workspaceRoot: workspacePath,
+      day: 3,
+      source: "office_hours_day_3",
+      request: pendingRequest,
+      turnLog: await loadOfficeHoursTurnLog({ workspaceRoot: workspacePath }),
+    });
+    await fs.writeFile(
+      path.join(appSupportPath, "sessions.json"),
+      JSON.stringify({
+        sessions: [
+          {
+            id: sessionId,
+            title: "Office Hours · Day 3",
+            provider: "codex",
+            model: "gpt-5.1-codex-mini",
+            status: "idle",
+            error: null,
+            createdAt: "2026-06-16T15:20:00.000Z",
+            updatedAt: "2026-06-16T15:25:00.000Z",
+            messages: [
+              {
+                id: "empty-final-after-tool-card",
+                role: "assistant",
+                provider: "codex",
+                content: "",
+                state: "final",
+                createdAt: "2026-06-16T15:25:00.000Z",
+              },
+            ],
+            pendingUserInput: null,
+            runtime: {
+              officeHours: {
+                active: true,
+                source: "office_hours_day_3",
+                day: 3,
+                startedAt: "2026-06-16T15:20:00.000Z",
+                context: "Office Hours mode: Startup\nOffice Hours day: 3\nExpected question count: 6",
+              },
+            },
+          },
+        ],
+      }, null, 2),
+      "utf8",
+    );
+
+    harness = await spawnSidecar({
+      tempRoot,
+      workspacePath,
+      appSupportPath,
+      cleanupOnClose: false,
+      extraEnv: {
+        AGENTIC30_RESTORE_SESSIONS_ON_BOOT: "1",
+      },
+    });
+    ws = await connectAndCollect(harness);
+    const ready = ws.events.find((event) => event.type === "ready");
+    const restored = ready?.sessions?.find((session) => session.id === sessionId);
+    assert.equal(restored?.status, "error");
+    assert.equal(restored?.pendingUserInput, null);
+    assert.match(restored?.error || "", /pending 질문이 저장되어 있지만 현재 세션에 연결되어 있지 않습니다/);
+    assert.match(restored?.error || "", new RegExp(requestId));
+    assert.match(restored?.error || "", /자동 복구나 질문 재생성 없이 중단/);
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "office_hours_status"
+          && ["provider_starting", "context_loaded", "specialist_routed"].includes(event.stage)
+      ),
+      false,
+      "detached pending failure must not start a provider run",
+    );
+    assert.deepEqual(await listUserInputRequests(appSupportPath), []);
+  } finally {
+    ws?.close();
+    await harness?.close({ cleanup: false });
+    await fs.rm(tempRoot, { recursive: true, force: true });
   }
 });
 

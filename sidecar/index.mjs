@@ -675,6 +675,13 @@ try {
   state.iddSetup = await loadIddSetupState(workspaceRoot);
   state.day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot });
   state.dayProgress = await loadDayProgress({ workspaceRoot });
+  const detachedOfficeHoursFailed = await failDetachedOfficeHoursPendingSessions({
+    emitEvents: false,
+    reason: "bootstrap",
+  });
+  if (detachedOfficeHoursFailed) {
+    await persistSessions();
+  }
   await persistBipCoachState(bipCoachFilePath, state.bipCoach);
 } catch (error) {
   const properties = {
@@ -7349,6 +7356,10 @@ function formatOfficeHoursPendingStateFailure(reason = "", { requestId = "" } = 
       return `저장된 Office Hours pending 질문은 이미 답변된 질문입니다${suffix}. 질문을 다시 생성하지 않았습니다.`;
     case "write_request_failed":
       return `저장된 Office Hours pending 질문을 현재 세션에 붙이지 못했습니다${suffix}. 질문을 다시 생성하지 않았습니다.`;
+    case "detached_pending_request":
+      return `Office Hours pending 질문이 저장되어 있지만 현재 세션에 연결되어 있지 않습니다${suffix}. 자동 복구나 질문 재생성 없이 중단했습니다.`;
+    case "detached_without_pending_request":
+      return "Office Hours 세션이 진행 중으로 표시되어 있지만 대기 질문도 실행 중 provider도 없습니다. 자동 복구나 질문 재생성 없이 중단했습니다.";
     default:
       return "Office Hours pending 질문 상태가 유효하지 않습니다. 질문을 다시 생성하지 않았습니다.";
   }
@@ -7473,6 +7484,82 @@ async function clearOfficeHoursPendingQuestionForSession(session = null, request
       reason,
     });
   }
+}
+
+function shouldFailDetachedOfficeHoursPendingSession(session = null) {
+  if (!session?.id) return false;
+  if (session.pendingUserInput) return false;
+  if (state.activeRuns.has(session.id)) return false;
+  if (session.status === "running" || session.status === "awaiting_input" || session.status === "error") return false;
+  const officeHours = session.runtime?.officeHours;
+  if (officeHours?.active !== true) return false;
+  if (officeHours.completedByExpectedCount === true || officeHours.terminalAnswered === true) return false;
+  return Boolean(normalizeOfficeHoursDay(officeHours.day));
+}
+
+async function failDetachedOfficeHoursPendingSession(session = null, {
+  emitEvents = true,
+  reason = "detached_pending_request",
+} = {}) {
+  if (!shouldFailDetachedOfficeHoursPendingSession(session)) return false;
+  const day = normalizeOfficeHoursDay(session.runtime?.officeHours?.day);
+  let pending = null;
+  try {
+    pending = await loadOfficeHoursPendingQuestion({ workspaceRoot, day });
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "office_hours_detached_pending_load",
+      session_id: session.id,
+      day,
+      reason,
+    });
+  }
+  const requestId = String(pending?.request?.requestId || "").trim();
+  const failureReason = requestId ? "detached_pending_request" : "detached_without_pending_request";
+  const message = formatOfficeHoursPendingStateFailure(failureReason, { requestId });
+  session.pendingUserInput = null;
+  session.status = "error";
+  session.error = message;
+  touch(session);
+  telemetry.captureEvent("mac_sidecar_office_hours_detached_pending_failed", {
+    session_id: session.id,
+    provider: session.provider,
+    day,
+    request_id: requestId,
+    reason,
+    failure_reason: failureReason,
+  });
+  if (emitEvents) {
+    emitOfficeHoursStatus(session, {
+      stage: "failed",
+      detail: message,
+      progressText: message,
+      requestId: requestId || null,
+    });
+    broadcast({
+      type: "error",
+      sessionId: session.id,
+      message,
+      errorKind: "office_hours_detached_pending",
+      recoverable: false,
+    });
+  }
+  return true;
+}
+
+async function failDetachedOfficeHoursPendingSessions({
+  changedSessions = null,
+  emitEvents = true,
+  reason = "detached_pending_request",
+} = {}) {
+  let changed = false;
+  for (const session of state.sessions.values()) {
+    if (await failDetachedOfficeHoursPendingSession(session, { emitEvents, reason })) {
+      changed = true;
+      changedSessions?.add?.(session.id);
+    }
+  }
+  return changed;
 }
 
 async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
@@ -16381,6 +16468,12 @@ async function syncPendingUserInputRequests() {
       state.resolvedUserInputIds.delete(requestId);
     }
   }
+
+  await failDetachedOfficeHoursPendingSessions({
+    changedSessions,
+    emitEvents: true,
+    reason: "sync_pending_user_input_requests",
+  });
 
   if (changedSessions.size === 0) return;
 
