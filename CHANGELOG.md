@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.26] - 2026-06-17
+
 ### 추가
 - **Office Hours pending 질문 복원**: 앱 재시작 뒤에도 진행 중이던 Day별 구조화 질문을 `.agentic30/memory/office-hours-pending.json`에서 복원하고, 답변 기록이 달라진 경우 새 provider run으로 덮어쓰지 않고 명시 실패로 멈추도록 했습니다.
 
