@@ -27,6 +27,9 @@ export const NEWS_MARKET_RADAR_PROMPT_PROFILE = "ko_market_radar_v7_market_surfa
 export const NEWS_MARKET_RADAR_LANE_CONCURRENCY = 2;
 export const NEWS_MARKET_RADAR_MAX_CARDS_PER_LANE = 4;
 export const NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
+export const NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON = "exa_mcp_timeout";
+export const NEWS_MARKET_RADAR_EXA_MCP_ERROR_REASON = "exa_mcp_error";
+export const NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON = "aborted_after_exa_mcp_timeout";
 export const NEWS_MARKET_RADAR_EXA_MCP_TOOLS = Object.freeze([
   "web_search_exa",
   "web_search_advanced_exa",
@@ -150,6 +153,99 @@ export function formatNewsMarketRadarProviderTimeout(timeoutMs) {
   if (timeoutMs < 60_000) return `${Math.round(timeoutMs / 1000)}s`;
   const minutes = timeoutMs / 60_000;
   return Number.isInteger(minutes) ? `${minutes}m` : `${Math.round(timeoutMs / 1000)}s`;
+}
+
+export function normalizeNewsMarketRadarCodexExaMcpToolTimeout(
+  value,
+  {
+    providerTimeoutMs = NEWS_MARKET_RADAR_DEFAULT_PROVIDER_TIMEOUT_MS,
+    defaultSec = 300,
+    minSec = 15,
+    maxSec = 300,
+    safetyMarginSec = 5,
+  } = {},
+) {
+  const providerBound = Math.floor(providerTimeoutMs / 1000) - safetyMarginSec;
+  const upperBound = Math.max(minSec, Math.min(maxSec, providerBound));
+  const parsed = Number.parseInt(String(value || ""), 10);
+  const candidate = Number.isFinite(parsed) ? parsed : defaultSec;
+  return Math.max(minSec, Math.min(candidate, upperBound));
+}
+
+export function applyNewsMarketRadarCodexExaMcpToolTimeout(mcpConfig, toolTimeoutSec) {
+  if (!mcpConfig || typeof mcpConfig !== "object") return mcpConfig;
+  if (Number.isFinite(mcpConfig.tool_timeout_sec)) return mcpConfig;
+  return {
+    ...mcpConfig,
+    tool_timeout_sec: toolTimeoutSec,
+  };
+}
+
+function normalizeNewsMarketRadarExaMcpToolFailureItem(eventOrItem = {}) {
+  const item = eventOrItem?.item && typeof eventOrItem.item === "object"
+    ? eventOrItem.item
+    : eventOrItem;
+  if (!item || typeof item !== "object") return null;
+  if (item.type !== "mcp_tool_call") return null;
+  const server = cleanString(item.server || "", 120);
+  if (server !== "exa") return null;
+  const tool = cleanString(item.tool || "", 120);
+  if (!NEWS_MARKET_RADAR_EXA_MCP_TOOLS.includes(tool)) return null;
+  const status = cleanString(item.status || "", 80);
+  if (status !== "failed") return null;
+  const message = cleanString(
+    item.error?.message
+      || item.error
+      || eventOrItem?.error?.message
+      || eventOrItem?.message
+      || "",
+    500,
+  );
+  if (!message) return null;
+  return { server, tool, status, message };
+}
+
+export function classifyNewsMarketRadarExaMcpToolFailure(eventOrItem = {}) {
+  const failure = normalizeNewsMarketRadarExaMcpToolFailureItem(eventOrItem);
+  if (!failure) return null;
+  const isTimeout = /(timed out|timeout|deadline exceeded|etimedout)/i.test(failure.message);
+  return {
+    ...failure,
+    reason: isTimeout ? NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON : NEWS_MARKET_RADAR_EXA_MCP_ERROR_REASON,
+    code: isTimeout ? NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON : NEWS_MARKET_RADAR_EXA_MCP_ERROR_REASON,
+  };
+}
+
+export function createNewsMarketRadarExaMcpFailureError({
+  reason = NEWS_MARKET_RADAR_EXA_MCP_ERROR_REASON,
+  code = reason,
+  server = "exa",
+  tool = "",
+  status = "failed",
+  message = "",
+  toolTimeoutSec = null,
+} = {}) {
+  const isTimeout = reason === NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON;
+  const timeoutText = Number.isFinite(toolTimeoutSec) ? `${toolTimeoutSec}초` : "제한 시간";
+  const rootMessage = cleanString(message, 500);
+  const error = new Error(
+    isTimeout
+      ? `Exa MCP tool call이 ${timeoutText} 안에 완료되지 않았습니다.${rootMessage ? ` ${rootMessage}` : ""}`
+      : `Exa MCP tool call이 실패했습니다.${rootMessage ? ` ${rootMessage}` : ""}`,
+  );
+  error.reason = reason;
+  error.code = code || reason;
+  error.server = server;
+  error.tool = tool;
+  error.status = status;
+  error.rootMessage = rootMessage;
+  return error;
+}
+
+export function createNewsMarketRadarExaMcpFailureErrorFromEvent(eventOrItem = {}, options = {}) {
+  const failure = classifyNewsMarketRadarExaMcpToolFailure(eventOrItem);
+  if (!failure) return null;
+  return createNewsMarketRadarExaMcpFailureError({ ...failure, ...options });
 }
 
 export function buildNewsMarketRadarProgressStatus(progress = {}, {
@@ -770,11 +866,28 @@ export async function refreshNewsMarketRadar({
   });
   const researchStartedAt = now.toISOString();
   let completedLaneCount = 0;
+  const laneAbortController = new AbortController();
+  let hardFailure = null;
+  const recordHardFailure = (failure) => {
+    if (!isNewsMarketRadarHardFailure(failure)) return;
+    if (hardFailure) return;
+    hardFailure = failure;
+    laneAbortController.abort(failure);
+  };
+  const skippedAfterHardFailure = (laneId) => ({
+    ok: false,
+    laneId,
+    laneTitle: NEWS_LANE_TITLES[laneId],
+    error: "Exa MCP timeout 이후 시작하지 않은 가설 리서치입니다.",
+    reason: NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON,
+    code: NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON,
+  });
   const laneResults = await runWithConcurrency(
     NEWS_LANE_IDS,
     laneConcurrency,
     async (laneId) => {
       const laneTitle = NEWS_LANE_TITLES[laneId];
+      if (hardFailure) return skippedAfterHardFailure(laneId);
       const laneContext = buildMarketRadarLaneResearchContext(context, laneId);
       try {
         const rawProviderResult = await providerResearcher({
@@ -788,6 +901,7 @@ export async function refreshNewsMarketRadar({
           laneId,
           laneTitle,
           mode: "lane_research",
+          signal: laneAbortController.signal,
         });
         const lane = normalizeLaneResearchResult(rawProviderResult, laneId, {
           now,
@@ -810,6 +924,12 @@ export async function refreshNewsMarketRadar({
           researchSource: rawProviderResultResearchSource(rawProviderResult) || primaryRoute.label || null,
         };
       } catch (error) {
+        const failure = normalizeMarketRadarLaneFailure(error, {
+          laneId,
+          laneTitle,
+          hardFailure,
+        });
+        recordHardFailure(failure);
         completedLaneCount += 1;
         notifyNewsMarketRadarProgress(onProgress, {
           stage: "running_provider_research",
@@ -820,21 +940,53 @@ export async function refreshNewsMarketRadar({
           ok: false,
           laneId,
           laneTitle,
-          error: formatMarketRadarError(error),
+          ...failure,
         };
       }
+    },
+    {
+      shouldStop: () => Boolean(hardFailure),
+      onSkipped: (laneId) => skippedAfterHardFailure(laneId),
     },
   );
   const successfulLaneResults = laneResults.filter((result) => result.ok);
   const partialFailures = normalizePartialFailures(
     laneResults.filter((result) => !result.ok),
   );
+  const hardFailureResult = hardFailure || partialFailures.find(isNewsMarketRadarHardFailure) || null;
   const researchSource = cleanString(
     successfulLaneResults.find((result) => result.researchSource)?.researchSource
       || primaryRoute.label
       || "",
     160,
   ) || null;
+
+  if (hardFailureResult) {
+    const completedAt = new Date().toISOString();
+    const failed = failedCardlessNewsMarketRadarSnapshot({
+      ...makeEmptyNewsMarketRadarSnapshot({ now }),
+      contextFingerprint,
+    }, {
+      error: formatMarketRadarError(hardFailureResult),
+      reason: NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON,
+      researchSource,
+      partialFailures,
+      startedAt: researchStartedAt,
+      completedAt,
+      durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(researchStartedAt)),
+    });
+    return persistNewsMarketRadarSnapshot({
+      workspaceRoot,
+      snapshot: failed,
+      rawProviderResult: {
+        mode: "parallel_lane_research",
+        laneResults,
+        hardFailure: hardFailureResult,
+      },
+      now,
+      adaptiveProfile: context.adaptiveProfile,
+    });
+  }
 
   if (successfulLaneResults.length === 0) {
     const completedAt = new Date().toISOString();
@@ -1011,17 +1163,27 @@ export async function refreshNewsMarketRadar({
   });
 }
 
-async function runWithConcurrency(items, limit, worker) {
+async function runWithConcurrency(items, limit, worker, {
+  shouldStop = null,
+  onSkipped = null,
+} = {}) {
   const concurrency = Math.max(1, Math.min(clampInt(limit, 1, 20, NEWS_MARKET_RADAR_LANE_CONCURRENCY), items.length));
   const results = new Array(items.length);
   let nextIndex = 0;
   await Promise.all(Array.from({ length: concurrency }, async () => {
     while (nextIndex < items.length) {
+      if (typeof shouldStop === "function" && shouldStop()) break;
       const index = nextIndex;
       nextIndex += 1;
       results[index] = await worker(items[index], index);
     }
   }));
+  if (typeof onSkipped === "function") {
+    for (let index = 0; index < results.length; index += 1) {
+      if (Object.prototype.hasOwnProperty.call(results, index)) continue;
+      results[index] = onSkipped(items[index], index);
+    }
+  }
   return results;
 }
 
@@ -2213,14 +2375,69 @@ function normalizePartialFailures(value) {
       const laneTitle = cleanString(failure?.laneTitle || failure?.lane_title || NEWS_LANE_TITLES[laneId] || "", 120);
       const error = cleanString(failure?.error || failure?.message || "", 500);
       if (!laneId || !error) return null;
-      return {
+      const normalized = {
         laneId,
         laneTitle: laneTitle || NEWS_LANE_TITLES[laneId],
         error,
       };
+      const reason = cleanString(failure?.reason || "", 120);
+      const code = cleanString(failure?.code || reason || "", 120);
+      const server = cleanString(failure?.server || "", 120);
+      const tool = cleanString(failure?.tool || "", 120);
+      const status = cleanString(failure?.status || "", 80);
+      const rootMessage = cleanString(failure?.rootMessage || failure?.root_message || "", 500);
+      if (reason) normalized.reason = reason;
+      if (code) normalized.code = code;
+      if (server) normalized.server = server;
+      if (tool) normalized.tool = tool;
+      if (status) normalized.status = status;
+      if (rootMessage) normalized.rootMessage = rootMessage;
+      return normalized;
     })
     .filter(Boolean)
     .slice(0, NEWS_LANE_IDS.length);
+}
+
+function isNewsMarketRadarAbortLikeError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return error?.name === "AbortError" || message.includes("aborted") || message.includes("abort");
+}
+
+function isNewsMarketRadarHardFailure(value = {}) {
+  return value?.reason === NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON
+    || value?.code === NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON;
+}
+
+function normalizeMarketRadarLaneFailure(error, {
+  laneId = "",
+  laneTitle = "",
+  hardFailure = null,
+} = {}) {
+  const abortedAfterHardFailure = hardFailure && isNewsMarketRadarAbortLikeError(error);
+  const failure = {
+    laneId,
+    laneTitle,
+    error: abortedAfterHardFailure
+      ? "Exa MCP timeout 이후 진행 중이던 가설 리서치를 중단했습니다."
+      : formatMarketRadarError(error),
+  };
+  const reason = abortedAfterHardFailure
+    ? NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON
+    : cleanString(error?.reason || "", 120);
+  const code = abortedAfterHardFailure
+    ? NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON
+    : cleanString(error?.code || reason || "", 120);
+  const server = cleanString(error?.server || "", 120);
+  const tool = cleanString(error?.tool || "", 120);
+  const status = cleanString(error?.status || "", 80);
+  const rootMessage = cleanString(error?.rootMessage || "", 500);
+  if (reason) failure.reason = reason;
+  if (code) failure.code = code;
+  if (server) failure.server = server;
+  if (tool) failure.tool = tool;
+  if (status) failure.status = status;
+  if (rootMessage) failure.rootMessage = rootMessage;
+  return failure;
 }
 
 function hasSnapshotCards(snapshot = {}) {
@@ -2245,7 +2462,7 @@ function rawProviderResultResearchSource(rawProviderResult = {}) {
 }
 
 function formatMarketRadarError(error) {
-  return cleanString(error?.message || error || "알 수 없는 리서치 오류", 500);
+  return cleanString(error?.message || error?.error || error || "알 수 없는 리서치 오류", 500);
 }
 
 function answersForLane(answers = [], laneId = "") {

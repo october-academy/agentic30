@@ -344,11 +344,14 @@ import {
 import { buildMiniActionSessionTriggerEvent } from "./adaptive-curriculum.mjs";
 import {
   appendCurriculumAnswer,
+  applyNewsMarketRadarCodexExaMcpToolTimeout,
   buildExaMcpConfig,
   buildNewsMarketRadarProgressStatus,
+  createNewsMarketRadarExaMcpFailureErrorFromEvent,
   formatNewsMarketRadarProviderTimeout,
   isNewsMarketRadarAutoRefreshDue,
   loadNewsMarketRadarSnapshot,
+  normalizeNewsMarketRadarCodexExaMcpToolTimeout,
   normalizeNewsMarketRadarProviderTimeout,
   refreshNewsMarketRadar,
 } from "./news-market-radar.mjs";
@@ -566,9 +569,11 @@ const MARKET_RESEARCH_PROVIDER_MCP_CONCURRENCY = boundedIntegerEnv(
 );
 const CODEX_EXA_MCP_TOOL_TIMEOUT_SEC = boundedIntegerEnv(
   process.env.AGENTIC30_CODEX_EXA_MCP_TOOL_TIMEOUT_SEC,
-  90,
+  300,
   15,
-  Math.max(15, Math.min(210, Math.floor(NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS / 1000) - 5)),
+  normalizeNewsMarketRadarCodexExaMcpToolTimeout("", {
+    providerTimeoutMs: NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS,
+  }),
 );
 const runWithMarketResearchProviderBudget = createAsyncSemaphore(MARKET_RESEARCH_PROVIDER_MCP_CONCURRENCY);
 const REQUEST_EMIT_SCHEMA_VERSION = 1;
@@ -14715,6 +14720,7 @@ async function runNewsMarketRadarProviderResearch({
   exaResearchRoute,
   exaResearchRoutes = [],
   onProgress = null,
+  signal = null,
 } = {}) {
   // Single explicit provider route (or codex default). No multi-route/provider
   // fallback: if the chosen route's provider is unavailable or fails, surface
@@ -14755,13 +14761,14 @@ async function runNewsMarketRadarProviderResearch({
       };
     }
   }
-  const text = await runWithMarketResearchProviderBudget(async () => (
-    provider === "claude"
+  const text = await runWithMarketResearchProviderBudget(async () => {
+    if (signal?.aborted) throw new Error("aborted");
+    return provider === "claude"
       ? await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: route.mcpConfig })
       : provider === "gemini"
         ? await runNewsMarketRadarGeminiResearch({ prompt, exaMcpConfig: route.mcpConfig })
-        : await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: route.mcpConfig })
-  ));
+        : await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: route.mcpConfig, signal });
+  });
   return {
     text,
     provider,
@@ -14828,12 +14835,7 @@ function normalizeNewsMarketRadarProviderRoutes({
 }
 
 function withCodexExaMcpToolTimeout(mcpConfig) {
-  if (!mcpConfig || typeof mcpConfig !== "object") return mcpConfig;
-  if (Number.isFinite(mcpConfig.tool_timeout_sec)) return mcpConfig;
-  return {
-    ...mcpConfig,
-    tool_timeout_sec: CODEX_EXA_MCP_TOOL_TIMEOUT_SEC,
-  };
+  return applyNewsMarketRadarCodexExaMcpToolTimeout(mcpConfig, CODEX_EXA_MCP_TOOL_TIMEOUT_SEC);
 }
 
 function providerLabel(provider) {
@@ -15034,8 +15036,16 @@ async function runNewsMarketRadarClaudeSynthesis({
 async function runNewsMarketRadarCodexResearch({
   prompt,
   exaMcpConfig,
+  signal = null,
 } = {}) {
   const abortController = new AbortController();
+  let parentAbortListener = null;
+  if (signal?.aborted) {
+    abortController.abort(signal.reason);
+  } else if (signal && typeof signal.addEventListener === "function") {
+    parentAbortListener = () => abortController.abort(signal.reason);
+    signal.addEventListener("abort", parentAbortListener, { once: true });
+  }
   let timedOut = false;
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -15081,6 +15091,15 @@ async function runNewsMarketRadarCodexResearch({
     for await (const event of events) {
       if (
         (event.type === "item.started" || event.type === "item.updated" || event.type === "item.completed")
+        && event.item?.type === "mcp_tool_call"
+      ) {
+        const exaMcpFailure = createNewsMarketRadarExaMcpFailureErrorFromEvent(event, {
+          toolTimeoutSec: CODEX_EXA_MCP_TOOL_TIMEOUT_SEC,
+        });
+        if (exaMcpFailure) throw exaMcpFailure;
+      }
+      if (
+        (event.type === "item.started" || event.type === "item.updated" || event.type === "item.completed")
         && event.item?.type === "agent_message"
         && typeof event.item.text === "string"
       ) {
@@ -15098,6 +15117,9 @@ async function runNewsMarketRadarCodexResearch({
     }
     throw error;
   } finally {
+    if (signal && parentAbortListener && typeof signal.removeEventListener === "function") {
+      signal.removeEventListener("abort", parentAbortListener);
+    }
     clearTimeout(timeout);
   }
 }

@@ -58,6 +58,28 @@ test("parseCodexSdkEvent accepts in-progress MCP tool events with null result an
   assert.equal(event.item.error, null);
 });
 
+test("parseCodexSdkEvent accepts failed MCP tool events with error details", () => {
+  const event = parseCodexSdkEvent({
+    type: "item.completed",
+    item: {
+      id: "call-exa-timeout",
+      type: "mcp_tool_call",
+      server: "exa",
+      tool: "web_fetch_exa",
+      arguments: { url: "https://example.com" },
+      result: null,
+      error: { message: "timed out awaiting tools/call after 300s" },
+      status: "failed",
+    },
+  });
+
+  assert.equal(event.type, "item.completed");
+  assert.equal(event.item.server, "exa");
+  assert.equal(event.item.tool, "web_fetch_exa");
+  assert.equal(event.item.status, "failed");
+  assert.equal(event.item.error.message, "timed out awaiting tools/call after 300s");
+});
+
 test("parseCodexSdkEvent rejects malformed known item events", () => {
   assert.throws(
     () => parseCodexSdkEvent({

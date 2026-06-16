@@ -5,12 +5,16 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON,
+  NEWS_MARKET_RADAR_EXA_MCP_ERROR_REASON,
+  NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON,
   NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS,
   NEWS_MARKET_RADAR_LANE_CONCURRENCY,
   NEWS_MARKET_RADAR_PROGRESS_STEPS,
   NEWS_MARKET_RADAR_PROMPT_PROFILE,
   NEWS_MARKET_RADAR_REFRESH_INTERVAL_MS,
   appendCurriculumAnswer,
+  applyNewsMarketRadarCodexExaMcpToolTimeout,
   buildMarketRadarResearchContext,
   buildMarketRadarLaneResearchContext,
   buildMarketRadarLaneProviderPrompt,
@@ -18,11 +22,14 @@ import {
   canonicalMarketRadarSourceKey,
   buildExaMcpConfig,
   buildNewsMarketRadarProgressStatus,
+  classifyNewsMarketRadarExaMcpToolFailure,
   collectWorkspaceEvidence,
+  createNewsMarketRadarExaMcpFailureError,
   formatNewsMarketRadarProviderTimeout,
   isNewsMarketRadarAutoRefreshDue,
   loadCurriculumAnswerLog,
   loadNewsMarketRadarSnapshot,
+  normalizeNewsMarketRadarCodexExaMcpToolTimeout,
   normalizeNewsMarketRadarProviderTimeout,
   normalizeNewsMarketRadarSnapshot,
   rankAnswersForMarketRadar,
@@ -520,6 +527,62 @@ test("provider timeout is long enough for Exa research and has a user-readable l
   assert.equal(normalizeNewsMarketRadarProviderTimeout("1500000"), 1_200_000);
   assert.equal(formatNewsMarketRadarProviderTimeout(900_000), "15m");
   assert.equal(formatNewsMarketRadarProviderTimeout(45_000), "45s");
+});
+
+test("Codex Exa MCP tool timeout defaults to 300 seconds with a provider-aware cap", () => {
+  assert.equal(normalizeNewsMarketRadarCodexExaMcpToolTimeout(""), 300);
+  assert.equal(normalizeNewsMarketRadarCodexExaMcpToolTimeout("180"), 180);
+  assert.equal(normalizeNewsMarketRadarCodexExaMcpToolTimeout("999"), 300);
+  assert.equal(normalizeNewsMarketRadarCodexExaMcpToolTimeout("", { providerTimeoutMs: 45_000 }), 40);
+  assert.equal(normalizeNewsMarketRadarCodexExaMcpToolTimeout("999", { providerTimeoutMs: 10_000 }), 15);
+
+  assert.deepEqual(
+    applyNewsMarketRadarCodexExaMcpToolTimeout({ type: "http", url: "https://mcp.exa.ai/mcp" }, 300),
+    { type: "http", url: "https://mcp.exa.ai/mcp", tool_timeout_sec: 300 },
+  );
+  assert.deepEqual(
+    applyNewsMarketRadarCodexExaMcpToolTimeout({ type: "http", tool_timeout_sec: 120 }, 300),
+    { type: "http", tool_timeout_sec: 120 },
+  );
+});
+
+test("Codex Exa MCP tool failure classification distinguishes timeout from other failures", () => {
+  const timeout = classifyNewsMarketRadarExaMcpToolFailure({
+    type: "item.completed",
+    item: {
+      type: "mcp_tool_call",
+      server: "exa",
+      tool: "web_fetch_exa",
+      status: "failed",
+      error: { message: "timed out awaiting tools/call after 300s" },
+    },
+  });
+  assert.equal(timeout.reason, NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON);
+  assert.equal(timeout.code, NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON);
+  assert.equal(timeout.tool, "web_fetch_exa");
+
+  const nonTimeout = classifyNewsMarketRadarExaMcpToolFailure({
+    type: "item.completed",
+    item: {
+      type: "mcp_tool_call",
+      server: "exa",
+      tool: "web_search_exa",
+      status: "failed",
+      error: { message: "HTTP 401 unauthorized" },
+    },
+  });
+  assert.equal(nonTimeout.reason, NEWS_MARKET_RADAR_EXA_MCP_ERROR_REASON);
+
+  assert.equal(classifyNewsMarketRadarExaMcpToolFailure({
+    type: "item.completed",
+    item: {
+      type: "mcp_tool_call",
+      server: "github",
+      tool: "search",
+      status: "failed",
+      error: { message: "timed out" },
+    },
+  }), null);
 });
 
 test("progress status recomputes elapsed from refresh start for heartbeat updates", () => {
@@ -1537,6 +1600,97 @@ test("refresh keeps successful lanes ready when some lane research fails", async
     assert.deepEqual(snapshot.status.partialFailures.map((failure) => failure.laneId).sort(), ["channel", "problem"]);
     assert.equal(snapshot.lanes.find((lane) => lane.id === "problem").cards.length, 0);
     assert.equal(snapshot.lanes.find((lane) => lane.id === "icp").cards.length, 1);
+  });
+});
+
+test("refresh hard-fails when any lane reports a Codex Exa MCP timeout", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    const snapshot = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      laneConcurrency: 1,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => {
+        if (laneId === "problem") {
+          throw createNewsMarketRadarExaMcpFailureError({
+            reason: NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON,
+            code: NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON,
+            server: "exa",
+            tool: "web_search_advanced_exa",
+            status: "failed",
+            message: "timed out awaiting tools/call after 300s",
+            toolTimeoutSec: 300,
+          });
+        }
+        return testLaneResearchResult(laneId);
+      },
+      providerSynthesizer: async ({ candidateSnapshot }) => candidateSnapshot,
+    });
+
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.status.reason, NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON);
+    assert.match(snapshot.status.error, /300초/);
+    assert.equal(countCards(snapshot), 0);
+    assert.equal(snapshot.status.partialFailures.some((failure) => (
+      failure.laneId === "problem"
+      && failure.reason === NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON
+      && failure.tool === "web_search_advanced_exa"
+    )), true);
+    assert.equal(snapshot.status.partialFailures.some((failure) => (
+      failure.reason === NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON
+    )), true);
+  });
+});
+
+test("refresh stops queued lanes and aborts active lanes after a Codex Exa MCP timeout", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    const startedLaneIds = [];
+    const snapshot = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      laneConcurrency: 2,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId, signal }) => {
+        startedLaneIds.push(laneId);
+        if (laneId === "problem") {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          throw createNewsMarketRadarExaMcpFailureError({
+            reason: NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON,
+            code: NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON,
+            server: "exa",
+            tool: "web_fetch_exa",
+            status: "failed",
+            message: "deadline exceeded while awaiting tools/call",
+            toolTimeoutSec: 300,
+          });
+        }
+        return await new Promise((resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            const abortError = new Error("aborted");
+            abortError.name = "AbortError";
+            reject(abortError);
+          }, { once: true });
+          setTimeout(() => resolve(testLaneResearchResult(laneId)), 100);
+        });
+      },
+      providerSynthesizer: async ({ candidateSnapshot }) => candidateSnapshot,
+    });
+
+    assert.deepEqual(startedLaneIds.sort(), ["icp", "problem"]);
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.status.reason, NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON);
+    assert.equal(snapshot.status.partialFailures.length, 5);
+    assert.equal(snapshot.status.partialFailures.filter((failure) => (
+      failure.reason === NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON
+    )).length, 4);
   });
 });
 
