@@ -1292,6 +1292,39 @@ function buildCommitBuckets({ commits = [], deploys = [], window }) {
   }));
 }
 
+function normalizeCommitTimestamps(values = []) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => {
+      const ts = Date.parse(String(value || ""));
+      return Number.isFinite(ts) ? ts : null;
+    })
+    .filter((value) => value !== null)
+    .sort((a, b) => a - b);
+}
+
+function commitEventsForGithubDrilldown(gitSource, commitCount) {
+  const hasCommitSeries = Array.isArray(gitSource?.series?.commitTimestamps);
+  const commitTimestamps = normalizeCommitTimestamps(gitSource?.series?.commitTimestamps);
+  if (!hasCommitSeries && commitCount > 0) {
+    throw new Error(`GitHub drilldown commit series missing: counts.commits=${commitCount}, series.commitTimestamps=missing.`);
+  }
+  if (hasCommitSeries && commitTimestamps.length !== commitCount) {
+    throw new Error(`GitHub drilldown commit series mismatch: counts.commits=${commitCount}, series.commitTimestamps=${commitTimestamps.length}.`);
+  }
+  return {
+    hasCommitSeries,
+    commitEvents: commitTimestamps.map((ts) => ({ ts })),
+  };
+}
+
+function assertCommitBucketTotalMatchesCount({ commitBuckets = [], commitCount = 0, hasCommitSeries = false } = {}) {
+  if (!hasCommitSeries) return;
+  const bucketTotal = commitBuckets.reduce((sum, bucket) => sum + (finiteNumber(bucket?.value) ?? 0), 0);
+  if (bucketTotal !== commitCount) {
+    throw new Error(`GitHub drilldown commit bucket mismatch: counts.commits=${commitCount}, chart.total=${bucketTotal}.`);
+  }
+}
+
 async function readGithubRepoFacts({ cwd, execImpl }) {
   const [repoView, branch] = await Promise.all([
     execImpl("gh", ["repo", "view", "--json", "nameWithOwner,stargazerCount,hasWikiEnabled"], { cwd }),
@@ -1423,7 +1456,7 @@ export async function collectGithubDrilldown({
   const commits = finiteNumber(counts.commits) ?? 0;
   const additions = finiteNumber(counts.additions);
   const deletions = finiteNumber(counts.deletions);
-  const commitEvents = (gitSource?.events || []).map((event) => ({ at: event.at }));
+  const { hasCommitSeries, commitEvents } = commitEventsForGithubDrilldown(gitSource, commits);
 
   let prRows = [];
   let deploys = [];
@@ -1751,10 +1784,11 @@ export async function collectGithubDrilldown({
     metaRows.push({ key: "Stars", value: String(repoFacts.stargazerCount), tone: "amber" });
   }
   const commitBuckets = buildCommitBuckets({
-    commits: commitEvents.map((event) => ({ ts: Date.parse(event.at) })),
+    commits: commitEvents,
     deploys,
     window,
   });
+  assertCommitBucketTotalMatchesCount({ commitBuckets, commitCount: commits, hasCommitSeries });
 
   return normalizeMorningBriefingDrilldown("github", {
     title: "GitHub · 빌드·배포 · 레포 신호",

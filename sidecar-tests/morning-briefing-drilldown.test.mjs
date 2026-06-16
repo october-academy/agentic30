@@ -52,10 +52,22 @@ test("normalizeCardSparkline defaults missing values to zero and drops invalid n
 });
 
 function gitSourceFixture() {
+  const commitTimestamps = [
+    "2026-06-09T00:10:00.000Z",
+    "2026-06-09T01:10:00.000Z",
+    "2026-06-09T03:30:00.000Z",
+    "2026-06-09T05:00:00.000Z",
+    "2026-06-09T09:30:00.000Z",
+    "2026-06-09T12:15:00.000Z",
+    "2026-06-09T18:12:00.000Z",
+    "2026-06-09T21:05:00.000Z",
+    "2026-06-09T22:40:00.000Z",
+  ];
   return {
     id: "git",
     state: "ready",
     counts: { commits: 9, additions: 412, deletions: 138 },
+    series: { commitTimestamps },
     events: [
       { at: "2026-06-09T01:10:00.000Z", text: "커밋 · a" },
       { at: "2026-06-09T03:30:00.000Z", text: "커밋 · b" },
@@ -63,6 +75,10 @@ function gitSourceFixture() {
       { at: "2026-06-09T22:40:00.000Z", text: "커밋 · d" },
     ],
   };
+}
+
+function sumValues(points = []) {
+  return points.reduce((sum, point) => sum + Number(point?.value || 0), 0);
 }
 
 function ghSourceFixture() {
@@ -146,8 +162,8 @@ test("collectGithubDrilldown builds kpis, buckets, lists, scan, and maintenance 
 
   assert.equal(drilldown.chart.kind, "bars");
   assert.equal(drilldown.chart.bars.length, 8);
-  const total = drilldown.chart.bars.reduce((sum, bar) => sum + bar.value, 0);
-  assert.equal(total, 4);
+  const total = sumValues(drilldown.chart.bars);
+  assert.equal(total, Number(commitKpi.valueLabel));
   assert.ok(drilldown.chart.bars.some((bar) => bar.tone === "violet"));
   assert.equal(drilldown.cardSparkline.length, 8);
   assert.deepEqual(
@@ -181,6 +197,67 @@ test("collectGithubDrilldown builds kpis, buckets, lists, scan, and maintenance 
 
   assert.equal(drilldown.meta.progress.label, "main 배포");
   assert.ok(drilldown.meta.rows.some((row) => row.key === "리포" && row.value === "zettalyst/agentic30-public"));
+});
+
+test("collectGithubDrilldown charts full commit series even when timeline events are capped", async () => {
+  const commitTimestamps = [
+    "2026-06-09T00:10:00.000Z",
+    "2026-06-09T00:30:00.000Z",
+    "2026-06-09T01:00:00.000Z",
+    "2026-06-09T02:45:00.000Z",
+    "2026-06-09T04:00:00.000Z",
+    "2026-06-09T06:30:00.000Z",
+    "2026-06-09T08:15:00.000Z",
+    "2026-06-09T10:00:00.000Z",
+    "2026-06-09T12:20:00.000Z",
+    "2026-06-09T14:40:00.000Z",
+    "2026-06-09T16:05:00.000Z",
+    "2026-06-09T18:10:00.000Z",
+    "2026-06-09T21:05:00.000Z",
+    "2026-06-09T22:40:00.000Z",
+  ];
+  const gitSource = {
+    id: "git",
+    state: "ready",
+    counts: { commits: 14, additions: 100, deletions: 20 },
+    series: { commitTimestamps },
+    events: commitTimestamps.slice(-8).map((at, index) => ({ at, text: `커밋 · capped ${index}` })),
+  };
+  assert.equal(gitSource.events.length, 8);
+
+  const { exec } = stubGithubExec();
+  const drilldown = await collectGithubDrilldown({
+    workspaceRoot: "/tmp/ws",
+    window: WINDOW,
+    gitSource,
+    ghSource: ghSourceFixture(),
+    previousCommitCount: 12,
+    execImpl: exec,
+  });
+
+  const commitKpi = drilldown.kpis.find((kpi) => kpi.label === "커밋");
+  assert.equal(commitKpi.valueLabel, "14");
+  assert.equal(sumValues(drilldown.chart.bars), 14);
+  assert.equal(sumValues(drilldown.cardSparkline), 14);
+});
+
+test("collectGithubDrilldown fails explicitly when commit series is missing", async () => {
+  const { exec } = stubGithubExec();
+  await assert.rejects(
+    () => collectGithubDrilldown({
+      workspaceRoot: "/tmp/ws",
+      window: WINDOW,
+      gitSource: {
+        id: "git",
+        state: "ready",
+        counts: { commits: 1, additions: 1, deletions: 0 },
+        events: [{ at: "2026-06-09T01:10:00.000Z", text: "커밋 · only event" }],
+      },
+      ghSource: null,
+      execImpl: exec,
+    }),
+    /GitHub drilldown commit series missing: counts\.commits=1/,
+  );
 });
 
 test("collectGithubDrilldown counts in-window releases and packages as deploys", async () => {

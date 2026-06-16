@@ -43,6 +43,16 @@ function gitDigestLogFixture() {
   ].join("\n");
 }
 
+function manyCommitDigestLogFixture(count = 10) {
+  return Array.from({ length: count }, (_, index) => {
+    const hour = String(index).padStart(2, "0");
+    return [
+      `\u001e2026-06-08T${hour}:05:00+09:00\u001fme@example.com\u001fraw commit subject ${index}`,
+      "1\t0\tsidecar/daily-office-hours-digest.mjs",
+    ].join("\n");
+  }).join("\n");
+}
+
 test("officeHoursDigestWindow starts at local previous-day midnight", () => {
   const window = officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), {
     tzOffsetMinutes: KST,
@@ -345,6 +355,70 @@ test("collectGitDailySignals stores aggregate summaries without commit SHAs", as
   assert.equal(source.counts.uncommittedChanges, 2);
   assert.match(source.summary, /git 커밋 2건/);
   assert.doesNotMatch(JSON.stringify(source), /aaa111|bbb222|[a-f0-9]{40}/i);
+});
+
+test("collectGitDailySignals caps timeline events but preserves full commit timestamp series", async () => {
+  const window = officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), {
+    tzOffsetMinutes: KST,
+  });
+  const execImpl = fakeExec([
+    ["git rev-parse", { ok: true, stdout: "true\n" }],
+    ["git log --all --no-merges", { ok: true, stdout: manyCommitDigestLogFixture(10) }],
+    ["git config user.email", { ok: true, stdout: "me@example.com\n" }],
+    ["git status --short", { ok: true, stdout: "" }],
+  ]);
+
+  const source = await collectGitDailySignals({ workspaceRoot: "/tmp/ws", window, execImpl });
+
+  assert.equal(source.counts.commits, 10);
+  assert.equal(source.events.length, 8);
+  assert.equal(source.series.commitTimestamps.length, 10);
+  assert.deepEqual(source.series.commitTimestamps.slice(0, 2), [
+    "2026-06-07T15:05:00.000Z",
+    "2026-06-07T16:05:00.000Z",
+  ]);
+  assert.doesNotMatch(JSON.stringify(source.series), /raw commit subject|[a-f0-9]{40}/i);
+});
+
+test("finalizeDailyOfficeHoursDigest carries local source analytics series", () => {
+  const digest = finalizeDailyOfficeHoursDigest({
+    gate: {
+      day: 2,
+      ok: true,
+      reason: "ready",
+      selectedSources: ["git"],
+      window: officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), { tzOffsetMinutes: KST }),
+      sources: [
+        { id: "git", label: "git", state: "ready", selected: true, required: true },
+      ],
+    },
+    localSignals: [
+      {
+        id: "git",
+        label: "git",
+        state: "ready",
+        counts: { commits: 2 },
+        highlights: ["git 커밋 2건"],
+        summary: "git 커밋 2건",
+        series: {
+          commitTimestamps: [
+            "2026-06-08T01:00:00.000Z",
+            "not-a-date",
+            "2026-06-08T00:00:00.000Z",
+          ],
+        },
+      },
+    ],
+    externalSignals: [],
+    context: "Goal lane: build_product",
+    now: new Date("2026-06-09T10:30:00+09:00"),
+  });
+
+  const git = digest.sources.find((source) => source.id === "git");
+  assert.deepEqual(git.series.commitTimestamps, [
+    "2026-06-08T00:00:00.000Z",
+    "2026-06-08T01:00:00.000Z",
+  ]);
 });
 
 test("collectGitDailySignals includes tag events without exposing SHAs", async () => {

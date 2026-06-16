@@ -157,11 +157,13 @@ function sourceStatus({
   goalSignals = [],
   evidenceGaps = [],
   events = [],
+  series = {},
 } = {}) {
   const def = SOURCE_DEFS[id] || { id, label: id };
   const normalizedState = normalizeStatusState(state);
   const resolvedConnectionState = normalizeStatusState(connectionState, normalizedState);
   const resolvedCollectionState = normalizeStatusState(collectionState, normalizedState);
+  const normalizedSeries = normalizeSourceSeries(series);
   return {
     id: def.id,
     label: def.label,
@@ -186,6 +188,7 @@ function sourceStatus({
     // consumers (morning briefing timeline) can render when things happened, not
     // just that they happened. Empty for sources without per-event timestamps.
     events: normalizeEventList(events),
+    ...(Object.keys(normalizedSeries).length ? { series: normalizedSeries } : {}),
   };
 }
 
@@ -200,6 +203,23 @@ function normalizeEventList(values = [], limit = 8) {
     .filter(Boolean)
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
     .slice(-limit);
+}
+
+function normalizeIsoTimestampList(values = []) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => {
+      const ts = Date.parse(String(value || ""));
+      return Number.isFinite(ts) ? new Date(ts).toISOString() : null;
+    })
+    .filter(Boolean)
+    .sort();
+}
+
+function normalizeSourceSeries(series = {}) {
+  const commitTimestamps = normalizeIsoTimestampList(series?.commitTimestamps);
+  return {
+    ...(commitTimestamps.length ? { commitTimestamps } : {}),
+  };
 }
 
 function normalizeStringList(values = [], limit = 6, max = 200) {
@@ -618,6 +638,9 @@ export async function collectGitDailySignals({
     },
     highlights,
     summary: highlights.join(" / "),
+    series: {
+      commitTimestamps: commits.map((commit) => new Date(commit.ts).toISOString()),
+    },
     events: [
       ...commits.map((commit) => ({
         at: new Date(commit.ts).toISOString(),
@@ -978,6 +1001,7 @@ export function finalizeDailyOfficeHoursDigest({
       state,
     );
     const collectionState = normalizeStatusState(merged.collectionState ?? merged.state, state);
+    const normalizedSeries = normalizeSourceSeries(merged.series);
     return {
       id: merged.id,
       label: merged.label,
@@ -999,6 +1023,9 @@ export function finalizeDailyOfficeHoursDigest({
       goalSignals: normalizeStringList(merged.goalSignals, 6, 200),
       evidenceGaps: normalizeStringList(merged.evidenceGaps, 6, 200),
       events: normalizeEventList(merged.events),
+      ...(Object.keys(normalizedSeries).length
+        ? { series: normalizedSeries }
+        : {}),
     };
   });
   const failedRequired = sources.filter((source) => source.required && source.connectionState !== "ready");
