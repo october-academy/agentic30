@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.28] - 2026-06-17
+
 ### 추가
 - **humanize-korean skill 번들**: sidecar release bundle에 `sidecar/skills/humanize-korean` 룰북과 레퍼런스를 포함하고, Xcode sidecar build input에도 `sidecar/skills`를 추가해 skill 변경이 번들 재생성을 유발하도록 했습니다.
 
