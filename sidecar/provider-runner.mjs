@@ -190,6 +190,10 @@ function normalizeProviderSettings(settings = {}) {
   };
 }
 
+function hasStructuredOutputSchema(schema) {
+  return Boolean(schema && typeof schema === "object");
+}
+
 function normalizeAuthMode(authMode = "") {
   const normalized = String(authMode || "local").trim().toLowerCase();
   return [
@@ -222,6 +226,7 @@ export async function runProviderStream({
   onRuntimeUpdate,
   onRunEvent,
   stopAfterCodexThreadStarted = false,
+  structuredOutputSchema = null,
 }) {
   onRunEvent?.({
     phase: "provider.entry",
@@ -281,6 +286,7 @@ export async function runProviderStream({
       prompt,
       model,
       abortController,
+      structuredOutputSchema,
       onTextReplace,
     });
     return { runtime: sessionRuntime };
@@ -301,6 +307,7 @@ export async function runProviderStream({
       executionMode,
       systemPromptOverride,
       approvedToolExecution,
+      structuredOutputSchema,
       onTextDelta,
       onTextReplace,
       onToolEvent,
@@ -347,6 +354,7 @@ export async function runProviderStream({
       systemPromptOverride,
       specialist,
       approvedToolExecution,
+      structuredOutputSchema,
       onTextDelta,
       onTextReplace,
       onToolEvent,
@@ -366,6 +374,7 @@ export async function runProviderStream({
     systemPromptOverride,
     specialist,
     approvedToolExecution,
+    structuredOutputSchema,
     onTextDelta,
     onTextReplace,
     onToolEvent,
@@ -672,6 +681,7 @@ async function runClaudeProvider({
   onToolEvent,
   onRuntimeUpdate,
   onRunEvent,
+  structuredOutputSchema = null,
 }) {
   let runtime = { ...sessionRuntime };
   let sawPartialText = false;
@@ -744,6 +754,9 @@ async function runClaudeProvider({
     },
     abortController,
     maxTurns: resolveClaudeMaxTurns(executionMode),
+    ...(hasStructuredOutputSchema(structuredOutputSchema)
+      ? { outputFormat: { type: "json_schema", schema: structuredOutputSchema } }
+      : {}),
     ...(claudeVendor?.exists && executionMode !== OFFICE_HOURS_QUESTION_EXECUTION_MODE
       ? {
           plugins: [{ type: "local", path: claudeVendor.pluginRoot }],
@@ -852,9 +865,22 @@ async function runClaudeProvider({
         costUsd: event.total_cost_usd,
       });
       if (event.subtype === "success") {
-        onTextReplace?.(event.result ?? "");
+        if (hasStructuredOutputSchema(structuredOutputSchema)) {
+          if (!Object.hasOwn(event, "structured_output")) {
+            const error = new Error("Claude structured output missing structured_output");
+            error.structuredOutputFailure = "missing_structured_output";
+            throw error;
+          }
+          onTextReplace?.(JSON.stringify(event.structured_output));
+        } else {
+          onTextReplace?.(event.result ?? "");
+        }
       } else {
-        throw new Error((event.errors ?? []).join("; ") || event.stop_reason || "Claude Agent SDK run failed.");
+        const error = new Error((event.errors ?? []).join("; ") || event.stop_reason || "Claude Agent SDK run failed.");
+        if (hasStructuredOutputSchema(structuredOutputSchema)) {
+          error.structuredOutputFailure = "provider_schema_rejected";
+        }
+        throw error;
       }
       continue;
     }
@@ -1396,6 +1422,7 @@ async function runCodexAttempt({
   onRuntimeUpdate,
   onRunEvent,
   stopAfterCodexThreadStarted = false,
+  structuredOutputSchema = null,
 }) {
   let runtime = { ...sessionRuntime };
   onRunEvent?.({ phase: "provider.codex.prepare_start" });
@@ -1470,6 +1497,9 @@ async function runCodexAttempt({
   onRunEvent?.({ phase: "provider.codex.run_streamed_call_start" });
   const { events } = await thread.runStreamed(prompt, {
     signal: abortController.signal,
+    ...(hasStructuredOutputSchema(structuredOutputSchema)
+      ? { outputSchema: structuredOutputSchema }
+      : {}),
   });
   onRunEvent?.({ phase: "provider.codex.stream_opened", promptChars: String(prompt || "").length });
 
@@ -2620,6 +2650,7 @@ async function runGeminiProvider({
   onToolEvent,
   onRuntimeUpdate,
   onRunEvent,
+  structuredOutputSchema = null,
 }) {
   let runtime = { ...sessionRuntime };
   onRunEvent?.({ phase: "provider.gemini.prepare_start" });
@@ -2659,6 +2690,12 @@ async function runGeminiProvider({
     config: {
       systemInstruction: systemPromptText,
       ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
+      ...(hasStructuredOutputSchema(structuredOutputSchema)
+        ? {
+            responseMimeType: "application/json",
+            responseJsonSchema: structuredOutputSchema,
+          }
+        : {}),
     },
     abortSignal: abortController?.signal,
   });

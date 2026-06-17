@@ -4,6 +4,12 @@ import path from "node:path";
 import { z } from "zod";
 
 import { atomicWriteJson } from "./atomic-store.mjs";
+import {
+  createDirectExaApiKeyRequiredError,
+  DIRECT_EXA_API_KEY_REQUIRED_REASON,
+  DIRECT_EXA_SEARCH_FAILED_REASON,
+  extractDirectExaApiKey,
+} from "./direct-exa-research.mjs";
 import { projectDocDefinitions } from "./project-doc-paths.mjs";
 
 export const STRATEGY_REPORT_SCHEMA_VERSION = 1;
@@ -12,6 +18,13 @@ export const STRATEGY_REPORT_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const STRATEGY_REPORT_RETENTION_DAYS = 30;
 export const STRATEGY_REPORT_CONTENT_LOCALE = "ko-KR";
 export const STRATEGY_REPORT_PROMPT_PROFILE = "ko_strategy_report_v1_three_pass_exa";
+export const STRATEGY_REPORT_OUTPUT_SCHEMA_NAME = "StrategyReportOutputContract";
+export const STRATEGY_REPORT_ADVERSARIAL_OUTPUT_SCHEMA_NAME = "StrategyReportAdversarialReviewContract";
+export const STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS = Object.freeze({
+  competitorsMinItems: 3,
+  competitorsMaxItems: 12,
+});
+export const STRATEGY_REPORT_STRUCTURED_OUTPUT_FAILURE_PROVIDER_SCHEMA_INVALID_LOCAL = "provider_schema_invalid_local";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_EVIDENCE_CHARS_PER_DOC = 12_000;
@@ -221,6 +234,7 @@ const SECRET_TOKEN_PATTERNS = Object.freeze([
 ]);
 
 const PRIVATE_RAW_TEXT_PATTERN = /(raw\s+private|private\s+alignment|interview\s+transcript|transcript\s+says|token\s+sk-|api[_ -]?key|password|credential)/i;
+const PRIVATE_RAW_TEXT_PATTERN_EXCEPT_API_KEY = /(raw\s+private|private\s+alignment|interview\s+transcript|transcript\s+says|token\s+sk-|password|credential)/i;
 
 const StrategyReportStringSchema = z.string().trim().min(1);
 const StrategyReportOptionalStringSchema = z.string().trim().optional();
@@ -346,13 +360,92 @@ const StrategyReportAdversarialReviewContract = z.object({
   required_changes: StrategyReportOptionalGeneratedFieldSchema,
 }).passthrough();
 
+const StrategyReportProviderStringSchema = z.string().trim().min(1);
+
+const StrategyReportProviderSummaryTileSchema = z.object({
+  id: StrategyReportProviderStringSchema.max(80),
+  label: StrategyReportProviderStringSchema.max(80),
+  title: StrategyReportProviderStringSchema.max(160),
+  detail: StrategyReportProviderStringSchema.max(360),
+}).strict();
+
+const StrategyReportProviderCriteriaRowSchema = z.object({
+  id: StrategyReportProviderStringSchema.max(80),
+  label: StrategyReportProviderStringSchema.max(80),
+  value: StrategyReportProviderStringSchema.max(500),
+}).strict();
+
+const StrategyReportProviderCanvasBlockSchema = z.object({
+  id: StrategyReportProviderStringSchema.max(80),
+  title: StrategyReportProviderStringSchema.max(160),
+  bullets: z.array(StrategyReportProviderStringSchema.max(300)).min(1).max(8),
+}).strict();
+
+const StrategyReportProviderCompetitorSchema = z.object({
+  id: StrategyReportProviderStringSchema.max(80),
+  title: StrategyReportProviderStringSchema.max(120),
+  tag: StrategyReportProviderStringSchema.max(180),
+  body: StrategyReportProviderStringSchema.max(600),
+  gap: StrategyReportProviderStringSchema.max(420),
+  adaptiveScore: z.number().min(0).max(100),
+  evidenceScore: z.number().min(0).max(100),
+  sourceLabel: StrategyReportProviderStringSchema.max(160),
+  scoreRationale: StrategyReportProviderStringSchema.max(500),
+  isAgentic30: z.boolean(),
+}).strict();
+
+const StrategyReportProviderSwotGroupSchema = z.object({
+  id: StrategyReportProviderStringSchema.max(80),
+  title: StrategyReportProviderStringSchema.max(120),
+  tag: StrategyReportProviderStringSchema.max(80),
+  bullets: z.array(StrategyReportProviderStringSchema.max(300)).min(1).max(8),
+}).strict();
+
+const StrategyReportProviderSourceRefSchema = z.object({
+  id: StrategyReportProviderStringSchema.max(80),
+  sourceType: StrategyReportProviderStringSchema.max(80),
+  title: StrategyReportProviderStringSchema.max(220),
+  url: StrategyReportProviderStringSchema.max(500),
+  domain: StrategyReportProviderStringSchema.max(160),
+  excerpt: StrategyReportProviderStringSchema.max(500),
+}).strict();
+
+const StrategyReportProviderContentContract = z.object({
+  commandLine: StrategyReportProviderStringSchema.max(240),
+  diagnosisKicker: StrategyReportProviderStringSchema.max(80),
+  diagnosisTitle: StrategyReportProviderStringSchema.max(360),
+  diagnosisLead: StrategyReportProviderStringSchema.max(800),
+  positioningStatement: StrategyReportProviderStringSchema.max(500),
+  judgement: StrategyReportProviderStringSchema.max(900),
+  analysisBasisLabel: StrategyReportProviderStringSchema.max(160),
+  summaryTiles: z.array(StrategyReportProviderSummaryTileSchema).min(3).max(6),
+  criteriaRows: z.array(StrategyReportProviderCriteriaRowSchema).min(4).max(12),
+  canvasBlocks: z.array(StrategyReportProviderCanvasBlockSchema).min(9).max(24),
+  competitors: z.array(StrategyReportProviderCompetitorSchema)
+    .min(STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS.competitorsMinItems)
+    .max(STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS.competitorsMaxItems),
+  swotGroups: z.array(StrategyReportProviderSwotGroupSchema).min(4).max(8),
+  sourceRefs: z.array(StrategyReportProviderSourceRefSchema).min(1).max(24),
+}).strict();
+
+export const StrategyReportProviderOutputContract = z.object({
+  report: StrategyReportProviderContentContract,
+}).strict();
+
+const StrategyReportProviderAdversarialReviewContract = z.object({
+  verdict: StrategyReportProviderStringSchema.max(80),
+  confidence: z.number().min(0).max(1),
+  findings: z.array(StrategyReportProviderStringSchema.max(500)).min(1).max(12),
+  requiredChanges: z.array(StrategyReportProviderStringSchema.max(500)).max(12),
+}).strict();
+
 const STRATEGY_REPORT_STRUCTURED_OUTPUT_CONTRACT = [
   "Structured output contract (Zod source of truth): return exactly one JSON object {\"report\": StrategyReportContent}.",
   "StrategyReportContent required string fields: commandLine, diagnosisKicker, diagnosisTitle, diagnosisLead, positioningStatement, judgement, analysisBasisLabel.",
   "summaryTiles: 3-6 items, each {id,label,title,detail}; never omit this field.",
   "criteriaRows: at least 4 items, each {id,label,value}.",
   "canvasBlocks: at least 9 items covering partners, activities, resources, value-proposition, relationships, channels, customer-segments, cost-structure, revenue-streams; each has {id,title,bullets}.",
-  "competitors: at least 3 items, including {id:\"agentic30\", isAgentic30:true}; every item has title, tag, body, gap, adaptiveScore, evidenceScore, sourceLabel, scoreRationale. adaptiveScore and evidenceScore must be 0-100 integers.",
+  "competitors: 3-12 items, maximum 12, including {id:\"agentic30\", isAgentic30:true}; if you find more than 12 candidates, keep only the most strategically important matrix items. Every item has title, tag, body, gap, adaptiveScore, evidenceScore, sourceLabel, scoreRationale. adaptiveScore and evidenceScore must be 0-100 integers.",
   "swotGroups: exactly/at least strengths, weaknesses, opportunities, threats; each has {id,title,tag,bullets}.",
   "Optional but preferred: tone, swotMatrixColumnCount, swotMatrixRows, sourceRefs, searchableCopy, generatedBadge, canvasMeta, matrixMeta, swotMeta.",
 ].join("\n");
@@ -361,6 +454,245 @@ const STRATEGY_REPORT_ADVERSARIAL_OUTPUT_CONTRACT = [
   "Structured output contract (Zod source of truth): return exactly one JSON object with verdict, confidence, findings, requiredChanges.",
   "findings must contain at least one concrete critique. requiredChanges may be empty only when verdict is pass.",
 ].join("\n");
+
+const PROVIDER_JSON_SCHEMA_ALLOWED_KEYS = new Set([
+  "$anchor",
+  "$defs",
+  "$id",
+  "$ref",
+  "additionalProperties",
+  "anyOf",
+  "const",
+  "description",
+  "enum",
+  "format",
+  "items",
+  "maxItems",
+  "maximum",
+  "minItems",
+  "minimum",
+  "oneOf",
+  "properties",
+  "required",
+  "title",
+  "type",
+]);
+
+export function buildStrategyReportProviderJsonSchema(provider = "", {
+  contract = StrategyReportProviderOutputContract,
+  schemaName = STRATEGY_REPORT_OUTPUT_SCHEMA_NAME,
+} = {}) {
+  const normalizedProvider = String(provider || "").trim().toLowerCase();
+  const schema = sanitizeProviderJsonSchema(z.toJSONSchema(contract), { provider: normalizedProvider });
+  assertStrategyReportProviderJsonSchema(schema, {
+    provider: normalizedProvider,
+    schemaName,
+  });
+  return schema;
+}
+
+export function assertStrategyReportProviderJsonSchema(schema, {
+  provider = "",
+  schemaName = "",
+} = {}) {
+  const issues = collectStrategyReportProviderJsonSchemaIssues(schema);
+  if (issues.length === 0) return schema;
+  const issueSummary = issues.slice(0, 5).join("; ");
+  const error = new Error(
+    `strategy report provider JSON schema invalid locally${schemaName ? ` for ${schemaName}` : ""}: ${issueSummary}`,
+  );
+  error.code = STRATEGY_REPORT_STRUCTURED_OUTPUT_FAILURE_PROVIDER_SCHEMA_INVALID_LOCAL;
+  error.reason = STRATEGY_REPORT_STRUCTURED_OUTPUT_FAILURE_PROVIDER_SCHEMA_INVALID_LOCAL;
+  error.structuredOutputFailure = STRATEGY_REPORT_STRUCTURED_OUTPUT_FAILURE_PROVIDER_SCHEMA_INVALID_LOCAL;
+  error.structuredOutputProvider = cleanString(provider, 80) || null;
+  error.structuredOutputSchemaName = cleanString(schemaName, 120) || null;
+  throw error;
+}
+
+export function buildStrategyReportStructuredOutputMetadata(provider = "", {
+  schemaName = STRATEGY_REPORT_OUTPUT_SCHEMA_NAME,
+  limits = STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS,
+} = {}) {
+  return {
+    structuredOutputRequested: true,
+    structuredOutputProvider: cleanString(provider, 80) || null,
+    structuredOutputSchemaName: cleanString(schemaName, 120) || STRATEGY_REPORT_OUTPUT_SCHEMA_NAME,
+    structuredOutputSchemaLimits: limits ? deepSanitize(limits) : null,
+  };
+}
+
+function buildStrategyReportPassStructuredOutput(provider = "", {
+  schemaName = STRATEGY_REPORT_OUTPUT_SCHEMA_NAME,
+  contract = StrategyReportProviderOutputContract,
+  limits = STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS,
+  mode = "",
+  schemaBuilder = buildStrategyReportProviderJsonSchema,
+} = {}) {
+  let schema = null;
+  try {
+    schema = schemaBuilder(provider, { contract, schemaName });
+    assertStrategyReportProviderJsonSchema(schema, { provider, schemaName });
+  } catch (error) {
+    error.strategyReportPassMode = mode;
+    throw error;
+  }
+  return {
+    schema,
+    metadata: buildStrategyReportStructuredOutputMetadata(provider, { schemaName, limits }),
+  };
+}
+
+function annotateStrategyReportProviderResult(result, metadata = null) {
+  if (!metadata?.structuredOutputRequested) return result;
+  if (result && typeof result === "object") {
+    return {
+      ...result,
+      ...metadata,
+      structuredOutputProvider: metadata.structuredOutputProvider || cleanString(result.provider, 80) || null,
+    };
+  }
+  return {
+    text: typeof result === "string" ? result : "",
+    ...metadata,
+  };
+}
+
+function sanitizeProviderJsonSchema(value, {
+  provider = "",
+  preserveObjectKeys = false,
+} = {}) {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeProviderJsonSchema(item, { provider }));
+  }
+  if (!value || typeof value !== "object") return value;
+  const output = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (!preserveObjectKeys && !PROVIDER_JSON_SCHEMA_ALLOWED_KEYS.has(key)) continue;
+    if (key === "additionalProperties") {
+      output.additionalProperties = false;
+      continue;
+    }
+    output[key] = sanitizeProviderJsonSchema(child, {
+      provider,
+      preserveObjectKeys: key === "properties" || key === "$defs",
+    });
+  }
+  if (output.type === "object") {
+    output.additionalProperties = false;
+  }
+  if (provider === "gemini") {
+    return output;
+  }
+  return output;
+}
+
+function collectStrategyReportProviderJsonSchemaIssues(value, {
+  path = "<root>",
+  schemaNode = true,
+} = {}) {
+  const issues = [];
+  collectStrategyReportProviderJsonSchemaIssuesInto(value, {
+    path,
+    schemaNode,
+    issues,
+  });
+  return issues;
+}
+
+function collectStrategyReportProviderJsonSchemaIssuesInto(value, {
+  path,
+  schemaNode,
+  issues,
+} = {}) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectStrategyReportProviderJsonSchemaIssuesInto(item, {
+      path: `${path}[${index}]`,
+      schemaNode,
+      issues,
+    }));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+
+  const keys = Object.keys(value);
+  if (keys.length === 0) {
+    issues.push(`${path}: empty schema object`);
+    return;
+  }
+  if (schemaNode && !hasStrategyReportProviderSchemaType(value)) {
+    issues.push(`${path}: schema object missing type`);
+  }
+  if (Object.hasOwn(value, "additionalProperties") && value.additionalProperties !== false) {
+    issues.push(`${path}.additionalProperties: must be boolean false`);
+  }
+  if (
+    value.type === "object"
+    && value.properties
+    && typeof value.properties === "object"
+    && !Array.isArray(value.properties)
+  ) {
+    const propertyKeys = Object.keys(value.properties);
+    const requiredKeys = Array.isArray(value.required) ? value.required : null;
+    if (!requiredKeys) {
+      issues.push(`${path}.required: must include every property key`);
+    } else {
+      const missingRequiredKeys = propertyKeys.filter((key) => !requiredKeys.includes(key));
+      if (missingRequiredKeys.length > 0) {
+        issues.push(`${path}.required: missing required keys ${missingRequiredKeys.slice(0, 8).join(", ")}`);
+      }
+    }
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "properties" || key === "$defs") {
+      if (!child || typeof child !== "object" || Array.isArray(child)) {
+        issues.push(`${path}.${key}: must be an object map`);
+        continue;
+      }
+      for (const [propertyName, propertySchema] of Object.entries(child)) {
+        collectStrategyReportProviderJsonSchemaIssuesInto(propertySchema, {
+          path: `${path}.${key}.${propertyName}`,
+          schemaNode: true,
+          issues,
+        });
+      }
+      continue;
+    }
+    if (key === "items") {
+      collectStrategyReportProviderJsonSchemaIssuesInto(child, {
+        path: `${path}.items`,
+        schemaNode: true,
+        issues,
+      });
+      continue;
+    }
+    if (key === "anyOf" || key === "oneOf") {
+      collectStrategyReportProviderJsonSchemaIssuesInto(child, {
+        path: `${path}.${key}`,
+        schemaNode: true,
+        issues,
+      });
+      continue;
+    }
+    if (key === "additionalProperties") continue;
+    collectStrategyReportProviderJsonSchemaIssuesInto(child, {
+      path: `${path}.${key}`,
+      schemaNode: false,
+      issues,
+    });
+  }
+}
+
+function hasStrategyReportProviderSchemaType(value) {
+  return Boolean(
+    Object.hasOwn(value, "type")
+      || Object.hasOwn(value, "$ref")
+      || Object.hasOwn(value, "anyOf")
+      || Object.hasOwn(value, "oneOf")
+      || Object.hasOwn(value, "enum")
+      || Object.hasOwn(value, "const"),
+  );
+}
 
 export function resolveStrategyReportCachePath(workspaceRoot) {
   return path.join(resolveAgentic30Dir(workspaceRoot), "strategy", "research-report-cache.json");
@@ -466,6 +798,7 @@ export async function refreshStrategyReport({
   now = new Date(),
   fsImpl = fs,
   onProgress = null,
+  providerJsonSchemaBuilder = buildStrategyReportProviderJsonSchema,
 } = {}) {
   const key = String(exaApiKey || "").trim();
   const routes = normalizeExaResearchRoutes({
@@ -487,19 +820,6 @@ export async function refreshStrategyReport({
     exaConfigured: routes.length > 0,
     exaResearchSource: primaryRoute?.label || null,
   });
-  if (routes.length === 0) {
-    return persistStrategyReportSnapshot({
-      workspaceRoot,
-      snapshot: makeStrategyReportFailureSnapshot({
-        previous,
-        now,
-        reason: "exa_mcp_missing",
-        error: "Exa MCP is not configured.",
-        researchSource: null,
-      }),
-      now,
-    });
-  }
 
   notifyStrategyReportProgress(onProgress, {
     stage: "loading_strategy_context",
@@ -521,11 +841,47 @@ export async function refreshStrategyReport({
       return previous;
     }
   }
+  const directExaApiKey = extractDirectExaApiKey({
+    apiKey: key,
+    route: primaryRoute,
+  });
+  if (!directExaApiKey) {
+    const startedAt = new Date().toISOString();
+    const error = createDirectExaApiKeyRequiredError({
+      routeLabel: primaryRoute?.label || "Exa",
+      provider: primaryRoute?.provider || "",
+    });
+    return persistStrategyReportSnapshot({
+      workspaceRoot,
+      snapshot: makeStrategyReportFailureSnapshot({
+        previous,
+        now,
+        reason: DIRECT_EXA_API_KEY_REQUIRED_REASON,
+        error,
+        researchSource: primaryRoute?.label || null,
+        contextFingerprint,
+        startedAt,
+      }),
+      rawProviderResult: {
+        mode: "three_pass_strategy_report_failed",
+        error: {
+          reason: DIRECT_EXA_API_KEY_REQUIRED_REASON,
+          code: DIRECT_EXA_API_KEY_REQUIRED_REASON,
+          message: formatStrategyReportError(error),
+          researchSource: primaryRoute?.label || null,
+        },
+        passes: [],
+      },
+      now,
+    });
+  }
 
   const startedAt = now.toISOString();
   let researchResult = null;
   let adversarialResult = null;
   let finalResult = null;
+  let reportStructuredOutput = null;
+  let adversarialStructuredOutput = null;
   try {
     if (typeof providerResearcher !== "function") {
       throw new Error("strategy report requires a providerResearcher.");
@@ -536,6 +892,13 @@ export async function refreshStrategyReport({
     if (typeof multidimensionalVerifier !== "function") {
       throw new Error("strategy report requires a multidimensionalVerifier.");
     }
+    reportStructuredOutput = buildStrategyReportPassStructuredOutput(primaryRoute?.provider, {
+      schemaName: STRATEGY_REPORT_OUTPUT_SCHEMA_NAME,
+      contract: StrategyReportProviderOutputContract,
+      limits: STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS,
+      mode: "exa_research",
+      schemaBuilder: providerJsonSchemaBuilder,
+    });
 
     notifyStrategyReportProgress(onProgress, {
       stage: "running_exa_research",
@@ -550,17 +913,28 @@ export async function refreshStrategyReport({
       exaApiKeyConfigured: Boolean(key),
       reason,
       mode: "exa_research",
+      structuredOutputSchema: reportStructuredOutput.schema,
+      structuredOutputSchemaName: reportStructuredOutput.metadata.structuredOutputSchemaName,
+      structuredOutputSchemaLimits: reportStructuredOutput.metadata.structuredOutputSchemaLimits,
       onProgress: (progress = {}) => notifyStrategyReportProgress(onProgress, {
         ...progress,
         stage: "running_exa_research",
         researchSource: progress.researchSource || primaryRoute?.label || null,
       }),
     });
+    researchResult = annotateStrategyReportProviderResult(researchResult, reportStructuredOutput.metadata);
     const candidateReport = extractStrategyReport(researchResult, { now });
 
     notifyStrategyReportProgress(onProgress, {
       stage: "running_adversarial_review",
       researchSource: primaryRoute?.label || null,
+    });
+    adversarialStructuredOutput = buildStrategyReportPassStructuredOutput(primaryRoute?.provider, {
+      schemaName: STRATEGY_REPORT_ADVERSARIAL_OUTPUT_SCHEMA_NAME,
+      contract: StrategyReportProviderAdversarialReviewContract,
+      limits: null,
+      mode: "adversarial_review",
+      schemaBuilder: providerJsonSchemaBuilder,
     });
     adversarialResult = await adversarialReviewer({
       context,
@@ -572,7 +946,11 @@ export async function refreshStrategyReport({
       reason,
       researchSource: rawProviderResultResearchSource(researchResult) || primaryRoute.label || null,
       mode: "adversarial_review",
+      structuredOutputSchema: adversarialStructuredOutput.schema,
+      structuredOutputSchemaName: adversarialStructuredOutput.metadata.structuredOutputSchemaName,
+      structuredOutputSchemaLimits: adversarialStructuredOutput.metadata.structuredOutputSchemaLimits,
     });
+    adversarialResult = annotateStrategyReportProviderResult(adversarialResult, adversarialStructuredOutput.metadata);
     const adversarialReview = normalizeAdversarialReview(
       parseStrategyReportContract(
         StrategyReportAdversarialReviewContract,
@@ -597,7 +975,11 @@ export async function refreshStrategyReport({
       reason,
       researchSource: rawProviderResultResearchSource(researchResult) || primaryRoute.label || null,
       mode: "multidimensional_verification",
+      structuredOutputSchema: reportStructuredOutput.schema,
+      structuredOutputSchemaName: reportStructuredOutput.metadata.structuredOutputSchemaName,
+      structuredOutputSchemaLimits: reportStructuredOutput.metadata.structuredOutputSchemaLimits,
     });
+    finalResult = annotateStrategyReportProviderResult(finalResult, reportStructuredOutput.metadata);
     const finalReport = extractStrategyReport(finalResult, { now });
 
     notifyStrategyReportProgress(onProgress, {
@@ -648,16 +1030,22 @@ export async function refreshStrategyReport({
         researchResult,
         adversarialResult,
         finalResult,
+        structuredOutputMetadataByMode: {
+          exa_research: reportStructuredOutput.metadata,
+          adversarial_review: adversarialStructuredOutput.metadata,
+          multidimensional_verification: reportStructuredOutput.metadata,
+        },
       }),
       now,
     });
   } catch (error) {
+    const failureReason = cleanString(error?.reason || error?.code || reason, 120) || reason;
     return persistStrategyReportSnapshot({
       workspaceRoot,
       snapshot: makeStrategyReportFailureSnapshot({
         previous,
         now,
-        reason,
+        reason: failureReason,
         error,
         researchSource: primaryRoute?.label || null,
         contextFingerprint,
@@ -669,6 +1057,20 @@ export async function refreshStrategyReport({
         adversarialResult,
         finalResult,
         error,
+        structuredOutputMetadataByMode: {
+          exa_research: reportStructuredOutput?.metadata || buildStrategyReportStructuredOutputMetadata(primaryRoute?.provider, {
+            schemaName: STRATEGY_REPORT_OUTPUT_SCHEMA_NAME,
+            limits: STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS,
+          }),
+          adversarial_review: adversarialStructuredOutput?.metadata || buildStrategyReportStructuredOutputMetadata(primaryRoute?.provider, {
+            schemaName: STRATEGY_REPORT_ADVERSARIAL_OUTPUT_SCHEMA_NAME,
+            limits: null,
+          }),
+          multidimensional_verification: reportStructuredOutput?.metadata || buildStrategyReportStructuredOutputMetadata(primaryRoute?.provider, {
+            schemaName: STRATEGY_REPORT_OUTPUT_SCHEMA_NAME,
+            limits: STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS,
+          }),
+        },
       }),
       now,
     });
@@ -905,20 +1307,30 @@ function makeStrategyReportFailureSnapshot({
 }
 
 function extractStrategyReport(rawProviderResult, { now = new Date() } = {}) {
-  const parsed = extractProviderJson(rawProviderResult);
-  const report = parsed?.report || parsed?.strategyReport || parsed?.strategy_report || parsed;
-  parseStrategyReportContract(
-    StrategyReportContentContract,
-    report,
-    "strategy report structured output",
-  );
-  return normalizeStrategyReport(report, { now });
+  try {
+    const parsed = extractProviderJson(rawProviderResult);
+    const report = parsed?.report || parsed?.strategyReport || parsed?.strategy_report || parsed;
+    const normalized = normalizeStrategyReport(report, { now });
+    parseStrategyReportContract(
+      StrategyReportContentContract,
+      normalized,
+      "strategy report structured output",
+    );
+    return normalized;
+  } catch (error) {
+    if (rawProviderResult?.structuredOutputRequested && !error?.structuredOutputFailure) {
+      error.structuredOutputFailure = "normalized_contract_violation";
+    }
+    throw error;
+  }
 }
 
 function parseStrategyReportContract(schema, value, label) {
   const parsed = schema.safeParse(value);
   if (parsed.success) return parsed.data;
-  throw new Error(`${label} contract violation: ${zodIssueSummary(parsed.error)}`);
+  const error = new Error(`${label} contract violation: ${zodIssueSummary(parsed.error)}`);
+  error.structuredOutputFailure = "normalized_contract_violation";
+  throw error;
 }
 
 function normalizeStrategyReport(value = {}, { now = new Date() } = {}) {
@@ -1134,9 +1546,20 @@ function normalizeCanvasBlockNumber(value) {
 }
 
 function normalizeCompetitors(value) {
-  return asArray(value).map((competitor, index) => {
+  const seenIds = new Set();
+  const seenTitles = new Set();
+  const competitors = [];
+  for (const [index, competitor] of asArray(value).entries()) {
     const title = cleanString(competitor?.title || competitor?.name, 120);
-    const id = slugify(competitor?.id || title || `competitor-${index + 1}`);
+    const rawId = slugify(competitor?.id || title || `competitor-${index + 1}`);
+    const rawTitleId = slugify(title);
+    const isAgentic30 = Boolean(
+      competitor?.isAgentic30
+        || competitor?.is_agentic30
+        || rawId === "agentic30"
+        || rawTitleId === "agentic30",
+    );
+    const id = isAgentic30 ? "agentic30" : rawId;
     const rawAdaptiveScore = competitor?.adaptiveScore ?? competitor?.adaptive_score;
     const rawEvidenceScore = competitor?.evidenceScore ?? competitor?.evidence_score;
     const adaptiveScore = normalizeCompetitorScore(
@@ -1147,7 +1570,7 @@ function normalizeCompetitors(value) {
       rawEvidenceScore,
       0,
     );
-    return {
+    const normalized = {
       id,
       title,
       tag: cleanString(competitor?.tag || competitor?.subtitle, 180),
@@ -1162,20 +1585,35 @@ function normalizeCompetitors(value) {
       sourceDisplay: cleanString(competitor?.sourceDisplay || competitor?.source_display, 160),
       verifiedAt: cleanString(competitor?.verifiedAt || competitor?.verified_at, 80),
       scoreRationale: cleanString(competitor?.scoreRationale || competitor?.score_rationale, 500),
-      category: normalizeCompetitorCategory(competitor?.category, Boolean(competitor?.isAgentic30 || competitor?.is_agentic30)),
-      isAgentic30: Boolean(competitor?.isAgentic30 || competitor?.is_agentic30 || id === "agentic30"),
+      category: normalizeCompetitorCategory(competitor?.category, isAgentic30),
+      isAgentic30,
       labelPlacement: normalizeLabelPlacement(competitor?.labelPlacement || competitor?.label_placement),
       hasMatrixScores: hasGeneratedScore(rawAdaptiveScore) && hasGeneratedScore(rawEvidenceScore),
     };
-  }).filter((competitor) => (
-    competitor.id
-    && competitor.title
-    && competitor.tag
-    && competitor.body
-    && competitor.sourceLabel
-    && competitor.scoreRationale
-    && competitor.hasMatrixScores
-  )).map(({ hasMatrixScores, ...competitor }) => competitor).slice(0, 12);
+    if (!(
+      normalized.id
+      && normalized.title
+      && normalized.tag
+      && normalized.body
+      && normalized.sourceLabel
+      && normalized.scoreRationale
+      && normalized.hasMatrixScores
+    )) {
+      continue;
+    }
+    const titleKey = slugify(normalized.title);
+    if (seenIds.has(normalized.id) || (titleKey && seenTitles.has(titleKey))) continue;
+    seenIds.add(normalized.id);
+    if (titleKey) seenTitles.add(titleKey);
+    const { hasMatrixScores, ...publicCompetitor } = normalized;
+    competitors.push(publicCompetitor);
+  }
+  const limited = competitors.slice(0, 12);
+  const agentic30 = competitors.find((competitor) => competitor.id === "agentic30" && competitor.isAgentic30);
+  if (agentic30 && !limited.some((competitor) => competitor.id === "agentic30" && competitor.isAgentic30)) {
+    limited[Math.max(0, limited.length - 1)] = agentic30;
+  }
+  return limited;
 }
 
 function normalizeCompetitorScore(value, fallback = 0) {
@@ -1417,13 +1855,26 @@ function summarizeProviderPasses({
   adversarialResult = null,
   finalResult = null,
   error = null,
+  structuredOutputMetadataByMode = {},
 } = {}) {
+  const failedMode = error
+    ? inferStrategyReportFailedPassMode({ researchResult, adversarialResult, finalResult, error })
+    : null;
   const summary = {
     mode,
     passes: [
-      summarizeProviderResult("exa_research", researchResult),
-      summarizeProviderResult("adversarial_review", adversarialResult),
-      summarizeProviderResult("multidimensional_verification", finalResult),
+      summarizeProviderResult("exa_research", researchResult, {
+        structuredOutputMetadata: structuredOutputMetadataByMode.exa_research,
+        error: failedMode === "exa_research" ? error : null,
+      }),
+      summarizeProviderResult("adversarial_review", adversarialResult, {
+        structuredOutputMetadata: structuredOutputMetadataByMode.adversarial_review,
+        error: failedMode === "adversarial_review" ? error : null,
+      }),
+      summarizeProviderResult("multidimensional_verification", finalResult, {
+        structuredOutputMetadata: structuredOutputMetadataByMode.multidimensional_verification,
+        error: failedMode === "multidimensional_verification" ? error : null,
+      }),
     ],
   };
   if (error) {
@@ -1432,7 +1883,13 @@ function summarizeProviderPasses({
   return summary;
 }
 
-function summarizeProviderResult(mode, result) {
+function summarizeProviderResult(mode, result, {
+  structuredOutputMetadata = null,
+  error = null,
+} = {}) {
+  const metadata = result?.structuredOutputRequested
+    ? result
+    : structuredOutputMetadata;
   const summary = {
     mode,
     provider: cleanString(result?.provider, 80) || null,
@@ -1440,6 +1897,20 @@ function summarizeProviderResult(mode, result) {
     researchSource: rawProviderResultResearchSource(result),
     textChars: String(result?.text || "").length,
   };
+  if (metadata?.structuredOutputRequested) {
+    summary.structuredOutputRequested = true;
+    summary.structuredOutputProvider = cleanString(
+      metadata.structuredOutputProvider || result?.provider || "",
+      80,
+    ) || null;
+    summary.structuredOutputSchemaName = cleanString(metadata.structuredOutputSchemaName, 120) || null;
+    summary.structuredOutputSchemaLimits = deepSanitize(metadata.structuredOutputSchemaLimits || null);
+  }
+  const structuredOutputFailure = structuredOutputFailureFromError(error)
+    || cleanString(result?.structuredOutputFailure, 80);
+  if (structuredOutputFailure) {
+    summary.structuredOutputFailure = structuredOutputFailure;
+  }
   const parsedReportShape = summarizeParsedReportShape(result);
   if (parsedReportShape) {
     summary.parsedReportShape = parsedReportShape;
@@ -1447,19 +1918,61 @@ function summarizeProviderResult(mode, result) {
   return summary;
 }
 
+function inferStrategyReportFailedPassMode({
+  researchResult = null,
+  adversarialResult = null,
+  finalResult = null,
+  error = null,
+} = {}) {
+  const explicitMode = cleanString(error?.strategyReportPassMode, 80);
+  if (explicitMode) return explicitMode;
+  if (finalResult) return "multidimensional_verification";
+  if (adversarialResult) {
+    const message = String(error?.message || "");
+    return /adversarial/i.test(message)
+      ? "adversarial_review"
+      : "multidimensional_verification";
+  }
+  return researchResult ? "exa_research" : "exa_research";
+}
+
+function structuredOutputFailureFromError(error) {
+  return cleanString(error?.structuredOutputFailure, 80) || null;
+}
+
 function summarizeParsedReportShape(result) {
   try {
     const parsed = extractProviderJson(result);
     const report = parsed?.report || parsed?.strategyReport || parsed?.strategy_report || parsed;
     if (!report || typeof report !== "object") return null;
+    const summaryTiles = asArray(report.summaryTiles || report.summary_tiles);
+    const criteriaRows = asArray(report.criteriaRows || report.criteria_rows);
     const canvasBlocks = asArray(report.canvasBlocks || report.canvas_blocks);
+    const competitors = asArray(report.competitors || report.competitorMatrix || report.competitor_matrix);
+    const swotGroups = asArray(report.swotGroups || report.swot_groups);
+    const sourceRefs = asArray(report.sourceRefs || report.source_refs);
     return {
+      summaryTileCount: summaryTiles.length,
+      criteriaRowCount: criteriaRows.length,
       canvasBlockCount: canvasBlocks.length,
       canvasBlocks: canvasBlocks.slice(0, 24).map((block, index) => summarizeCanvasBlockShape(block, index)),
+      competitorCount: competitors.length,
+      competitorIds: competitors.slice(0, 24).map((competitor, index) => summarizeCompetitorShapeId(competitor, index)).filter(Boolean),
+      swotGroupIds: swotGroups.slice(0, 12).map((group) => slugify(group?.id || group?.title)).filter(Boolean),
+      sourceRefCount: sourceRefs.length,
     };
   } catch {
     return null;
   }
+}
+
+function summarizeCompetitorShapeId(competitor, index = 0) {
+  if (!competitor || typeof competitor !== "object") return `competitor-${index + 1}`;
+  const rawId = slugify(competitor.id || competitor.title || competitor.name || `competitor-${index + 1}`);
+  const titleId = slugify(competitor.title || competitor.name);
+  return competitor.isAgentic30 || competitor.is_agentic30 || rawId === "agentic30" || titleId === "agentic30"
+    ? "agentic30"
+    : rawId;
 }
 
 function summarizeCanvasBlockShape(block, index = 0) {
@@ -1509,10 +2022,21 @@ function extractProviderJson(rawProviderResult) {
     ? rawProviderResult
     : String(rawProviderResult.text || "");
   const trimmed = text.trim();
-  if (!trimmed) throw new Error("strategy report provider returned empty text");
+  const strictStructuredJson = Boolean(rawProviderResult?.structuredOutputRequested);
+  if (!trimmed) {
+    const error = new Error("strategy report provider returned empty text");
+    if (strictStructuredJson) error.structuredOutputFailure = "invalid_json_text";
+    throw error;
+  }
   try {
     return JSON.parse(trimmed);
-  } catch {
+  } catch (parseError) {
+    if (strictStructuredJson) {
+      const error = new Error("strategy report provider structured output was not valid JSON text");
+      error.cause = parseError;
+      error.structuredOutputFailure = "invalid_json_text";
+      throw error;
+    }
     const jsonText = extractJsonObject(trimmed);
     if (!jsonText) throw new Error("strategy report provider did not return valid JSON");
     return JSON.parse(jsonText);
@@ -1556,8 +2080,9 @@ function extractJsonObject(text) {
 }
 
 function fingerprintStrategyReportContext(context) {
+  const { generatedAt, ...stableContext } = context || {};
   return createHash("sha256")
-    .update(JSON.stringify(context))
+    .update(JSON.stringify(stableContext))
     .digest("hex");
 }
 
@@ -1594,13 +2119,23 @@ function deepSanitize(value) {
 function redactSensitiveString(value) {
   let text = String(value || "");
   if (!text) return "";
-  if (PRIVATE_RAW_TEXT_PATTERN.test(text)) {
+  if (
+    PRIVATE_RAW_TEXT_PATTERN.test(text)
+    && (
+      !isSafeDirectExaFailureSummary(text)
+      || PRIVATE_RAW_TEXT_PATTERN_EXCEPT_API_KEY.test(text)
+    )
+  ) {
     return "[redacted-private]";
   }
   for (const pattern of SECRET_TOKEN_PATTERNS) {
     text = text.replace(pattern, "[redacted-private]");
   }
   return text;
+}
+
+function isSafeDirectExaFailureSummary(text = "") {
+  return String(text || "").startsWith("Exa Search API 호출이 실패했습니다");
 }
 
 function cleanString(value, maxLength = 400) {
@@ -1798,6 +2333,48 @@ function truncatePrompt(prompt) {
 }
 
 function formatStrategyReportError(error) {
+  const reason = cleanString(error?.reason || error?.code, 120);
+  if (reason === DIRECT_EXA_SEARCH_FAILED_REASON) {
+    return formatDirectExaSearchFailureError(error);
+  }
   return cleanString(error?.message || error || "Strategy report refresh failed.", 500)
     || "Strategy report refresh failed.";
+}
+
+function formatDirectExaSearchFailureError(error) {
+  const details = [];
+  if (Array.isArray(error?.failures)) {
+    for (const failure of error.failures) {
+      const detail = cleanDirectExaFailureString(failure?.error, 220);
+      if (detail) details.push(detail);
+      if (details.length >= 3) break;
+    }
+  }
+  if (details.length === 0) {
+    const detail = cleanDirectExaFailureString(error?.message || error, 420);
+    if (detail) details.push(detail);
+  }
+  const suffix = details.length > 0
+    ? `: ${details.join(" | ")}`
+    : ". Exa 연결/API 키/네트워크 응답을 확인하세요.";
+  return `Exa Search API 호출이 실패했습니다${suffix}`;
+}
+
+function cleanDirectExaFailureString(value, maxLength = 300) {
+  let text = String(value ?? "");
+  for (const pattern of SECRET_TOKEN_PATTERNS) {
+    text = text.replace(pattern, "[redacted-private]");
+  }
+  text = text.replace(
+    /("(?:x-api-key|api[_-]?key|authorization)"\s*:\s*")[^"]*(")/gi,
+    "$1[redacted-private]$2",
+  );
+  text = text.replace(
+    /\b(?:x-api-key|api[_ -]?key|authorization)\s*[:=]\s*[^,\s|}]+/gi,
+    (match) => `${match.split(/[:=]/)[0]}=[redacted-private]`,
+  );
+  return text
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
 }

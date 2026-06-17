@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		596660B12F86A4920021885C /* sidecar in Copy Sidecar Resources */ = {isa = PBXBuildFile; fileRef = 596660B02F86A4920021885C /* sidecar */; };
 		596660C02F86A4920021885C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 596660C12F86A4920021885C /* Sparkle */; };
 		596660D02F86B0000021885C /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = 596660D12F86B0000021885C /* PostHog */; };
 /* End PBXBuildFile section */
@@ -29,25 +28,10 @@
 		};
 /* End PBXContainerItemProxy section */
 
-/* Begin PBXCopyFilesBuildPhase section */
-		596660B22F86A4920021885C /* Copy Sidecar Resources */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 7;
-			files = (
-				596660B12F86A4920021885C /* sidecar in Copy Sidecar Resources */,
-			);
-			name = "Copy Sidecar Resources";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
-
 /* Begin PBXFileReference section */
 		596660502F86A4900021885C /* agentic30.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = agentic30.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5966605F2F86A4910021885C /* agentic30Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = agentic30Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		596660692F86A4910021885C /* agentic30UITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = agentic30UITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		596660B02F86A4920021885C /* sidecar */ = {isa = PBXFileReference; lastKnownFileType = folder; name = sidecar; path = "sidecar-build/sidecar"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -115,7 +99,6 @@
 				596660522F86A4900021885C /* agentic30 */,
 				596660622F86A4910021885C /* agentic30Tests */,
 				5966606C2F86A4910021885C /* agentic30UITests */,
-				596660B02F86A4920021885C /* sidecar */,
 				596660512F86A4900021885C /* Products */,
 			);
 			sourceTree = "<group>";
@@ -141,7 +124,7 @@
 				5966604C2F86A4900021885C /* Sources */,
 				5966604D2F86A4900021885C /* Frameworks */,
 				5966604E2F86A4900021885C /* Resources */,
-				596660B22F86A4920021885C /* Copy Sidecar Resources */,
+				596660B22F86A4920021885C /* Copy Sidecar Bundle */,
 				596660B42F86A4920021885C /* Sign Sidecar Native Binaries */,
 			);
 			buildRules = (
@@ -279,6 +262,29 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		596660B22F86A4920021885C /* Copy Sidecar Bundle */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/sidecar-build/.build-stamp.json",
+				"$(SRCROOT)/sidecar-build/sidecar/index.mjs",
+			);
+			name = "Copy Sidecar Bundle";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/sidecar/.build-stamp.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/sidecar/index.mjs",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\nsrc=\"$SRCROOT/sidecar-build/sidecar\"\nstamp=\"$SRCROOT/sidecar-build/.build-stamp.json\"\ndst=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/sidecar\"\nif [ ! -f \"$src/index.mjs\" ]; then\n  echo \"error: sidecar bundle missing at $src/index.mjs; Build Sidecar Bundle must run before Copy Sidecar Bundle\" >&2\n  exit 1\nfi\nif [ ! -f \"$stamp\" ]; then\n  echo \"error: sidecar build stamp missing at $stamp; Build Sidecar Bundle must run before Copy Sidecar Bundle\" >&2\n  exit 1\nfi\nif [ -f \"$dst/index.mjs\" ] && [ -f \"$dst/.build-stamp.json\" ] && cmp -s \"$src/index.mjs\" \"$dst/index.mjs\" && cmp -s \"$stamp\" \"$dst/.build-stamp.json\"; then\n  echo \"[copy-sidecar] up to date: $dst\" >&2\n  exit 0\nfi\necho \"[copy-sidecar] syncing $src -> $dst\" >&2\nrm -rf \"$dst\"\nmkdir -p \"$(dirname \"$dst\")\"\nditto \"$src\" \"$dst\"\ncp \"$stamp\" \"$dst/.build-stamp.json\"\nif ! cmp -s \"$src/index.mjs\" \"$dst/index.mjs\"; then\n  echo \"error: copied sidecar index.mjs differs from source bundle\" >&2\n  exit 1\nfi\nif ! cmp -s \"$stamp\" \"$dst/.build-stamp.json\"; then\n  echo \"error: copied sidecar build stamp differs from source stamp\" >&2\n  exit 1\nfi\n";
+		};
 		596660B32F86A4920021885C /* Build Sidecar Bundle */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -299,6 +305,7 @@
 				"$(SRCROOT)/sidecar/bip-prompt.mjs",
 				"$(SRCROOT)/sidecar/bip-readiness.mjs",
 				"$(SRCROOT)/sidecar/diagnostics.mjs",
+				"$(SRCROOT)/sidecar/direct-exa-research.mjs",
 				"$(SRCROOT)/sidecar/gws-client.mjs",
 				"$(SRCROOT)/sidecar/gws-memory.mjs",
 				"$(SRCROOT)/sidecar/index.mjs",

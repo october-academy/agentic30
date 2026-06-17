@@ -1936,6 +1936,7 @@ test("morning_briefing_get marks cached snapshot while refresh is in flight", as
         && event.status?.state === "collecting"
         && event.status?.runId,
     );
+    assert.equal(Number.isFinite(collecting.status.elapsedMs), true);
 
     ws.send(JSON.stringify({
       type: "morning_briefing_get",
@@ -1949,6 +1950,7 @@ test("morning_briefing_get marks cached snapshot while refresh is in flight", as
     );
     assert.equal(cached.status.reason, "refresh_in_flight");
     assert.equal(cached.status.runId, collecting.status.runId);
+    assert.equal(Number.isFinite(cached.status.elapsedMs), true);
     assert.equal(cached.morningBriefing.summary.title, "밤사이 신호 요약");
   } finally {
     ws?.close();
@@ -2299,6 +2301,9 @@ test("morning_briefing_refresh completes verdict through judge_read_only with lo
       45_000,
     );
 
+    assert.equal(Number.isFinite(collecting.status.elapsedMs), true);
+    assert.equal(Number.isFinite(result.status.durationMs), true);
+    assert.equal(result.status.durationMs >= result.status.elapsedMs, true);
     assert.equal(result.morningBriefing.customerEvidenceVerdict.verdictProvider, "codex");
     assert.equal(
       ws.events.some((event) =>

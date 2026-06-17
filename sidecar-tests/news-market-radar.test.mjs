@@ -43,6 +43,9 @@ import {
   buildTrustedSourceQueriesForLane,
   trustedSourcesForMarketRadarPrompt,
 } from "../sidecar/market-radar-source-catalog.mjs";
+import {
+  DIRECT_EXA_API_KEY_REQUIRED_REASON,
+} from "../sidecar/direct-exa-research.mjs";
 
 async function withTmpWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-news-"));
@@ -62,6 +65,7 @@ function testExaRoute() {
     mcpConfig: {
       type: "http",
       url: "https://mcp.exa.ai/mcp",
+      headers: { "x-api-key": "exa_test_key" },
     },
   };
 }
@@ -278,7 +282,7 @@ test("provider prompt requires Korean user-facing Market Radar copy", () => {
   assert.match(prompt, /Context\.searchExclusions/);
   assert.match(prompt, /excludeDomains/);
   assert.match(prompt, /excludeText/);
-  assert.match(prompt, /additionalQueries/);
+  assert.match(prompt, /Treat additionalQueries as query seeds/);
   assert.match(prompt, /Do not search for the current product name/);
   assert.match(prompt, /Context\.selfReferenceProfile/);
   assert.match(prompt, /Trusted source policy/);
@@ -301,17 +305,17 @@ test("provider prompt requires Korean user-facing Market Radar copy", () => {
   assert.match(lanePrompt, /Context\.adaptiveProfile\.localeProfile/);
   assert.match(lanePrompt, /Self-source exclusion/);
   assert.match(lanePrompt, /Context\.trustedSourceHints/);
-  assert.match(lanePrompt, /Use at most two web_search_advanced_exa calls total/);
+  assert.match(lanePrompt, /Never launch parallel Exa MCP tool calls/);
+  assert.match(lanePrompt, /Use at most two Exa search calls total across web_search_advanced_exa and web_search_exa/);
   assert.match(lanePrompt, /Pass A: trusted\/reference\/local evidence/);
   assert.match(lanePrompt, /Pass B: competitor\/recent-market\/pricing\/review evidence/);
   assert.match(lanePrompt, /type:"fast"/);
-  assert.match(lanePrompt, /numResults <= 6/);
-  assert.match(lanePrompt, /numResults <= 8/);
+  assert.match(lanePrompt, /numResults <= 5/);
   assert.match(lanePrompt, /enableSummary:false/);
-  assert.match(lanePrompt, /highlightsMaxCharacters <= 800/);
-  assert.match(lanePrompt, /Fetch at most 4 URLs total across both passes/);
-  assert.doesNotMatch(lanePrompt, /Use at most one web_search_advanced_exa call/);
-  assert.doesNotMatch(lanePrompt, /numResults <= 4/);
+  assert.match(lanePrompt, /highlightsMaxCharacters <= 600/);
+  assert.match(lanePrompt, /Fetch at most 2 URLs total across both passes/);
+  assert.doesNotMatch(lanePrompt, /Use at most two web_search_advanced_exa calls total/);
+  assert.match(lanePrompt, /no additionalQueries/);
   assert.doesNotMatch(lanePrompt, /Call web_fetch_exa for at most 3 URLs/);
   assert.match(lanePrompt, /cannot make confidence strong/);
 });
@@ -325,17 +329,17 @@ test("two-pass Exa lane prompt exposes bounded market-search budget", () => {
     },
   });
 
-  assert.match(prompt, /Use at most two web_search_advanced_exa calls total/);
+  assert.match(prompt, /Never launch parallel Exa MCP tool calls/);
+  assert.match(prompt, /Use at most two Exa search calls total across web_search_advanced_exa and web_search_exa/);
   assert.match(prompt, /Pass A: trusted\/reference\/local evidence/);
   assert.match(prompt, /Pass B: competitor\/recent-market\/pricing\/review evidence/);
   assert.match(prompt, /type:"fast"/);
-  assert.match(prompt, /numResults <= 6/);
-  assert.match(prompt, /numResults <= 8/);
+  assert.match(prompt, /numResults <= 5/);
   assert.match(prompt, /enableSummary:false/);
-  assert.match(prompt, /highlightsMaxCharacters <= 800/);
-  assert.match(prompt, /Fetch at most 4 URLs total across both passes/);
-  assert.doesNotMatch(prompt, /Use at most one web_search_advanced_exa call/);
-  assert.doesNotMatch(prompt, /numResults <= 4/);
+  assert.match(prompt, /highlightsMaxCharacters <= 600/);
+  assert.match(prompt, /Fetch at most 2 URLs total across both passes/);
+  assert.doesNotMatch(prompt, /Use at most two web_search_advanced_exa calls total/);
+  assert.match(prompt, /no additionalQueries/);
   assert.doesNotMatch(prompt, /Call web_fetch_exa for at most 3 URLs/);
 });
 
@@ -967,12 +971,15 @@ test("refresh persists provider result and missing Exa route returns stale cache
     await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
     await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
     const now = new Date("2026-05-20T00:00:00.000Z");
+    const providerModes = [];
     const snapshot = await refreshNewsMarketRadar({
       workspaceRoot: root,
       exaApiKey: "exa_test_key",
       force: true,
       now,
-      providerResearcher: async () => ({
+      providerResearcher: async ({ mode }) => {
+        providerModes.push(mode);
+        return {
         lanes: [{
           id: "icp",
           cards: [{
@@ -986,11 +993,13 @@ test("refresh persists provider result and missing Exa route returns stale cache
             ],
           }],
         }],
-      }),
+        };
+      },
     });
     assert.equal(snapshot.status.state, "ready");
     assert.equal(snapshot.status.researchSource, "Exa Search (EXA_API_KEY)");
     assert.equal(snapshot.lanes.find((lane) => lane.id === "icp").cards.length, 1);
+    assert.deepEqual([...new Set(providerModes)], ["market_radar"]);
     const stat = await fs.stat(resolveNewsMarketRadarCachePath(root));
     assert.equal(stat.mode & 0o777, 0o600);
 
@@ -1003,7 +1012,7 @@ test("refresh persists provider result and missing Exa route returns stale cache
       },
     });
     assert.equal(noKey.status.state, "failed");
-    assert.equal(noKey.status.reason, "exa_mcp_missing");
+    assert.equal(noKey.status.reason, DIRECT_EXA_API_KEY_REQUIRED_REASON);
     assert.equal(noKey.status.stale, true);
     assert.equal(noKey.lanes.find((lane) => lane.id === "icp").cards.length, 1);
   });
@@ -1194,7 +1203,183 @@ test("load marks cardless ready cache as failed when no cardful run exists", asy
   });
 });
 
-test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async () => {
+test("refresh fails fast when provider Exa route has no direct API key", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    let providerCalled = false;
+    const snapshot = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [{
+        provider: "codex",
+        source: "provider_mcp",
+        label: "Codex Exa MCP",
+        serverName: "exa",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      providerResearcher: async () => {
+        providerCalled = true;
+        return testLaneResearchResult("icp");
+      },
+    });
+
+    assert.equal(providerCalled, false);
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.status.reason, DIRECT_EXA_API_KEY_REQUIRED_REASON);
+    assert.match(snapshot.status.error, /direct Exa Search 연결 키/);
+    assert.equal(countCards(snapshot), 0);
+    assert.equal(snapshot.status.partialFailures.length, 5);
+
+    const loaded = await loadNewsMarketRadarSnapshot({
+      workspaceRoot: root,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaConfigured: true,
+      exaResearchSource: "Codex Exa MCP",
+    });
+    assert.equal(loaded.status.state, "failed");
+    assert.equal(loaded.status.reason, DIRECT_EXA_API_KEY_REQUIRED_REASON);
+  });
+});
+
+test("daily refresh reuses fresh Market Radar cache before checking missing direct Exa key", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    let calls = 0;
+    const first = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => {
+        calls += 1;
+        return testLaneResearchResult(laneId);
+      },
+    });
+
+    const second = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "daily",
+      force: false,
+      now: new Date("2026-05-20T01:00:00.000Z"),
+      exaResearchRoutes: [{
+        provider: "codex",
+        source: "provider_mcp",
+        label: "Codex Exa MCP",
+        serverName: "exa",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      providerResearcher: async ({ laneId }) => {
+        calls += 1;
+        return testLaneResearchResult(laneId);
+      },
+    });
+
+    assert.equal(calls, 5);
+    assert.equal(first.status.state, "ready");
+    assert.equal(second.status.state, "ready");
+    assert.equal(second.generatedAt, first.generatedAt);
+    assert.equal(second.status.reason, first.status.reason);
+  });
+});
+
+test("missing direct Exa key marks stale Market Radar failure without discarding previous cards", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    const first = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [testExaRoute()],
+      providerResearcher: async ({ laneId }) => testLaneResearchResult(laneId),
+    });
+    let providerCalled = false;
+    const second = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-21T01:00:00.000Z"),
+      exaResearchRoutes: [{
+        provider: "codex",
+        source: "provider_mcp",
+        label: "Codex Exa MCP",
+        serverName: "exa",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      providerResearcher: async () => {
+        providerCalled = true;
+        return testLaneResearchResult("icp");
+      },
+    });
+
+    assert.equal(providerCalled, false);
+    assert.equal(first.status.state, "ready");
+    assert.equal(countCards(first), 5);
+    assert.equal(second.status.state, "failed");
+    assert.equal(second.status.reason, DIRECT_EXA_API_KEY_REQUIRED_REASON);
+    assert.equal(second.status.stale, true);
+    assert.equal(countCards(second), 5);
+    assert.equal(second.status.partialFailures.length, 5);
+  });
+});
+
+test("daily refresh reuses recent missing-key Market Radar failure during cooldown", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
+    const noKeyRoute = {
+      provider: "codex",
+      source: "provider_mcp",
+      label: "Codex Exa MCP",
+      serverName: "exa",
+      mcpConfig: {
+        type: "http",
+        url: "https://mcp.exa.ai/mcp",
+      },
+    };
+    const first = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "manual",
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [noKeyRoute],
+      providerResearcher: async () => {
+        throw new Error("provider should not be called without direct Exa key");
+      },
+    });
+    const second = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      reason: "daily",
+      force: false,
+      now: new Date(Date.parse("2026-05-20T00:00:00.000Z") + 60_000),
+      exaResearchRoutes: [noKeyRoute],
+      providerResearcher: async () => {
+        throw new Error("provider should not be retried during failed refresh cooldown");
+      },
+    });
+
+    assert.equal(first.status.state, "failed");
+    assert.equal(first.status.reason, DIRECT_EXA_API_KEY_REQUIRED_REASON);
+    assert.equal(second.status.state, "failed");
+    assert.equal(second.status.reason, DIRECT_EXA_API_KEY_REQUIRED_REASON);
+    assert.equal(second.generatedAt, first.generatedAt);
+    assert.equal(second.contextFingerprint, first.contextFingerprint);
+  });
+});
+
+test("refresh uses provider Exa route header key without requiring EXA_API_KEY", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
     await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
@@ -1213,6 +1398,7 @@ test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async 
         mcpConfig: {
           type: "http",
           url: "https://mcp.exa.ai/mcp",
+          headers: { "x-api-key": "exa_test_key" },
         },
       }],
       providerResearcher: async ({ exaMcpConfig, exaResearchRoute, exaApiKeyConfigured }) => {
@@ -1430,16 +1616,7 @@ test("refresh runs every Market Radar lane with bounded concurrency", async () =
       workspaceRoot: root,
       force: true,
       now: new Date("2026-05-20T00:00:00.000Z"),
-      exaResearchRoutes: [{
-        provider: "codex",
-        source: "provider_mcp",
-        label: "Codex Exa MCP",
-        serverName: "exa",
-        mcpConfig: {
-          type: "http",
-          url: "https://mcp.exa.ai/mcp",
-        },
-      }],
+      exaResearchRoutes: [testExaRoute()],
       providerResearcher: async ({ laneId }) => {
         active += 1;
         maxActive = Math.max(maxActive, active);
@@ -1481,16 +1658,7 @@ test("refresh groups duplicate all-lane timeout failures and persists diagnostic
       workspaceRoot: root,
       force: true,
       now: new Date("2026-05-20T00:00:00.000Z"),
-      exaResearchRoutes: [{
-        provider: "codex",
-        source: "provider_mcp",
-        label: "Codex Exa MCP",
-        serverName: "exa",
-        mcpConfig: {
-          type: "http",
-          url: "https://mcp.exa.ai/mcp",
-        },
-      }],
+      exaResearchRoutes: [testExaRoute()],
       providerResearcher: async () => {
         throw new Error("공개 근거 검색이 15m 안에 끝나지 않았습니다");
       },
@@ -1513,16 +1681,7 @@ test("refresh reuses recent failed daily snapshot during failed auto-refresh coo
     await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
     await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\nsolo devs");
     let calls = 0;
-    const route = {
-      provider: "codex",
-      source: "provider_mcp",
-      label: "Codex Exa MCP",
-      serverName: "exa",
-      mcpConfig: {
-        type: "http",
-        url: "https://mcp.exa.ai/mcp",
-      },
-    };
+    const route = testExaRoute();
     const first = await refreshNewsMarketRadar({
       workspaceRoot: root,
       reason: "manual",
@@ -1564,16 +1723,7 @@ test("refresh keeps successful lanes ready when some lane research fails", async
       workspaceRoot: root,
       force: true,
       now: new Date("2026-05-20T00:00:00.000Z"),
-      exaResearchRoutes: [{
-        provider: "codex",
-        source: "provider_mcp",
-        label: "Codex Exa MCP",
-        serverName: "exa",
-        mcpConfig: {
-          type: "http",
-          url: "https://mcp.exa.ai/mcp",
-        },
-      }],
+      exaResearchRoutes: [testExaRoute()],
       providerResearcher: async ({ laneId }) => {
         if (failingLaneIds.has(laneId)) throw new Error(`${laneId} failed`);
         return {
@@ -1888,16 +2038,7 @@ test("refresh fails explicitly when final synthesis throws", async () => {
       workspaceRoot: root,
       force: true,
       now: new Date("2026-05-20T00:00:00.000Z"),
-      exaResearchRoutes: [{
-        provider: "codex",
-        source: "provider_mcp",
-        label: "Codex Exa MCP",
-        serverName: "exa",
-        mcpConfig: {
-          type: "http",
-          url: "https://mcp.exa.ai/mcp",
-        },
-      }],
+      exaResearchRoutes: [testExaRoute()],
       providerResearcher: async ({ laneId }) => ({
         lane: {
           id: laneId,
@@ -1982,16 +2123,7 @@ test("refresh emits real progress stages for the Market Radar UI", async () => {
       workspaceRoot: root,
       force: true,
       now: new Date("2026-05-20T00:00:00.000Z"),
-      exaResearchRoutes: [{
-        provider: "codex",
-        source: "provider_mcp",
-        label: "Codex Exa MCP",
-        serverName: "exa",
-        mcpConfig: {
-          type: "http",
-          url: "https://mcp.exa.ai/mcp",
-        },
-      }],
+      exaResearchRoutes: [testExaRoute()],
       providerResearcher: async () => ({
         researchSource: "Codex Exa MCP",
         lanes: [{

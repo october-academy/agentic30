@@ -356,6 +356,13 @@ import {
   refreshNewsMarketRadar,
 } from "./news-market-radar.mjs";
 import {
+  buildDirectExaGroundedPrompt,
+  createDirectExaApiKeyRequiredError,
+  extractDirectExaApiKey,
+  runDirectExaResearch,
+  usesDirectExaResearchMode,
+} from "./direct-exa-research.mjs";
+import {
   buildStrategyReportProgressStatus,
   loadStrategyReportSnapshot,
   refreshStrategyReport,
@@ -615,6 +622,7 @@ const state = {
   workHistoryProgressStartedAt: null,
   morningBriefingRefreshPromise: null,
   morningBriefingRefreshRunId: "",
+  morningBriefingRefreshStartedAt: null,
   userInputRequestWatcher: null,
   // 수집 중 카드별 라이브 진행(스피너+에이전트 로그). 서빙 전용, persist 금지.
   morningBriefingProgressTracker: null,
@@ -2623,6 +2631,7 @@ async function handleClientMessage(socket, payload) {
               snapshot: true,
               reason: refreshInFlight ? "refresh_in_flight" : "tab_enter",
               runId: state.morningBriefingRefreshRunId,
+              elapsedMs: currentMorningBriefingRefreshElapsedMs(),
             }),
             morningBriefing: store.current,
             morningBriefingPrevious: store.previous,
@@ -2648,7 +2657,14 @@ async function handleClientMessage(socket, payload) {
         return;
       }
       if (refreshInFlight) {
-        send(socket, { type: "morning_briefing_status", status: { state: "collecting" } });
+        send(socket, {
+          type: "morning_briefing_status",
+          status: buildMorningBriefingRefreshStatus({
+            reason: "refresh_in_flight",
+            runId: state.morningBriefingRefreshRunId,
+            startedAt: state.morningBriefingRefreshStartedAt,
+          }),
+        });
         // 수집 중 탭 재진입: 카드별 진행(스피너+로그)을 즉시 복원한다.
         const progressSnapshot = state.morningBriefingProgressTracker?.snapshot?.();
         if (progressSnapshot) {
@@ -6228,6 +6244,8 @@ function morningBriefingResultStatus(briefing = null, {
   reason = "",
   runId = "",
   detail = "",
+  elapsedMs = null,
+  durationMs = null,
 } = {}) {
   const failedSources = morningBriefingFailedSources(briefing);
   const status = {
@@ -6238,7 +6256,49 @@ function morningBriefingResultStatus(briefing = null, {
   if (runId) status.runId = runId;
   const resolvedDetail = detail || briefing?.status?.detail || "";
   if (resolvedDetail) status.detail = resolvedDetail;
+  const resolvedElapsedMs = Number.isFinite(elapsedMs)
+    ? elapsedMs
+    : Number.isFinite(briefing?.status?.elapsedMs)
+      ? briefing.status.elapsedMs
+      : null;
+  const resolvedDurationMs = Number.isFinite(durationMs)
+    ? durationMs
+    : Number.isFinite(briefing?.status?.durationMs)
+      ? briefing.status.durationMs
+      : null;
+  if (Number.isFinite(resolvedElapsedMs)) status.elapsedMs = Math.max(0, Math.round(resolvedElapsedMs));
+  if (Number.isFinite(resolvedDurationMs)) status.durationMs = Math.max(0, Math.round(resolvedDurationMs));
   if (!snapshot && failedSources.length) status.failedSources = failedSources;
+  return status;
+}
+
+function elapsedSinceMs(startedAt) {
+  return Number.isFinite(startedAt)
+    ? Math.max(0, Math.round(Date.now() - startedAt))
+    : null;
+}
+
+function currentMorningBriefingRefreshElapsedMs() {
+  return elapsedSinceMs(state.morningBriefingRefreshStartedAt);
+}
+
+function buildMorningBriefingRefreshStatus({
+  state: statusState = "collecting",
+  reason = "",
+  runId = "",
+  startedAt = null,
+  detail = "",
+  snapshot = null,
+  durationMs = null,
+} = {}) {
+  const elapsedMs = elapsedSinceMs(startedAt);
+  const status = { state: statusState };
+  if (reason) status.reason = reason;
+  if (runId) status.runId = runId;
+  if (detail) status.detail = detail;
+  if (snapshot !== null) status.snapshot = Boolean(snapshot);
+  if (Number.isFinite(elapsedMs)) status.elapsedMs = elapsedMs;
+  if (Number.isFinite(durationMs)) status.durationMs = Math.max(0, Math.round(durationMs));
   return status;
 }
 
@@ -6371,13 +6431,18 @@ function scheduleMorningBriefingRefresh({
   if (state.morningBriefingRefreshPromise) {
     send(targetSocket, {
       type: "morning_briefing_status",
-      status: { state: "collecting", reason, runId: state.morningBriefingRefreshRunId },
+      status: buildMorningBriefingRefreshStatus({
+        reason,
+        runId: state.morningBriefingRefreshRunId,
+        startedAt: state.morningBriefingRefreshStartedAt,
+      }),
     });
     return state.morningBriefingRefreshPromise;
   }
   const promise = runMorningBriefingRefresh({ reason, force, preferredProvider }).finally(() => {
     state.morningBriefingRefreshPromise = null;
     state.morningBriefingRefreshRunId = "";
+    state.morningBriefingRefreshStartedAt = null;
     state.morningBriefingProgressTracker = null;
   });
   state.morningBriefingRefreshPromise = promise;
@@ -6388,8 +6453,20 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
   const startedAt = Date.now();
   const runLog = createMorningBriefingRunLogger({ reason, force });
   state.morningBriefingRefreshRunId = runLog.runId;
+  state.morningBriefingRefreshStartedAt = startedAt;
+  const emitRefreshStatus = (status = {}) => broadcast({
+    type: "morning_briefing_status",
+    status: buildMorningBriefingRefreshStatus({
+      reason,
+      runId: runLog.runId,
+      startedAt,
+      ...status,
+    }),
+  });
   await runLog.record("refresh", "started", { preferredProvider });
-  broadcast({ type: "morning_briefing_status", status: { state: "collecting", reason, runId: runLog.runId } });
+  emitRefreshStatus();
+  const progressHeartbeat = setInterval(() => emitRefreshStatus(), 1_000);
+  progressHeartbeat.unref?.();
   await delayMorningBriefingRefreshForTesting();
   try {
     const store = await collectMorningBriefingStage({
@@ -6728,18 +6805,21 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
       },
       fn: () => persistMorningBriefing({ workspaceRoot, briefing }),
     });
+    const completedDurationMs = Date.now() - startedAt;
     broadcast({
       type: "morning_briefing_result",
       status: morningBriefingResultStatus(briefing, {
         snapshot: false,
         reason,
         runId: runLog.runId,
+        elapsedMs: completedDurationMs,
+        durationMs: completedDurationMs,
       }),
       morningBriefing: briefing,
       morningBriefingPrevious: persistedStore.previous,
     });
     await runLog.record("refresh", "completed", {
-      durationMs: Date.now() - startedAt,
+      durationMs: completedDurationMs,
       generatedAt: briefing.generatedAt,
       syncedAt: briefing.sync?.syncedAt,
       syncedAtLabel: briefing.sync?.syncedAtLabel,
@@ -6748,7 +6828,7 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     });
     telemetry.captureEvent("mac_sidecar_morning_briefing_refresh_completed", {
       reason,
-      duration_ms: Date.now() - startedAt,
+      duration_ms: completedDurationMs,
       day: briefing.day ?? 0,
       ready_sources: readySources.join(","),
       anomaly: briefing.anomaly?.id || "",
@@ -6762,15 +6842,19 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     const detail = error?.morningBriefingStage === "verdict_provider"
       ? `판정 생성 실패: ${errorDetail} 이전 브리핑을 stale 상태로 유지합니다.`
       : `브리핑 수집 실패: ${errorDetail} 이전 브리핑을 stale 상태로 유지합니다.`;
+    const failedDurationMs = Date.now() - startedAt;
     await runLog.record("refresh", "failed", {
-      durationMs: Date.now() - startedAt,
+      durationMs: failedDurationMs,
       error: formatMorningBriefingRunError(error),
     });
-    broadcast({
-      type: "morning_briefing_status",
-      status: { state: "failed", detail, reason, runId: runLog.runId },
+    emitRefreshStatus({
+      state: "failed",
+      detail,
+      durationMs: failedDurationMs,
     });
     return null;
+  } finally {
+    clearInterval(progressHeartbeat);
   }
 }
 
@@ -14457,6 +14541,7 @@ async function runWorkHistoryClaudeRefinement(prompt) {
     ].join("\n"),
   };
   let text = "";
+  let sawStructuredOutputResult = false;
   try {
     const stream = query({ prompt, options });
     for await (const event of stream) {
@@ -14715,12 +14800,17 @@ async function runBipResearchRefresh({
 }
 
 async function runNewsMarketRadarProviderResearch({
+  context = {},
   prompt,
   exaMcpConfig,
   exaResearchRoute,
   exaResearchRoutes = [],
   onProgress = null,
   signal = null,
+  mode = "",
+  structuredOutputSchema = null,
+  structuredOutputSchemaName = "",
+  structuredOutputSchemaLimits = null,
 } = {}) {
   // Single explicit provider route (or codex default). No multi-route/provider
   // fallback: if the chosen route's provider is unavailable or fails, surface
@@ -14758,29 +14848,94 @@ async function runNewsMarketRadarProviderResearch({
         provider,
         researchSource: routeLabel,
         exaResearchRoute: redactExaResearchRoute(route),
+        ...structuredOutputResultMetadata({
+          provider,
+          structuredOutputSchema,
+          structuredOutputSchemaName,
+          structuredOutputSchemaLimits,
+        }),
       };
     }
   }
-  const text = await runWithMarketResearchProviderBudget(async () => {
-    if (signal?.aborted) throw new Error("aborted");
-    return provider === "claude"
-      ? await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: route.mcpConfig })
-      : provider === "gemini"
-        ? await runNewsMarketRadarGeminiResearch({ prompt, exaMcpConfig: route.mcpConfig })
-        : await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: route.mcpConfig, signal });
+  if (!usesDirectExaResearchMode(mode)) {
+    const text = await runWithMarketResearchProviderBudget(async () => {
+      if (signal?.aborted) throw new Error("aborted");
+      return provider === "claude"
+        ? await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: route.mcpConfig, structuredOutputSchema, structuredOutputSchemaName })
+        : provider === "gemini"
+          ? await runNewsMarketRadarGeminiResearch({ prompt, exaMcpConfig: route.mcpConfig, structuredOutputSchema, structuredOutputSchemaName })
+          : await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: route.mcpConfig, signal, structuredOutputSchema, structuredOutputSchemaName });
+    });
+    return {
+      text,
+      provider,
+      researchSource: route.label || `${providerLabel(provider)} 웹 검색 도구`,
+      exaResearchRoute: redactExaResearchRoute(route),
+      ...structuredOutputResultMetadata({
+        provider,
+        structuredOutputSchema,
+        structuredOutputSchemaName,
+        structuredOutputSchemaLimits,
+      }),
+    };
+  }
+  const directExaApiKey = extractDirectExaApiKey({
+    apiKey: currentExaApiKey(),
+    mcpConfig: route.mcpConfig,
   });
-  return {
-    text,
+  if (directExaApiKey) {
+    if (typeof onProgress === "function") {
+      onProgress({
+        stage: "running_provider_research",
+        progressText: "Exa Search API로 공개 근거를 직접 검색하는 중",
+        researchSource: `${routeLabel} · Exa Search API`,
+      });
+    }
+    const directExaResult = await runDirectExaResearch({
+      apiKey: directExaApiKey,
+      context,
+      mode,
+      signal,
+    });
+    const groundedPrompt = buildDirectExaGroundedPrompt({
+      prompt,
+      directExaResult,
+    });
+    const text = await runWithMarketResearchProviderBudget(async () => {
+      if (signal?.aborted) throw new Error("aborted");
+      return provider === "claude"
+        ? await runNewsMarketRadarClaudeSynthesis({ prompt: groundedPrompt, structuredOutputSchema, structuredOutputSchemaName })
+        : provider === "gemini"
+          ? await runNewsMarketRadarGeminiSynthesis({ prompt: groundedPrompt, structuredOutputSchema, structuredOutputSchemaName })
+          : await runNewsMarketRadarCodexSynthesis({ prompt: groundedPrompt, structuredOutputSchema, structuredOutputSchemaName });
+    });
+    return {
+      text,
+      provider,
+      researchSource: `${route.label || `${providerLabel(provider)} 웹 검색 도구`} · Exa Search API`,
+      exaResearchRoute: redactExaResearchRoute(route),
+      directExaResult,
+      ...structuredOutputResultMetadata({
+        provider,
+        structuredOutputSchema,
+        structuredOutputSchemaName,
+        structuredOutputSchemaLimits,
+      }),
+    };
+  }
+  throw createDirectExaApiKeyRequiredError({
+    routeLabel,
     provider,
-    researchSource: route.label || `${providerLabel(provider)} 웹 검색 도구`,
-    exaResearchRoute: redactExaResearchRoute(route),
-  };
+  });
 }
 
 async function runNewsMarketRadarProviderSynthesis({
   prompt,
   provider = "",
   preferredProvider = "",
+  structuredOutputSchema = null,
+  structuredOutputSchemaName = "",
+  structuredOutputSchemaLimits = null,
 } = {}) {
   // Single explicit provider (or codex default). No precedence fallback: if the
   // chosen provider is unavailable or fails, surface the error directly.
@@ -14796,18 +14951,30 @@ async function runNewsMarketRadarProviderSynthesis({
         text: stubText,
         provider: candidate,
         researchSource: `${providerLabel(candidate)} synthesis`,
+        ...structuredOutputResultMetadata({
+          provider: candidate,
+          structuredOutputSchema,
+          structuredOutputSchemaName,
+          structuredOutputSchemaLimits,
+        }),
       };
     }
   }
   const text = candidate === "claude"
-    ? await runNewsMarketRadarClaudeSynthesis({ prompt })
+    ? await runNewsMarketRadarClaudeSynthesis({ prompt, structuredOutputSchema, structuredOutputSchemaName })
     : candidate === "gemini"
-      ? await runNewsMarketRadarGeminiSynthesis({ prompt })
-      : await runNewsMarketRadarCodexSynthesis({ prompt });
+      ? await runNewsMarketRadarGeminiSynthesis({ prompt, structuredOutputSchema, structuredOutputSchemaName })
+      : await runNewsMarketRadarCodexSynthesis({ prompt, structuredOutputSchema, structuredOutputSchemaName });
   return {
     text,
     provider: candidate,
     researchSource: `${providerLabel(candidate)} synthesis`,
+    ...structuredOutputResultMetadata({
+      provider: candidate,
+      structuredOutputSchema,
+      structuredOutputSchemaName,
+      structuredOutputSchemaLimits,
+    }),
   };
 }
 
@@ -14844,6 +15011,92 @@ function providerLabel(provider) {
   case "gemini": return "Gemini";
   case "codex": return "Codex";
   default: return "Provider";
+  }
+}
+
+function hasStructuredOutputSchema(schema) {
+  return Boolean(schema && typeof schema === "object");
+}
+
+function structuredOutputResultMetadata({
+  provider = "",
+  structuredOutputSchema = null,
+  structuredOutputSchemaName = "",
+  structuredOutputSchemaLimits = null,
+} = {}) {
+  if (!hasStructuredOutputSchema(structuredOutputSchema)) return {};
+  return {
+    structuredOutputRequested: true,
+    structuredOutputProvider: normalizeProviderName(provider) || String(provider || ""),
+    structuredOutputSchemaName: String(structuredOutputSchemaName || "StructuredOutputContract"),
+    structuredOutputSchemaLimits: structuredOutputSchemaLimits || null,
+  };
+}
+
+function structuredOutputProviderError({
+  provider = "Provider",
+  schemaName = "",
+  failure = "",
+  message = "",
+  cause = null,
+} = {}) {
+  const error = new Error(
+    message || `${provider} structured output failed${schemaName ? ` for ${schemaName}` : ""}`,
+  );
+  if (cause) error.cause = cause;
+  if (failure) error.structuredOutputFailure = failure;
+  return error;
+}
+
+function serializeClaudeStructuredOutputEvent(event, {
+  provider = "Claude",
+  schemaName = "",
+} = {}) {
+  if (event.subtype !== "success") {
+    throw structuredOutputProviderError({
+      provider,
+      schemaName,
+      failure: "provider_schema_rejected",
+      message: event.errors?.join("; ") || event.stop_reason || `${provider} structured output failed for ${schemaName}`,
+    });
+  }
+  if (!Object.hasOwn(event, "structured_output")) {
+    throw structuredOutputProviderError({
+      provider,
+      schemaName,
+      failure: "missing_structured_output",
+      message: `${provider} structured output missing structured_output`,
+    });
+  }
+  return JSON.stringify(event.structured_output);
+}
+
+function assertStructuredOutputJsonText({
+  provider = "Provider",
+  schemaName = "",
+  structuredOutputSchema = null,
+  text = "",
+} = {}) {
+  if (!hasStructuredOutputSchema(structuredOutputSchema)) return;
+  const trimmed = String(text || "").trim();
+  if (!trimmed) {
+    throw structuredOutputProviderError({
+      provider,
+      schemaName,
+      failure: "invalid_json_text",
+      message: `${provider} structured output returned empty JSON text for ${schemaName || "schema"}`,
+    });
+  }
+  try {
+    JSON.parse(trimmed);
+  } catch (error) {
+    throw structuredOutputProviderError({
+      provider,
+      schemaName,
+      failure: "invalid_json_text",
+      message: `${provider} structured output returned invalid JSON text for ${schemaName || "schema"}`,
+      cause: error,
+    });
   }
 }
 
@@ -14928,6 +15181,8 @@ function buildStrategyReportStubContent() {
 async function runNewsMarketRadarClaudeResearch({
   prompt,
   exaMcpConfig,
+  structuredOutputSchema = null,
+  structuredOutputSchemaName = "",
 } = {}) {
   const cliPath = resolveClaudeCodeEntrypoint();
   const env = buildClaudeAgentEnv();
@@ -14954,8 +15209,12 @@ async function runNewsMarketRadarClaudeResearch({
       "Write every user-facing JSON string in Korean unless it is a fixed enum/id/key, URL, domain, product name, plan name, or official source title.",
       "Return strict JSON only.",
     ].join("\n"),
+    ...(hasStructuredOutputSchema(structuredOutputSchema)
+      ? { outputFormat: { type: "json_schema", schema: structuredOutputSchema } }
+      : {}),
   };
   let text = "";
+  let sawStructuredOutputResult = false;
   try {
     const stream = query({ prompt, options });
     for await (const event of stream) {
@@ -14966,9 +15225,23 @@ async function runNewsMarketRadarClaudeResearch({
           }
         }
       }
-      if (event.type === "result" && event.result) {
+      if (event.type === "result" && hasStructuredOutputSchema(structuredOutputSchema)) {
+        sawStructuredOutputResult = true;
+        text = serializeClaudeStructuredOutputEvent(event, {
+          provider: "Claude",
+          schemaName: structuredOutputSchemaName,
+        });
+      } else if (event.type === "result" && event.result) {
         text += `\n${event.result}`;
       }
+    }
+    if (hasStructuredOutputSchema(structuredOutputSchema) && !sawStructuredOutputResult) {
+      throw structuredOutputProviderError({
+        provider: "Claude",
+        schemaName: structuredOutputSchemaName,
+        failure: "missing_structured_output",
+        message: "Claude structured output missing structured_output",
+      });
     }
     return text;
   } catch (error) {
@@ -14983,6 +15256,8 @@ async function runNewsMarketRadarClaudeResearch({
 
 async function runNewsMarketRadarClaudeSynthesis({
   prompt,
+  structuredOutputSchema = null,
+  structuredOutputSchemaName = "",
 } = {}) {
   const cliPath = resolveClaudeCodeEntrypoint();
   const env = buildClaudeAgentEnv();
@@ -15006,8 +15281,12 @@ async function runNewsMarketRadarClaudeSynthesis({
       "Write every user-facing JSON string in Korean unless it is a fixed enum/id/key, URL, domain, product name, plan name, or official source title.",
       "Return strict JSON only.",
     ].join("\n"),
+    ...(hasStructuredOutputSchema(structuredOutputSchema)
+      ? { outputFormat: { type: "json_schema", schema: structuredOutputSchema } }
+      : {}),
   };
   let text = "";
+  let sawStructuredOutputResult = false;
   try {
     const stream = query({ prompt, options });
     for await (const event of stream) {
@@ -15018,9 +15297,23 @@ async function runNewsMarketRadarClaudeSynthesis({
           }
         }
       }
-      if (event.type === "result" && event.result) {
+      if (event.type === "result" && hasStructuredOutputSchema(structuredOutputSchema)) {
+        sawStructuredOutputResult = true;
+        text = serializeClaudeStructuredOutputEvent(event, {
+          provider: "Claude",
+          schemaName: structuredOutputSchemaName,
+        });
+      } else if (event.type === "result" && event.result) {
         text += `\n${event.result}`;
       }
+    }
+    if (hasStructuredOutputSchema(structuredOutputSchema) && !sawStructuredOutputResult) {
+      throw structuredOutputProviderError({
+        provider: "Claude",
+        schemaName: structuredOutputSchemaName,
+        failure: "missing_structured_output",
+        message: "Claude structured output missing structured_output",
+      });
     }
     return text;
   } catch (error) {
@@ -15037,6 +15330,8 @@ async function runNewsMarketRadarCodexResearch({
   prompt,
   exaMcpConfig,
   signal = null,
+  structuredOutputSchema = null,
+  structuredOutputSchemaName = "",
 } = {}) {
   const abortController = new AbortController();
   let parentAbortListener = null;
@@ -15087,6 +15382,9 @@ async function runNewsMarketRadarCodexResearch({
   try {
     const { events } = await thread.runStreamed(prompt, {
       signal: abortController.signal,
+      ...(hasStructuredOutputSchema(structuredOutputSchema)
+        ? { outputSchema: structuredOutputSchema }
+        : {}),
     });
     for await (const event of events) {
       if (
@@ -15105,11 +15403,27 @@ async function runNewsMarketRadarCodexResearch({
       ) {
         text = event.item.text;
       } else if (event.type === "turn.failed") {
-        throw new Error(event.error?.message || "Codex SDK turn failed.");
+        throw structuredOutputProviderError({
+          provider: "Codex",
+          schemaName: structuredOutputSchemaName,
+          failure: hasStructuredOutputSchema(structuredOutputSchema) ? "provider_schema_rejected" : "",
+          message: event.error?.message || "Codex SDK turn failed.",
+        });
       } else if (event.type === "error") {
-        throw new Error(event.message || "Codex SDK emitted an error.");
+        throw structuredOutputProviderError({
+          provider: "Codex",
+          schemaName: structuredOutputSchemaName,
+          failure: hasStructuredOutputSchema(structuredOutputSchema) ? "provider_schema_rejected" : "",
+          message: event.message || "Codex SDK emitted an error.",
+        });
       }
     }
+    assertStructuredOutputJsonText({
+      provider: "Codex",
+      schemaName: structuredOutputSchemaName,
+      structuredOutputSchema,
+      text,
+    });
     return text;
   } catch (error) {
     if (timedOut && isAbortLikeError(error)) {
@@ -15126,6 +15440,8 @@ async function runNewsMarketRadarCodexResearch({
 
 async function runNewsMarketRadarCodexSynthesis({
   prompt,
+  structuredOutputSchema = null,
+  structuredOutputSchemaName = "",
 } = {}) {
   const abortController = new AbortController();
   let timedOut = false;
@@ -15166,6 +15482,9 @@ async function runNewsMarketRadarCodexSynthesis({
   try {
     const { events } = await thread.runStreamed(prompt, {
       signal: abortController.signal,
+      ...(hasStructuredOutputSchema(structuredOutputSchema)
+        ? { outputSchema: structuredOutputSchema }
+        : {}),
     });
     for await (const event of events) {
       if (
@@ -15175,11 +15494,27 @@ async function runNewsMarketRadarCodexSynthesis({
       ) {
         text = event.item.text;
       } else if (event.type === "turn.failed") {
-        throw new Error(event.error?.message || "Codex SDK synthesis turn failed.");
+        throw structuredOutputProviderError({
+          provider: "Codex",
+          schemaName: structuredOutputSchemaName,
+          failure: hasStructuredOutputSchema(structuredOutputSchema) ? "provider_schema_rejected" : "",
+          message: event.error?.message || "Codex SDK synthesis turn failed.",
+        });
       } else if (event.type === "error") {
-        throw new Error(event.message || "Codex SDK emitted an error.");
+        throw structuredOutputProviderError({
+          provider: "Codex",
+          schemaName: structuredOutputSchemaName,
+          failure: hasStructuredOutputSchema(structuredOutputSchema) ? "provider_schema_rejected" : "",
+          message: event.message || "Codex SDK emitted an error.",
+        });
       }
     }
+    assertStructuredOutputJsonText({
+      provider: "Codex",
+      schemaName: structuredOutputSchemaName,
+      structuredOutputSchema,
+      text,
+    });
     return text;
   } catch (error) {
     if (timedOut && isAbortLikeError(error)) {
@@ -15194,6 +15529,8 @@ async function runNewsMarketRadarCodexSynthesis({
 async function runNewsMarketRadarGeminiResearch({
   prompt,
   exaMcpConfig,
+  structuredOutputSchema = null,
+  structuredOutputSchemaName = "",
 } = {}) {
   const env = buildGeminiEnv();
   const useVertex = env.GOOGLE_GENAI_USE_VERTEXAI === "true" || env.GOOGLE_GENAI_USE_VERTEXAI === "1";
@@ -15232,10 +15569,23 @@ async function runNewsMarketRadarGeminiResearch({
           "Return strict JSON only.",
         ].join("\n"),
         tools: [mcpToTool(client)],
+        ...(hasStructuredOutputSchema(structuredOutputSchema)
+          ? {
+              responseMimeType: "application/json",
+              responseJsonSchema: structuredOutputSchema,
+            }
+          : {}),
       },
       abortSignal: abortController.signal,
     });
-    return extractGeminiResponseText(response);
+    const text = extractGeminiResponseText(response);
+    assertStructuredOutputJsonText({
+      provider: "Gemini",
+      schemaName: structuredOutputSchemaName,
+      structuredOutputSchema,
+      text,
+    });
+    return text;
   } catch (error) {
     if (timedOut && isAbortLikeError(error)) {
       throw newsMarketRadarProviderTimeoutError();
@@ -15249,6 +15599,8 @@ async function runNewsMarketRadarGeminiResearch({
 
 async function runNewsMarketRadarGeminiSynthesis({
   prompt,
+  structuredOutputSchema = null,
+  structuredOutputSchemaName = "",
 } = {}) {
   const env = buildGeminiEnv();
   const useVertex = env.GOOGLE_GENAI_USE_VERTEXAI === "true" || env.GOOGLE_GENAI_USE_VERTEXAI === "1";
@@ -15280,10 +15632,23 @@ async function runNewsMarketRadarGeminiSynthesis({
           "Write every user-facing JSON string in Korean unless it is a fixed enum/id/key, URL, domain, product name, plan name, or official source title.",
           "Return strict JSON only.",
         ].join("\n"),
+        ...(hasStructuredOutputSchema(structuredOutputSchema)
+          ? {
+              responseMimeType: "application/json",
+              responseJsonSchema: structuredOutputSchema,
+            }
+          : {}),
       },
       abortSignal: abortController.signal,
     });
-    return extractGeminiResponseText(response);
+    const text = extractGeminiResponseText(response);
+    assertStructuredOutputJsonText({
+      provider: "Gemini",
+      schemaName: structuredOutputSchemaName,
+      structuredOutputSchema,
+      text,
+    });
+    return text;
   } catch (error) {
     if (timedOut && isAbortLikeError(error)) {
       throw newsMarketRadarProviderTimeoutError();

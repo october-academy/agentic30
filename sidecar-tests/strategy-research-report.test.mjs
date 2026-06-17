@@ -5,13 +5,23 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  STRATEGY_REPORT_ADVERSARIAL_OUTPUT_SCHEMA_NAME,
+  STRATEGY_REPORT_OUTPUT_SCHEMA_NAME,
   STRATEGY_REPORT_PROGRESS_STEPS,
+  STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS,
+  STRATEGY_REPORT_STRUCTURED_OUTPUT_FAILURE_PROVIDER_SCHEMA_INVALID_LOCAL,
+  assertStrategyReportProviderJsonSchema,
+  buildStrategyReportProviderJsonSchema,
   buildStrategyReportProgressStatus,
   loadStrategyReportSnapshot,
   refreshStrategyReport,
   resolveStrategyReportCachePath,
   resolveStrategyReportRunsDir,
 } from "../sidecar/strategy-research-report.mjs";
+import {
+  DIRECT_EXA_API_KEY_REQUIRED_REASON,
+  DIRECT_EXA_SEARCH_FAILED_REASON,
+} from "../sidecar/direct-exa-research.mjs";
 
 async function withTmpWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-strategy-"));
@@ -98,6 +108,181 @@ function completeReport(overrides = {}) {
   };
 }
 
+function competitorFixture(index, overrides = {}) {
+  return {
+    id: `competitor-${index}`,
+    title: `Competitor ${index}`,
+    tag: "Adjacent strategy tool",
+    body: `Competitor ${index} is a synthetic public matrix fixture used to exercise report normalization.`,
+    gap: "Agentic30 should stay focused on local execution evidence rather than this adjacent workflow.",
+    adaptiveScore: 30 + (index % 50),
+    evidenceScore: 20 + (index % 60),
+    sourceLabel: "Fixture public source",
+    sourceURL: `https://example.com/competitor-${index}`,
+    sourceDisplay: `example.com/competitor-${index}`,
+    verifiedAt: "2026-06",
+    scoreRationale: "Fixture row has complete matrix scores and source metadata.",
+    category: "other",
+    isAgentic30: false,
+    labelPlacement: "trailing",
+    ...overrides,
+  };
+}
+
+function collectEmptySchemaObjectPaths(value, path = "<root>") {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => collectEmptySchemaObjectPaths(item, `${path}[${index}]`));
+  }
+  const keys = Object.keys(value);
+  const nested = Object.entries(value)
+    .flatMap(([key, child]) => collectEmptySchemaObjectPaths(child, `${path}.${key}`));
+  return keys.length === 0 ? [path, ...nested] : nested;
+}
+
+function collectAdditionalPropertiesValues(value, path = "<root>") {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => collectAdditionalPropertiesValues(item, `${path}[${index}]`));
+  }
+  const own = Object.hasOwn(value, "additionalProperties")
+    ? [{ path: `${path}.additionalProperties`, value: value.additionalProperties }]
+    : [];
+  return [
+    ...own,
+    ...Object.entries(value).flatMap(([key, child]) => collectAdditionalPropertiesValues(child, `${path}.${key}`)),
+  ];
+}
+
+function collectMissingRequiredPropertyKeys(value, path = "<root>") {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => collectMissingRequiredPropertyKeys(item, `${path}[${index}]`));
+  }
+  const own = [];
+  if (
+    value.type === "object"
+    && value.properties
+    && typeof value.properties === "object"
+    && !Array.isArray(value.properties)
+  ) {
+    const required = Array.isArray(value.required) ? value.required : [];
+    const missing = Object.keys(value.properties).filter((key) => !required.includes(key));
+    if (missing.length > 0) {
+      own.push({ path, missing });
+    }
+  }
+  return [
+    ...own,
+    ...Object.entries(value).flatMap(([key, child]) => collectMissingRequiredPropertyKeys(child, `${path}.${key}`)),
+  ];
+}
+
+test("strategy report provider JSON schema preserves competitor bounds", () => {
+  const schema = buildStrategyReportProviderJsonSchema("codex");
+  const report = schema.properties.report;
+  const competitors = report.properties.competitors;
+
+  assert.equal(competitors.minItems, STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS.competitorsMinItems);
+  assert.equal(competitors.maxItems, STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS.competitorsMaxItems);
+  assert.equal(schema.required.includes("report"), true);
+  assert.deepEqual(report.properties.canvasBlocks.items.required, ["id", "title", "bullets"]);
+  assert.deepEqual(competitors.items.required, [
+    "id",
+    "title",
+    "tag",
+    "body",
+    "gap",
+    "adaptiveScore",
+    "evidenceScore",
+    "sourceLabel",
+    "scoreRationale",
+    "isAgentic30",
+  ]);
+  assert.equal(Object.hasOwn(schema, "$schema"), false);
+  assert.deepEqual(collectEmptySchemaObjectPaths(schema), []);
+  assert.deepEqual(collectMissingRequiredPropertyKeys(schema), []);
+  assert.equal(
+    collectAdditionalPropertiesValues(schema).every((entry) => entry.value === false),
+    true,
+  );
+});
+
+test("strategy report Gemini JSON schema sanitizer keeps required object and array limits", () => {
+  const schema = buildStrategyReportProviderJsonSchema("gemini");
+  const report = schema.properties.report;
+  const competitors = report.properties.competitors;
+
+  assert.equal(schema.type, "object");
+  assert.equal(schema.required.includes("report"), true);
+  assert.equal(Object.hasOwn(report, "additionalProperties"), true);
+  assert.equal(report.additionalProperties, false);
+  assert.equal(report.required.includes("competitors"), true);
+  assert.equal(competitors.minItems, 3);
+  assert.equal(competitors.maxItems, 12);
+  assert.deepEqual(collectEmptySchemaObjectPaths(schema), []);
+  assert.deepEqual(collectMissingRequiredPropertyKeys(schema), []);
+  assert.equal(
+    collectAdditionalPropertiesValues(schema).every((entry) => entry.value === false),
+    true,
+  );
+});
+
+test("strategy report provider JSON schema preflight rejects schemas unsafe for provider strict mode", () => {
+  assert.throws(
+    () => assertStrategyReportProviderJsonSchema({
+      type: "object",
+      properties: {
+        report: {},
+      },
+      required: ["report"],
+      additionalProperties: false,
+    }, { provider: "codex", schemaName: "BrokenReportContract" }),
+    (error) => (
+      error.structuredOutputFailure === STRATEGY_REPORT_STRUCTURED_OUTPUT_FAILURE_PROVIDER_SCHEMA_INVALID_LOCAL
+      && /empty schema object/.test(error.message)
+    ),
+  );
+
+  assert.throws(
+    () => assertStrategyReportProviderJsonSchema({
+      type: "object",
+      properties: {
+        report: { type: "object", properties: {}, required: [], additionalProperties: {} },
+      },
+      required: ["report"],
+      additionalProperties: false,
+    }, { provider: "codex", schemaName: "BrokenAdditionalPropertiesContract" }),
+    (error) => (
+      error.structuredOutputFailure === STRATEGY_REPORT_STRUCTURED_OUTPUT_FAILURE_PROVIDER_SCHEMA_INVALID_LOCAL
+      && /additionalProperties/.test(error.message)
+    ),
+  );
+
+  assert.throws(
+    () => assertStrategyReportProviderJsonSchema({
+      type: "object",
+      properties: {
+        report: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            optionalSubtitle: { type: "string" },
+          },
+          required: ["title"],
+          additionalProperties: false,
+        },
+      },
+      required: ["report"],
+      additionalProperties: false,
+    }, { provider: "codex", schemaName: "BrokenRequiredContract" }),
+    (error) => (
+      error.structuredOutputFailure === STRATEGY_REPORT_STRUCTURED_OUTPUT_FAILURE_PROVIDER_SCHEMA_INVALID_LOCAL
+      && /missing required keys optionalSubtitle/.test(error.message)
+    ),
+  );
+});
+
 test("strategy report fails closed when Exa route is unavailable", async () => {
   await withTmpWorkspace(async (root) => {
     let called = false;
@@ -113,8 +298,153 @@ test("strategy report fails closed when Exa route is unavailable", async () => {
 
     assert.equal(called, false);
     assert.equal(snapshot.status.state, "failed");
-    assert.equal(snapshot.status.reason, "exa_mcp_missing");
+    assert.equal(snapshot.status.reason, DIRECT_EXA_API_KEY_REQUIRED_REASON);
+    assert.match(snapshot.status.error, /direct Exa Search 연결 키/);
     assert.equal(snapshot.report, null);
+  });
+});
+
+test("strategy report fails fast when Exa route has no direct API key", async () => {
+  await withTmpWorkspace(async (root) => {
+    let called = false;
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [{
+        provider: "codex",
+        label: "Codex Exa MCP",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      providerResearcher: async () => {
+        called = true;
+        return { text: "{}" };
+      },
+      adversarialReviewer: async () => ({ text: "{}" }),
+      multidimensionalVerifier: async () => ({ text: "{}" }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(called, false);
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.status.reason, DIRECT_EXA_API_KEY_REQUIRED_REASON);
+    assert.match(snapshot.status.error, /direct Exa Search 연결 키/);
+    assert.equal(snapshot.report, null);
+  });
+});
+
+test("strategy report reuses fresh cache before checking missing direct Exa key", async () => {
+  await withTmpWorkspace(async (root) => {
+    let calls = 0;
+    const first = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => {
+        calls += 1;
+        return { text: JSON.stringify({ report: completeReport() }), provider: "codex", researchSource: "Codex Exa MCP" };
+      },
+      adversarialReviewer: async () => {
+        calls += 1;
+        return { text: JSON.stringify({ verdict: "pass", findings: [], requiredChanges: [] }) };
+      },
+      multidimensionalVerifier: async () => {
+        calls += 1;
+        return { text: JSON.stringify({ report: completeReport() }) };
+      },
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    const second = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [{
+        provider: "codex",
+        label: "Codex Exa MCP",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      force: false,
+      providerResearcher: async () => {
+        calls += 1;
+        return { text: "{}" };
+      },
+      adversarialReviewer: async () => {
+        calls += 1;
+        return { text: "{}" };
+      },
+      multidimensionalVerifier: async () => {
+        calls += 1;
+        return { text: "{}" };
+      },
+      now: new Date("2026-06-14T01:00:00.000Z"),
+    });
+
+    assert.equal(calls, 3);
+    assert.equal(first.status.state, "ready");
+    assert.equal(second.status.state, "ready");
+    assert.equal(second.generatedAt, first.generatedAt);
+    assert.equal(second.contextFingerprint, first.contextFingerprint);
+  });
+});
+
+test("strategy report preserves typed direct Exa search failure reason", async () => {
+  await withTmpWorkspace(async (root) => {
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => {
+        const error = new Error("Exa Search API returned no usable evidence. Exa Search API 401: {\"error\":\"Invalid API key\",\"tag\":\"INVALID_API_KEY\"}");
+        error.reason = DIRECT_EXA_SEARCH_FAILED_REASON;
+        error.code = DIRECT_EXA_SEARCH_FAILED_REASON;
+        error.failures = [{
+          query: "Agentic30 alternatives",
+          reason: DIRECT_EXA_SEARCH_FAILED_REASON,
+          error: "Exa Search API 401: {\"error\":\"Invalid API key\",\"tag\":\"INVALID_API_KEY\"}",
+        }];
+        throw error;
+      },
+      adversarialReviewer: async () => ({ text: "{}" }),
+      multidimensionalVerifier: async () => ({ text: "{}" }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.status.reason, DIRECT_EXA_SEARCH_FAILED_REASON);
+    assert.match(snapshot.status.error, /Exa Search API 호출이 실패했습니다/);
+    assert.match(snapshot.status.error, /Invalid API key/);
+    assert.doesNotMatch(snapshot.status.error, /\[redacted-private\]/);
+  });
+});
+
+test("strategy report direct Exa failure summary does not bypass private text redaction", async () => {
+  await withTmpWorkspace(async (root) => {
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => {
+        const error = new Error("Exa Search API returned no usable evidence.");
+        error.reason = DIRECT_EXA_SEARCH_FAILED_REASON;
+        error.code = DIRECT_EXA_SEARCH_FAILED_REASON;
+        error.failures = [{
+          query: "private test",
+          reason: DIRECT_EXA_SEARCH_FAILED_REASON,
+          error: "Exa Search API 401: {\"error\":\"Invalid API key\"}; interview transcript says founder@example.com",
+        }];
+        throw error;
+      },
+      adversarialReviewer: async () => ({ text: "{}" }),
+      multidimensionalVerifier: async () => ({ text: "{}" }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.status.reason, DIRECT_EXA_SEARCH_FAILED_REASON);
+    assert.equal(snapshot.status.error, "[redacted-private]");
   });
 });
 
@@ -167,6 +497,193 @@ test("strategy report executes research, adversarial review, and multidimensiona
     assert.equal(snapshot.status.state, "ready");
     assert.equal(snapshot.report.diagnosisKicker, "Verified diagnosis");
     assert.equal(snapshot.report.competitors.find((competitor) => competitor.id === "agentic30").isAgentic30, true);
+  });
+});
+
+test("strategy report forwards structured output schemas to provider passes and logs metadata", async () => {
+  await withTmpWorkspace(async (root) => {
+    const seen = {};
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [{
+        ...exaRoute(),
+        provider: "gemini",
+        label: "Gemini Exa MCP",
+      }],
+      force: true,
+      providerResearcher: async (args) => {
+        seen[args.mode] = args;
+        return {
+          text: JSON.stringify({ report: completeReport() }),
+          provider: "gemini",
+          researchSource: "Gemini Exa MCP",
+        };
+      },
+      adversarialReviewer: async (args) => {
+        seen[args.mode] = args;
+        return {
+          text: JSON.stringify({ verdict: "pass", findings: ["구조화 출력 검증 통과"], requiredChanges: [] }),
+          provider: "gemini",
+          researchSource: "gemini synthesis",
+        };
+      },
+      multidimensionalVerifier: async (args) => {
+        seen[args.mode] = args;
+        return {
+          text: JSON.stringify({ report: completeReport({ judgement: "구조화 출력 검증" }) }),
+          provider: "gemini",
+          researchSource: "gemini synthesis",
+        };
+      },
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(seen.exa_research.structuredOutputSchemaName, STRATEGY_REPORT_OUTPUT_SCHEMA_NAME);
+    assert.equal(
+      assertStrategyReportProviderJsonSchema(seen.exa_research.structuredOutputSchema, {
+        provider: "gemini",
+        schemaName: STRATEGY_REPORT_OUTPUT_SCHEMA_NAME,
+      }),
+      seen.exa_research.structuredOutputSchema,
+    );
+    assert.equal(
+      seen.exa_research.structuredOutputSchema.properties.report.properties.competitors.maxItems,
+      STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS.competitorsMaxItems,
+    );
+    assert.equal(seen.exa_research.structuredOutputSchemaLimits.competitorsMaxItems, 12);
+    assert.equal(seen.adversarial_review.structuredOutputSchemaName, STRATEGY_REPORT_ADVERSARIAL_OUTPUT_SCHEMA_NAME);
+    assert.equal(
+      assertStrategyReportProviderJsonSchema(seen.adversarial_review.structuredOutputSchema, {
+        provider: "gemini",
+        schemaName: STRATEGY_REPORT_ADVERSARIAL_OUTPUT_SCHEMA_NAME,
+      }),
+      seen.adversarial_review.structuredOutputSchema,
+    );
+    assert.equal(seen.adversarial_review.structuredOutputSchema.properties.verdict.type, "string");
+    assert.equal(seen.adversarial_review.structuredOutputSchemaLimits, null);
+    assert.equal(seen.multidimensional_verification.structuredOutputSchemaName, STRATEGY_REPORT_OUTPUT_SCHEMA_NAME);
+
+    const cache = JSON.parse(await fs.readFile(resolveStrategyReportCachePath(root), "utf8"));
+    assert.equal(cache.rawProviderResult.passes.length, 3);
+    assert.equal(cache.rawProviderResult.passes.every((pass) => pass.structuredOutputRequested), true);
+    assert.equal(cache.rawProviderResult.passes[0].structuredOutputProvider, "gemini");
+    assert.equal(cache.rawProviderResult.passes[0].structuredOutputSchemaName, STRATEGY_REPORT_OUTPUT_SCHEMA_NAME);
+    assert.deepEqual(
+      cache.rawProviderResult.passes[0].structuredOutputSchemaLimits,
+      STRATEGY_REPORT_STRUCTURED_OUTPUT_LIMITS,
+    );
+    assert.equal(cache.rawProviderResult.passes[1].structuredOutputSchemaName, STRATEGY_REPORT_ADVERSARIAL_OUTPUT_SCHEMA_NAME);
+    assert.equal(cache.rawProviderResult.passes[1].structuredOutputSchemaLimits, null);
+    assert.equal(cache.rawProviderResult.passes[2].structuredOutputSchemaName, STRATEGY_REPORT_OUTPUT_SCHEMA_NAME);
+  });
+});
+
+test("strategy report fails closed on invalid structured output JSON text", async () => {
+  await withTmpWorkspace(async (root) => {
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({
+        text: `provider preface ${JSON.stringify({ report: completeReport() })}`,
+        provider: "codex",
+        researchSource: "Codex Exa MCP",
+      }),
+      adversarialReviewer: async () => {
+        throw new Error("should not run");
+      },
+      multidimensionalVerifier: async () => {
+        throw new Error("should not run");
+      },
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.report, null);
+    assert.match(snapshot.status.error, /structured output was not valid JSON text/);
+
+    const cache = JSON.parse(await fs.readFile(resolveStrategyReportCachePath(root), "utf8"));
+    assert.equal(cache.rawProviderResult.passes[0].structuredOutputRequested, true);
+    assert.equal(cache.rawProviderResult.passes[0].structuredOutputFailure, "invalid_json_text");
+    assert.equal(cache.rawProviderResult.passes[0].structuredOutputSchemaName, STRATEGY_REPORT_OUTPUT_SCHEMA_NAME);
+    assert.equal(cache.rawProviderResult.passes[1].textChars, 0);
+  });
+});
+
+test("strategy report fails before provider call when local provider schema preflight fails", async () => {
+  await withTmpWorkspace(async (root) => {
+    let providerCalled = false;
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerJsonSchemaBuilder: () => ({
+        type: "object",
+        properties: {
+          report: {},
+        },
+        required: ["report"],
+        additionalProperties: false,
+      }),
+      providerResearcher: async () => {
+        providerCalled = true;
+        return { text: JSON.stringify({ report: completeReport() }) };
+      },
+      adversarialReviewer: async () => {
+        throw new Error("should not run");
+      },
+      multidimensionalVerifier: async () => {
+        throw new Error("should not run");
+      },
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(providerCalled, false);
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.report, null);
+    assert.equal(snapshot.status.reason, STRATEGY_REPORT_STRUCTURED_OUTPUT_FAILURE_PROVIDER_SCHEMA_INVALID_LOCAL);
+    assert.match(snapshot.status.error, /provider JSON schema invalid locally/);
+
+    const cache = JSON.parse(await fs.readFile(resolveStrategyReportCachePath(root), "utf8"));
+    assert.equal(cache.rawProviderResult.passes[0].structuredOutputRequested, true);
+    assert.equal(
+      cache.rawProviderResult.passes[0].structuredOutputFailure,
+      STRATEGY_REPORT_STRUCTURED_OUTPUT_FAILURE_PROVIDER_SCHEMA_INVALID_LOCAL,
+    );
+    assert.equal(cache.rawProviderResult.passes[0].textChars, 0);
+  });
+});
+
+test("strategy report preserves provider schema rejection as provider_schema_rejected", async () => {
+  await withTmpWorkspace(async (root) => {
+    let providerCalled = false;
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => {
+        providerCalled = true;
+        const error = new Error("Invalid schema for response_format 'codex_output_schema'");
+        error.structuredOutputFailure = "provider_schema_rejected";
+        throw error;
+      },
+      adversarialReviewer: async () => {
+        throw new Error("should not run");
+      },
+      multidimensionalVerifier: async () => {
+        throw new Error("should not run");
+      },
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(providerCalled, true);
+    assert.equal(snapshot.status.state, "failed");
+    assert.match(snapshot.status.error, /Invalid schema for response_format/);
+
+    const cache = JSON.parse(await fs.readFile(resolveStrategyReportCachePath(root), "utf8"));
+    assert.equal(cache.rawProviderResult.passes[0].structuredOutputRequested, true);
+    assert.equal(cache.rawProviderResult.passes[0].structuredOutputFailure, "provider_schema_rejected");
   });
 });
 
@@ -470,7 +987,7 @@ test("strategy report normalizes object-shaped adversarial review findings", asy
   });
 });
 
-test("strategy report structured output contract rejects missing summaryTiles before review passes", async () => {
+test("strategy report rejects missing summaryTiles before review passes", async () => {
   await withTmpWorkspace(async (root) => {
     const reportWithoutSummaryTiles = completeReport();
     delete reportWithoutSummaryTiles.summaryTiles;
@@ -493,8 +1010,7 @@ test("strategy report structured output contract rejects missing summaryTiles be
     assert.equal(adversarialCalled, false);
     assert.equal(snapshot.status.state, "failed");
     assert.equal(snapshot.report, null);
-    assert.match(snapshot.status.error, /structured output contract violation/);
-    assert.match(snapshot.status.error, /summaryTiles/);
+    assert.match(snapshot.status.error, /missing required summaryTiles/);
   });
 });
 
@@ -579,6 +1095,120 @@ test("strategy report rejects provider output missing required static-equivalent
     assert.equal(snapshot.status.state, "failed");
     assert.equal(snapshot.report, null);
     assert.match(snapshot.status.error, /swotGroups/);
+  });
+});
+
+test("strategy report normalizes oversized competitors before contract validation", async () => {
+  await withTmpWorkspace(async (root) => {
+    const oversizedCompetitors = [
+      ...Array.from({ length: 13 }, (_, index) => competitorFixture(index + 1)),
+      completeReport().competitors[0],
+    ];
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: completeReport({ competitors: oversizedCompetitors }) }) }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({ text: JSON.stringify({ report: completeReport({ competitors: oversizedCompetitors }) }) }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(snapshot.report.competitors.length, 12);
+    assert.equal(snapshot.report.competitors.some((competitor) => competitor.id === "agentic30" && competitor.isAgentic30), true);
+    assert.equal(snapshot.report.competitors.some((competitor) => competitor.id === "competitor-12"), false);
+
+    const cache = JSON.parse(await fs.readFile(resolveStrategyReportCachePath(root), "utf8"));
+    assert.equal(cache.rawProviderResult.passes[2].parsedReportShape.competitorCount, 14);
+    assert.equal(cache.rawProviderResult.passes[2].parsedReportShape.competitorIds.includes("agentic30"), true);
+  });
+});
+
+test("strategy report rejects output with fewer than three normalized competitors", async () => {
+  await withTmpWorkspace(async (root) => {
+    const competitors = [
+      completeReport().competitors[0],
+      competitorFixture(1),
+    ];
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: completeReport() }) }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({ text: JSON.stringify({ report: completeReport({ competitors }) }) }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.report, null);
+    assert.match(snapshot.status.error, /competitors/);
+  });
+});
+
+test("strategy report rejects output missing the Agentic30 competitor", async () => {
+  await withTmpWorkspace(async (root) => {
+    const competitors = Array.from({ length: 3 }, (_, index) => competitorFixture(index + 1));
+    const snapshot = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: completeReport() }) }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({ text: JSON.stringify({ report: completeReport({ competitors }) }) }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "failed");
+    assert.equal(snapshot.report, null);
+    assert.match(snapshot.status.error, /Agentic30 competitor/);
+  });
+});
+
+test("strategy report failure diagnostics include competitor and section shape", async () => {
+  await withTmpWorkspace(async (root) => {
+    const oversizedCompetitors = [
+      ...Array.from({ length: 13 }, (_, index) => competitorFixture(index + 1)),
+      completeReport().competitors[0],
+    ];
+    const first = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: completeReport({ judgement: "이전 성공 판단" }) }) }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({ text: JSON.stringify({ report: completeReport({ judgement: "이전 성공 판단" }) }) }),
+      now: new Date("2026-06-14T00:00:00.000Z"),
+    });
+    const second = await refreshStrategyReport({
+      workspaceRoot: root,
+      exaResearchRoutes: [exaRoute()],
+      force: true,
+      providerResearcher: async () => ({ text: JSON.stringify({ report: completeReport({ competitors: oversizedCompetitors }) }) }),
+      adversarialReviewer: async () => ({ text: JSON.stringify({ verdict: "pass" }) }),
+      multidimensionalVerifier: async () => ({
+        text: JSON.stringify({ report: completeReport({ competitors: oversizedCompetitors, swotGroups: [] }) }),
+      }),
+      now: new Date("2026-06-15T00:00:00.000Z"),
+    });
+
+    assert.equal(first.status.state, "ready");
+    assert.equal(second.status.state, "failed");
+    assert.equal(second.status.stale, true);
+
+    const cache = JSON.parse(await fs.readFile(resolveStrategyReportCachePath(root), "utf8"));
+    const finalShape = cache.rawProviderResult.passes[2].parsedReportShape;
+    assert.equal(finalShape.summaryTileCount, 3);
+    assert.equal(finalShape.criteriaRowCount, 4);
+    assert.equal(finalShape.canvasBlockCount, 9);
+    assert.equal(finalShape.competitorCount, 14);
+    assert.equal(finalShape.competitorIds.includes("agentic30"), true);
+    assert.deepEqual(finalShape.swotGroupIds, []);
+    assert.equal(finalShape.sourceRefCount, 1);
+    assert.equal(cache.rawProviderResult.passes[2].structuredOutputRequested, true);
+    assert.equal(cache.rawProviderResult.passes[2].structuredOutputSchemaName, STRATEGY_REPORT_OUTPUT_SCHEMA_NAME);
+    assert.equal(cache.rawProviderResult.passes[2].structuredOutputFailure, "normalized_contract_violation");
   });
 });
 

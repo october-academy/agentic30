@@ -13,6 +13,12 @@ import {
   buildTrustedSourceQueriesForLane,
   trustedSourcesForMarketRadarPrompt,
 } from "./market-radar-source-catalog.mjs";
+import {
+  createDirectExaApiKeyRequiredError,
+  DIRECT_EXA_API_KEY_REQUIRED_REASON,
+  DIRECT_EXA_SEARCH_FAILED_REASON,
+  extractDirectExaApiKey,
+} from "./direct-exa-research.mjs";
 import { sanitizeWebSearchQuery } from "./read-only-workspace-tool-policy.mjs";
 import { projectDocDefinitions } from "./project-doc-paths.mjs";
 
@@ -30,6 +36,7 @@ export const NEWS_MARKET_RADAR_FAILED_AUTO_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
 export const NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON = "exa_mcp_timeout";
 export const NEWS_MARKET_RADAR_EXA_MCP_ERROR_REASON = "exa_mcp_error";
 export const NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON = "aborted_after_exa_mcp_timeout";
+export const NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_DIRECT_FAILURE_REASON = "aborted_after_exa_direct_failure";
 export const NEWS_MARKET_RADAR_EXA_MCP_TOOLS = Object.freeze([
   "web_search_exa",
   "web_search_advanced_exa",
@@ -644,6 +651,24 @@ function failedCardlessNewsMarketRadarSnapshot(current, statusOverrides = {}) {
   };
 }
 
+function failedNewsMarketRadarSnapshotPreservingVisibleCards(current, statusOverrides = {}) {
+  if (countNewsMarketRadarCards(current) === 0) {
+    return failedCardlessNewsMarketRadarSnapshot(current, statusOverrides);
+  }
+  const currentStatus = current?.status || {};
+  return {
+    ...current,
+    status: {
+      ...currentStatus,
+      state: "failed",
+      lastSuccessAt: currentStatus.lastSuccessAt || current?.generatedAt || null,
+      stale: true,
+      partialFailures: currentStatus.partialFailures || [],
+      ...statusOverrides,
+    },
+  };
+}
+
 function normalizeLegacyExaApiKeyMissingSnapshot(
   snapshot,
   {
@@ -793,20 +818,6 @@ export async function refreshNewsMarketRadar({
     exaConfigured: routes.length > 0,
     exaResearchSource: primaryRoute?.label || null,
   });
-  if (routes.length === 0) {
-    const noExaRoute = {
-      ...previous,
-      status: {
-        state: "failed",
-        lastSuccessAt: previous.status?.lastSuccessAt || null,
-        stale: Boolean(previous.generatedAt),
-        error: "Exa MCP is not configured.",
-        reason: "exa_mcp_missing",
-        researchSource: null,
-      },
-    };
-    return persistNewsMarketRadarSnapshot({ workspaceRoot, snapshot: noExaRoute, now });
-  }
   if (
     !force
     && isNewsMarketRadarAutomaticRefreshReason(reason)
@@ -859,6 +870,51 @@ export async function refreshNewsMarketRadar({
   ) {
     return previous;
   }
+  const directExaApiKey = extractDirectExaApiKey({
+    apiKey: key,
+    route: primaryRoute,
+  });
+  if (!directExaApiKey) {
+    const completedAt = new Date().toISOString();
+    const error = createDirectExaApiKeyRequiredError({
+      routeLabel: primaryRoute?.label || "Exa",
+      provider: primaryRoute?.provider || "",
+    });
+    const partialFailures = NEWS_LANE_IDS.map((laneId) => ({
+      laneId,
+      laneTitle: NEWS_LANE_TITLES[laneId],
+      error: formatMarketRadarError(error),
+      reason: DIRECT_EXA_API_KEY_REQUIRED_REASON,
+      code: DIRECT_EXA_API_KEY_REQUIRED_REASON,
+    }));
+    const failed = failedNewsMarketRadarSnapshotPreservingVisibleCards({
+      ...previous,
+      contextFingerprint,
+    }, {
+      error: formatMarketRadarError(error),
+      reason: DIRECT_EXA_API_KEY_REQUIRED_REASON,
+      researchSource: primaryRoute?.label || null,
+      partialFailures,
+      startedAt: completedAt,
+      completedAt,
+      durationMs: 0,
+    });
+    return persistNewsMarketRadarSnapshot({
+      workspaceRoot,
+      snapshot: failed,
+      rawProviderResult: {
+        mode: "parallel_lane_research",
+        laneResults: [],
+        hardFailure: {
+          error: formatMarketRadarError(error),
+          reason: DIRECT_EXA_API_KEY_REQUIRED_REASON,
+          code: DIRECT_EXA_API_KEY_REQUIRED_REASON,
+          researchSource: primaryRoute?.label || null,
+        },
+      },
+      now,
+    });
+  }
   notifyNewsMarketRadarProgress(onProgress, {
     stage: "running_provider_research",
     progressText: `${NEWS_LANE_IDS.length}개 가설을 최대 ${NEWS_MARKET_RADAR_LANE_CONCURRENCY}개씩 리서치하는 중`,
@@ -874,14 +930,22 @@ export async function refreshNewsMarketRadar({
     hardFailure = failure;
     laneAbortController.abort(failure);
   };
-  const skippedAfterHardFailure = (laneId) => ({
-    ok: false,
-    laneId,
-    laneTitle: NEWS_LANE_TITLES[laneId],
-    error: "Exa MCP timeout 이후 시작하지 않은 가설 리서치입니다.",
-    reason: NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON,
-    code: NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON,
-  });
+  const skippedAfterHardFailure = (laneId) => {
+    const directFailure = isNewsMarketRadarDirectExaFailure(hardFailure);
+    const reasonCode = directFailure
+      ? NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_DIRECT_FAILURE_REASON
+      : NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON;
+    return {
+      ok: false,
+      laneId,
+      laneTitle: NEWS_LANE_TITLES[laneId],
+      error: directFailure
+        ? "Exa direct Search API 실패 이후 시작하지 않은 가설 리서치입니다."
+        : "Exa MCP timeout 이후 시작하지 않은 가설 리서치입니다.",
+      reason: reasonCode,
+      code: reasonCode,
+    };
+  };
   const laneResults = await runWithConcurrency(
     NEWS_LANE_IDS,
     laneConcurrency,
@@ -900,7 +964,7 @@ export async function refreshNewsMarketRadar({
           reason,
           laneId,
           laneTitle,
-          mode: "lane_research",
+          mode: "market_radar",
           signal: laneAbortController.signal,
         });
         const lane = normalizeLaneResearchResult(rawProviderResult, laneId, {
@@ -968,7 +1032,10 @@ export async function refreshNewsMarketRadar({
       contextFingerprint,
     }, {
       error: formatMarketRadarError(hardFailureResult),
-      reason: NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON,
+      reason: cleanString(
+        hardFailureResult.reason || hardFailureResult.code || NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON,
+        120,
+      ) || NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON,
       researchSource,
       partialFailures,
       startedAt: researchStartedAt,
@@ -1481,7 +1548,7 @@ export function buildMarketRadarProviderPrompt(context) {
     "",
     "Self-source exclusion:",
     "- Context.selfReferenceProfile describes the current user's own product/app. Use it only as an exclusion list.",
-    "- Context.searchExclusions contains query-time filters derived from the current user's project. Pass excludeDomains, excludeText, and additionalQueries to web_search_advanced_exa when those arrays are non-empty.",
+    "- Context.searchExclusions contains query-time filters derived from the current user's project. Pass excludeDomains and excludeText to web_search_advanced_exa when those arrays are non-empty. Treat additionalQueries as query seeds, not as the Exa additionalQueries parameter.",
     "- Do not add more than one excludeText item. Exa MCP only reliably supports a single excludeText string.",
     "- Do not search for the current product name, owned domains, GitHub repositories, or product listings.",
     "- Discard pages that describe, list, price, announce, or compare the current product itself. The product name is interpretation context, not market evidence.",
@@ -1495,6 +1562,7 @@ export function buildMarketRadarProviderPrompt(context) {
     "",
     "Trusted source policy:",
     "- Context.trustedSourceHints lists preferred source seeds and site queries by lane. Use them as priority starting points, not a mandatory citation list or hard whitelist.",
+    "- Never launch parallel Exa MCP tool calls. Wait for each Exa search/fetch call to finish before deciding whether another call is necessary.",
     "- Search at least 2 relevant trusted-source queries for a lane when they are not self-referential, then search the open web for current pricing, reviews, product pages, and community evidence.",
     "- Strong confidence requires 2+ independent external domains, or a primary trusted source plus independent current market evidence.",
     "- Community-only sources such as launch/community forums can support a card but cannot make confidence strong by themselves.",
@@ -1581,7 +1649,7 @@ export function buildMarketRadarLaneProviderPrompt(context) {
     "",
     "Self-source exclusion:",
     "- Context.selfReferenceProfile describes the current user's own product/app. Use it only as an exclusion list.",
-    "- Context.searchExclusions contains query-time filters derived from the current user's project. Pass excludeDomains, excludeText, and additionalQueries to web_search_advanced_exa when those arrays are non-empty.",
+    "- Context.searchExclusions contains query-time filters derived from the current user's project. Pass excludeDomains and excludeText to web_search_advanced_exa when those arrays are non-empty. Treat additionalQueries as query seeds, not as the Exa additionalQueries parameter.",
     "- Do not add more than one excludeText item. Exa MCP only reliably supports a single excludeText string.",
     "- Do not search for the current product name, owned domains, GitHub repositories, or product listings.",
     "- Discard pages that describe, list, price, announce, or compare the current product itself.",
@@ -1596,10 +1664,11 @@ export function buildMarketRadarLaneProviderPrompt(context) {
     "",
     "Trusted source policy:",
     "- Context.trustedSourceHints lists preferred source seeds and site queries for this lane. Use them as priority starting points, not a mandatory citation list or hard whitelist.",
-    "- Use at most two web_search_advanced_exa calls total.",
-    "- Pass A: trusted/reference/local evidence. Use type:\"fast\", numResults <= 6, enableSummary:false, enableHighlights:true, highlightsMaxCharacters <= 800, and no more than 2 additionalQueries.",
-    "- Pass B: competitor/recent-market/pricing/review evidence. Use type:\"fast\", numResults <= 8, enableSummary:false, enableHighlights:true, highlightsMaxCharacters <= 800, and no more than 2 additionalQueries.",
-    "- Fetch at most 4 URLs total across both passes. Fetch no more than 2 URLs from either pass unless the other pass has no useful result.",
+    "- Never launch parallel Exa MCP tool calls. Wait for each Exa search/fetch call to finish before deciding whether another call is necessary.",
+    "- Use at most two Exa search calls total across web_search_advanced_exa and web_search_exa.",
+    "- Pass A: trusted/reference/local evidence. Prefer one web_search_advanced_exa call with type:\"fast\", numResults <= 5, enableSummary:false, enableHighlights:true, highlightsMaxCharacters <= 600, and no additionalQueries.",
+    "- Pass B: competitor/recent-market/pricing/review evidence. Make this second search only if Pass A is thin. Use type:\"fast\", numResults <= 5, enableSummary:false, enableHighlights:true, highlightsMaxCharacters <= 600, and no additionalQueries.",
+    "- Fetch at most 2 URLs total across both passes. Do not fetch when highlights already support the card.",
     "- Search the strongest relevant trusted-source query when it is not self-referential, then use any remaining query budget for current pricing, reviews, product pages, and community evidence.",
     "- Strong confidence requires 2+ independent external domains, or a primary trusted source plus independent current market evidence.",
     "- Community-only sources such as launch/community forums can support a card but cannot make confidence strong by themselves.",
@@ -2405,7 +2474,15 @@ function isNewsMarketRadarAbortLikeError(error) {
 
 function isNewsMarketRadarHardFailure(value = {}) {
   return value?.reason === NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON
-    || value?.code === NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON;
+    || value?.code === NEWS_MARKET_RADAR_EXA_MCP_TIMEOUT_REASON
+    || isNewsMarketRadarDirectExaFailure(value);
+}
+
+function isNewsMarketRadarDirectExaFailure(value = {}) {
+  return [
+    DIRECT_EXA_API_KEY_REQUIRED_REASON,
+    DIRECT_EXA_SEARCH_FAILED_REASON,
+  ].includes(String(value?.reason || value?.code || ""));
 }
 
 function normalizeMarketRadarLaneFailure(error, {
@@ -2414,18 +2491,25 @@ function normalizeMarketRadarLaneFailure(error, {
   hardFailure = null,
 } = {}) {
   const abortedAfterHardFailure = hardFailure && isNewsMarketRadarAbortLikeError(error);
+  const abortedAfterDirectFailure = abortedAfterHardFailure && isNewsMarketRadarDirectExaFailure(hardFailure);
   const failure = {
     laneId,
     laneTitle,
     error: abortedAfterHardFailure
-      ? "Exa MCP timeout 이후 진행 중이던 가설 리서치를 중단했습니다."
+      ? (abortedAfterDirectFailure
+          ? "Exa direct Search API 실패 이후 진행 중이던 가설 리서치를 중단했습니다."
+          : "Exa MCP timeout 이후 진행 중이던 가설 리서치를 중단했습니다.")
       : formatMarketRadarError(error),
   };
   const reason = abortedAfterHardFailure
-    ? NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON
+    ? (abortedAfterDirectFailure
+        ? NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_DIRECT_FAILURE_REASON
+        : NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON)
     : cleanString(error?.reason || "", 120);
   const code = abortedAfterHardFailure
-    ? NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON
+    ? (abortedAfterDirectFailure
+        ? NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_DIRECT_FAILURE_REASON
+        : NEWS_MARKET_RADAR_ABORTED_AFTER_EXA_MCP_TIMEOUT_REASON)
     : cleanString(error?.code || reason || "", 120);
   const server = cleanString(error?.server || "", 120);
   const tool = cleanString(error?.tool || "", 120);
