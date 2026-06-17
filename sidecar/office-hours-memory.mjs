@@ -511,6 +511,7 @@ export function buildPriorCycle(memory, { currentCycle, now = new Date() } = {})
     compiledTruth: cleanString(memory?.compiledTruth?.text, MAX_COMPILED_TRUTH_CHARS),
     openThreads: (memory?.compiledTruth?.openThreads ?? []).slice(0, MAX_OPEN_THREADS),
     abandonedThreads: detectAbandonedThreads(memory, { currentCycle: cycleNow }),
+    consecutiveDeferrals: countConsecutiveDeferrals(memory),
   };
 }
 
@@ -551,6 +552,31 @@ export function countConsecutiveDeferrals(memory) {
   return streak;
 }
 
+// Pure: does the brain already hold at least one CLOSED customer-evidence commitment
+// (a commitment with evidence attached)? Same signal buildEvidenceOS uses per-day
+// (hasHardEvidence, :643), lifted to a whole-brain check. The cheap product-stage proxy:
+// a founder who has ever closed real customer evidence is past "prove demand exists" (Q1)
+// and should route to wedge-expansion / repeat-use, not be re-interrogated from zero.
+// LIMITATION: a paying customer whose payment was never logged as a commitment-with-evidence
+// is missed; a full product_stage capture pipeline is deferred (see plan P2).
+export function officeHoursMemoryHasClosedEvidence(memory) {
+  return (memory?.commitments ?? []).some((commitment) => Boolean(commitment?.evidence));
+}
+
+// Pure: the product-stage routing signal injected into the office-hours CONTEXT,
+// INDEPENDENT of whether a prior cycle exists (so it reaches first-session founders who
+// already have paying customers). Empty when no closed evidence — pre-product founders keep
+// the default Q1-first routing. Fixes the simulation collapse where a founder with paying
+// customers was interrogated from Q1 as if they had none. Benchmarks the stage routing the
+// sidecar prompt already names (has_paying_customers -> Q4/Q5/Q6) but had no code trigger for.
+export function formatOfficeHoursStageSignal(memory) {
+  if (!officeHoursMemoryHasClosedEvidence(memory)) return "";
+  return [
+    "[고객 단계] 이미 확보된 고객 증거(결제·계약·이행 기록)가 있어. 이 창업자는 수요가 존재하는지 처음부터 다시 증명할 단계가 아니야.",
+    "그러니 Q1 수요 증거를 0부터 다시 묻지 말고, 작은 유료 진입점 확장과 반복 사용·이탈 관찰로 이어가. 이미 확보한 고객을 첫 고객도 없는 사람처럼 다루지 마.",
+  ].join("\n");
+}
+
 // Pure: the Cycle#N interview-opening block. Injected into the office-hours CONTEXT
 // (NOT the specialist prompt — the vendored office-hours SKILL.md overrides specialist
 // promptText when present, so context injection is the reliable path). Empty on a cold
@@ -577,6 +603,15 @@ export function formatPriorCycleOpening(priorCycle) {
     const text = String(top?.text || "").trim();
     lines.push(
       `잠깐 — 이 약속이 ${silent} 사이클째 증거 0이야: "${text}". 도구를 더 만드는 건 일을 회피하는 가장 깊은 코스튬이야. 오늘은 그 약속만.`,
+    );
+  }
+  // Deterministic costume/avoidance naming from the deferral streak (gate-held cycles with
+  // no intervening success), independent of abandonedThreads. Strengthens 회피 차단 by making
+  // the repeated-wall pattern impossible to slip past — the interviewer must name it, not the LLM.
+  const deferrals = Number.isInteger(priorCycle.consecutiveDeferrals) ? priorCycle.consecutiveDeferrals : 0;
+  if (deferrals >= 2) {
+    lines.push(
+      `그리고 — 지난 ${deferrals} 사이클을 연속으로 미뤘어(증거 없이 보류). 같은 벽 앞에서 ${deferrals}번째야. 새 주제나 새 작업으로 넘어가지 말고, 오늘은 그 벽 하나만 정면으로 밟고 정리해.`,
     );
   }
   return lines.join("\n");

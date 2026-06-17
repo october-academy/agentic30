@@ -214,6 +214,7 @@ import {
   carryForwardCommitment,
   classifyInterviewGate,
   formatPriorCycleOpening,
+  formatOfficeHoursStageSignal,
   gradeCommitment,
   gradePrediction,
   latestUnresolvedPrediction,
@@ -7206,6 +7207,7 @@ async function buildOfficeHoursCyclePreamble(day = null) {
       buildOfficeHoursHistorySummary({ workspaceRoot, day: currentDay }),
     ]);
     return [
+      formatOfficeHoursStageSignal(memory),
       formatPriorCycleOpening(buildPriorCycle(memory, { currentCycle: currentDay })),
       formatOfficeHoursHistoryForPrompt(history),
     ].filter(Boolean).join("\n\n");
