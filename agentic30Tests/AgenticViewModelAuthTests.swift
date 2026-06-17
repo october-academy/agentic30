@@ -1422,6 +1422,61 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.newsMarketRadar.status.stage == "running_provider_research")
     }
 
+    @Test @MainActor func sidecarInterruptionFailsRefreshingDynamicResearchSurfaces() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "news_market_radar_status",
+              "status": {
+                "state": "refreshing",
+                "stale": true,
+                "error": null,
+                "reason": "refresh_in_flight",
+                "stage": "running_provider_research",
+                "progressText": "Codex Exa MCP로 공개 근거를 검색하는 중"
+              }
+            }
+            """
+        ))
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "strategy_report_status",
+              "status": {
+                "state": "refreshing",
+                "stale": true,
+                "error": null,
+                "reason": "manual",
+                "stage": "running_provider_research",
+                "progressText": "전략 리포트 공개 근거를 검색하는 중"
+              }
+            }
+            """
+        ))
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent(
+            """
+            {
+              "type": "sidecar_unexpected_exit",
+              "message": "Sidecar stopped unexpectedly (exit 1)."
+            }
+            """
+        ))
+
+        #expect(viewModel.newsMarketRadar.status.state == "failed")
+        #expect(viewModel.newsMarketRadar.status.reason == "sidecar_unexpected_exit")
+        #expect(viewModel.newsMarketRadar.status.error?.contains("실행 보조 앱이 중단") == true)
+        #expect(viewModel.newsMarketRadarPreparingForDisplay == false)
+        #expect(viewModel.strategyReport.status.state == "failed")
+        #expect(viewModel.strategyReport.status.reason == "sidecar_unexpected_exit")
+        #expect(viewModel.strategyReport.status.error?.contains("실행 보조 앱이 중단") == true)
+        #expect(viewModel.strategyReportPreparingForDisplay == false)
+    }
+
     @Test @MainActor func sidecarInterruptionClearsIntegrationStatusCheckSpinner() throws {
         let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
         let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})

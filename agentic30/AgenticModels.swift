@@ -823,6 +823,8 @@ nonisolated struct MorningBriefingStatus: Codable, Hashable {
     var reason: String?
     var runId: String?
     var snapshot: Bool?
+    var elapsedMs: Int?
+    var durationMs: Int?
     var failedSources: [MorningBriefingStatusFailedSource]?
 
     init(
@@ -831,6 +833,8 @@ nonisolated struct MorningBriefingStatus: Codable, Hashable {
         reason: String? = nil,
         runId: String? = nil,
         snapshot: Bool? = nil,
+        elapsedMs: Int? = nil,
+        durationMs: Int? = nil,
         failedSources: [MorningBriefingStatusFailedSource]? = nil
     ) {
         self.state = state
@@ -838,6 +842,8 @@ nonisolated struct MorningBriefingStatus: Codable, Hashable {
         self.reason = reason
         self.runId = runId
         self.snapshot = snapshot
+        self.elapsedMs = elapsedMs
+        self.durationMs = durationMs
         self.failedSources = failedSources
     }
 }
@@ -3191,6 +3197,37 @@ nonisolated struct NewsMarketRadarStatus: Codable, Hashable {
     let stepIndex: Int?
     let stepCount: Int?
     let partialFailures: [NewsMarketRadarPartialFailure]?
+    let durationMs: Int?
+
+    init(
+        state: String,
+        lastSuccessAt: Date?,
+        stale: Bool?,
+        error: String?,
+        reason: String?,
+        researchSource: String?,
+        stage: String?,
+        progressText: String?,
+        elapsedMs: Int?,
+        stepIndex: Int?,
+        stepCount: Int?,
+        partialFailures: [NewsMarketRadarPartialFailure]?,
+        durationMs: Int? = nil
+    ) {
+        self.state = state
+        self.lastSuccessAt = lastSuccessAt
+        self.stale = stale
+        self.error = error
+        self.reason = reason
+        self.researchSource = researchSource
+        self.stage = stage
+        self.progressText = progressText
+        self.elapsedMs = elapsedMs
+        self.stepIndex = stepIndex
+        self.stepCount = stepCount
+        self.partialFailures = partialFailures
+        self.durationMs = durationMs
+    }
 }
 
 nonisolated struct NewsMarketRadarPartialFailure: Codable, Hashable, Identifiable {

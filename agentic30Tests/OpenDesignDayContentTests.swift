@@ -4,6 +4,13 @@ import Testing
 @testable import agentic30
 
 struct OpenDesignDayContentTests {
+    @Test func refreshTimingLabelsUseSharedKoreanDurationFormatter() {
+        #expect(openDesignRefreshRunningTimingLabel(17_400) == "17초 경과")
+        #expect(openDesignRefreshCompletedTimingLabel(72_000) == "1분 12초 걸림")
+        #expect(openDesignRefreshFailedTimingLabel(3_600_000) == "1시간 후 실패")
+        #expect(openDesignRefreshRunningTimingLabel(nil) == nil)
+    }
+
     @Test func officeHoursDailyDigestSourceDotToneSeparatesConnectionAndCollectionState() throws {
         let decoder = JSONDecoder()
 
@@ -1395,8 +1402,10 @@ struct OpenDesignDayContentTests {
         #expect(strategyResearchStatusTitle(refreshing) == "전략 리서치 진행 중 3/6")
         #expect(strategyResearchStatusMessage(refreshing, isPreparing: false) == "Codex Exa MCP로 공개 근거를 검색하는 중")
         #expect(strategyResearchStatusMessage(refreshing, isPreparing: true) == "캐시와 진행 상태를 불러오는 중")
+        #expect(strategyResearchTimingLabel(refreshing, isPreparing: false) == "1초 경과")
         #expect(strategyResearchStatusTitle(failed) == "리서치 실패")
         #expect(strategyResearchStatusMessage(failed, isPreparing: false).contains("summaryTiles"))
+        #expect(strategyResearchTimingLabel(failed, isPreparing: false) == "2초 후 실패")
     }
 
     @Test func strategyColdLoadingOnlyAppearsWhenDynamicReportHasNoContent() {
@@ -1777,6 +1786,14 @@ struct OpenDesignDayContentTests {
             "normalizing_cards",
             "saving_results",
         ])
+        #expect(preparingRows.map(\.title) == [
+            "검색 연결 확인",
+            "워크스페이스 근거 읽기",
+            "리서치 질문 구성",
+            "공개 웹 근거 검색",
+            "가정별 카드 정리",
+            "로컬 캐시에 저장",
+        ])
         #expect(preparingRows.first?.state == "collecting")
         #expect(preparingRows.first?.iconID == "exa")
         #expect(preparingRows.first?.detail == "리서치 준비 중")
@@ -1824,7 +1841,7 @@ struct OpenDesignDayContentTests {
         #expect(stagedRows[3].state == "collecting")
         #expect(stagedRows[0].iconID == "exa")
         #expect(stagedRows[3].iconID == "exa")
-        #expect(stagedRows[3].detail == "Codex 웹 검색 도구로 공개 근거를 검색하는 중")
+        #expect(stagedRows[3].detail == "공개 웹 근거를 검색하는 중")
         #expect(stagedRows[4].state == "waiting")
 
         let cachedRefresh = newsMarketRadarPresentationState(
@@ -1835,6 +1852,19 @@ struct OpenDesignDayContentTests {
         #expect(cachedRefresh.primaryContent == .cards)
         #expect(cachedRefresh.showsProgress)
         #expect(!cachedRefresh.suppressesEmptyStream)
+        #expect(cachedRefresh.failureStatus == nil)
+
+        var filteredUserState = NewsMarketRadarUserState()
+        filteredUserState.selectedValueFilter = "low"
+        let cachedRefreshWithEmptyFilter = newsMarketRadarPresentationState(
+            snapshot: makeNewsRadarSnapshot(state: "refreshing", cardIDs: ["cached-card"]),
+            userState: filteredUserState,
+            isPreparing: false
+        )
+        #expect(cachedRefreshWithEmptyFilter.primaryContent == .empty)
+        #expect(cachedRefreshWithEmptyFilter.showsProgress)
+        #expect(!cachedRefreshWithEmptyFilter.suppressesEmptyStream)
+        #expect(cachedRefreshWithEmptyFilter.progressStatus?.state == "refreshing")
 
         let failedWithCachedCards = newsMarketRadarPresentationState(
             snapshot: makeNewsRadarSnapshot(state: "failed", reason: "empty_result", cardIDs: ["cached-card"]),
@@ -1843,6 +1873,7 @@ struct OpenDesignDayContentTests {
         )
         #expect(failedWithCachedCards.primaryContent == .cards)
         #expect(!failedWithCachedCards.showsProgress)
+        #expect(failedWithCachedCards.failureStatus?.reason == "empty_result")
 
         let exaMissing = newsMarketRadarPresentationState(
             snapshot: makeNewsRadarSnapshot(state: "failed", reason: "exa_api_key_missing", cardIDs: []),
@@ -1890,18 +1921,27 @@ struct OpenDesignDayContentTests {
         #expect(morningBriefingColdLoadPresentation(
             briefing: nil,
             collecting: true,
+            status: nil,
             sourceProgress: [:]
         ).kind == .loading)
         #expect(morningBriefingColdLoadPresentation(
             briefing: failedBriefing,
             collecting: false,
+            status: nil,
             sourceProgress: [:]
         ).kind == .error)
         #expect(morningBriefingColdLoadPresentation(
             briefing: MorningBriefing.uiTestingSample,
             collecting: true,
+            status: nil,
             sourceProgress: [:]
         ).kind == .none)
+        #expect(morningBriefingColdLoadPresentation(
+            briefing: nil,
+            collecting: false,
+            status: MorningBriefingStatus(state: "failed", detail: "수집 실패", elapsedMs: 1700, durationMs: 1700),
+            sourceProgress: [:]
+        ).kind == .error)
     }
 
     @Test func newsMarketRadarUserStatePersistsByWorkspaceAndCardID() throws {

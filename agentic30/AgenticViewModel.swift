@@ -2772,6 +2772,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var morningBriefing: MorningBriefing?
     @Published private(set) var morningBriefingPrevious: MorningBriefing?
     @Published private(set) var morningBriefingCollecting = false
+    @Published private(set) var morningBriefingStatus: MorningBriefingStatus?
     /// 수집 중 카드별 라이브 진행(`morning_briefing_progress`): 카드 id →
     /// 스피너 상태 + 에이전트 로그. result 도착 시 비운다.
     @Published private(set) var morningBriefingSourceProgress: [String: MorningBriefingSourceProgress] = [:]
@@ -2978,6 +2979,7 @@ final class AgenticViewModel: ObservableObject {
     private var pendingWorkspaceScanProvider: AgentProvider?
     private var pendingProjectContextRefresh: PendingProjectContextRefresh?
     private var pendingStrategyReportRefresh: PendingStrategyReportRefresh?
+    private var uiTestingDynamicResearchRefreshTriggered = false
     private var attemptedStartupWorkspaceScanRecoveryRoots = Set<String>()
     #if DEBUG
     static var workspaceScanResultAppSupportURLOverrideForTesting: URL?
@@ -6160,6 +6162,24 @@ final class AgenticViewModel: ObservableObject {
         requestNewsMarketRadar(autoRefreshIfDue: false)
     }
 
+    #if DEBUG
+    private func triggerUITestingDynamicResearchRefreshIfRequested() {
+        let arguments = CommandLine.arguments
+        let triggerAll = arguments.contains("--ui-testing-trigger-dynamic-research-refresh")
+        let triggerMarketRadar = triggerAll || arguments.contains("--ui-testing-trigger-news-market-radar-refresh")
+        let triggerStrategy = triggerAll || arguments.contains("--ui-testing-trigger-strategy-report-refresh")
+        guard triggerMarketRadar || triggerStrategy else { return }
+        guard !uiTestingDynamicResearchRefreshTriggered else { return }
+        uiTestingDynamicResearchRefreshTriggered = true
+        if triggerMarketRadar {
+            refreshNewsMarketRadar(reason: "ui_testing_e2e", force: true)
+        }
+        if triggerStrategy {
+            refreshStrategyReport(reason: "ui_testing_e2e", force: true)
+        }
+    }
+    #endif
+
     func requestDiagnostics() {
         PostHogTelemetry.capture("mac_diagnostics_requested", authSession: macAuthSession)
         sidecar.send(payload: ["type": "get_diagnostics"])
@@ -6266,11 +6286,84 @@ final class AgenticViewModel: ObservableObject {
                 elapsedMs: status.elapsedMs ?? current.status.elapsedMs,
                 stepIndex: status.stepIndex ?? current.status.stepIndex,
                 stepCount: status.stepCount ?? current.status.stepCount,
-                partialFailures: status.partialFailures ?? current.status.partialFailures
+                partialFailures: status.partialFailures ?? current.status.partialFailures,
+                durationMs: status.durationMs ?? current.status.durationMs
             ),
             workspaceEvidenceRefs: current.workspaceEvidenceRefs,
             lanes: current.lanes
         )
+    }
+
+    private func markDynamicResearchSurfacesFailedAfterSidecarExit(message: String) {
+        let detail = "실행 보조 앱이 중단되어 리서치 갱신이 완료되지 않았습니다. 다시 시도해 주세요."
+        if newsMarketRadarPreparingForDisplay || longRunningCompletionStateIsRunning(newsMarketRadar.status.state) {
+            let current = newsMarketRadar
+            newsMarketRadarPreparingForDisplay = false
+            newsMarketRadar = NewsMarketRadarSnapshot(
+                schemaVersion: current.schemaVersion,
+                generatedAt: current.generatedAt,
+                nextRefreshAfter: current.nextRefreshAfter,
+                status: NewsMarketRadarStatus(
+                    state: "failed",
+                    lastSuccessAt: current.status.lastSuccessAt,
+                    stale: current.generatedAt != nil || current.cardCount > 0 || current.status.stale == true,
+                    error: detail,
+                    reason: "sidecar_unexpected_exit",
+                    researchSource: current.status.researchSource,
+                    stage: current.status.stage,
+                    progressText: current.status.progressText ?? message,
+                    elapsedMs: current.status.elapsedMs,
+                    stepIndex: current.status.stepIndex,
+                    stepCount: current.status.stepCount,
+                    partialFailures: current.status.partialFailures,
+                    durationMs: current.status.durationMs
+                ),
+                workspaceEvidenceRefs: current.workspaceEvidenceRefs,
+                lanes: current.lanes
+            )
+            completeLongRunningCompletionAttempt(
+                .newsMarketRadar,
+                outcome: .failed,
+                detail: detail
+            )
+        }
+
+        if strategyReportPreparingForDisplay || longRunningCompletionStateIsRunning(strategyReport.status.state) {
+            let current = strategyReport
+            strategyReportPreparingForDisplay = false
+            strategyReport = StrategyReportSnapshot(
+                schemaVersion: current.schemaVersion,
+                promptProfile: current.promptProfile,
+                contentLocale: current.contentLocale,
+                generatedAt: current.generatedAt,
+                nextRefreshAfter: current.nextRefreshAfter,
+                contextFingerprint: current.contextFingerprint,
+                status: StrategyReportStatus(
+                    state: "failed",
+                    lastSuccessAt: current.status.lastSuccessAt,
+                    stale: current.generatedAt != nil || current.hasReport || current.status.stale == true,
+                    error: detail,
+                    reason: "sidecar_unexpected_exit",
+                    researchSource: current.status.researchSource,
+                    stage: current.status.stage,
+                    progressText: current.status.progressText ?? message,
+                    elapsedMs: current.status.elapsedMs,
+                    stepIndex: current.status.stepIndex,
+                    stepCount: current.status.stepCount,
+                    partialFailures: current.status.partialFailures,
+                    startedAt: current.status.startedAt,
+                    completedAt: Date(),
+                    durationMs: current.status.durationMs
+                ),
+                workspaceEvidenceRefs: current.workspaceEvidenceRefs,
+                report: current.report
+            )
+            completeLongRunningCompletionAttempt(
+                .strategyReport,
+                outcome: .failed,
+                detail: detail
+            )
+        }
     }
 
     func requestWorkHistory() {
@@ -6324,6 +6417,35 @@ final class AgenticViewModel: ObservableObject {
             "preferredProvider": selectedProvider.rawValue,
             "autoRefreshIfStale": autoRefreshIfStale,
         ])
+    }
+
+    private func mergedMorningBriefingStatus(
+        from briefingStatus: MorningBriefingStatus?,
+        applying topLevelStatus: MorningBriefingStatus?
+    ) -> MorningBriefingStatus? {
+        guard let topLevelStatus else { return briefingStatus }
+        return MorningBriefingStatus(
+            state: topLevelStatus.state ?? briefingStatus?.state,
+            detail: topLevelStatus.detail ?? briefingStatus?.detail,
+            reason: topLevelStatus.reason ?? briefingStatus?.reason,
+            runId: topLevelStatus.runId ?? briefingStatus?.runId,
+            snapshot: topLevelStatus.snapshot ?? briefingStatus?.snapshot,
+            elapsedMs: topLevelStatus.elapsedMs ?? briefingStatus?.elapsedMs,
+            durationMs: topLevelStatus.durationMs ?? briefingStatus?.durationMs,
+            failedSources: topLevelStatus.failedSources ?? briefingStatus?.failedSources
+        )
+    }
+
+    private func morningBriefing(
+        _ briefing: MorningBriefing,
+        applying topLevelStatus: MorningBriefingStatus?
+    ) -> MorningBriefing {
+        var updated = briefing
+        updated.status = mergedMorningBriefingStatus(
+            from: briefing.status,
+            applying: topLevelStatus
+        )
+        return updated
     }
 
     func refreshMorningBriefing(reason: String = "manual", force: Bool = true) {
@@ -8085,6 +8207,7 @@ final class AgenticViewModel: ObservableObject {
                 markFailedResult: true
             )
             markRunningSessionsRecoverableAfterSidecarExit(message: message)
+            markDynamicResearchSurfacesFailedAfterSidecarExit(message: message)
             markStartupQueuedActionFailed(message)
             refreshPresentationState()
         case "request_emit":
@@ -8130,6 +8253,9 @@ final class AgenticViewModel: ObservableObject {
             refreshIntegrationStatus()
             flushPendingProjectContextRefreshIfNeeded()
             flushPendingStrategyReportRefreshIfNeeded()
+            #if DEBUG
+            triggerUITestingDynamicResearchRefreshIfRequested()
+            #endif
             refreshPresentationState()
             requestCodexWarmupIfNeeded()
             requestBipReadinessCheck()
@@ -8739,16 +8865,28 @@ final class AgenticViewModel: ObservableObject {
         case "morning_briefing_result":
             let topLevelStatus = event.morningBriefingStatus
             let topLevelFailed = topLevelStatus?.state == "failed"
+            if let topLevelStatus {
+                morningBriefingStatus = topLevelStatus
+            }
             if let briefing = event.morningBriefing {
+                let timedBriefing = morningBriefing(briefing, applying: topLevelStatus)
                 if topLevelFailed {
-                    var staleBriefing = briefing
+                    var staleBriefing = timedBriefing
                     staleBriefing.status = MorningBriefingStatus(
                         state: "failed",
-                        detail: topLevelStatus?.detail ?? briefing.status?.detail ?? "브리핑 갱신에 실패해 이전 결과를 표시 중입니다."
+                        detail: topLevelStatus?.detail ?? timedBriefing.status?.detail ?? "브리핑 갱신에 실패해 이전 결과를 표시 중입니다.",
+                        reason: topLevelStatus?.reason ?? timedBriefing.status?.reason,
+                        runId: topLevelStatus?.runId ?? timedBriefing.status?.runId,
+                        snapshot: topLevelStatus?.snapshot ?? timedBriefing.status?.snapshot,
+                        elapsedMs: topLevelStatus?.elapsedMs ?? timedBriefing.status?.elapsedMs,
+                        durationMs: topLevelStatus?.durationMs ?? timedBriefing.status?.durationMs,
+                        failedSources: topLevelStatus?.failedSources ?? timedBriefing.status?.failedSources
                     )
                     morningBriefing = staleBriefing
+                    morningBriefingStatus = staleBriefing.status
                 } else {
-                    morningBriefing = briefing
+                    morningBriefing = timedBriefing
+                    morningBriefingStatus = timedBriefing.status ?? topLevelStatus
                 }
             }
             if let previous = event.morningBriefingPrevious {
@@ -8773,23 +8911,43 @@ final class AgenticViewModel: ObservableObject {
                 )
             }
         case "morning_briefing_status":
-            morningBriefingCollecting = event.morningBriefingStatus?.state == "collecting"
-            if event.morningBriefingStatus?.state == "failed" {
+            let status = event.morningBriefingStatus
+            morningBriefingStatus = mergedMorningBriefingStatus(
+                from: morningBriefingStatus,
+                applying: status
+            )
+            morningBriefingCollecting = status?.state == "collecting"
+            if let status, status.state == "collecting",
+               var currentBriefing = morningBriefing {
+                currentBriefing.status = mergedMorningBriefingStatus(
+                    from: currentBriefing.status,
+                    applying: status
+                )
+                morningBriefing = currentBriefing
+            }
+            if status?.state == "failed" {
                 morningBriefingSourceProgress.removeAll()
                 if var staleBriefing = morningBriefing {
                     staleBriefing.status = MorningBriefingStatus(
                         state: "failed",
-                        detail: event.morningBriefingStatus?.detail ?? "브리핑 갱신에 실패해 이전 결과를 표시 중입니다."
+                        detail: status?.detail ?? "브리핑 갱신에 실패해 이전 결과를 표시 중입니다.",
+                        reason: status?.reason ?? staleBriefing.status?.reason,
+                        runId: status?.runId ?? staleBriefing.status?.runId,
+                        snapshot: status?.snapshot ?? staleBriefing.status?.snapshot,
+                        elapsedMs: status?.elapsedMs ?? staleBriefing.status?.elapsedMs,
+                        durationMs: status?.durationMs ?? staleBriefing.status?.durationMs,
+                        failedSources: status?.failedSources ?? staleBriefing.status?.failedSources
                     )
                     morningBriefing = staleBriefing
+                    morningBriefingStatus = staleBriefing.status
                 }
                 completeLongRunningCompletionAttempt(
                     .morningBriefing,
                     outcome: .failed,
-                    detail: event.morningBriefingStatus?.detail
+                    detail: status?.detail
                 )
             }
-            if longRunningCompletionStateIsRunning(event.morningBriefingStatus?.state) {
+            if longRunningCompletionStateIsRunning(status?.state) {
                 beginLongRunningCompletionAttemptFromDisplayInterestIfNeeded(
                     .morningBriefing,
                     source: "display"

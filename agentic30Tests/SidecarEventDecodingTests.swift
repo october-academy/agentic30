@@ -1176,7 +1176,7 @@ struct SidecarEventDecodingTests {
         let payload = """
         {
           "type": "morning_briefing_status",
-          "status": { "state": "collecting", "reason": "tab_enter" }
+          "status": { "state": "collecting", "reason": "tab_enter", "elapsedMs": 1700 }
         }
         """
 
@@ -1185,6 +1185,7 @@ struct SidecarEventDecodingTests {
         #expect(event.type == "morning_briefing_status")
         #expect(event.morningBriefing == nil)
         #expect(event.morningBriefingStatus?.state == "collecting")
+        #expect(event.morningBriefingStatus?.elapsedMs == 1700)
     }
 
     @MainActor @Test func cachedMorningBriefingResultKeepsCollectionProgressAlive() throws {
@@ -1192,7 +1193,7 @@ struct SidecarEventDecodingTests {
         let collectingPayload = """
         {
           "type": "morning_briefing_status",
-          "status": { "state": "collecting", "reason": "manual", "runId": "run-1" }
+          "status": { "state": "collecting", "reason": "manual", "runId": "run-1", "elapsedMs": 1200 }
         }
         """
         let progressPayload = """
@@ -1208,7 +1209,7 @@ struct SidecarEventDecodingTests {
         let cachedPayload = """
         {
           "type": "morning_briefing_result",
-          "status": { "state": "collecting", "snapshot": true, "reason": "refresh_in_flight", "runId": "run-1" },
+          "status": { "state": "collecting", "snapshot": true, "reason": "refresh_in_flight", "runId": "run-1", "elapsedMs": 2400 },
           "morningBriefing": {
             "schemaVersion": 2,
             "generatedAt": "2026-06-14T10:21:41.391Z",
@@ -1241,6 +1242,8 @@ struct SidecarEventDecodingTests {
 
         #expect(viewModel.morningBriefing?.sync?.syncedAtLabel == "19:21")
         #expect(viewModel.morningBriefingCollecting)
+        #expect(viewModel.morningBriefingStatus?.elapsedMs == 2400)
+        #expect(viewModel.morningBriefing?.status?.elapsedMs == 2400)
         #expect(viewModel.morningBriefingSourceProgress["github"]?.state == "collecting")
     }
 
@@ -1255,7 +1258,7 @@ struct SidecarEventDecodingTests {
         let failedPayload = """
         {
           "type": "morning_briefing_result",
-          "status": { "state": "failed", "detail": "브리핑 수집 실패 - 이전 브리핑 표시 중" },
+          "status": { "state": "failed", "detail": "브리핑 수집 실패 - 이전 브리핑 표시 중", "elapsedMs": 4200, "durationMs": 4200 },
           "morningBriefing": {
             "schemaVersion": 2,
             "generatedAt": "2026-06-14T10:21:41.391Z",
@@ -1282,6 +1285,7 @@ struct SidecarEventDecodingTests {
         #expect(viewModel.morningBriefingCollecting == false)
         #expect(viewModel.morningBriefing?.status?.state == "failed")
         #expect(viewModel.morningBriefing?.status?.detail == "브리핑 수집 실패 - 이전 브리핑 표시 중")
+        #expect(viewModel.morningBriefing?.status?.durationMs == 4200)
         #expect(viewModel.morningBriefing?.sync?.syncedAtLabel == "19:21")
     }
 
@@ -3209,6 +3213,7 @@ struct SidecarEventDecodingTests {
             "stage": "running_provider_research",
             "progressText": "Gemini 웹 검색 도구로 공개 근거를 검색하는 중",
             "elapsedMs": 4210,
+            "durationMs": 9123,
             "stepIndex": 4,
             "stepCount": 6,
             "partialFailures": [
@@ -3232,6 +3237,7 @@ struct SidecarEventDecodingTests {
         #expect(event.newsMarketRadarStatus?.stage == "running_provider_research")
         #expect(event.newsMarketRadarStatus?.progressText == "Gemini 웹 검색 도구로 공개 근거를 검색하는 중")
         #expect(event.newsMarketRadarStatus?.elapsedMs == 4210)
+        #expect(event.newsMarketRadarStatus?.durationMs == 9123)
         #expect(event.newsMarketRadarStatus?.stepIndex == 4)
         #expect(event.newsMarketRadarStatus?.stepCount == 6)
         #expect(event.newsMarketRadarStatus?.partialFailures?.first?.laneId == "problem")

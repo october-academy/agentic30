@@ -5663,6 +5663,34 @@ nonisolated func openDesignLastUpdatedLabel(_ date: Date?) -> String {
     "마지막 업데이트 \(openDesignUpdatedAtText(date))"
 }
 
+nonisolated private func openDesignRefreshDurationText(_ elapsedMs: Int) -> String {
+    let seconds = max(0, elapsedMs / 1000)
+    if seconds < 60 { return "\(seconds)초" }
+    let minutes = seconds / 60
+    let remainingSeconds = seconds % 60
+    if minutes < 60 {
+        return remainingSeconds == 0 ? "\(minutes)분" : "\(minutes)분 \(remainingSeconds)초"
+    }
+    let hours = minutes / 60
+    let remainingMinutes = minutes % 60
+    return remainingMinutes == 0 ? "\(hours)시간" : "\(hours)시간 \(remainingMinutes)분"
+}
+
+nonisolated func openDesignRefreshRunningTimingLabel(_ elapsedMs: Int?) -> String? {
+    guard let elapsedMs else { return nil }
+    return "\(openDesignRefreshDurationText(elapsedMs)) 경과"
+}
+
+nonisolated func openDesignRefreshCompletedTimingLabel(_ elapsedMs: Int?) -> String? {
+    guard let elapsedMs else { return nil }
+    return "\(openDesignRefreshDurationText(elapsedMs)) 걸림"
+}
+
+nonisolated func openDesignRefreshFailedTimingLabel(_ elapsedMs: Int?) -> String? {
+    guard let elapsedMs else { return nil }
+    return "\(openDesignRefreshDurationText(elapsedMs)) 후 실패"
+}
+
 private struct OpenDesignStrategyPageView: View {
     let strategyReport: StrategyReportSnapshot
     let strategyReportPreparingForDisplay: Bool
@@ -5704,6 +5732,16 @@ private struct OpenDesignStrategyPageView: View {
         strategyReport.status.lastSuccessAt ?? strategyReport.report?.generatedAt ?? strategyReport.generatedAt
     }
 
+    private var completedDurationLabel: String? {
+        guard !researchIsRefreshing,
+              strategyReport.status.state != "failed" else {
+            return nil
+        }
+        return openDesignRefreshCompletedTimingLabel(
+            strategyReport.status.durationMs ?? strategyReport.status.elapsedMs
+        )
+    }
+
     private var selectedCompetitor: OpenDesignStrategyCompetitor {
         displayContent.competitors.first { $0.id == selectedCompetitorID }
             ?? displayContent.competitors.first { $0.isAgentic30 }
@@ -5720,6 +5758,10 @@ private struct OpenDesignStrategyPageView: View {
                 ),
                 rows: strategyReportLoadingRows(
                     status: strategyReport.status,
+                    isPreparing: strategyReportPreparingForDisplay
+                ),
+                timingLabel: strategyResearchTimingLabel(
+                    strategyReport.status,
                     isPreparing: strategyReportPreparingForDisplay
                 ),
                 accessibilityIdentifier: "strategy.loading",
@@ -5740,6 +5782,10 @@ private struct OpenDesignStrategyPageView: View {
                                 ),
                                 rows: strategyReportLoadingRows(
                                     status: strategyReport.status,
+                                    isPreparing: strategyReportPreparingForDisplay
+                                ),
+                                timingLabel: strategyResearchTimingLabel(
+                                    strategyReport.status,
                                     isPreparing: strategyReportPreparingForDisplay
                                 ),
                                 accessibilityIdentifier: "strategy.loading",
@@ -5822,6 +5868,15 @@ private struct OpenDesignStrategyPageView: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
                         .lineLimit(1)
+                    if let completedDurationLabel {
+                        Text("·")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text(completedDurationLabel)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .lineLimit(1)
+                    }
                 }
                 .accessibilityIdentifier("strategy.last-updated")
             }
@@ -6078,6 +6133,9 @@ private struct StrategyResearchStatusBanner: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
+            if let timingLabel = strategyResearchTimingLabel(status, isPreparing: isPreparing) {
+                OpenDesignRefreshTimingPill(timingLabel)
+            }
         }
         .padding(14)
         .background(
@@ -6112,6 +6170,17 @@ nonisolated func strategyResearchStatusMessage(
         return "캐시와 진행 상태를 불러오는 중"
     }
     return status.progressText ?? "Exa 공개 근거와 검증 패스를 실행하는 중"
+}
+
+nonisolated func strategyResearchTimingLabel(
+    _ status: StrategyReportStatus,
+    isPreparing: Bool
+) -> String? {
+    if status.state == "failed" {
+        return openDesignRefreshFailedTimingLabel(status.durationMs ?? status.elapsedMs)
+    }
+    guard status.state == "refreshing" || isPreparing else { return nil }
+    return openDesignRefreshRunningTimingLabel(status.elapsedMs)
 }
 
 nonisolated func strategyReportShowsColdLoading(
@@ -6223,6 +6292,7 @@ struct OpenDesignColdLoadingStateView: View {
     let title: String
     let detail: String
     let rows: [OpenDesignLoadingCardRow]
+    var timingLabel: String? = nil
     let accessibilityIdentifier: String
     let spinnerAccessibilityLabel: String
     var maxWidth: CGFloat = 780
@@ -6246,8 +6316,14 @@ struct OpenDesignColdLoadingStateView: View {
                         .foregroundStyle(OpenDesignDayColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .layoutPriority(1)
 
                 Spacer(minLength: 0)
+
+                if let timingLabel, !timingLabel.isEmpty {
+                    OpenDesignRefreshTimingPill(timingLabel)
+                        .accessibilityIdentifier("\(accessibilityIdentifier).timing")
+                }
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -6263,6 +6339,25 @@ struct OpenDesignColdLoadingStateView: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: fillsAvailableHeight ? .infinity : nil)
         .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
+struct OpenDesignRefreshTimingPill: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .lineLimit(1)
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(Capsule().fill(OpenDesignDayColor.surface2))
+            .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
     }
 }
 

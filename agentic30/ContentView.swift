@@ -2766,6 +2766,7 @@ struct ContentView: View {
                             briefing: viewModel.morningBriefing,
                             previousBriefing: viewModel.morningBriefingPrevious,
                             collecting: viewModel.morningBriefingCollecting,
+                            status: viewModel.morningBriefingStatus,
                             sourceProgress: viewModel.morningBriefingSourceProgress,
                             fallbackDay: officeHoursActiveDay,
                             refresh: {

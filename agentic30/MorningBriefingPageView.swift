@@ -24,6 +24,7 @@ nonisolated struct MorningBriefingLoadingRow: Hashable, Identifiable {
 nonisolated func morningBriefingColdLoadPresentation(
     briefing: MorningBriefing?,
     collecting: Bool,
+    status: MorningBriefingStatus?,
     sourceProgress: [String: MorningBriefingSourceProgress]
 ) -> MorningBriefingColdLoadPresentation {
     if briefing?.status?.state == "failed",
@@ -32,6 +33,13 @@ nonisolated func morningBriefingColdLoadPresentation(
             kind: .error,
             rows: morningBriefingLoadingRows(sourceProgress: sourceProgress),
             detail: briefing?.status?.detail
+        )
+    }
+    if briefing == nil && status?.state == "failed" {
+        return MorningBriefingColdLoadPresentation(
+            kind: .error,
+            rows: morningBriefingLoadingRows(sourceProgress: sourceProgress),
+            detail: status?.detail
         )
     }
     if briefing == nil && collecting {
@@ -103,6 +111,7 @@ struct MorningBriefingPageView: View {
     let briefing: MorningBriefing?
     let previousBriefing: MorningBriefing?
     let collecting: Bool
+    let status: MorningBriefingStatus?
     /// 수집 중 카드별 라이브 진행(카드 id → 스피너 상태 + 에이전트 로그).
     let sourceProgress: [String: MorningBriefingSourceProgress]
     let fallbackDay: Int
@@ -129,6 +138,7 @@ struct MorningBriefingPageView: View {
         briefing: MorningBriefing?,
         previousBriefing: MorningBriefing?,
         collecting: Bool,
+        status: MorningBriefingStatus? = nil,
         sourceProgress: [String: MorningBriefingSourceProgress],
         fallbackDay: Int,
         refresh: @escaping () -> Void,
@@ -141,6 +151,7 @@ struct MorningBriefingPageView: View {
         self.briefing = briefing
         self.previousBriefing = previousBriefing
         self.collecting = collecting
+        self.status = status
         self.sourceProgress = sourceProgress
         self.fallbackDay = fallbackDay
         self.refresh = refresh
@@ -157,6 +168,10 @@ struct MorningBriefingPageView: View {
         viewingPrevious ? (previousBriefing ?? briefing) : briefing
     }
 
+    private var effectiveStatus: MorningBriefingStatus? {
+        viewingPrevious ? displayBriefing?.status : (status ?? displayBriefing?.status)
+    }
+
     private var day: Int { displayBriefing?.day ?? fallbackDay }
     private var totalDays: Int { displayBriefing?.totalDays ?? 30 }
     private var isLocked: Bool { displayBriefing?.status?.state == "locked" }
@@ -170,8 +185,30 @@ struct MorningBriefingPageView: View {
         morningBriefingColdLoadPresentation(
             briefing: displayBriefing,
             collecting: collecting,
+            status: effectiveStatus,
             sourceProgress: sourceProgress
         )
+    }
+    private var runningTimingLabel: String? {
+        guard collecting, !viewingPrevious else { return nil }
+        return openDesignRefreshRunningTimingLabel(effectiveStatus?.elapsedMs)
+    }
+    private var completedTimingLabel: String? {
+        guard !collecting, !viewingPrevious else { return nil }
+        return openDesignRefreshCompletedTimingLabel(effectiveStatus?.durationMs ?? effectiveStatus?.elapsedMs)
+    }
+    private var failedTimingLabel: String? {
+        guard !collecting, !viewingPrevious,
+              effectiveStatus?.state == "failed" else {
+            return nil
+        }
+        return openDesignRefreshFailedTimingLabel(effectiveStatus?.durationMs ?? effectiveStatus?.elapsedMs)
+    }
+    private var lastSyncTimingLabel: String? {
+        if effectiveStatus?.state == "failed" {
+            return failedTimingLabel
+        }
+        return completedTimingLabel
     }
     private var phaseLabel: String {
         if let phase = displayBriefing?.phase, !phase.isEmpty { return phase }
@@ -699,9 +736,21 @@ struct MorningBriefingPageView: View {
                     Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
                     Text("소스 \(displayBriefing?.sync?.readyCount ?? 0) 연결됨")
                         .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                    if let synced = displayBriefing?.sync?.syncedAtLabel {
+                    if collecting {
+                        Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text("동기화 중")
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        if let runningTimingLabel {
+                            Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            Text(runningTimingLabel)
+                        }
+                    } else if let synced = displayBriefing?.sync?.syncedAtLabel {
                         Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
                         Text("\(synced) 동기화")
+                        if let lastSyncTimingLabel {
+                            Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            Text(lastSyncTimingLabel)
+                        }
                     }
                     if displayBriefing?.anomaly != nil {
                         Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
@@ -2181,9 +2230,16 @@ struct MorningBriefingPageView: View {
                                 .font(.system(size: 12))
                                 .foregroundStyle(OpenDesignDayColor.fgSecondary)
                             Spacer()
-                            Text(synced)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(OpenDesignDayColor.muted)
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(synced)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(OpenDesignDayColor.muted)
+                                if let lastSyncTimingLabel {
+                                    Text(lastSyncTimingLabel)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                                }
+                            }
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
@@ -2381,6 +2437,7 @@ struct MorningBriefingPageView: View {
             title: "밤사이 신호를 모으는 중",
             detail: "소스별 수집 로그가 도착하는 대로 업데이트됩니다.",
             rows: openDesignLoadingRows(from: presentation.rows),
+            timingLabel: runningTimingLabel,
             accessibilityIdentifier: "morningBriefing.loading",
             spinnerAccessibilityLabel: "밤사이 신호 수집 중"
         )
