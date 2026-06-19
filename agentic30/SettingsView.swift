@@ -1152,8 +1152,10 @@ struct SettingsView: View {
         if let result = viewModel.exaMcpConnectResult, result.isFailed || result.isMissing {
             return "검증 실패"
         }
-        if let live = viewModel.integrationStatus?.exa, !live.isMissing {
-            return live.isReady ? "MCP 연결됨" : "설정 실패"
+        if let live = viewModel.integrationStatus?.exa {
+            if live.isReady { return "MCP 연결됨" }
+            if live.isMissing { return "키 필요" }
+            return "설정 실패"
         }
         return "설정 필요"
     }
@@ -1165,8 +1167,10 @@ struct SettingsView: View {
         if let result = viewModel.exaMcpConnectResult, result.isFailed || result.isMissing {
             return OpenDesignDayColor.rose
         }
-        if let live = viewModel.integrationStatus?.exa, !live.isMissing {
-            return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
+        if let live = viewModel.integrationStatus?.exa {
+            if live.isReady { return settingsAccentColor }
+            if live.isMissing { return OpenDesignDayColor.amber }
+            return OpenDesignDayColor.rose
         }
         return OpenDesignDayColor.amber
     }
@@ -1178,11 +1182,15 @@ struct SettingsView: View {
         if let result = viewModel.exaMcpConnectResult, result.isFailed || result.isMissing {
             return (result.detail ?? "Exa MCP 연결을 확인하세요.", OpenDesignDayColor.rose)
         }
-        if let live = viewModel.integrationStatus?.exa, !live.isMissing {
+        if let live = viewModel.integrationStatus?.exa {
+            let detail = live.detail?.trimmingCharacters(in: .whitespacesAndNewlines)
             if live.isReady {
-                return ("Exa MCP 경로 확인됨.", settingsAccentColor)
+                return (detail?.isEmpty == false ? detail! : "Exa Search 키와 MCP 경로 확인됨.", settingsAccentColor)
             }
-            return ("Exa MCP 설정을 확인하세요.", OpenDesignDayColor.rose)
+            if live.isMissing {
+                return (detail?.isEmpty == false ? detail! : "Exa direct Search 키를 연결하세요.", OpenDesignDayColor.amber)
+            }
+            return (detail?.isEmpty == false ? detail! : "Exa MCP 설정을 확인하세요.", OpenDesignDayColor.rose)
         }
         return ("MCP 연결로 Exa API Key를 검증하고 provider 설정을 추가하세요.", OpenDesignDayColor.amber)
     }

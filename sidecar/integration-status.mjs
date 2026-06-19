@@ -10,6 +10,7 @@ import {
   redactExaResearchRoute,
   resolveExaResearchRoutes,
 } from "./exa-mcp-discovery.mjs";
+import { extractDirectExaApiKey } from "./direct-exa-research.mjs";
 
 // Live integration checks for Settings > 연동. Each probe verifies the stored
 // credential against the real service (gh auth status, PostHog /users/@me,
@@ -224,10 +225,23 @@ export async function probeExaIntegration({
     }
 
     const redactedRoute = redactExaResearchRoute(route);
+    const directExaApiKey = extractDirectExaApiKey({
+      apiKey: key,
+      route,
+      env,
+    });
+    if (!directExaApiKey) {
+      return status(
+        "missing",
+        "Exa MCP route는 발견됐지만 direct Exa Search 키가 없습니다. Settings에서 Exa API Key를 연결하세요.",
+        { route: redactedRoute },
+      );
+    }
+
     const providerLabel = exaProviderDisplayLabel(redactedRoute?.provider || route.provider || "");
     const detail = route.source === "api_key"
-      ? `Exa MCP route configured from saved/env key (${providerLabel})`
-      : `Exa MCP route discovered in ${providerLabel} config`;
+      ? `Exa MCP route configured from direct Exa Search key (${providerLabel})`
+      : `Exa MCP route verified with direct Exa Search key in ${providerLabel} config`;
     return status("ready", detail, { route: redactedRoute });
   } catch (error) {
     return status("failed", `Exa MCP config check failed: ${String(error?.message || error)}`);

@@ -46,10 +46,25 @@ export function extractDirectExaApiKey({
         if (match?.[1]?.trim()) return match[1].trim();
       }
     }
+    const inlineEnvKey = extractApiKeyFromInlineEnv(config.env, env);
+    if (inlineEnvKey) return inlineEnvKey;
     const envVar = String(config.bearer_token_env_var || config.api_key_env_var || "").trim();
     if (envVar && String(env?.[envVar] || "").trim()) return String(env[envVar]).trim();
   }
   return String(env?.EXA_API_KEY || "").trim();
+}
+
+function extractApiKeyFromInlineEnv(value, env = process.env) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  for (const [key, entry] of Object.entries(value)) {
+    if (String(key || "").trim().toUpperCase() !== "EXA_API_KEY") continue;
+    const raw = String(entry || "").trim();
+    if (!raw) continue;
+    const envReference = raw.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/);
+    if (envReference?.[1]) return String(env?.[envReference[1]] || "").trim();
+    return raw;
+  }
+  return "";
 }
 
 export function createDirectExaApiKeyRequiredError({

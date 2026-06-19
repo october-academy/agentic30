@@ -209,7 +209,48 @@ test("probeExaIntegration reports ready from EXA_API_KEY without leaking the key
   }
 });
 
-test("probeExaIntegration reports ready from discovered Codex MCP without live validation", async () => {
+test("probeExaIntegration reports ready from saved Exa API key without leaking the key", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "integration-exa-saved-"));
+  try {
+    const result = await probeExaIntegration({
+      env: {},
+      exaApiKey: "exa_saved_secret",
+      homeDir: home,
+      provider: "codex",
+    });
+    assert.equal(result.state, "ready");
+    assert.match(result.detail, /direct Exa Search key/);
+    assert.equal(result.route.hasHeaders, true);
+    assert.equal(JSON.stringify(result).includes("exa_saved_secret"), false);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+test("probeExaIntegration reports missing when a discovered Codex MCP route has no direct key", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "integration-exa-codex-route-only-"));
+  try {
+    await fs.mkdir(path.join(home, ".codex"), { recursive: true });
+    await fs.writeFile(path.join(home, ".codex", "config.toml"), [
+      "[mcp_servers.exa]",
+      "url = \"https://mcp.exa.ai/mcp\"",
+    ].join("\n"));
+
+    const result = await probeExaIntegration({
+      env: {},
+      homeDir: home,
+      provider: "codex",
+    });
+    assert.equal(result.state, "missing");
+    assert.match(result.detail, /route는 발견됐지만 direct Exa Search 키가 없습니다/);
+    assert.equal(result.route.provider, "codex");
+    assert.equal(result.route.hasHeaders, false);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+test("probeExaIntegration reports ready from discovered Codex MCP header key", async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "integration-exa-codex-"));
   try {
     await fs.mkdir(path.join(home, ".codex"), { recursive: true });
@@ -230,6 +271,34 @@ test("probeExaIntegration reports ready from discovered Codex MCP without live v
     assert.match(result.detail, /Codex/);
     assert.equal(result.route.provider, "codex");
     assert.equal(JSON.stringify(result).includes("codex-secret"), false);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+test("probeExaIntegration reports ready from discovered MCP env key without leaking it", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "integration-exa-env-route-"));
+  try {
+    await fs.mkdir(path.join(home, ".gemini"), { recursive: true });
+    await fs.writeFile(path.join(home, ".gemini", "settings.json"), JSON.stringify({
+      mcpServers: {
+        exa: {
+          url: "https://mcp.exa.ai/mcp",
+          env: { EXA_API_KEY: "gemini-secret" },
+        },
+      },
+    }));
+
+    const result = await probeExaIntegration({
+      env: {},
+      homeDir: home,
+      provider: "gemini",
+    });
+    assert.equal(result.state, "ready");
+    assert.match(result.detail, /Gemini/);
+    assert.equal(result.route.provider, "gemini");
+    assert.equal(result.route.hasEnv, true);
+    assert.equal(JSON.stringify(result).includes("gemini-secret"), false);
   } finally {
     await fs.rm(home, { recursive: true, force: true });
   }

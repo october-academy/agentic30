@@ -506,6 +506,10 @@ function normalizeMcpServerConfig(config = {}) {
   if (Object.keys(headers).length) normalized.headers = headers;
   const env = stringMap(config.env);
   if (Object.keys(env).length) normalized.env = env;
+  const bearerTokenEnvVar = firstNonEmptyString(config.bearer_token_env_var, config.bearerTokenEnvVar);
+  if (bearerTokenEnvVar) normalized.bearer_token_env_var = bearerTokenEnvVar;
+  const apiKeyEnvVar = firstNonEmptyString(config.api_key_env_var, config.apiKeyEnvVar);
+  if (apiKeyEnvVar) normalized.api_key_env_var = apiKeyEnvVar;
   if (!normalized.url && !normalized.command) return null;
   return normalized;
 }
