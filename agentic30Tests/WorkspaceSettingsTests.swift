@@ -684,6 +684,11 @@ final class SparkleUpdateTests: XCTestCase {
         ))
         XCTAssertTrue(AppDelegate.isSparkleNoUpdateCycleError(
             NSError(domain: "Other", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: " You’re up to date!\n"
+            ])
+        ))
+        XCTAssertFalse(AppDelegate.isSparkleNoUpdateCycleError(
+            NSError(domain: "Other", code: -1, userInfo: [
                 NSLocalizedDescriptionKey: "No update found."
             ])
         ))

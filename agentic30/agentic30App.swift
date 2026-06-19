@@ -84,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let workspaceWindowTitle = "Agentic30"
     private static let updateBlockedErrorDomain = "Agentic30SparkleUpdateCheck"
+    private static let sparkleNoUpdateErrorCode = 1001
     private var openWorkspaceHandler: (() -> Void)?
     private var pendingWorkspaceOpen = false
     private(set) var shouldMaximizeWorkspaceWindowOnFirstAppear = AppDelegate.shouldMaximizeWorkspaceWindowOnLaunch(
@@ -500,14 +501,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func isSparkleNoUpdateCycleError(_ error: Error) -> Bool {
         let nsError = error as NSError
-        if nsError.domain == SUSparkleErrorDomain && nsError.code == 1001 {
+        if nsError.domain == SUSparkleErrorDomain && nsError.code == Self.sparkleNoUpdateErrorCode {
             return true
         }
 
-        let description = error.localizedDescription
+        let normalizedDescription = error.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "’", with: "'")
             .lowercased()
-        return description.contains("up to date") || description.contains("no update")
+        return normalizedDescription == "you're up to date!"
     }
 
     private static func sparkleConfiguration(bundle: Bundle = .main) -> SparkleConfiguration {
