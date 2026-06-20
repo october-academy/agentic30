@@ -2321,6 +2321,38 @@ final class AgenticViewModelAuthTests {
         #expect(!presentation.canOpenDay1)
     }
 
+    @Test @MainActor func sidecarConnectionStateErrorCapturesBenignTelemetryOnly() async throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        var captures: [PostHogTelemetryCapture] = []
+        PostHogTelemetry.captureSink = { captures.append($0) }
+        defer { PostHogTelemetry.resetTestingHooks() }
+
+        try sidecar.emit("""
+        {
+          "type": "error",
+          "message": "Sidecar is not connected.",
+          "errorKind": "sidecar_connection_state"
+        }
+        """)
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        #expect(viewModel.lastError == "Sidecar is not connected.")
+        #expect(viewModel.isConnected == false)
+        #expect(captures.contains { capture in
+            capture.event == "mac_sidecar_connection_state"
+                && capture.isException == false
+                && capture.properties["error_kind"] as? String == "sidecar_connection_state"
+        })
+        #expect(!captures.contains { $0.event == "$exception" || $0.isException })
+    }
+
     @Test @MainActor func startHydratesExplicitWorkspaceBeforeSidecarReady() throws {
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-start-hydrates-workspace-\(UUID().uuidString)", isDirectory: true)
