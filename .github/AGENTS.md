@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
+<!-- Generated: 2026-06-20 | Commit: 6f0fc7e | Branch: main -->
 
 # .github
 
@@ -17,6 +17,7 @@ GitHub repository metadata: PR template, issue templates, secret/public-safety w
 ## CONVENTIONS
 - Workflow changes should keep secrets out of YAML and use repository/Actions secrets.
 - Release workflow publishes only after both architecture DMGs are present.
+- Release workflow uses a non-canceling `release` concurrency group; stale-run appcast protection is intentional.
 - Release jobs use macOS runners, Node 20, `npm ci`, Wrangler, signing/notarization env, Sparkle feed controls.
 - PR template stays short and points to test evidence rather than duplicating this knowledge base.
 
@@ -24,6 +25,7 @@ GitHub repository metadata: PR template, issue templates, secret/public-safety w
 - Do not add public issue paths for security disclosures; point reporters to `security@october-academy.com`.
 - Do not weaken the secret scanning/public-safety workflow.
 - Do not bypass draft-release cleanup or the two-architecture publish check in release automation.
+- Do not publish x64 builds to the arm64 historical `appcast.xml`; x64 uses `appcast-x64.xml`.
 
 ## TESTS
 ```bash

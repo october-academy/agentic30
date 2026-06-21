@@ -1,5 +1,7 @@
 # Agentic30 30-Day Adaptive Program Spec
 
+> **Deprecated:** 이 v1 문서는 역사 기록과 배경 분석용으로 보존한다. 새 구현 목표 명세는 [Agentic30 30-Day Adaptive Program v2](./agentic30-30day-adaptive-program-v2.md)를 따른다.
+>
 > **작성일:** 2026-06-12 · **기준 코드:** `main` @ c80e257 (v1.0.19 build 24)
 > **상태:** 구현 대기 명세 (implementation-ready)
 > **근거 표기 원칙:** 모든 current-state 주장에는 근거 파일(필요 시 라인)을 병기한다. 라인 번호는 2026-06-12 HEAD 기준 관찰값이다. 코드로 확인 못 한 항목은 `Assumption`으로 분리했다(§28).
