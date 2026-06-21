@@ -113,3 +113,28 @@ test("specialist prompt carries the topic-shift avoidance naming rule", () => {
   assert.match(prompt, /코스튬/);
   assert.match(prompt, /같은 회피가 두 번 이상 반복되면 패턴으로 묶어 부른다/);
 });
+
+// ---- Incomplete-interview hardening: the stage reroute must still open a card --------
+// The [고객 단계] guard (d6b3530) routes a paying-customer founder away from Q1; combined
+// with smart-skip it could end a turn with zero structured cards, tripping the
+// answered=0 incomplete-interview gate. Both prompts must carry the at-least-one-card floor.
+
+test("chat system prompt carries the at-least-one-card floor for the stage reroute", () => {
+  const prompt = buildOfficeHoursChatSystemPrompt("/workspace", {
+    provider: "codex",
+    context: "target solo founder",
+  });
+  assert.match(prompt, /At-least-one-card floor/);
+  assert.match(prompt, /MUST open at least one structured input card before it can end/);
+  assert.match(prompt, /never finish a routed turn in prose with no card/);
+});
+
+test("specialist prompt carries the at-least-one-card floor for the stage reroute", () => {
+  const prompt = buildOfficeHoursSpecialistPrompt({
+    doc: { title: "ICP" },
+    observations: "Mac 메뉴바 어시스턴트",
+    lastAnswer: "이미 결제하는 고객이 있어요",
+  });
+  assert.match(prompt, /질문 0개로 만들면 안 된다/);
+  assert.match(prompt, /최소 한 개의 structured input 카드를 반드시 연다/);
+});

@@ -7954,6 +7954,11 @@ function failOfficeHoursIncompleteInterview(session, assistantMessage, {
     type: "error",
     sessionId: session.id,
     message,
+    // An incomplete interview is an expected, recoverable provider-miss (the
+    // user keeps the failure block + retry path). Tag it so the Mac client
+    // classifies it as a normal telemetry event instead of a captureException
+    // crash report — it is not an app exception.
+    errorKind: "office_hours_incomplete_interview",
   });
 }
 

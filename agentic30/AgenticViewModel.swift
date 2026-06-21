@@ -8185,6 +8185,32 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    /// Maps a sidecar `error` event's `errorKind` to the telemetry event name we
+    /// `capture` for it, or `nil` when the error should be routed through
+    /// `captureException` as a crash-style report. Expected, recoverable failures
+    /// (usage limits, auth gaps, aborts, sidecar-connection blips, and the
+    /// office-hours incomplete-interview provider-miss) are normal events, not
+    /// exceptions — they keep their user-facing error state and retry path but
+    /// must not pollute error tracking.
+    static func nonExceptionSidecarErrorTelemetryEvent(forErrorKind errorKind: String?) -> String? {
+        switch errorKind {
+        case "provider_usage_limit":
+            return "mac_provider_usage_limit"
+        case "provider_auth_required":
+            return "mac_provider_auth_required"
+        case "provider_aborted":
+            return "mac_provider_aborted"
+        case "sidecar_connection_state":
+            return "mac_sidecar_connection_state"
+        case "office_hours_incomplete_interview":
+            // Interview ended with no question card on deck. The user keeps the
+            // failure block + retry, so this is not an app exception.
+            return "mac_office_hours_incomplete_interview"
+        default:
+            return nil
+        }
+    }
+
     private func handle(_ event: SidecarEvent) {
         switch event.type {
         case "sidecar_status":
@@ -9302,23 +9328,7 @@ final class AgenticViewModel: ObservableObject {
                 }
                 markStartupQueuedActionFailed(event.message ?? "실행 보조 앱 연결이 끊겼습니다.")
             }
-            if [
-                "provider_usage_limit",
-                "provider_auth_required",
-                "provider_aborted",
-                "sidecar_connection_state",
-            ].contains(event.errorKind ?? "") {
-                let telemetryEvent: String
-                switch event.errorKind {
-                case "provider_usage_limit":
-                    telemetryEvent = "mac_provider_usage_limit"
-                case "provider_auth_required":
-                    telemetryEvent = "mac_provider_auth_required"
-                case "provider_aborted":
-                    telemetryEvent = "mac_provider_aborted"
-                default:
-                    telemetryEvent = "mac_sidecar_connection_state"
-                }
+            if let telemetryEvent = Self.nonExceptionSidecarErrorTelemetryEvent(forErrorKind: event.errorKind) {
                 PostHogTelemetry.capture(
                     telemetryEvent,
                     properties: [
