@@ -4976,7 +4976,10 @@ final class AgenticViewModel: ObservableObject {
             lastError = "Daily card replacement requires the next candidate and next action."
             return false
         }
-        guard isConnected else { return false }
+        guard isConnected else {
+            lastError = "Daily card submission could not be sent because the sidecar is disconnected."
+            return false
+        }
         var payload: [String: Any] = [
             "type": "office_hours_daily_card_submit",
             "workspaceRoot": root,
@@ -12750,7 +12753,6 @@ final class AgenticViewModel: ObservableObject {
         guard ProcessInfo.processInfo.environment["AGENTIC30_DISABLE_CODEX_WARMUP"] != "1" else { return }
         guard let session = selectedSession else { return }
         guard session.provider == .codex else { return }
-        guard session.pendingUserInput != nil else { return }
         guard let officeHours = session.runtime?.officeHours,
               officeHours.active == true,
               let officeHoursContext = officeHours.context?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -13179,8 +13181,8 @@ final class AgenticViewModel: ObservableObject {
             )
             return
         }
-        guard await localNotificationAuthorizationGranted(center: center) else { return }
         center.removePendingNotificationRequests(withIdentifiers: managedIdentifiers)
+        guard await localNotificationAuthorizationGranted(center: center) else { return }
 
         var scheduledIdentifiers: [String] = []
         for request in requests {
@@ -14782,20 +14784,98 @@ struct SidecarEvent: Decodable {
                 case programScoreboardSnapshot = "program_scoreboard_snapshot"
                 case revenueOrActivationGate = "revenue_or_activation_gate"
             }
-            enum SourceState: String, Decodable, Equatable {
+            enum SourceState: Decodable, Equatable {
                 case ready
                 case missing
                 case stale
-                case manualProofRequired = "manual_proof_required"
+                case manualProofRequired
                 case rejected
+                case unknown(String)
+
+                var rawValue: String {
+                    switch self {
+                    case .ready:
+                        return "ready"
+                    case .missing:
+                        return "missing"
+                    case .stale:
+                        return "stale"
+                    case .manualProofRequired:
+                        return "manual_proof_required"
+                    case .rejected:
+                        return "rejected"
+                    case .unknown(let value):
+                        return value
+                    }
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.singleValueContainer()
+                    let value = try container.decode(String.self)
+                    switch value {
+                    case "ready":
+                        self = .ready
+                    case "missing":
+                        self = .missing
+                    case "stale":
+                        self = .stale
+                    case "manual_proof_required":
+                        self = .manualProofRequired
+                    case "rejected":
+                        self = .rejected
+                    default:
+                        self = .unknown(value)
+                    }
+                }
             }
-            enum ResolutionReason: String, Decodable, Equatable {
-                case notSent = "not_sent"
-                case messageNotReady = "message_not_ready"
-                case channelBlocked = "channel_blocked"
-                case wrongCandidate = "wrong_candidate"
-                case candidateExhausted = "candidate_exhausted"
-                case replacedByNextCandidate = "replaced_by_next_candidate"
+            enum ResolutionReason: Decodable, Equatable {
+                case notSent
+                case messageNotReady
+                case channelBlocked
+                case wrongCandidate
+                case candidateExhausted
+                case replacedByNextCandidate
+                case unknown(String)
+
+                var rawValue: String {
+                    switch self {
+                    case .notSent:
+                        return "not_sent"
+                    case .messageNotReady:
+                        return "message_not_ready"
+                    case .channelBlocked:
+                        return "channel_blocked"
+                    case .wrongCandidate:
+                        return "wrong_candidate"
+                    case .candidateExhausted:
+                        return "candidate_exhausted"
+                    case .replacedByNextCandidate:
+                        return "replaced_by_next_candidate"
+                    case .unknown(let value):
+                        return value
+                    }
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.singleValueContainer()
+                    let value = try container.decode(String.self)
+                    switch value {
+                    case "not_sent":
+                        self = .notSent
+                    case "message_not_ready":
+                        self = .messageNotReady
+                    case "channel_blocked":
+                        self = .channelBlocked
+                    case "wrong_candidate":
+                        self = .wrongCandidate
+                    case "candidate_exhausted":
+                        self = .candidateExhausted
+                    case "replaced_by_next_candidate":
+                        self = .replacedByNextCandidate
+                    default:
+                        self = .unknown(value)
+                    }
+                }
             }
             struct Generation: Decodable, Equatable {
                 let signalId: String
@@ -14831,16 +14911,6 @@ struct SidecarEvent: Decodable {
                     guard !entries.isEmpty else {
                         throw DailyCard.corrupted(decoder, code: "ERR_INVALID_PROOF_MAPPING", message: "proofLedgerMapping must be non-empty")
                     }
-                    let allowed: [String: Set<String>] = [
-                        "self_report": ["officeHoursResolution.negativeEvidenceOnly"],
-                        "self-report": ["officeHoursResolution.negativeEvidenceOnly"],
-                        "customer_screenshot": ["customerEvidence.acceptedProof"],
-                        "paymentIntent": ["firstRevenue.learningSignal"],
-                        "paymentRecord": ["firstRevenue.acceptedProof"],
-                        "first_value": ["activeUsers100.acceptedProof"],
-                        "signup": ["activeUsers100.excludedCount"],
-                        "visitor": ["activeUsers100.excludedCount"],
-                    ]
                     for (source, destination) in entries {
                         if source == "self_report" || source == "self-report",
                            destination != "officeHoursResolution.negativeEvidenceOnly" {
@@ -14848,13 +14918,6 @@ struct SidecarEvent: Decodable {
                                 decoder,
                                 code: "ERR_SELF_REPORT_COUNTED_AS_PROOF",
                                 message: "self-report cannot count as proof"
-                            )
-                        }
-                        guard allowed[source]?.contains(destination) == true else {
-                            throw DailyCard.corrupted(
-                                decoder,
-                                code: "ERR_INVALID_PROOF_MAPPING",
-                                message: "invalid proof mapping \(source) -> \(destination)"
                             )
                         }
                     }
@@ -14917,17 +14980,6 @@ struct SidecarEvent: Decodable {
                 let owner: String
                 let deadline: String
 
-                private static let allowedWorkTypes: Set<String> = [
-                    "outreach/customer copy",
-                    "offer/paid ask",
-                    "ICP/source analysis",
-                    "channel experiment",
-                    "first_value instrumentation snippet",
-                    "activation friction fix",
-                    "evidence capture checklist",
-                    "follow-up plan",
-                ]
-
                 private enum CodingKeys: String, CodingKey {
                     case id
                     case workType
@@ -14942,13 +14994,6 @@ struct SidecarEvent: Decodable {
                     let container = try decoder.container(keyedBy: CodingKeys.self)
                     id = try DailyCard.requiredString(.id, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
                     workType = try DailyCard.requiredString(.workType, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
-                    guard Self.allowedWorkTypes.contains(workType) else {
-                        throw DecodingError.dataCorruptedError(
-                            forKey: .workType,
-                            in: container,
-                            debugDescription: "ERR_MALFORMED_AGENT_WORKPACK: unknown workpack.workType"
-                        )
-                    }
                     targetExternalAction = try DailyCard.requiredString(
                         .targetExternalAction,
                         in: container,
@@ -14956,15 +15001,8 @@ struct SidecarEvent: Decodable {
                     )
                     expectedProof = try DailyCard.requiredString(.expectedProof, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
                     notProof = try DailyCard.nonEmptyStringArray(.notProof, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
-                    owner = try DailyCard.requiredString(.owner, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
-                    guard owner == "founder" else {
-                        throw DecodingError.dataCorruptedError(
-                            forKey: .owner,
-                            in: container,
-                            debugDescription: "ERR_MALFORMED_AGENT_WORKPACK: workpack.owner must be founder"
-                        )
-                    }
-                    deadline = try DailyCard.requiredString(.deadline, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
+                    owner = try DailyCard.optionalString(.owner, in: container) ?? ""
+                    deadline = try DailyCard.optionalString(.deadline, in: container) ?? ""
                 }
             }
             struct AgentWorkpackCard: Decodable, Equatable {
@@ -15030,8 +15068,6 @@ struct SidecarEvent: Decodable {
                 let recoveryBranch: String
                 let nextCardType: String
 
-                private static let allowedGates: Set<String> = ["G4", "G5", "G6", "G7"]
-
                 private enum CodingKeys: String, CodingKey {
                     case gate
                     case requires
@@ -15044,13 +15080,6 @@ struct SidecarEvent: Decodable {
                 init(from decoder: Decoder) throws {
                     let container = try decoder.container(keyedBy: CodingKeys.self)
                     gate = try DailyCard.requiredString(.gate, in: container, code: "ERR_UNKNOWN_CARD_TYPE")
-                    guard Self.allowedGates.contains(gate) else {
-                        throw DecodingError.dataCorruptedError(
-                            forKey: .gate,
-                            in: container,
-                            debugDescription: "ERR_UNKNOWN_CARD_TYPE: unknown revenue or activation gate"
-                        )
-                    }
                     requires = try DailyCard.nonEmptyStringArray(.requires, in: container, code: "ERR_MISSING_SOURCE_STATE")
                     satisfied = try container.decode(Bool.self, forKey: .satisfied)
                     blockingReasons = satisfied
@@ -15058,13 +15087,6 @@ struct SidecarEvent: Decodable {
                         : try DailyCard.nonEmptyStringArray(.blockingReasons, in: container, code: "ERR_MISSING_SOURCE_STATE")
                     recoveryBranch = try DailyCard.requiredString(.recoveryBranch, in: container, code: "ERR_MISSING_SOURCE_STATE")
                     nextCardType = try DailyCard.requiredString(.nextCardType, in: container, code: "ERR_UNKNOWN_CARD_TYPE")
-                    guard CardType(rawValue: nextCardType) != nil else {
-                        throw DecodingError.dataCorruptedError(
-                            forKey: .nextCardType,
-                            in: container,
-                            debugDescription: "ERR_UNKNOWN_CARD_TYPE: unknown next card type"
-                        )
-                    }
                 }
             }
 
@@ -15218,8 +15240,7 @@ struct SidecarEvent: Decodable {
                 in container: KeyedDecodingContainer<K>,
                 code: String
             ) throws -> String where K: CodingKey {
-                let value = try container.decodeIfPresent(String.self, forKey: key)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let value = try optionalString(key, in: container)
                 guard let value, !value.isEmpty else {
                     throw DecodingError.dataCorruptedError(
                         forKey: key,
@@ -15228,6 +15249,25 @@ struct SidecarEvent: Decodable {
                     )
                 }
                 return value
+            }
+
+            private static func optionalString<K>(
+                _ key: K,
+                in container: KeyedDecodingContainer<K>
+            ) throws -> String? where K: CodingKey {
+                if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+                    return value.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+                }
+                if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+                    return String(value)
+                }
+                if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+                    return String(value)
+                }
+                if let value = try? container.decodeIfPresent(Bool.self, forKey: key) {
+                    return String(value)
+                }
+                return nil
             }
 
             private static func nonEmptyArray<T, K>(

@@ -3753,7 +3753,7 @@ async function buildProgramNotificationScheduleForWorkspace(root, now = new Date
   const dayProgress = (activeWorkspace ? state.dayProgress : null)
     ?? await loadDayProgress({ workspaceRoot: resolvedRoot }).catch(() => null);
   const currentDay = dayProgress
-    ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt })
+    ? resolveOfficeHoursWorkedDay({ progress: dayProgress, now }).workedDay
     : null;
   if (!currentDay) {
     return buildProgramNotificationSchedule({ now });

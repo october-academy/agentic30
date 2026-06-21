@@ -2935,7 +2935,7 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.officeHoursLiveStatus(for: session.id) == nil)
     }
 
-    @Test @MainActor func officeHoursCodexWarmupStartsAfterPendingPromptInstallAndDedupesContext() throws {
+    @Test @MainActor func officeHoursCodexWarmupStartsForActiveSessionAndDedupesContext() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
         let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
@@ -2996,11 +2996,6 @@ final class AgenticViewModelAuthTests {
         sidecar.resetSentPayloads()
 
         viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
-        #expect(sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }.isEmpty)
-
-        session.status = .awaitingInput
-        session.pendingUserInput = prompt
-        viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
         let firstWarmPayloads = sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }
         try #require(firstWarmPayloads.count == 1)
         #expect(firstWarmPayloads[0]["sessionId"] as? String == session.id)
@@ -3008,6 +3003,11 @@ final class AgenticViewModelAuthTests {
         #expect(firstWarmPayloads[0]["context"] as? String == "context v1")
         #expect(firstWarmPayloads[0]["day"] as? Int == 1)
         #expect(firstWarmPayloads[0]["source"] as? String == "office_hours_screen")
+
+        session.status = .awaitingInput
+        session.pendingUserInput = prompt
+        viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
+        #expect(sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }.count == 1)
 
         viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
         viewModel.applySidecarEventForTesting(try sidecar.decodeEvent("""

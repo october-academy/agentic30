@@ -2901,11 +2901,12 @@ struct ContentView: View {
                         day1Content: day1Content,
                         activeDay: activeDay
                     )
-                    if viewModel.dailyCards.isEmpty {
+                    let activeDailyCards = viewModel.dailyCards.filter { $0.programDay == activeDay }
+                    if activeDailyCards.isEmpty {
                         officeHoursMissionCardBanner()
                     } else {
                         officeHoursDailyCardStackBanner(
-                            cards: viewModel.dailyCards,
+                            cards: activeDailyCards,
                             session: conversationSession,
                             day1Content: day1Content,
                             activeDay: activeDay
@@ -7996,9 +7997,6 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .disabled(!editable)
-        .simultaneousGesture(TapGesture().onEnded {
-            stageRevision()
-        })
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("opendesign.officeHours.submittedChoice.\(question.id).\(option.label)")
         .accessibilityLabel("\(option.label) \(isPending ? "수정 예정" : isSubmitted ? "제출됨" : "완료된 미선택")")
