@@ -13107,21 +13107,22 @@ final class AgenticViewModel: ObservableObject {
         return "근거 기반 실행 미션을 확인할 수 있어요."
     }
 
+    private func normalizedDailyCardSourceStateVersion(_ value: String?) -> String? {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+    }
+
     private func upsertDailyCard(_ card: SidecarEvent.MissionCard.DailyCard) {
-        if let currentDay = dailyCards.first?.programDay, currentDay != card.programDay {
-            dailyCards = []
-        } else if let currentVersion = dailyCards.first?.sourceStateVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  let nextVersion = card.sourceStateVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !currentVersion.isEmpty,
-                  !nextVersion.isEmpty,
-                  currentVersion != nextVersion {
+        if dailyCards.contains(where: { $0.programDay != card.programDay }) {
             dailyCards = []
         }
-        if let sourceStateVersion = card.sourceStateVersion {
-            dailyCards.removeAll {
-                $0.programDay == card.programDay
-                    && $0.sourceStateVersion != sourceStateVersion
+        let nextVersion = normalizedDailyCardSourceStateVersion(card.sourceStateVersion)
+        dailyCards.removeAll { existing in
+            guard existing.programDay == card.programDay else { return false }
+            let existingVersion = normalizedDailyCardSourceStateVersion(existing.sourceStateVersion)
+            if let nextVersion {
+                return existingVersion != nextVersion
             }
+            return existingVersion != nil
         }
         dailyCards.removeAll { $0.stableID == card.stableID }
         dailyCards.append(card)
@@ -13181,12 +13182,13 @@ final class AgenticViewModel: ObservableObject {
             )
             return
         }
-        center.removePendingNotificationRequests(withIdentifiers: managedIdentifiers)
         guard await localNotificationAuthorizationGranted(center: center) else { return }
 
+        var desiredIdentifiers = Set<String>()
         var scheduledIdentifiers: [String] = []
         for request in requests {
             guard let dateComponents = request.localDateComponents else { continue }
+            desiredIdentifiers.insert(request.identifier)
             let content = UNMutableNotificationContent()
             content.title = request.notificationTitle
             if let body = request.notificationBody {
@@ -13216,6 +13218,10 @@ final class AgenticViewModel: ObservableObject {
                     authSession: macAuthSession
                 )
             }
+        }
+        let obsoleteIdentifiers = managedIdentifiers.filter { !desiredIdentifiers.contains($0) }
+        if !obsoleteIdentifiers.isEmpty {
+            center.removePendingNotificationRequests(withIdentifiers: obsoleteIdentifiers)
         }
 
         PostHogTelemetry.capture(
@@ -14784,98 +14790,20 @@ struct SidecarEvent: Decodable {
                 case programScoreboardSnapshot = "program_scoreboard_snapshot"
                 case revenueOrActivationGate = "revenue_or_activation_gate"
             }
-            enum SourceState: Decodable, Equatable {
+            enum SourceState: String, Decodable, Equatable {
                 case ready
                 case missing
                 case stale
-                case manualProofRequired
+                case manualProofRequired = "manual_proof_required"
                 case rejected
-                case unknown(String)
-
-                var rawValue: String {
-                    switch self {
-                    case .ready:
-                        return "ready"
-                    case .missing:
-                        return "missing"
-                    case .stale:
-                        return "stale"
-                    case .manualProofRequired:
-                        return "manual_proof_required"
-                    case .rejected:
-                        return "rejected"
-                    case .unknown(let value):
-                        return value
-                    }
-                }
-
-                init(from decoder: Decoder) throws {
-                    let container = try decoder.singleValueContainer()
-                    let value = try container.decode(String.self)
-                    switch value {
-                    case "ready":
-                        self = .ready
-                    case "missing":
-                        self = .missing
-                    case "stale":
-                        self = .stale
-                    case "manual_proof_required":
-                        self = .manualProofRequired
-                    case "rejected":
-                        self = .rejected
-                    default:
-                        self = .unknown(value)
-                    }
-                }
             }
-            enum ResolutionReason: Decodable, Equatable {
-                case notSent
-                case messageNotReady
-                case channelBlocked
-                case wrongCandidate
-                case candidateExhausted
-                case replacedByNextCandidate
-                case unknown(String)
-
-                var rawValue: String {
-                    switch self {
-                    case .notSent:
-                        return "not_sent"
-                    case .messageNotReady:
-                        return "message_not_ready"
-                    case .channelBlocked:
-                        return "channel_blocked"
-                    case .wrongCandidate:
-                        return "wrong_candidate"
-                    case .candidateExhausted:
-                        return "candidate_exhausted"
-                    case .replacedByNextCandidate:
-                        return "replaced_by_next_candidate"
-                    case .unknown(let value):
-                        return value
-                    }
-                }
-
-                init(from decoder: Decoder) throws {
-                    let container = try decoder.singleValueContainer()
-                    let value = try container.decode(String.self)
-                    switch value {
-                    case "not_sent":
-                        self = .notSent
-                    case "message_not_ready":
-                        self = .messageNotReady
-                    case "channel_blocked":
-                        self = .channelBlocked
-                    case "wrong_candidate":
-                        self = .wrongCandidate
-                    case "candidate_exhausted":
-                        self = .candidateExhausted
-                    case "replaced_by_next_candidate":
-                        self = .replacedByNextCandidate
-                    default:
-                        self = .unknown(value)
-                    }
-                }
+            enum ResolutionReason: String, Decodable, Equatable {
+                case notSent = "not_sent"
+                case messageNotReady = "message_not_ready"
+                case channelBlocked = "channel_blocked"
+                case wrongCandidate = "wrong_candidate"
+                case candidateExhausted = "candidate_exhausted"
+                case replacedByNextCandidate = "replaced_by_next_candidate"
             }
             struct Generation: Decodable, Equatable {
                 let signalId: String
@@ -14911,6 +14839,16 @@ struct SidecarEvent: Decodable {
                     guard !entries.isEmpty else {
                         throw DailyCard.corrupted(decoder, code: "ERR_INVALID_PROOF_MAPPING", message: "proofLedgerMapping must be non-empty")
                     }
+                    let allowed: [String: Set<String>] = [
+                        "self_report": ["officeHoursResolution.negativeEvidenceOnly"],
+                        "self-report": ["officeHoursResolution.negativeEvidenceOnly"],
+                        "customer_screenshot": ["customerEvidence.acceptedProof"],
+                        "paymentIntent": ["firstRevenue.learningSignal"],
+                        "paymentRecord": ["firstRevenue.acceptedProof"],
+                        "first_value": ["activeUsers100.acceptedProof"],
+                        "signup": ["activeUsers100.excludedCount"],
+                        "visitor": ["activeUsers100.excludedCount"],
+                    ]
                     for (source, destination) in entries {
                         if source == "self_report" || source == "self-report",
                            destination != "officeHoursResolution.negativeEvidenceOnly" {
@@ -14918,6 +14856,13 @@ struct SidecarEvent: Decodable {
                                 decoder,
                                 code: "ERR_SELF_REPORT_COUNTED_AS_PROOF",
                                 message: "self-report cannot count as proof"
+                            )
+                        }
+                        guard allowed[source]?.contains(destination) == true else {
+                            throw DailyCard.corrupted(
+                                decoder,
+                                code: "ERR_INVALID_PROOF_MAPPING",
+                                message: "invalid proof mapping \(source) -> \(destination)"
                             )
                         }
                     }

@@ -2225,12 +2225,8 @@ struct SidecarEventDecodingTests {
         try assertSidecarEventDecodeFails(Self.v2MalformedWorkpackPayload, code: "ERR_MALFORMED_AGENT_WORKPACK")
     }
 
-    @MainActor @Test func decodesV2DailyCardFutureProofMapping() throws {
-        let event = try decoder.decode(SidecarEvent.self, from: Data(Self.v2InvalidProofMappingPayload.utf8))
-        let dailyCard = Self.mirrorChild("dailyCard", in: event.missionCard)
-
-        #expect(event.type == "mission_card")
-        #expect(dailyCard != nil)
+    @MainActor @Test func rejectsV2DailyCardInvalidProofMapping() throws {
+        try assertSidecarEventDecodeFails(Self.v2InvalidProofMappingPayload, code: "ERR_INVALID_PROOF_MAPPING")
     }
 
     @MainActor @Test func viewModelStoresOrderedV2DailyCards() throws {
