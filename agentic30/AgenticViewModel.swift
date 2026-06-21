@@ -3856,7 +3856,10 @@ final class AgenticViewModel: ObservableObject {
             answersByQuestionID: [:]
         )
         var draft = state.answersByQuestionID[question.id] ?? StructuredPromptAnswerDraft()
-        if question.allowFreeText == true || question.requiresFreeText == true {
+        let supportsFreeText = question.allowFreeText == true
+            || question.requiresFreeText == true
+            || question.options?.isEmpty != false
+        if supportsFreeText {
             draft.selectedOptions.removeAll()
         }
         state.answersByQuestionID[question.id] = draft
@@ -13104,6 +13107,12 @@ final class AgenticViewModel: ObservableObject {
 
     private func upsertDailyCard(_ card: SidecarEvent.MissionCard.DailyCard) {
         if let currentDay = dailyCards.first?.programDay, currentDay != card.programDay {
+            dailyCards = []
+        } else if let currentVersion = dailyCards.first?.sourceStateVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let nextVersion = card.sourceStateVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !currentVersion.isEmpty,
+                  !nextVersion.isEmpty,
+                  currentVersion != nextVersion {
             dailyCards = []
         }
         if let sourceStateVersion = card.sourceStateVersion {

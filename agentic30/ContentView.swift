@@ -14418,9 +14418,7 @@ private struct OfficeHoursDailyCardEvidenceSheet: View {
                     )
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(
-                    locator.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
+                .disabled(locator.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("opendesign.officeHours.dailyCard.evidence.submit")
             }
         }
@@ -14697,7 +14695,7 @@ private struct OfficeHoursDailyGateCardView: View {
                         .foregroundStyle(OpenDesignOfficeHoursColor.rose)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if !gate.satisfied {
+                if !gate.satisfied && !gate.recoveryBranch.isEmpty {
                     HStack(spacing: 8) {
                         Text(gate.recoveryBranch)
                             .font(.system(size: 10, design: .monospaced))
