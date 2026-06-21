@@ -78,6 +78,7 @@ case "$mode" in
       -only-testing:agentic30UITests/agentic30UITests/testSettingsWorkspaceMainProjectMatchesOpenDesignPathRow \
       -only-testing:agentic30UITests/agentic30UITests/testAgentSettingsModelPickersSaveClaudeCodexAndGeminiModels \
       -only-testing:agentic30UITests/agentic30UITests/testWorkspaceStartupDay1RoutesToOfficeHours \
+      -only-testing:agentic30UITests/agentic30UITests/testOfficeHoursV2DailyCardStackOrdersCardsAndOpensStaleReplacementAction \
       -only-testing:agentic30UITests/agentic30UITests/testStrategyRailOpensStrategyBusinessCanvasScreenWithMatrixAndSections \
       -only-testing:agentic30UITests/agentic30UITests/testStrategyResearchRunsThroughSidecarAndPersistsCanonicalRunDiagnostics \
       -only-testing:agentic30UITests/agentic30UITests/testMorningBriefingRailOpensBriefingScreenWithAllSections \

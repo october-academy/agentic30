@@ -4,6 +4,16 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { atomicWriteJson, withFileLock } from "./atomic-store.mjs";
 import { resolveAgentic30MemoryDir } from "./news-market-radar.mjs";
+import {
+  OFFICE_HOURS_RESOLUTION_REASONS,
+  classifyStaleCommitments,
+  countRepeatCommitmentsWithoutEvidence,
+  normalizeCommitmentResolution,
+  normalizeReplacementCommitmentDraft,
+  normalizeResolutionReason,
+} from "./office-hours-memory-resolution.mjs";
+
+export { OFFICE_HOURS_RESOLUTION_REASONS, classifyStaleCommitments };
 
 // Office-Hours / interview memory — the "Cycle#N" cross-interview store.
 //
@@ -16,7 +26,7 @@ import { resolveAgentic30MemoryDir } from "./news-market-radar.mjs";
 // impossible to hide. See memory project_office_hours_day_memory.
 //
 // Schema bumps require a canonical normalization test (office-hours-memory.test.mjs).
-export const OFFICE_HOURS_MEMORY_SCHEMA_VERSION = 3;
+export const OFFICE_HOURS_MEMORY_SCHEMA_VERSION = 4;
 export const OFFICE_HOURS_MEMORY_SCHEMA = "agentic30.office_hours_memory.v1";
 
 // Caps — no unbounded growth (curriculum-answer-log convention).
@@ -32,7 +42,7 @@ export const MAX_FIELD_CHARS = 500;
 // with zero hard evidence is surfaced by name as displacement ("costume").
 export const ABANDONED_THREAD_CYCLES = 2;
 
-const COMMITMENT_STATUSES = new Set(["open", "met", "missed", "abandoned", "carried_forward"]);
+const COMMITMENT_STATUSES = new Set(["open", "met", "missed", "abandoned", "carried_forward", "resolved_without_evidence"]);
 const ACTIVE_DEBT_STATUSES = new Set(["open", "missed"]);
 const PREDICTION_VERDICTS = new Set(["unresolved", "correct", "incorrect", "partial"]);
 const CYCLE_OUTCOMES = new Set(["success", "abort", "blocked"]); // abort|blocked == GATE HELD (a win).
@@ -117,9 +127,104 @@ export async function appendCommitment({
       expectedEvidenceKind: structured.expectedEvidenceKind,
       dueDay: structured.dueDay,
       confirmedByUser: structured.confirmedByUser,
+      candidateName: structured.candidateName,
+      actionKind: structured.actionKind,
+      actionText: structured.actionText,
+      repeatCountWithoutEvidence: 0,
+      resolution: null,
     };
     memory.commitments = [...memory.commitments, commitment];
     return persistOfficeHoursMemory({ workspaceRoot, memory, now });
+  });
+}
+
+export async function resolveCommitmentWithoutEvidence({
+  workspaceRoot,
+  commitmentId,
+  reason,
+  note,
+  originText,
+  nextCommitment,
+  cycle,
+  day,
+  now = new Date(),
+} = {}) {
+  assertWorkspace(workspaceRoot, "office_hours_memory_resolve_commitment_without_evidence");
+  assertUserOrigin(originText, "resolveCommitmentWithoutEvidence");
+  const cleanedReason = normalizeResolutionReason(reason);
+  if (!cleanedReason) {
+    throw typedError(
+      `resolveCommitmentWithoutEvidence: invalid resolution reason "${String(reason ?? "")}".`,
+      "ERR_INVALID_RESOLUTION_REASON",
+    );
+  }
+  const replacementDraft = cleanedReason === "replaced_by_next_candidate"
+    ? normalizeReplacementCommitmentDraft(nextCommitment, {
+        cycle,
+        day,
+        now,
+        makeId,
+        maxCycleLedger: MAX_CYCLE_LEDGER,
+        maxFieldChars: MAX_FIELD_CHARS,
+        evidenceKinds: EVIDENCE_KINDS,
+      })
+    : null;
+  if (cleanedReason === "replaced_by_next_candidate" && !replacementDraft) {
+    throw typedError(
+      "resolveCommitmentWithoutEvidence: replaced_by_next_candidate requires nextCommitment.",
+      "ERR_REPLACE_CANDIDATE_MISSING_NEXT_COMMITMENT",
+    );
+  }
+
+  const id = cleanString(commitmentId, 180);
+  if (!id) throw new Error("resolveCommitmentWithoutEvidence requires commitmentId.");
+  const filePath = resolveOfficeHoursMemoryPath(workspaceRoot);
+  return withFileLock(filePath, async () => {
+    const memory = await loadOfficeHoursMemory({ workspaceRoot, now });
+    const target = memory.commitments.find((commitment) => commitment.id === id);
+    if (!target) throw new Error(`resolveCommitmentWithoutEvidence: unknown commitment "${id}".`);
+    if (target.status === "met" || target.evidence || target.status === "abandoned" || target.status === "resolved_without_evidence") {
+      throw typedError(
+        `resolveCommitmentWithoutEvidence: commitment "${id}" is already resolved.`,
+        "ERR_COMMITMENT_ALREADY_RESOLVED",
+      );
+    }
+
+    const repeatCount = countRepeatCommitmentsWithoutEvidence(memory.commitments, target);
+    target.status = "resolved_without_evidence";
+    target.evidence = null;
+    target.repeatCountWithoutEvidence = Math.max(
+      clampInt(target.repeatCountWithoutEvidence, 0, MAX_COMMITMENTS, 0),
+      repeatCount,
+      1,
+    );
+    target.resolution = {
+      reason: cleanedReason,
+      source: "self_report",
+      note: cleanString(note, MAX_FIELD_CHARS),
+      resolvedAt: now.toISOString(),
+      countsAsCustomerEvidence: false,
+    };
+
+    let replacement = null;
+    if (replacementDraft) {
+      replacement = {
+        ...replacementDraft,
+        sourceCommitmentId: target.id,
+        carriedForwardTo: "",
+      };
+      memory.commitments = [...memory.commitments, replacement];
+    }
+
+    const persisted = await persistOfficeHoursMemory({ workspaceRoot, memory, now });
+    return {
+      memory: persisted,
+      commitment: persisted.commitments.find((commitment) => commitment.id === target.id) ?? target,
+      replacement: replacement
+        ? persisted.commitments.find((commitment) => commitment.id === replacement.id) ?? replacement
+        : null,
+      resolved: true,
+    };
   });
 }
 
@@ -232,6 +337,11 @@ export async function carryForwardCommitment({
       expectedEvidenceKind: EVIDENCE_KINDS.has(expected) ? expected : "",
       dueDay: clampInt(targetDay + 1, 1, 400, targetDay),
       confirmedByUser: target.confirmedByUser !== false,
+      candidateName: cleanString(target.candidateName || target.customer, MAX_FIELD_CHARS),
+      actionKind: cleanToken(target.actionKind),
+      actionText: cleanString(target.actionText || target.message || text, MAX_FIELD_CHARS),
+      repeatCountWithoutEvidence: 0,
+      resolution: null,
       sourceCommitmentId: target.id,
       carriedForwardTo: "",
     };
@@ -1059,13 +1169,14 @@ function normalizeCommitment(value = {}, { now = new Date() } = {}) {
   if (!text) return null;
   const cycle = clampInt(value.cycle, 1, MAX_CYCLE_LEDGER * 4, 1);
   const structured = normalizeCommitmentFields(value, { fallbackDueDay: null });
+  const status = COMMITMENT_STATUSES.has(value.status) ? value.status : "open";
   return {
     id: cleanString(value.id, 180) || makeId("cm", cycle, text, now),
     cycle,
     createdDay: clampInt(value.createdDay, 1, 400, cycle),
     createdAt: normalizeIsoDate(value.createdAt, now),
     text,
-    status: COMMITMENT_STATUSES.has(value.status) ? value.status : "open",
+    status,
     evidence: normalizeEvidence(value.evidence, { now }),
     // Load trusts the local file by design: the user-origin gate's threat model is
     // MODEL/TOOL fabrication at append time, not the human who owns this workspace.
@@ -1076,6 +1187,11 @@ function normalizeCommitment(value = {}, { now = new Date() } = {}) {
     expectedEvidenceKind: structured.expectedEvidenceKind,
     dueDay: structured.dueDay,
     confirmedByUser: structured.confirmedByUser,
+    candidateName: structured.candidateName,
+    actionKind: structured.actionKind,
+    actionText: structured.actionText,
+    repeatCountWithoutEvidence: clampInt(value.repeatCountWithoutEvidence ?? value.repeat_count_without_evidence, 0, MAX_COMMITMENTS, 0),
+    resolution: normalizeCommitmentResolution(value.resolution, { now }),
     sourceCommitmentId: cleanString(value.sourceCommitmentId ?? value.source_commitment_id, 180),
     carriedForwardTo: cleanString(value.carriedForwardTo ?? value.carried_forward_to, 180),
   };
@@ -1121,7 +1237,11 @@ function normalizeCommitmentFields(value = {}, { fallbackDueDay = null } = {}) {
   const customer = cleanString(input.customer, MAX_FIELD_CHARS);
   const channel = cleanString(input.channel, 80);
   const message = cleanString(input.message, MAX_FIELD_CHARS);
-  const hasExplicitStructuredDraft = ["customer", "channel", "message", "expectedEvidenceKind", "expected_evidence_kind", "dueDay", "due_day", "confirmedByUser", "confirmed_by_user"]
+  const candidateName = cleanString(input.candidateName ?? input.candidate_name ?? customer, MAX_FIELD_CHARS);
+  const actionKind = cleanToken(input.actionKind ?? input.action_kind);
+  const rawActionText = input.actionText ?? input.action_text;
+  const actionText = cleanString(rawActionText !== undefined ? rawActionText : (message || input.text), MAX_FIELD_CHARS);
+  const hasExplicitStructuredDraft = ["customer", "channel", "message", "expectedEvidenceKind", "expected_evidence_kind", "dueDay", "due_day", "confirmedByUser", "confirmed_by_user", "candidateName", "candidate_name", "actionKind", "action_kind", "actionText", "action_text"]
     .some((key) => Object.prototype.hasOwnProperty.call(input, key));
   const rawConfirmed = input.confirmedByUser ?? input.confirmed_by_user;
   return {
@@ -1131,6 +1251,9 @@ function normalizeCommitmentFields(value = {}, { fallbackDueDay = null } = {}) {
     expectedEvidenceKind: EVIDENCE_KINDS.has(expected) ? expected : "",
     dueDay: due,
     confirmedByUser: rawConfirmed === undefined ? true : rawConfirmed === true,
+    candidateName,
+    actionKind,
+    actionText,
     hasExplicitStructuredDraft,
   };
 }
@@ -1167,6 +1290,11 @@ function commitmentToReviewRecord(commitment = {}) {
     confirmedByUser: commitment.confirmedByUser !== false,
     status: COMMITMENT_STATUSES.has(commitment.status) ? commitment.status : "open",
     evidence,
+    candidateName: cleanString(commitment.candidateName || commitment.customer, MAX_FIELD_CHARS),
+    actionKind: cleanToken(commitment.actionKind),
+    actionText: cleanString(commitment.actionText || commitment.message || commitment.text, MAX_FIELD_CHARS),
+    repeatCountWithoutEvidence: clampInt(commitment.repeatCountWithoutEvidence, 0, MAX_COMMITMENTS, 0),
+    resolution: normalizeCommitmentResolution(commitment.resolution),
   };
 }
 
@@ -1312,6 +1440,12 @@ function assertUserOrigin(originText, fnName) {
   if (!text) {
     throw new Error(`${fnName}: user-origin gate — originText (the founder's own words) is required.`);
   }
+}
+
+function typedError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
 }
 
 function makeId(prefix, cycle, text, now) {

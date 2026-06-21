@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
+<!-- Generated: 2026-06-20 | Commit: 6f0fc7e | Branch: main -->
 
 # scripts
 
@@ -24,6 +24,7 @@ Build, release, sync, preflight, safety, and reporting scripts wired through `pa
 - Bash release scripts should fail fast and keep env-var validation near the top.
 - `build-sidecar.mjs` must be idempotent outside `sidecar-build/`.
 - When `build-sidecar.mjs` entry points change, update the Xcode "Build Sidecar Bundle" Run Script `inputPaths`.
+- `preflight-bundle.mjs` fails explicitly when the bundle entry, Node runtime, or bundled Codex CLI is missing.
 - Git hooks are opt-in local config via `npm run hooks:install`; do not assume they are installed.
 
 ## ANTI-PATTERNS
@@ -31,6 +32,7 @@ Build, release, sync, preflight, safety, and reporting scripts wired through `pa
 - Do not weaken `xcode-test.sh`'s local UI E2E approval gate.
 - Do not add release scripts that silently skip signing/notarization/Sparkle validation.
 - Do not store credentials, app-store keys, R2 keys, or signing material in the repo.
+- Do not make public-safety, alignment-leak, or secret scans recover silently; expose the blocking path or pattern.
 
 ## TESTS
 ```bash

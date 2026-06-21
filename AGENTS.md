@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
+<!-- Generated: 2026-06-20 | Commit: 6f0fc7e | Branch: main -->
 
 # PROJECT KNOWLEDGE BASE: agentic30-public
 
@@ -16,7 +16,9 @@ agentic30-public/
 ├── sidecar-tests/          # node:test integration suite
 ├── sidecar-evals/          # dogfood evaluator and fixtures
 ├── scripts/                # build, release, sync, preflight, test wrappers
+├── ci_scripts/             # Xcode Cloud post-clone/pre-xcodebuild hooks
 ├── docs/                   # product, specs, diagnostics, release docs
+├── mockups/                # static IA/design HTML prototypes; not app source
 └── .github/                # workflows, PR template, issue templates
 ```
 
@@ -36,18 +38,20 @@ agentic30-public/
 | Sidecar tests | `sidecar-tests/` | `node:test`, deterministic fakes |
 | Dogfood eval | `sidecar-evals/` | Offline by default; live mode env-gated |
 | Release / CI | `scripts/`, `.github/workflows/` | PKG primary, DMG fallback, Sparkle update archive |
+| Xcode Cloud hooks | `ci_scripts/` | Node availability and optional signing-team injection |
+| Static prototypes | `mockups/` | Standalone IA/design HTML; do not wire into runtime blindly |
 
 ## CODE MAP
 | Symbol | Type | Location | Refs | Role |
 |--------|------|----------|------|------|
-| `agentic30App` | Swift `@main` struct | `agentic30/agentic30App.swift:26` | LSP | App process entry |
-| `AppDelegate` | Swift class | `agentic30/agentic30App.swift:81` | LSP | App lifecycle, updater, workspace window |
-| `SidecarBridge` | Swift class | `agentic30/SidecarBridge.swift:31` | LSP | Launches Node, authenticates WebSocket, decodes events |
-| `AgenticViewModel` | Swift class | `agentic30/AgenticViewModel.swift:2233` | LSP | Observable app state and command dispatcher |
-| `SidecarEvent` | Swift struct | `agentic30/AgenticViewModel.swift:12224` | LSP | Swift decoder for sidecar event envelope |
+| `agentic30App` | Swift `@main` struct | `agentic30/agentic30App.swift:26` | rg | App process entry |
+| `AppDelegate` | Swift class | `agentic30/agentic30App.swift:81` | rg | App lifecycle, updater, workspace window |
+| `SidecarBridge` | Swift class | `agentic30/SidecarBridge.swift:31` | rg | Launches Node, authenticates WebSocket, decodes events |
+| `AgenticViewModel` | Swift class | `agentic30/AgenticViewModel.swift:2702` | rg | Observable app state and command dispatcher |
+| `SidecarEvent` | Swift struct | `agentic30/AgenticViewModel.swift:13785` | rg | Swift decoder for sidecar event envelope |
 | `index.mjs` | Node entry | `sidecar/index.mjs` | rg | WebSocket daemon and sidecar lifetime owner |
 | `runDogfoodSimulation` | Node export | `sidecar-evals/dogfood-simulation.mjs:33` | rg | Dogfood evaluator runner |
-| `build-sidecar.mjs` | Node script | `scripts/build-sidecar.mjs` | rg | Bundles Node entry points into app distribution |
+| `ENTRY_POINTS` | Node const | `scripts/build-sidecar.mjs:43` | rg | Bundled sidecar entry-point list for app distribution |
 
 ## CONVENTIONS
 - Swift uses an Xcode project layout, not SwiftPM. Add files to the proper target membership when needed.
@@ -55,6 +59,7 @@ agentic30-public/
 - There is no repo-level ESLint, Prettier, EditorConfig, SwiftLint, or SwiftFormat config. Follow local style and tests.
 - Sidecar stateful subsystems persist versioned JSON under the selected workspace's `.agentic30/`; schema bumps require migration coverage.
 - Release distribution is Developer ID signed/notarized PKG first, DMG fallback, plus Sparkle appcast. Mac App Store and App Sandbox are intentionally out of scope.
+- `CLAUDE.md` mirrors cross-cutting guidance for Claude Code; closest `AGENTS.md` remains the directory-scoped source for agents.
 
 ## ANTI-PATTERNS
 - Do not edit `sidecar/vendor/` directly. It is synced from upstream by `scripts/sync-gstack.mjs`.
@@ -80,6 +85,7 @@ AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full
 
 ## NOTES
 - Build, cache, local state, and artifact directories can exist in the checkout (`build/`, `sidecar-build/`, `sidecar-evals/.artifacts/`, `.agentic30/`, `.omo/`, `.omc/`, `.omx/`, `Library/`, `_workspace/`). Do not score or document them as source modules.
+- Local tool/config folders such as `.agents/`, `.claude/`, `.codex/`, `.gstack/`, `.codegraph/`, and root scratch reports are not app/sidecar modules unless tracked and explicitly wired.
 - Bridge-contract edits need both Swift and sidecar tests: `npm run test:sidecar` and `npm run test:swift:unit`.
 - Live provider canaries are opt-in behind `AGENTIC30_RUN_LIVE_PROVIDER_*=1` and related credential env vars.
 - Public-safety and secret scans are part of the normal contribution surface: `npm run check:public-safety`, optional `npm run scan:secrets:gh`.

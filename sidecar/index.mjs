@@ -169,7 +169,10 @@ import {
   ensureChallengeStart,
   loadDayProgress,
   makeDefaultDayProgress,
+  normalizeDayProgress,
   patchDayStep,
+  resolveDayProgressPath,
+  resolveOfficeHoursWorkedDay,
   setDayActiveStep,
 } from "./day-progress-state.mjs";
 import {
@@ -185,12 +188,18 @@ import {
 import { judgeActionEvidence } from "./action-evidence-judge.mjs";
 import { buildMissionCardEvent } from "./mission-card.mjs";
 import {
+  emitProgramV2DailyCards,
+  handleOfficeHoursDailyCardSubmit,
+  programV2Enabled,
+} from "./program-v2-runtime.mjs";
+import {
   buildInterventionContextBlock,
   buildInterventionRequiredEvent,
   interventionTriggerForGate,
   issueInterventionTokenForCommitment,
 } from "./oh-intervention.mjs";
 import { resolveInterventionPrompt } from "./oh-intervention-prompts.mjs";
+import { buildProgramNotificationSchedule } from "./curriculum-notification-scheduler.mjs";
 import {
   isNewCommitmentBlockedByAr17,
   labelAdaptiveRuleEvent,
@@ -405,7 +414,6 @@ import {
 } from "./structured-input-tools.mjs";
 import {
   buildOfficeHoursInterviewAnswerLogAttributes,
-  buildOfficeHoursIncompleteInterviewMessage,
   buildOfficeHoursInlineStructuredPromptPayload,
   buildOfficeHoursStructuredQuestionTranscriptText,
   buildOfficeHoursStructuredInputContinuationPrompt,
@@ -1050,6 +1058,7 @@ function registerAuthenticatedClient(socket) {
     day1GoalSelection: state.day1GoalSelection,
     dayProgress: state.dayProgress,
   });
+  void emitProgramNotificationSchedule(socket, workspaceRoot);
   scheduleQmdMemoryBootstrap();
 
   socket.on("message", async (raw) => {
@@ -1449,7 +1458,14 @@ async function handleClientMessage(socket, payload) {
         }
         throw new Error("This session is waiting for structured input.");
       }
-      if (session.runtime?.officeHours?.active === true && !session.error) {
+      if (
+        session.runtime?.officeHours?.active === true
+        && !session.error
+        && (
+          session.runtime.officeHours.completedByExpectedCount === true
+          || session.runtime.officeHours.terminalAnswered === true
+        )
+      ) {
         await broadcastOfficeHoursStartNoop(session);
         return;
       }
@@ -1549,6 +1565,18 @@ async function handleClientMessage(socket, payload) {
         },
       });
 
+      const staleRevisionRequestIds = new Set([
+        requestId,
+        ...revision.removedTurns
+          .map((turn) => String(turn?.requestId || "").trim())
+          .filter(Boolean),
+      ]);
+      await Promise.allSettled(
+        [...staleRevisionRequestIds].map(async (staleRequestId) => {
+          await deleteUserInputArtifacts(appSupportPath, session.id, staleRequestId);
+          state.resolvedUserInputIds.add(staleRequestId);
+        }),
+      );
       session.messages = [];
       session.pendingUserInput = null;
       if (session.runtime?.officeHours) {
@@ -1564,6 +1592,11 @@ async function handleClientMessage(socket, payload) {
         };
       }
       refreshOfficeHoursRuntimePromptSnapshotsFromTurns(session, revision.payload.turns);
+      await clearOfficeHoursPendingQuestionForSession(
+        session,
+        "",
+        "answer_revised",
+      );
       session.status = "idle";
       session.error = null;
       touch(session);
@@ -2413,6 +2446,24 @@ async function handleClientMessage(socket, payload) {
         success: accepted,
         status: judgment.status,
         message: judgment.miniActionSuggestion || judgment.agentAssessment,
+      });
+      return;
+    }
+    case "office_hours_daily_card_submit": {
+      const root = resolveDay1GoalWorkspaceRoot(payload);
+      const result = await handleOfficeHoursDailyCardSubmit({
+        payload,
+        workspaceRoot: root,
+        appSupportPath,
+        env: process.env,
+      });
+      send(socket, result);
+      await emitProgramV2DailyCards({
+        workspaceRoot: root,
+        day: payload.day ?? payload.programDay ?? payload.program_day,
+        appSupportPath,
+        env: process.env,
+        broadcast,
       });
       return;
     }
@@ -3583,6 +3634,7 @@ async function handleDay1GoalSave(socket, payload = {}) {
           evidenceOS: await loadOfficeHoursEvidenceOS(root, updated, currentDay),
           dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, currentDay),
         });
+        await emitProgramNotificationSchedule(socket, root, { broadcastToAll: true });
       }
     } catch (progressError) {
       telemetry.captureException(progressError, {
@@ -3624,6 +3676,7 @@ async function handleDayProgressGet(socket, payload = {}) {
     evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
     dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, currentDay),
   });
+  await emitProgramNotificationSchedule(socket, root);
 }
 
 // Compact office-hours memory summary for the additive `officeHoursMemory` field on the
@@ -3694,6 +3747,65 @@ async function loadOfficeHoursDayClosePolicy(root, currentDay = null) {
   });
 }
 
+async function buildProgramNotificationScheduleForWorkspace(root, now = new Date()) {
+  const resolvedRoot = path.resolve(root || workspaceRoot);
+  const activeWorkspace = resolvedRoot === path.resolve(workspaceRoot);
+  const dayProgress = (activeWorkspace ? state.dayProgress : null)
+    ?? await loadDayProgress({ workspaceRoot: resolvedRoot }).catch(() => null);
+  const currentDay = dayProgress
+    ? resolveOfficeHoursWorkedDay({ progress: dayProgress, now }).workedDay
+    : null;
+  if (!currentDay) {
+    return buildProgramNotificationSchedule({ now });
+  }
+
+  const [gateLedger, memory] = await Promise.all([
+    loadGateLedger({ workspaceRoot: resolvedRoot }),
+    loadOfficeHoursMemory({ workspaceRoot: resolvedRoot }),
+  ]);
+  return buildProgramNotificationSchedule({
+    gates: gateLedger?.gates ?? {},
+    commitments: memory?.commitments ?? [],
+    currentDay,
+    lastSent: {},
+    now,
+  });
+}
+
+async function emitProgramNotificationSchedule(target, root, { broadcastToAll = false } = {}) {
+  if (!programV2Enabled()) return null;
+  const resolvedRoot = path.resolve(root || workspaceRoot);
+  try {
+    const schedule = await buildProgramNotificationScheduleForWorkspace(resolvedRoot);
+    const payload = {
+      type: "program_notification_schedule",
+      workspaceRoot: resolvedRoot,
+      programNotificationSchedule: schedule,
+    };
+    if (broadcastToAll) {
+      broadcast(payload);
+    } else {
+      send(target, payload);
+    }
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "program_notification_schedule",
+      workspace_root: resolvedRoot,
+    });
+    const payload = {
+      type: "program_notification_schedule",
+      workspaceRoot: resolvedRoot,
+      success: false,
+      error: formatError(error),
+    };
+    if (broadcastToAll) {
+      broadcast(payload);
+    } else {
+      send(target, payload);
+    }
+  }
+}
+
 async function loadOfficeHoursUnavailableSources(root) {
   try {
     const raw = JSON.parse(await fs.readFile(resolveDailyOfficeHoursDigestPath(root), "utf8"));
@@ -3757,6 +3869,7 @@ async function sendOfficeHoursEvidenceState(socket, root, { broadcastToAll = tru
   } else {
     send(socket, payload);
   }
+  await emitProgramNotificationSchedule(socket, root, { broadcastToAll });
 }
 
 async function handleOfficeHoursCommitmentEvidence(socket, payload = {}) {
@@ -4074,6 +4187,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
         step_id: String(stepId || ""),
         workspace_basename: path.basename(root),
       });
+      await emitProgramNotificationSchedule(socket, root);
       return;
     }
     // §13.4: a commitment closing an intervention session issues the gate's
@@ -4128,6 +4242,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
         evidenceOS: await loadOfficeHoursEvidenceOS(root, current, ar17CurrentDay),
         dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, ar17CurrentDay),
       });
+      await emitProgramNotificationSchedule(socket, root);
       return;
     }
     if (gate.mode === "commit" && pendingIntervention) {
@@ -4268,6 +4383,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
           message: buildGateBlockedMessage(gateCheck.gate),
           dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, blockedCurrentDay),
         });
+        await emitProgramNotificationSchedule(socket, root);
         if (gateCheck.stateChanged) {
           telemetry.captureEvent("mac_sidecar_gate_blocked", {
             gate_id: gateCheck.gate.gateId,
@@ -4378,6 +4494,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
       evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
       dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, currentDay),
     });
+    await emitProgramNotificationSchedule(socket, root, { broadcastToAll: true });
     // §11.0/§17.2: entering the execution step loads the day's IDD mission as a
     // mission_card. Emission points: a Day 2+ interview close (execution becomes
     // the active surface) or an explicit non-done execution-step patch. Emission
@@ -4389,14 +4506,25 @@ async function handleDayProgressPatch(socket, payload = {}) {
     );
     if (executionEntered) {
       try {
-        const gateLedger = gateLedgerAfterSubstitution ?? await loadGateLedger({ workspaceRoot: root });
-        const missionCard = buildMissionCardEvent({
-          workspaceRoot: root,
-          day: missionDay,
-          gateEvaluation: gateCheck?.evaluation ?? null,
-          substitutions: gateLedger.substitutions,
-        });
-        if (missionCard) broadcast(missionCard);
+        if (programV2Enabled()) {
+          await emitProgramV2DailyCards({
+            workspaceRoot: root,
+            day: missionDay,
+            gateEvaluation: gateCheck?.evaluation ?? null,
+            appSupportPath,
+            env: process.env,
+            broadcast,
+          });
+        } else {
+          const gateLedger = gateLedgerAfterSubstitution ?? await loadGateLedger({ workspaceRoot: root });
+          const missionCard = buildMissionCardEvent({
+            workspaceRoot: root,
+            day: missionDay,
+            gateEvaluation: gateCheck?.evaluation ?? null,
+            substitutions: gateLedger.substitutions,
+          });
+          if (missionCard) broadcast(missionCard);
+        }
       } catch (missionError) {
         telemetry.captureException(missionError, {
           operation: "mission_card_emit",
@@ -5976,7 +6104,7 @@ function sendOfficeHoursSourceGate(socket, { sessionId = null, gate } = {}) {
   }
 }
 
-function buildOfficeHoursRuntime(context = "", source = "manual", day = null, selectedSources = []) {
+function buildOfficeHoursRuntime(context = "", source = "manual", day = null, selectedSources = [], metadata = {}) {
   const normalizedDay = normalizeOfficeHoursDay(day);
   const runtime = {
     active: true,
@@ -5985,6 +6113,10 @@ function buildOfficeHoursRuntime(context = "", source = "manual", day = null, se
     context: clampOfficeHoursContext(stripOfficeHoursResumePreambleBlocks(context)),
   };
   if (normalizedDay) runtime.day = normalizedDay;
+  const calendarDay = normalizeOfficeHoursDay(metadata.calendarDay);
+  if (calendarDay) runtime.calendarDay = calendarDay;
+  const workedDayReason = String(metadata.workedDayReason || "").trim();
+  if (workedDayReason) runtime.workedDayReason = workedDayReason;
   const normalizedSelectedSources = normalizeOfficeHoursSelectedSources(selectedSources);
   if (normalizedSelectedSources.length) runtime.selectedSources = normalizedSelectedSources;
   return runtime;
@@ -7180,17 +7312,88 @@ async function runMorningBriefingExternalDigestAttempt({ gate, provider, externa
   return { ok: true, timedOut: false, text: externalText, failureDetail: "" };
 }
 
-// Day-less Office Hours starts (fresh slash-command or button sessions) must not
-// silently skip the Day 2+ source gate and daily digest: fall back to the
-// challenge-elapsed day. Fail-open: null keeps the legacy day-less behavior.
+// Elapsed calendar day stays metadata. Day-less Office Hours starts use the
+// worked day resolver below so returning users resume unfinished work instead
+// of skipping ahead across calendar gaps.
 async function challengeElapsedOfficeHoursDay() {
+  const resolved = await challengeOfficeHoursDayResolution();
+  return resolved?.calendarDay ?? null;
+}
+
+async function challengeWorkedOfficeHoursDay() {
+  const resolved = await challengeOfficeHoursDayResolution();
+  return resolved?.workedDay ?? null;
+}
+
+async function loadDayProgressForOfficeHoursDayResolution() {
+  if (state.dayProgress) return state.dayProgress;
+  if (!workspaceRoot) return null;
+  const filePath = resolveDayProgressPath(workspaceRoot);
+  let raw;
   try {
-    const dayProgress = state.dayProgress ?? (await loadDayProgress({ workspaceRoot }));
-    if (!dayProgress) return null;
-    return normalizeOfficeHoursDay(computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }));
-  } catch {
-    return null;
+    raw = await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw new Error(`Unable to load day-progress for Office Hours worked-day resolution (${filePath}): ${formatError(error)}`, {
+      cause: error,
+    });
   }
+  try {
+    return normalizeDayProgress(JSON.parse(raw));
+  } catch (error) {
+    throw new Error(`Unable to parse day-progress for Office Hours worked-day resolution (${filePath}): ${formatError(error)}`, {
+      cause: error,
+    });
+  }
+}
+
+async function challengeOfficeHoursDayResolution() {
+  try {
+    const dayProgress = await loadDayProgressForOfficeHoursDayResolution();
+    if (!dayProgress) return null;
+    const resolved = resolveOfficeHoursWorkedDay({ progress: dayProgress });
+    return {
+      calendarDay: normalizeOfficeHoursDay(resolved?.calendarDay),
+      workedDay: normalizeOfficeHoursDay(resolved?.workedDay),
+      reason: String(resolved?.reason || "").trim(),
+    };
+  } catch (error) {
+    throw new Error(`Office Hours worked-day resolution failed: ${formatError(error)}`, {
+      cause: error,
+    });
+  }
+}
+
+async function failOfficeHoursWorkedDayResolution(session, { runKey, error } = {}) {
+  const message = formatError(error);
+  reportError(error, {
+    operation: "office_hours_worked_day_resolution",
+    session_id: session.id,
+    provider: session.provider,
+  });
+  const activeRun = state.activeRuns.get(session.id);
+  if (activeRun?.runKey === runKey) {
+    state.activeRuns.delete(session.id);
+  }
+  session.status = "error";
+  session.error = message;
+  session.pendingUserInput = null;
+  touch(session);
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
+  emitOfficeHoursStatus(session, {
+    stage: "failed",
+    detail: message,
+    progressText: message,
+  });
+  broadcast({
+    type: "error",
+    sessionId: session.id,
+    provider: session.provider,
+    message,
+    errorKind: "office_hours_day_resolution_failed",
+    recoverable: true,
+  });
 }
 
 // Cycle#N read-back: the prior interview's assignment + hard-evidence demand + costume
@@ -7606,6 +7809,30 @@ async function failDetachedOfficeHoursPendingSession(session = null, {
     });
   }
   const requestId = String(pending?.request?.requestId || "").trim();
+  if (!requestId) {
+    try {
+      const [turnLog, dayProgress] = await Promise.all([
+        loadOfficeHoursTurnLog({ workspaceRoot }),
+        Promise.resolve(state.dayProgress ?? loadDayProgress({ workspaceRoot })),
+      ]);
+      const resumeTurns = selectOfficeHoursResumeTurns({
+        turnLog,
+        day,
+        dayProgress,
+        source: session.runtime?.officeHours?.source || `office_hours_day_${day}`,
+      });
+      if (resumeTurns.length && isOfficeHoursInterviewActiveForDay(dayProgress, day)) {
+        return false;
+      }
+    } catch (error) {
+      telemetry.captureException(error, {
+        operation: "office_hours_detached_continuation_check",
+        session_id: session.id,
+        day,
+        reason,
+      });
+    }
+  }
   const failureReason = requestId ? "detached_pending_request" : "detached_without_pending_request";
   const message = formatOfficeHoursPendingStateFailure(failureReason, { requestId });
   session.pendingUserInput = null;
@@ -7658,6 +7885,7 @@ async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
   source = "",
   context = "",
   selectedSources = [],
+  runtimeMetadata = {},
   runKey = "",
 } = {}) {
   const day = normalizeOfficeHoursDay(runtimeDay);
@@ -7699,17 +7927,6 @@ async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
   });
 
   if (!pending) {
-    if (resumeTurns.length && shouldSeedOfficeHoursResumeTranscript(session)) {
-      await failOfficeHoursPendingQuestionState(session, {
-        runKey,
-        day,
-        source,
-        context,
-        selectedSources,
-        reason: "pending_snapshot_missing",
-      });
-      return true;
-    }
     return false;
   }
 
@@ -7781,7 +7998,7 @@ async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
     return true;
   }
 
-  const restoredRuntime = buildOfficeHoursRuntime(context, source, day, selectedSources);
+  const restoredRuntime = buildOfficeHoursRuntime(context, source, day, selectedSources, runtimeMetadata);
   const expected = parseExpectedOfficeHoursQuestionCount(restoredRuntime.context);
   if (expected > 0) {
     restoredRuntime.expectedQuestionCount = expected;
@@ -7919,6 +8136,17 @@ async function detectIncompleteOfficeHoursInterview(session, context) {
   return { expected: progress.expected, answered: progress.answered };
 }
 
+function formatOfficeHoursNoNextQuestionMessage(incomplete = {}, error = null) {
+  const rootCause = error ? String(formatError(error) || "").trim() : "";
+  if (rootCause) return rootCause;
+  const expected = Number.parseInt(String(incomplete.expected ?? ""), 10);
+  const answered = Number.parseInt(String(incomplete.answered ?? ""), 10);
+  if (Number.isFinite(expected) && expected > 0 && Number.isFinite(answered) && answered >= 0) {
+    return `Office Hours 다음 질문을 만들지 못했습니다. 인터뷰가 질문 ${expected}개 중 ${answered}개만 진행하고 종료했습니다. 다시 시도해 주세요.`;
+  }
+  return "Office Hours 다음 질문을 만들지 못했습니다. 다시 시도해 주세요.";
+}
+
 // An interview that stops early is an explicit failure, not a completion: the
 // Mac client has no free-chat fallback for an idle office-hours session, so an
 // early stop must land in the error state (failure block + retry) instead of
@@ -7927,8 +8155,9 @@ function failOfficeHoursIncompleteInterview(session, assistantMessage, {
   incomplete,
   runStartedAt,
   source,
+  error = null,
 }) {
-  const message = buildOfficeHoursIncompleteInterviewMessage(incomplete);
+  const message = formatOfficeHoursNoNextQuestionMessage(incomplete, error);
   assistantMessage.state = "error";
   assistantMessage.error = message;
   if (!assistantMessage.content) {
@@ -7954,6 +8183,8 @@ function failOfficeHoursIncompleteInterview(session, assistantMessage, {
     type: "error",
     sessionId: session.id,
     message,
+    errorKind: "office_hours_no_next_question",
+    recoverable: true,
   });
 }
 
@@ -8150,28 +8381,47 @@ async function runOfficeHours(session, {
     },
   });
 
+  let runtimeDayResolution = null;
+  try {
+    runtimeDayResolution = await challengeOfficeHoursDayResolution();
+  } catch (error) {
+    await failOfficeHoursWorkedDayResolution(session, { runKey, error });
+    return;
+  }
   const runtimeDay = normalizeOfficeHoursDay(day)
     || normalizeOfficeHoursDay(session.runtime?.officeHours?.day)
-    || (await challengeElapsedOfficeHoursDay());
+    || normalizeOfficeHoursDay(runtimeDayResolution?.workedDay);
+  const officeHoursRuntimeMetadata = {
+    calendarDay: runtimeDayResolution?.calendarDay,
+    workedDayReason: runtimeDayResolution?.reason,
+  };
   const normalizedSelectedSources = normalizeOfficeHoursSelectedSources(selectedSources);
-  // Past-day starts are timeline snapshot views, not interviews. The Day
-  // timeline scopes the live Office Hours screen by day and the Mac auto-start
-  // fires for whichever day-scoped session it lands on, so without this gate a
-  // Day-2+ launch viewing Day 1 RESUMED the unfinished Day-1 interview — a
-  // provider run generating a brand-new question on a closed day. Rebuild the
-  // read-only transcript from that day's turn log and settle idle instead.
-  // Placed BEFORE the Day 2+ source gate so viewing a past Day 2+ never
-  // surfaces a source-gate error. Fail-open: an unknown elapsed day keeps the
-  // legacy behavior, and current-day relaunches keep the resume path below.
+  if (await restoreOfficeHoursPendingQuestionIfAvailable(session, {
+    runtimeDay,
+    source,
+    context,
+    selectedSources: normalizedSelectedSources,
+    runtimeMetadata: officeHoursRuntimeMetadata,
+    runKey,
+  })) {
+    return;
+  }
+  // Completed past-day starts are timeline snapshot views, not interviews. The
+  // Day timeline scopes the live Office Hours screen by day and the Mac
+  // auto-start fires for whichever day-scoped session it lands on, so without
+  // this gate a Day-2+ launch viewing a closed day resumed the interview and
+  // generated a brand-new question. Active incomplete interviews are excluded:
+  // they must keep the pending restore / answered-turn continuation path.
   let officeHoursPastDaySnapshot = false;
   try {
     if (process.env.AGENTIC30_TEST_OFFICE_HOURS_PAST_DAY_SNAPSHOT_CHECK_FAILURE === "1") {
       throw new Error("Synthetic Office Hours past-day snapshot check failure");
     }
+    const snapshotDayProgress = state.dayProgress ?? (await loadDayProgress({ workspaceRoot }));
     officeHoursPastDaySnapshot = isPastOfficeHoursSnapshotDay({
       day: runtimeDay,
       elapsedDay: await challengeElapsedOfficeHoursDay(),
-    });
+    }) && !isOfficeHoursInterviewActiveForDay(snapshotDayProgress, runtimeDay);
   } catch (error) {
     reportError(error, {
       operation: "office_hours_past_day_snapshot_check",
@@ -8206,7 +8456,7 @@ async function runOfficeHours(session, {
     // hiding/dedup. Skipped when the session already carries real answer rows
     // (same-daemon re-tap) so turns are never duplicated.
     const snapshotSeeded = seedOfficeHoursTranscriptFromTurns(session, snapshotTurns);
-    const snapshotRuntime = buildOfficeHoursRuntime(context, source, runtimeDay);
+    const snapshotRuntime = buildOfficeHoursRuntime(context, source, runtimeDay, [], officeHoursRuntimeMetadata);
     const snapshotExpectedCount = parseExpectedOfficeHoursQuestionCount(snapshotRuntime.context);
     if (snapshotExpectedCount > 0) {
       snapshotRuntime.expectedQuestionCount = snapshotExpectedCount;
@@ -8245,15 +8495,6 @@ async function runOfficeHours(session, {
     if (snapshotRun?.runKey === runKey) {
       state.activeRuns.delete(session.id);
     }
-    return;
-  }
-  if (await restoreOfficeHoursPendingQuestionIfAvailable(session, {
-    runtimeDay,
-    source,
-    context,
-    selectedSources: normalizedSelectedSources,
-    runKey,
-  })) {
     return;
   }
   // Completed current-day (or otherwise day-scoped) interviews are snapshots
@@ -8298,7 +8539,7 @@ async function runOfficeHours(session, {
     }
     if (completedSnapshotTurns.length) {
       const completedSnapshotSeeded = seedOfficeHoursTranscriptFromTurns(session, completedSnapshotTurns);
-      const completedRuntime = buildOfficeHoursRuntime(context, source, runtimeDay, normalizedSelectedSources);
+      const completedRuntime = buildOfficeHoursRuntime(context, source, runtimeDay, normalizedSelectedSources, officeHoursRuntimeMetadata);
       const completedExpectedCount = parseExpectedOfficeHoursQuestionCount(completedRuntime.context);
       if (completedExpectedCount > 0) {
         completedRuntime.expectedQuestionCount = completedExpectedCount;
@@ -8408,7 +8649,7 @@ async function runOfficeHours(session, {
     throw new Error(authState.message);
   }
   await ensureDay2OfficeHoursInterviewProgress({ day: runtimeDay, context });
-  const officeHoursRuntime = buildOfficeHoursRuntime(context, source, runtimeDay, normalizedSelectedSources);
+  const officeHoursRuntime = buildOfficeHoursRuntime(context, source, runtimeDay, normalizedSelectedSources, officeHoursRuntimeMetadata);
   const visiblePrompt = String(originalPrompt || "Office Hours").trim() || "Office Hours";
   const runStartedAt = performance.now();
   const assistantMessage = makeMessage({
@@ -8432,10 +8673,9 @@ async function runOfficeHours(session, {
       };
     }
 
-    // Same-process resume support (answer revision / retry). Relaunch
-    // hydration from answered turns without a pending question snapshot is
-    // handled before the provider path and fails explicitly; do not use this
-    // block as a startup fallback.
+    // Same-process retry and relaunch continuation support. After a user
+    // answers a card, the pending snapshot is intentionally cleared, so an
+    // active incomplete interview must continue from durable answered turns.
     let officeHoursResumeTurns = [];
     try {
       officeHoursResumeTurns = selectOfficeHoursResumeTurns({
@@ -8466,21 +8706,6 @@ async function runOfficeHours(session, {
       // the "Expected question count" line surviving the head-keeping 16k clamp
       // after the cycle/resume preambles are prepended.
       officeHoursRuntime.expectedQuestionCount = officeHoursExpectedQuestionCount;
-    }
-    if (
-      officeHoursResumeTurns.length
-      && session.runtime?.officeHours?.active !== true
-      && shouldSeedOfficeHoursResumeTranscript(session)
-    ) {
-      await failOfficeHoursPendingQuestionState(session, {
-        runKey,
-        day: runtimeDay,
-        source,
-        context,
-        selectedSources: normalizedSelectedSources,
-        reason: "pending_snapshot_missing",
-      });
-      return;
     }
     // All questions already answered — the founder quit between the last answer
     // and the commitment close. The interview's only remaining work is the
@@ -13028,6 +13253,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
         agentic30Gitignore,
       });
+      await emitProgramNotificationSchedule(null, scanRoot, { broadcastToAll: true });
       triggerDay1AlignmentPlanBroadcast({
         scanRoot,
         deterministicPlan: day1AlignmentPlan,
@@ -13206,6 +13432,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
       agentic30Gitignore,
     });
+    await emitProgramNotificationSchedule(null, scanRoot, { broadcastToAll: true });
     triggerDay1AlignmentPlanBroadcast({
       scanRoot,
       deterministicPlan: day1AlignmentPlan,

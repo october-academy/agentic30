@@ -196,6 +196,8 @@ test("strategy report provider JSON schema preserves competitor bounds", () => {
     "adaptiveScore",
     "evidenceScore",
     "sourceLabel",
+    "sourceURL",
+    "sourceDisplay",
     "scoreRationale",
     "isAgentic30",
   ]);
@@ -754,6 +756,93 @@ test("strategy report normalizes competitor score scales into 0-100 matrix coord
       },
       { adaptiveScore: 40, evidenceScore: 50, x: 0.4, y: 0.5 },
     );
+  });
+});
+
+test("strategy report fills cached competitor source URLs from strategy data hints", async () => {
+  await withTmpWorkspace(async (root) => {
+    const strategyDir = path.join(root, "docs", "strategy");
+    await fs.mkdir(strategyDir, { recursive: true });
+    await fs.writeFile(
+      path.join(strategyDir, "agentic30-business-strategy-data.md"),
+      [
+        "| Competitor | source | verifiedAt | evidenceType | publicSafeSummary | strategyImplication |",
+        "|---|---|---|---|---|---|",
+        "| Tekk | https://tekk.coach/ | 2026-06-18 | public_competitor | Codebase-first AI CTO/spec agent. | PMF evidence remains outside the loop. |",
+        "| pre.dev | https://pre.dev/ | 2026-06-18 | public_competitor | AI CTO/dev-team agent. | Evidence target is working software. |",
+      ].join("\n"),
+    );
+
+    const cachedReport = completeReport({
+      competitors: [
+        completeReport().competitors[0],
+        {
+          ...competitorFixture(2),
+          id: "tekk-coach",
+          title: "Tekk.coach",
+          sourceLabel: "후보 제공 Tekk.coach 요약",
+          sourceURL: "",
+          sourceDisplay: "",
+        },
+        {
+          ...competitorFixture(3),
+          id: "pre-dev",
+          title: "pre.dev",
+          sourceLabel: "후보 제공 Indie Hackers 요약",
+          sourceURL: "",
+          sourceDisplay: "",
+        },
+        {
+          ...competitorFixture(4),
+          id: "nanocorp",
+          title: "Nanocorp",
+          sourceLabel: "후보 제공 리뷰 요약",
+          sourceURL: "file:///tmp/nanocorp",
+          sourceDisplay: "nanocorp fixture",
+        },
+      ],
+    });
+    const cachePath = resolveStrategyReportCachePath(root);
+    await fs.mkdir(path.dirname(cachePath), { recursive: true });
+    await fs.writeFile(
+      cachePath,
+      JSON.stringify({
+        schemaVersion: 1,
+        updatedAt: "2026-06-21T00:00:00.000Z",
+        snapshot: {
+          schemaVersion: 1,
+          promptProfile: "ko_strategy_report_v1_three_pass_exa",
+          contentLocale: "ko-KR",
+          generatedAt: "2026-06-21T00:00:00.000Z",
+          nextRefreshAfter: "2026-06-22T00:00:00.000Z",
+          contextFingerprint: "cached-empty-url-fixture",
+          status: {
+            state: "ready",
+            stale: false,
+            error: null,
+            reason: "manual",
+          },
+          workspaceEvidenceRefs: [],
+          report: cachedReport,
+        },
+        rawProviderResult: null,
+      }),
+    );
+
+    const snapshot = await loadStrategyReportSnapshot({
+      workspaceRoot: root,
+      exaConfigured: true,
+      now: new Date("2026-06-21T01:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    const competitorsByID = new Map(snapshot.report.competitors.map((competitor) => [competitor.id, competitor]));
+    assert.equal(competitorsByID.get("tekk-coach").sourceURL, "https://tekk.coach/");
+    assert.equal(competitorsByID.get("tekk-coach").sourceDisplay, "tekk.coach");
+    assert.equal(competitorsByID.get("pre-dev").sourceURL, "https://pre.dev/");
+    assert.equal(competitorsByID.get("pre-dev").sourceDisplay, "pre.dev");
+    assert.equal(competitorsByID.get("nanocorp").sourceURL, "");
+    assert.equal(competitorsByID.get("nanocorp").sourceDisplay, "nanocorp fixture");
   });
 });
 

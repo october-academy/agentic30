@@ -181,6 +181,47 @@ struct SidecarEventDecodingTests {
         #expect(event.state == .streaming)
     }
 
+    @MainActor @Test func decodesProgramNotificationScheduleEvent() throws {
+        let payload = """
+        {
+          "type": "program_notification_schedule",
+          "workspaceRoot": "/repo",
+          "programNotificationSchedule": {
+            "schema": "agentic30.program.notification_schedule.v1",
+            "schema_version": 1,
+            "notifications": [
+              {
+                "identifier": "agentic30.program.gate-blocked-morning",
+                "title": "G4 게이트가 잠겨 있어",
+                "body": "필요한 증거 1개: 유료 ask 발송 증거",
+                "sound": "default",
+                "trigger": {
+                  "type": "local_calendar_time",
+                  "calendar": "local",
+                  "hour": 9,
+                  "minute": 0,
+                  "repeats": false
+                },
+                "userInfo": {
+                  "kind": "program_gate_blocked_morning",
+                  "gateId": "G4",
+                  "day": 15
+                }
+              }
+            ]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        let request = event.programNotificationSchedule?.validLocalNotificationRequests.first
+
+        #expect(event.type == "program_notification_schedule")
+        #expect(event.workspaceRoot == "/repo")
+        #expect(request?.identifier == "agentic30.program.gate-blocked-morning")
+        #expect(request?.notificationUserInfo["agentic30.program.notification.gateId"] as? String == "G4")
+    }
+
     @MainActor @Test func decodesOfficeHoursRuntimePromptSnapshots() throws {
         let payload = """
         {
@@ -1716,6 +1757,71 @@ struct SidecarEventDecodingTests {
         #expect(event.dayReviews == nil)
     }
 
+    @MainActor @Test func decodedDayProgressDerivesWorkedOfficeHoursDayAcrossCalendarGap() throws {
+        let unfinishedPayload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 10,
+          "dayProgress": {
+            "schemaVersion": 1,
+            "schema": "agentic30.day_progress.v1",
+            "challengeStartedAt": "2026-06-01",
+            "days": {
+              "1": {
+                "day": 1,
+                "kind": "day1",
+                "steps": {
+                  "onboarding": "done", "scan": "done", "goal": "done", "first_interview": "active"
+                },
+                "goalText": "먼저 도울 사람 정하기",
+                "updatedAt": "2026-06-01T10:00:00.000Z"
+              }
+            }
+          }
+        }
+        """
+        let donePayload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 10,
+          "dayProgress": {
+            "schemaVersion": 1,
+            "schema": "agentic30.day_progress.v1",
+            "challengeStartedAt": "2026-06-01",
+            "days": {
+              "1": {
+                "day": 1,
+                "kind": "day1",
+                "steps": {
+                  "onboarding": "done", "scan": "done", "goal": "done", "first_interview": "done"
+                },
+                "goalText": "먼저 도울 사람 정하기",
+                "updatedAt": "2026-06-01T10:00:00.000Z"
+              }
+            }
+          }
+        }
+        """
+        let calendarDay10 = Calendar(identifier: .gregorian).date(from: DateComponents(
+            timeZone: TimeZone.current,
+            year: 2026,
+            month: 6,
+            day: 10,
+            hour: 10
+        ))!
+
+        let unfinished = try decoder.decode(SidecarEvent.self, from: Data(unfinishedPayload.utf8))
+        #expect(unfinished.dayProgress?.currentDayNumber(now: calendarDay10) == 10)
+        #expect(unfinished.dayProgress?.officeHoursWorkedDay(now: calendarDay10) == 1)
+
+        let done = try decoder.decode(SidecarEvent.self, from: Data(donePayload.utf8))
+        #expect(done.dayProgress?.currentDayNumber(now: calendarDay10) == 10)
+        #expect(done.dayProgress?.officeHoursWorkedDay(now: calendarDay10) == 2)
+        #expect(done.dayProgress?.record(forDay: 10) == nil)
+    }
+
     @MainActor @Test func decodesDayProgressStateWithDayReviews() throws {
         let payload = """
         {
@@ -2047,6 +2153,313 @@ struct SidecarEventDecodingTests {
         #expect(event.missionCard?.mission?.substituted == true)
         #expect(event.missionCard?.mission?.substitutionReason == "G4_failed")
         #expect(event.missionCard?.evidenceSpec == nil)
+    }
+
+    @MainActor @Test func decodesV2StateTransitionDailyCard() throws {
+        let event = try decoder.decode(SidecarEvent.self, from: Data(Self.v2StateTransitionPayload.utf8))
+        let dailyCard = Self.mirrorChild("dailyCard", in: event.missionCard)
+
+        #expect(event.type == "mission_card")
+        #expect(event.missionCard?.day == 14)
+        #expect(Self.mirrorChild("stateTransition", in: dailyCard) != nil)
+        #expect(Self.mirrorChild("sourceState", in: dailyCard).map(String.init(describing:))?.contains("stale") == true)
+        #expect(Self.mirrorChild("proofLedgerMapping", in: dailyCard) != nil)
+        #expect(Self.mirrorChild("choices", in: Self.mirrorChild("stateTransition", in: dailyCard)).map { Mirror(reflecting: $0).children.count } == 4)
+    }
+
+    @MainActor @Test func decodesV2AgentWorkpackDailyCard() throws {
+        let event = try decoder.decode(SidecarEvent.self, from: Data(Self.v2WorkpackPayload.utf8))
+        let dailyCard = Self.mirrorChild("dailyCard", in: event.missionCard)
+        let workpackCard = Self.mirrorChild("agentWorkpack", in: dailyCard)
+        let workpack = Self.mirrorChild("workpack", in: workpackCard)
+
+        #expect(event.missionCard?.day == 14)
+        #expect(Self.mirrorChild("sourceState", in: dailyCard).map(String.init(describing:))?.contains("ready") == true)
+        #expect(Self.mirrorChild("targetExternalAction", in: workpack) as? String == "Send one paid ask DM with price, outcome, and deadline.")
+        #expect(Self.mirrorChild("notProof", in: workpack).map { Mirror(reflecting: $0).children.count } == 2)
+        #expect(Self.mirrorChild("proofLedgerMapping", in: dailyCard) != nil)
+    }
+
+    @MainActor @Test func decodesV2ProgramScoreboardSnapshotDailyCard() throws {
+        let event = try decoder.decode(SidecarEvent.self, from: Data(Self.v2ScoreboardPayload.utf8))
+        let dailyCard = Self.mirrorChild("dailyCard", in: event.missionCard)
+        let scoreboard = Self.mirrorChild("scoreboard", in: dailyCard)
+        let scoreboards = Self.mirrorChild("scoreboards", in: scoreboard)
+        let activeUsers100 = Self.mirrorChild("activeUsers100", in: scoreboards)
+
+        #expect(event.missionCard?.day == 21)
+        #expect(Self.mirrorChild("acceptedCount", in: activeUsers100) as? Int == 7)
+        #expect(Self.mirrorChild("excludedCounts", in: activeUsers100) != nil)
+        #expect(Self.mirrorChild("sourceState", in: activeUsers100).map(String.init(describing:))?.contains("ready") == true)
+    }
+
+    @MainActor @Test func decodesV2RevenueOrActivationGateDailyCard() throws {
+        let event = try decoder.decode(SidecarEvent.self, from: Data(Self.v2GatePayload.utf8))
+        let dailyCard = Self.mirrorChild("dailyCard", in: event.missionCard)
+        let gateCard = Self.mirrorChild("gateCard", in: dailyCard)
+
+        #expect(event.missionCard?.day == 14)
+        #expect(Self.mirrorChild("gate", in: gateCard).map(String.init(describing:))?.contains("G4") == true)
+        #expect(Self.mirrorChild("satisfied", in: gateCard) as? Bool == false)
+        #expect(Self.mirrorChild("blockingReasons", in: gateCard).map { Mirror(reflecting: $0).children.count } == 2)
+        #expect(Self.mirrorChild("nextCardType", in: gateCard).map(String.init(describing:))?.contains("office_hours_agent_workpack") == true)
+    }
+
+    @MainActor @Test func rejectsV2DailyCardSelfReportProofMapping() throws {
+        try assertSidecarEventDecodeFails(Self.v2SelfReportProofPayload, code: "ERR_SELF_REPORT_COUNTED_AS_PROOF")
+    }
+
+    @MainActor @Test func rejectsV2DailyCardMissingSourceState() throws {
+        try assertSidecarEventDecodeFails(Self.v2MissingSourceStatePayload, code: "ERR_MISSING_SOURCE_STATE")
+    }
+
+    @MainActor @Test func rejectsV2DailyCardUnknownCardType() throws {
+        let payload = Self.v2WorkpackPayload.replacingOccurrences(
+            of: #""type": "office_hours_agent_workpack""#,
+            with: #""type": "program_magic_card""#
+        )
+        try assertSidecarEventDecodeFails(payload, code: "ERR_UNKNOWN_CARD_TYPE")
+    }
+
+    @MainActor @Test func rejectsV2DailyCardMalformedWorkpack() throws {
+        try assertSidecarEventDecodeFails(Self.v2MalformedWorkpackPayload, code: "ERR_MALFORMED_AGENT_WORKPACK")
+    }
+
+    @MainActor @Test func rejectsV2DailyCardInvalidProofMapping() throws {
+        try assertSidecarEventDecodeFails(Self.v2InvalidProofMappingPayload, code: "ERR_INVALID_PROOF_MAPPING")
+    }
+
+    @MainActor @Test func viewModelStoresOrderedV2DailyCards() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        let stateEvent = try decoder.decode(SidecarEvent.self, from: Data(Self.v2StateTransitionPayload.utf8))
+        let workpackEvent = try decoder.decode(SidecarEvent.self, from: Data(Self.v2WorkpackPayload.utf8))
+
+        viewModel.applySidecarEventForTesting(workpackEvent)
+        viewModel.applySidecarEventForTesting(stateEvent)
+
+        #expect(viewModel.dailyCards.count == 2)
+        #expect(viewModel.dailyCards.first?.stateTransition != nil)
+        #expect(viewModel.dailyCards.last?.agentWorkpack != nil)
+    }
+
+    @MainActor @Test func repairV2DailyCardRefreshReplacesSameLogicalCardWhenSourceStateVersionChanges() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        let firstPayload = Self.v2WorkpackPayload
+            .replacingOccurrences(
+                of: #""schemaVersion": 1,"#,
+                with: #""id": "office_hours_agent_workpack:14:commitment_14:state-v1", "schemaVersion": 1,"#
+            )
+            .replacingOccurrences(
+                of: #""sourceState": "ready","#,
+                with: #""sourceState": "ready", "sourceStateVersion": "state-v1","#
+            )
+        let refreshedPayload = Self.v2WorkpackPayload
+            .replacingOccurrences(
+                of: #""schemaVersion": 1,"#,
+                with: #""id": "office_hours_agent_workpack:14:commitment_14:state-v2", "schemaVersion": 1,"#
+            )
+            .replacingOccurrences(
+                of: #""sourceState": "ready","#,
+                with: #""sourceState": "ready", "sourceStateVersion": "state-v2","#
+            )
+
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(firstPayload.utf8)))
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(refreshedPayload.utf8)))
+
+        #expect(viewModel.dailyCards.count == 1)
+        #expect(viewModel.dailyCards.first?.sourceStateVersion == "state-v2")
+        #expect(viewModel.dailyCards.first?.id == "office_hours_agent_workpack:14:commitment_14:state-v2")
+    }
+
+    @MainActor @Test func repairV2DailyCardRefreshDropsCardsMissingFromNewSourceStateVersion() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        let stalePayload = Self.v2StateTransitionPayloadWithGeneration
+            .replacingOccurrences(
+                of: #""sourceStateVersion": "state-transition-v1""#,
+                with: #""sourceStateVersion": "state-v1""#
+            )
+        let firstWorkpackPayload = Self.v2WorkpackPayload
+            .replacingOccurrences(
+                of: #""schemaVersion": 1,"#,
+                with: #""id": "office_hours_agent_workpack:14:commitment_14:state-v1", "schemaVersion": 1,"#
+            )
+            .replacingOccurrences(
+                of: #""sourceState": "ready","#,
+                with: #""sourceState": "ready", "sourceStateVersion": "state-v1","#
+            )
+        let refreshedWorkpackPayload = Self.v2WorkpackPayload
+            .replacingOccurrences(
+                of: #""schemaVersion": 1,"#,
+                with: #""id": "office_hours_agent_workpack:14:commitment_14:state-v2", "schemaVersion": 1,"#
+            )
+            .replacingOccurrences(
+                of: #""sourceState": "ready","#,
+                with: #""sourceState": "ready", "sourceStateVersion": "state-v2","#
+            )
+
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(stalePayload.utf8)))
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(firstWorkpackPayload.utf8)))
+        #expect(viewModel.dailyCards.count == 2)
+
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(refreshedWorkpackPayload.utf8)))
+
+        #expect(viewModel.dailyCards.count == 1)
+        #expect(viewModel.dailyCards.first?.sourceStateVersion == "state-v2")
+        #expect(viewModel.dailyCards.first?.agentWorkpack != nil)
+        #expect(viewModel.dailyCards.contains { $0.stateTransition != nil } == false)
+    }
+
+    @MainActor @Test func repairV2DailyCardClearsLegacyExecutionMissionCard() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        let legacyEvent = try decoder.decode(SidecarEvent.self, from: Data(Self.legacyMissionCardPayload.utf8))
+        let dailyCardEvent = try decoder.decode(SidecarEvent.self, from: Data(Self.v2WorkpackPayload.utf8))
+
+        viewModel.applySidecarEventForTesting(legacyEvent)
+        viewModel.applySidecarEventForTesting(dailyCardEvent)
+
+        #expect(viewModel.executionMissionCard == nil)
+        #expect(viewModel.dailyCards.count == 1)
+        #expect(viewModel.dailyCards.first?.agentWorkpack != nil)
+    }
+
+    @MainActor @Test func v2DailyCardRefreshPrunesCardsFromOlderSourceStateVersion() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        let statePayload = Self.v2StateTransitionPayload
+            .replacingOccurrences(
+                of: #""schemaVersion": 1,"#,
+                with: #""id": "office_hours_state_transition:14:commitment_14:state-v1", "schemaVersion": 1,"#
+            )
+            .replacingOccurrences(
+                of: #""sourceState": "stale","#,
+                with: #""sourceState": "stale", "sourceStateVersion": "state-v1","#
+            )
+        let refreshedWorkpackPayload = Self.v2WorkpackPayload
+            .replacingOccurrences(
+                of: #""schemaVersion": 1,"#,
+                with: #""id": "office_hours_agent_workpack:14:commitment_14:state-v2", "schemaVersion": 1,"#
+            )
+            .replacingOccurrences(
+                of: #""sourceState": "ready","#,
+                with: #""sourceState": "ready", "sourceStateVersion": "state-v2","#
+            )
+
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(statePayload.utf8)))
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(refreshedWorkpackPayload.utf8)))
+
+        #expect(viewModel.dailyCards.count == 1)
+        #expect(viewModel.dailyCards.first?.type == .officeHoursAgentWorkpack)
+        #expect(viewModel.dailyCards.first?.sourceStateVersion == "state-v2")
+    }
+
+    @MainActor @Test func repairV2DailyCardDayChangeClearsPreviousDayCards() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        let day14Event = try decoder.decode(SidecarEvent.self, from: Data(Self.v2WorkpackPayload.utf8))
+        let day21Event = try decoder.decode(SidecarEvent.self, from: Data(Self.v2ScoreboardPayload.utf8))
+
+        viewModel.applySidecarEventForTesting(day14Event)
+        viewModel.applySidecarEventForTesting(day21Event)
+
+        #expect(viewModel.dailyCards.count == 1)
+        #expect(viewModel.dailyCards.first?.programDay == 21)
+        #expect(viewModel.dailyCards.first?.scoreboard != nil)
+    }
+
+    @MainActor @Test func repairTodo8ReplacementActionRequiresNonEmptyNextCandidateAndNextAction() throws {
+        let sidecar = Todo8DailyCardCapturingSidecar()
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, sidecar: sidecar)
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/product")
+        let card = try dailyCard(Self.v2StateTransitionPayloadWithGeneration)
+
+        let missingCandidate = OfficeHoursDailyCardPresentation.replacementCandidate(
+            candidateName: " ",
+            actionText: "Send the paid ask"
+        )
+        let missingAction = OfficeHoursDailyCardPresentation.replacementCandidate(
+            candidateName: "Next Candidate",
+            actionText: "\n"
+        )
+        let submitted = viewModel.submitOfficeHoursDailyCard(
+            card,
+            action: "replace_candidate",
+            choiceId: "replace_candidate",
+            resolutionReason: "replaced_by_next_candidate",
+            replacementCandidate: missingCandidate?.payload
+        )
+
+        #expect(missingCandidate == nil)
+        #expect(missingAction == nil)
+        #expect(submitted == false)
+        #expect(sidecar.sentPayloads.isEmpty)
+    }
+
+    @MainActor @Test func repairTodo8ReplacementPayloadUsesNewInputNotCurrentStaleCardValues() throws {
+        let sidecar = Todo8DailyCardCapturingSidecar()
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, sidecar: sidecar)
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/product")
+        let card = try dailyCard(Self.v2StateTransitionPayloadWithGeneration)
+        let replacement = try #require(OfficeHoursDailyCardPresentation.replacementCandidate(
+            candidateName: "Next Candidate",
+            actionText: "Send a paid ask with a deadline"
+        ))
+
+        let submitted = viewModel.submitOfficeHoursDailyCard(
+            card,
+            action: "replace_candidate",
+            choiceId: "replace_candidate",
+            resolutionReason: "replaced_by_next_candidate",
+            replacementCandidate: replacement.payload
+        )
+        let payload = try #require(sidecar.sentPayloads.first)
+        let candidate = try #require(payload["replacementCandidate"] as? [String: Any])
+
+        #expect(submitted == true)
+        #expect(candidate["candidateName"] as? String == "Next Candidate")
+        #expect(candidate["actionText"] as? String == "Send a paid ask with a deadline")
+        #expect(candidate["candidateName"] as? String != card.stateTransition?.candidateName)
+        #expect(candidate["actionText"] as? String != card.stateTransition?.actionText)
+    }
+
+    @MainActor @Test func repairTodo8ScoreboardBucketsDoNotDoubleCountLearningInsideExcluded() throws {
+        let card = try dailyCard(Self.v2ScoreboardPayload)
+        let activeUsers100 = try #require(card.scoreboard?.scoreboards.activeUsers100)
+        let buckets = OfficeHoursDailyCardPresentation.scoreboardBuckets(for: activeUsers100)
+
+        #expect(buckets.accepted == 7)
+        #expect(buckets.excluded == 1422)
+        #expect(buckets.learning == 3)
+        #expect(buckets.excluded != 1425)
+    }
+
+    @MainActor @Test func repairTodo8DailyCardOrderingActionsAndSelfReportCopyUseObservablePresenter() throws {
+        let unordered = [
+            try dailyCard(Self.v2ScoreboardPayload),
+            try dailyCard(Self.v2WorkpackPayload),
+            try dailyCard(Self.v2StateTransitionPayload),
+            try dailyCard(Self.v2GatePayload),
+        ]
+        let orderedTypes = OfficeHoursDailyCardPresentation.orderedCards(unordered).map(\.type)
+        let stateActions = OfficeHoursDailyCardPresentation.actionIDs(for: unordered[2])
+        let workpackActions = OfficeHoursDailyCardPresentation.actionIDs(for: unordered[1])
+        let gateActions = OfficeHoursDailyCardPresentation.actionIDs(for: unordered[3])
+
+        let expectedTypes: [SidecarEvent.MissionCard.DailyCard.CardType] = [
+            .officeHoursStateTransition,
+            .officeHoursAgentWorkpack,
+            .programScoreboardSnapshot,
+            .revenueOrActivationGate,
+        ]
+        #expect(orderedTypes == expectedTypes)
+        #expect(stateActions == [
+            "attach_evidence",
+            "resolve_without_evidence",
+            "replace_candidate",
+            "keep_open_today",
+        ])
+        #expect(workpackActions == ["attach_evidence"])
+        #expect(gateActions == ["gate_recovery"])
+        #expect(OfficeHoursDailyCardPresentation.selfReportResolutionCopy == "자기 보고 해소는 고객 증거나 매출 진전으로 세지 않음")
+        #expect(!OfficeHoursDailyCardPresentation.selfReportResolutionCopy.contains("고객 증거로 인정"))
+        #expect(!OfficeHoursDailyCardPresentation.selfReportResolutionCopy.contains("매출 진전으로 인정"))
     }
 
     @MainActor @Test func decodesOfficeHoursInterventionRequiredEvent() throws {
@@ -3917,5 +4330,400 @@ struct SidecarEventDecodingTests {
             return date
         }
         return decoder
+    }
+
+    private static func mirrorChild(_ label: String, in value: Any?) -> Any? {
+        guard let value = unwrapOptional(value) else { return nil }
+        for child in Mirror(reflecting: value).children where child.label == label {
+            return unwrapOptional(child.value)
+        }
+        return nil
+    }
+
+    private static func unwrapOptional(_ value: Any?) -> Any? {
+        guard let value else { return nil }
+        let mirror = Mirror(reflecting: value)
+        guard mirror.displayStyle == .optional else { return value }
+        return mirror.children.first.map(\.value)
+    }
+
+    private func assertSidecarEventDecodeFails(_ payload: String, code: String) throws {
+        do {
+            _ = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+            Issue.record("Expected \(code) decoding failure")
+        } catch {
+            #expect(String(describing: error).contains(code))
+        }
+    }
+
+    private func dailyCard(_ payload: String) throws -> SidecarEvent.MissionCard.DailyCard {
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        return try #require(event.missionCard?.dailyCard)
+    }
+
+    private static let legacyMissionCardPayload = """
+    {
+      "type": "mission_card",
+      "workspaceRoot": "/Users/october/prj/myapp",
+      "missionCard": {
+        "schemaVersion": 1,
+        "day": 9,
+        "source": "idd",
+        "mission": {
+          "day": 9,
+          "title": "입력→처리→출력 흐름을 고정한다",
+          "shortTitle": "Input Flow",
+          "summary": "사용자가 바로 써볼 수 있게 입력, 처리, 결과 화면을 한 번에 지나가게 만든다.",
+          "tasks": ["첫 입력 포맷 1개만 선택", "처리 실패와 빈 입력 폴백 작성", "결과 화면까지 30초 이내인지 재기"],
+          "output": "input-process-output flow",
+          "dayType": "action",
+          "phase": "build",
+          "curriculumWeek": 2,
+          "substituted": false,
+          "substitutionReason": "",
+          "exitCondition": ""
+        },
+        "evidenceSpec": {
+          "evidenceRequired": true,
+          "artifact": "input-process-output flow",
+          "allowedEvidenceTypes": ["link", "file"],
+          "minimumStrength": "medium",
+          "completionSignal": "증거 제출 후 판정이 accepted 또는 verified가 되어야 합니다."
+        },
+        "gateContext": {
+          "day": 9,
+          "blockingGateId": null,
+          "states": { "G1": "passed", "G2": "passed", "G4": "locked" }
+        },
+        "generatedAt": "2026-06-12T09:00:00.000Z"
+      }
+    }
+    """
+
+    private static let v2StateTransitionPayload = """
+    {
+      "type": "mission_card",
+      "workspaceRoot": "/tmp/product",
+      "missionCard": {
+        "type": "office_hours_state_transition",
+        "schemaVersion": 1,
+        "programDay": 14,
+        "generation": {
+          "signalId": "office-hours-state-transition",
+          "signalLabel": "Office Hours stale commitment"
+        },
+        "sourceState": "stale",
+        "requiresUserAction": true,
+        "proofLedgerMapping": {
+          "self_report": "officeHoursResolution.negativeEvidenceOnly",
+          "customer_screenshot": "customerEvidence.acceptedProof"
+        },
+        "commitmentId": "commitment_14",
+        "sourceCommitmentId": "commitment_14",
+        "candidateName": "Candidate A",
+        "actionText": "Request validation material by 18:00.",
+        "repeatCountWithoutEvidence": 2,
+        "choices": [
+          { "id": "attach_evidence", "label": "Attach evidence" },
+          { "id": "resolve_without_evidence", "label": "Resolve without evidence" },
+          { "id": "replace_candidate", "label": "Replace candidate" },
+          { "id": "keep_open_today", "label": "Keep open today" }
+        ],
+        "resolutionReasons": [
+          "not_sent",
+          "message_not_ready",
+          "channel_blocked",
+          "wrong_candidate",
+          "candidate_exhausted",
+          "replaced_by_next_candidate"
+        ]
+      }
+    }
+    """
+
+    private static let v2StateTransitionPayloadWithGeneration = """
+    {
+      "type": "mission_card",
+      "workspaceRoot": "/tmp/product",
+      "missionCard": {
+        "type": "office_hours_state_transition",
+        "schemaVersion": 1,
+        "programDay": 14,
+        "generation": {
+          "signalId": "office-hours-state-transition",
+          "signalLabel": "Office Hours stale commitment",
+          "generationId": "generation-state-transition"
+        },
+        "sourceState": "stale",
+        "sourceStateVersion": "state-transition-v1",
+        "requiresUserAction": true,
+        "proofLedgerMapping": {
+          "self_report": "officeHoursResolution.negativeEvidenceOnly",
+          "customer_screenshot": "customerEvidence.acceptedProof"
+        },
+        "commitmentId": "commitment_14",
+        "sourceCommitmentId": "commitment_14",
+        "candidateName": "Candidate A",
+        "actionText": "Request validation material by 18:00.",
+        "repeatCountWithoutEvidence": 2,
+        "choices": [
+          { "id": "attach_evidence", "label": "Attach evidence" },
+          { "id": "resolve_without_evidence", "label": "Resolve without evidence" },
+          { "id": "replace_candidate", "label": "Replace candidate" },
+          { "id": "keep_open_today", "label": "Keep open today" }
+        ],
+        "resolutionReasons": [
+          "not_sent",
+          "message_not_ready",
+          "channel_blocked",
+          "wrong_candidate",
+          "candidate_exhausted",
+          "replaced_by_next_candidate"
+        ]
+      }
+    }
+    """
+
+    private static let v2WorkpackPayload = """
+    {
+      "type": "mission_card",
+      "workspaceRoot": "/tmp/product",
+      "missionCard": {
+        "type": "office_hours_agent_workpack",
+        "schemaVersion": 1,
+        "programDay": 14,
+        "generation": {
+          "signalId": "office-hours-workpack",
+          "signalLabel": "Office Hours agent workpack"
+        },
+        "sourceState": "ready",
+        "requiresUserAction": true,
+        "proofLedgerMapping": {
+          "paymentIntent": "firstRevenue.learningSignal",
+          "paymentRecord": "firstRevenue.acceptedProof"
+        },
+        "sourceCommitmentId": "commitment_14",
+        "selectedLens": "service_planning",
+        "workpack": {
+          "id": "workpack_day_14_g4",
+          "workType": "offer/paid ask",
+          "targetExternalAction": "Send one paid ask DM with price, outcome, and deadline.",
+          "expectedProof": "Sent screenshot, sent time, recipient identifier, and reply text.",
+          "notProof": ["AI draft", "self-report that it will be sent"],
+          "owner": "founder",
+          "deadline": "2026-06-20T18:00:00+09:00"
+        }
+      }
+    }
+    """
+
+    private static let v2MalformedWorkpackPayload = """
+    {
+      "type": "mission_card",
+      "workspaceRoot": "/tmp/product",
+      "missionCard": {
+        "type": "office_hours_agent_workpack",
+        "schemaVersion": 1,
+        "programDay": 14,
+        "generation": {
+          "signalId": "office-hours-workpack",
+          "signalLabel": "Office Hours agent workpack"
+        },
+        "sourceState": "ready",
+        "requiresUserAction": true,
+        "proofLedgerMapping": {
+          "paymentIntent": "firstRevenue.learningSignal",
+          "paymentRecord": "firstRevenue.acceptedProof"
+        },
+        "selectedLens": "service_planning",
+        "workpack": {
+          "id": "workpack_day_14_g4",
+          "workType": "offer/paid ask",
+          "targetExternalAction": "",
+          "expectedProof": "Sent screenshot, sent time, recipient identifier, and reply text.",
+          "notProof": [],
+          "owner": "founder",
+          "deadline": "2026-06-20T18:00:00+09:00"
+        }
+      }
+    }
+    """
+
+    private static let v2MissingSourceStatePayload = """
+    {
+      "type": "mission_card",
+      "workspaceRoot": "/tmp/product",
+      "missionCard": {
+        "type": "office_hours_agent_workpack",
+        "schemaVersion": 1,
+        "programDay": 14,
+        "generation": {
+          "signalId": "office-hours-workpack",
+          "signalLabel": "Office Hours agent workpack"
+        },
+        "requiresUserAction": true,
+        "proofLedgerMapping": {
+          "paymentIntent": "firstRevenue.learningSignal",
+          "paymentRecord": "firstRevenue.acceptedProof"
+        },
+        "selectedLens": "service_planning",
+        "workpack": {
+          "id": "workpack_day_14_g4",
+          "workType": "offer/paid ask",
+          "targetExternalAction": "Send one paid ask DM with price, outcome, and deadline.",
+          "expectedProof": "Sent screenshot, sent time, recipient identifier, and reply text.",
+          "notProof": ["AI draft", "self-report that it will be sent"],
+          "owner": "founder",
+          "deadline": "2026-06-20T18:00:00+09:00"
+        }
+      }
+    }
+    """
+
+    private static let v2ScoreboardPayload = """
+    {
+      "type": "mission_card",
+      "workspaceRoot": "/tmp/product",
+      "missionCard": {
+        "type": "program_scoreboard_snapshot",
+        "schemaVersion": 1,
+        "programDay": 21,
+        "generation": {
+          "signalId": "program-scoreboard",
+          "signalLabel": "Program scoreboard"
+        },
+        "sourceState": "ready",
+        "requiresUserAction": false,
+        "proofLedgerMapping": {
+          "first_value": "activeUsers100.acceptedProof",
+          "paymentRecord": "firstRevenue.acceptedProof"
+        },
+        "scoreboards": {
+          "activeUsers100": {
+            "acceptedCount": 7,
+            "excludedCounts": {
+              "signup": 42,
+              "visitor": 1380,
+              "self-report": 3
+            },
+            "sourceState": "ready",
+            "nextUnblockAction": "activation friction fix workpack"
+          },
+          "firstRevenue": {
+            "acceptedCount": 0,
+            "sourceState": "manual_proof_required",
+            "nextUnblockAction": "offer/paid ask follow-up plan"
+          }
+        }
+      }
+    }
+    """
+
+    private static let v2SelfReportProofPayload = """
+    {
+      "type": "mission_card",
+      "workspaceRoot": "/tmp/product",
+      "missionCard": {
+        "type": "program_scoreboard_snapshot",
+        "schemaVersion": 1,
+        "programDay": 21,
+        "generation": {
+          "signalId": "program-scoreboard",
+          "signalLabel": "Program scoreboard"
+        },
+        "sourceState": "ready",
+        "requiresUserAction": false,
+        "proofLedgerMapping": {
+          "first_value": "activeUsers100.acceptedProof",
+          "self_report": "firstRevenue.acceptedProof"
+        },
+        "scoreboards": {
+          "activeUsers100": {
+            "acceptedCount": 7,
+            "excludedCounts": {
+              "signup": 42,
+              "visitor": 1380,
+              "self-report": 3
+            },
+            "sourceState": "ready",
+            "nextUnblockAction": "activation friction fix workpack"
+          },
+          "firstRevenue": {
+            "acceptedCount": 0,
+            "sourceState": "manual_proof_required",
+            "nextUnblockAction": "offer/paid ask follow-up plan"
+          }
+        }
+      }
+    }
+    """
+
+    private static let v2InvalidProofMappingPayload = """
+    {
+      "type": "mission_card",
+      "workspaceRoot": "/tmp/product",
+      "missionCard": {
+        "type": "revenue_or_activation_gate",
+        "schemaVersion": 1,
+        "programDay": 14,
+        "generation": {
+          "signalId": "revenue-or-activation-gate",
+          "signalLabel": "Revenue or activation gate"
+        },
+        "sourceState": "missing",
+        "requiresUserAction": true,
+        "proofLedgerMapping": {
+          "paymentIntent": "firstRevenue.acceptedProof"
+        },
+        "gate": "G4",
+        "requires": ["first_value", "paymentIntent"],
+        "satisfied": false,
+        "blockingReasons": ["missing first_value source", "paymentRecord missing"],
+        "recoveryBranch": "g4-recovery-instrumentation",
+        "nextCardType": "office_hours_agent_workpack"
+      }
+    }
+    """
+
+    private static let v2GatePayload = """
+    {
+      "type": "mission_card",
+      "workspaceRoot": "/tmp/product",
+      "missionCard": {
+        "type": "revenue_or_activation_gate",
+        "schemaVersion": 1,
+        "programDay": 14,
+        "generation": {
+          "signalId": "revenue-or-activation-gate",
+          "signalLabel": "Revenue or activation gate"
+        },
+        "sourceState": "missing",
+        "requiresUserAction": true,
+        "proofLedgerMapping": {
+          "first_value": "activeUsers100.acceptedProof",
+          "paymentIntent": "firstRevenue.learningSignal"
+        },
+        "gate": "G4",
+        "requires": ["first_value", "paymentIntent"],
+        "satisfied": false,
+        "blockingReasons": ["missing first_value source", "paymentRecord missing"],
+        "recoveryBranch": "g4-recovery-instrumentation",
+        "nextCardType": "office_hours_agent_workpack"
+      }
+    }
+    """
+}
+
+private final class Todo8DailyCardCapturingSidecar: SidecarTransport {
+    var onEvent: ((SidecarEvent) -> Void)?
+    private(set) var sentPayloads: [[String: Any]] = []
+
+    func start() {}
+    func stop() {}
+
+    @discardableResult
+    func send(payload: [String: Any]) -> Bool {
+        sentPayloads.append(payload)
+        return true
     }
 }

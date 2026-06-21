@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
+<!-- Generated: 2026-06-20 | Commit: 6f0fc7e | Branch: main -->
 
 # sidecar
 
@@ -10,19 +10,18 @@ Node.js ESM sidecar launched by the macOS app. Owns the localhost WebSocket daem
 | Path | Purpose |
 |------|---------|
 | `index.mjs` | Main WebSocket daemon and sidecar lifetime owner |
-| `mcp-server.mjs` | MCP server for workspace/user-input/doc tools |
+| `mcp-server.mjs`, `qmd-bootstrap-worker.mjs` | MCP server and QMD worker entry points |
+| `onboarding-helper.mjs`, `preflight-cli.mjs` | Helper CLI registration and diagnostics CLI entry points |
 | `acp-adapter.mjs`, `acp-utils.mjs` | Agent Client Protocol surface |
 | `provider-runner.mjs`, `auth-context.mjs` | Claude, Codex, Gemini, Cursor execution and scrubbed auth env |
 | `chat-route.mjs`, `inline-decision.mjs`, `structured-input-tools.mjs` | Routing and structured decision contracts |
 | `foundation-chat.mjs`, `foundation-summary-integration.mjs` | Unified foundation chat and Day-7 summary glue |
 | `bip-*.mjs`, `monetization-ask-*.mjs`, `onboarding-*.mjs` | Stateful product subsystems |
 | `program-gate-engine.mjs`, `day-progress-state.mjs`, `mission-card.mjs` | 30-day program gates, progress, bridge events |
+| `action-day-*.mjs`, `review-day-*.mjs` | Evidence verification and review-day composition |
 | `morning-briefing*.mjs`, `news-market-radar.mjs`, `work-history.mjs` | Briefing, external digest, history surfaces |
 | `workspace-*.mjs`, `local-discovery.mjs`, `read-only-workspace-tool-policy.mjs` | Workspace scan/safety/discovery |
-| `github/posthog/cloudflare/vercel *-mcp-config*.mjs` | Integration settings and OAuth/API-key config |
-| `foundation-summary/` | Claude-only read-only review loop |
-| `specialists/` | Project-owned specialist prompt builders |
-| `vendor/` | Upstream gstack assets; synced, not edited |
+| `github/posthog/cloudflare/vercel/exa *-mcp-config*.mjs` | Integration settings and OAuth/API-key config |
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
@@ -33,7 +32,7 @@ Node.js ESM sidecar launched by the macOS app. Owns the localhost WebSocket daem
 | Office Hours cards | `office-hours-structured-input.mjs`, `office-hours-resume.mjs`, `index.mjs` | Provider channels converge through card-ready payloads |
 | MCP OAuth status | `mcp-oauth-prewarm.mjs`, `mcp-oauth-state.mjs`, `integration-status.mjs` | Durable state is verification only, never tokens |
 | State schema changes | `session-store.mjs`, `bip-coach-state.mjs`, `monetization-ask-state.mjs`, `day-progress-state.mjs` | Bump schema and add migration tests |
-| Build bundle inputs | `../scripts/build-sidecar.mjs`, `../agentic30.xcodeproj/project.pbxproj` | Keep entry-point list and Xcode input paths in sync |
+| Build bundle inputs | `../scripts/build-sidecar.mjs`, `../agentic30.xcodeproj/project.pbxproj` | Keep `ENTRY_POINTS` and Xcode input paths in sync; remove stale inputs |
 
 ## CONVENTIONS
 - ESM only. Prefer explicit named exports and small pure helpers beside the owner module.
@@ -41,24 +40,17 @@ Node.js ESM sidecar launched by the macOS app. Owns the localhost WebSocket daem
 - Provider streams must remain cancellable and avoid synchronous blocking inside async stream consumers.
 - Workspace-derived state persists under `<workspace>/.agentic30/` with versioned schemas.
 - `workspace-safety.mjs` is the runtime path-safety/secret-redaction source; `scripts/check-public-safety.mjs` is the repo CI gate.
+- Bundle entry points are `index.mjs`, `qmd-bootstrap-worker.mjs`, `mcp-server.mjs`, `onboarding-helper.mjs`, `acp-adapter.mjs`, and `preflight-cli.mjs`.
 
 ## ANTI-PATTERNS
-- Do not edit `vendor/` by hand.
 - Do not add write-capable tools to read-only provider or foundation-summary paths.
 - Do not parse inline-decision sentinels with ad hoc string surgery.
 - Do not add provider-specific behavior that breaks Claude/Codex parity unless the app gate explicitly fails closed.
 - Do not persist raw prompts, provider tokens, OAuth credentials, or raw external event rows.
+- Do not leave Xcode Run Script `inputPaths` pointing at removed sidecar files.
 
 ## TESTS
-```bash
-npm run test:sidecar
-node --test sidecar-tests/<module>.test.mjs
-```
-Live provider canaries are gated by `AGENTIC30_RUN_LIVE_PROVIDER_*=1`.
-
-## DEPENDENCIES
-- Internal: Swift app bridge, `scripts/build-sidecar.mjs`, `sidecar-tests/`, vendored gstack sync.
-- External: Claude Agent SDK, OpenAI Codex SDK, Google GenAI, Cursor SDK, MCP SDK, qmd, `ws`, `zod`.
+`npm run test:sidecar`; single files via `node --test sidecar-tests/<module>.test.mjs`. Live provider canaries are gated by `AGENTIC30_RUN_LIVE_PROVIDER_*=1`.
 
 <!-- MANUAL: -->
 

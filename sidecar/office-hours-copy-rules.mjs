@@ -99,6 +99,13 @@ export const OFFICE_HOURS_COPY_RULEBOOK = Object.freeze([
     guidance: "처음부터 시작, 아직 기준이 없다처럼 자연스럽게 쓴다.",
   }),
   Object.freeze({
+    id: "OH-S2-CAPTURE-SPELLING",
+    severity: "S2",
+    pattern: /\uCEA1\uCCD0/g,
+    problem: "화면 문구에 맞춤법이 어색한 캡처 표기가 노출됨",
+    guidance: "캡처로 쓰고, 답장 캡처처럼 앞말과 붙은 경우는 띄어 쓴다.",
+  }),
+  Object.freeze({
     id: "OH-S3-SLASH",
     severity: "S3",
     pattern: /[^\s]+\/[^\s]+/g,
@@ -238,6 +245,7 @@ export function humanizeOfficeHoursVisibleText(value = "") {
   text = rewriteOfficeHoursJargon(text);
   text = rewriteHumanizeKoreanS1Patterns(text);
   text = rewriteOfficeHoursS2Copy(text);
+  text = rewriteOfficeHoursKoreanSpelling(text);
   text = text.replace(/\s{2,}/g, " ").trim();
 
   const restored = restore(text);
@@ -316,12 +324,21 @@ function rewriteOfficeHoursS2Copy(text) {
   return out;
 }
 
+function rewriteOfficeHoursKoreanSpelling(text) {
+  let out = text;
+  out = out.replace(/답장\s*\uCEA1\uCCD0/g, "답장 캡처");
+  out = out.replace(/\b([A-Za-z][A-Za-z0-9]{1,20})[-\s]*\uCEA1\uCCD0/g, "$1 캡처");
+  out = out.replace(/\uCEA1\uCCD0/g, "캡처");
+  return out;
+}
+
 function maskDoNotRewriteSpans(text) {
   const spans = [];
   const token = (index) => `__A30_COPY_DONOT_${index}__`;
   const masked = String(text).replace(
-    /https?:\/\/[^\s)）]+|`[^`]*`|"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’/g,
+    /https?:\/\/[^\s)）]+|`[^`]*`|"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|(?=[\p{L}\p{N}_./:-]*\uCEA1\uCCD0)(?=[\p{L}\p{N}_./:-]*[A-Za-z_])(?=[\p{L}\p{N}_./:-]*[_./:-])[\p{L}\p{N}_./:-]+/gu,
     (match) => {
+      if (!shouldMaskDoNotRewriteSpan(match)) return match;
       const index = spans.length;
       spans.push(match);
       return token(index);
@@ -336,6 +353,16 @@ function maskDoNotRewriteSpans(text) {
       });
     },
   };
+}
+
+function shouldMaskDoNotRewriteSpan(value) {
+  const text = String(value || "");
+  if (/^https?:\/\//.test(text)) return true;
+  if (/^`[^`]*`$|^"[^"]*"$|^'[^']*'$|^“[^”]*”$|^‘[^’]*’$/.test(text)) return true;
+  if (!/\uCEA1\uCCD0/.test(text)) return false;
+  if (/[_.:/]/.test(text)) return true;
+  const hyphenCount = (text.match(/-/g) || []).length;
+  return hyphenCount >= 2 || (hyphenCount >= 1 && /\d/.test(text));
 }
 
 function changeRatio(before, after) {

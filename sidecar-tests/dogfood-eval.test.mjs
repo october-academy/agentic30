@@ -52,6 +52,7 @@ test("dogfood scenario fixtures load with stable ids and prompts", async () => {
       "complete-startup-verdict",
       "complete-builder-retro",
       "gate-blocked-day-entry",
+      "v2-stale-resolution-to-workpack",
     ],
   );
   assert.ok(scenarios.every((scenario) => scenario.prompt.length > 0));
@@ -261,6 +262,78 @@ test("event-only gate blocked scenario skips visible text fragments", () => {
 
   assert.equal(result.verdict, DOGFOOD_VERDICTS.SMOKE_PASS);
   assert.equal(result.smoke.checks.must_include_1, undefined);
+});
+
+test("program v2 stale-resolution smoke fails explicitly on malformed observed fields", () => {
+  const scenario = {
+    id: "v2-stale-resolution-to-workpack",
+    repo_stage: "running",
+    intent_mode: "startup",
+    title: "Program v2 stale debt resolves into workpack",
+    goal: "Program v2 cards",
+    prompt: "Day 3 실행",
+    expected_visible_outcome: {
+      must_include: [],
+      must_not_include: [],
+      requires_one_next_action: false,
+      requires_proof_target: false,
+      requires_visible_output: false,
+    },
+  };
+  const malformed = summarizeSmokeRun({
+    scenario,
+    observed: {
+      assistantMessages: [],
+      programV2: {
+        cardOrder: ["office_hours_agent_workpack", "office_hours_state_transition"],
+        sameDebtRevived: true,
+        scoreboardsSeparateAcceptedExcluded: false,
+        gateRecoveryBranch: "",
+        replacementWorkpackSourceCommitmentId: "",
+        replacementWorkpackTargetExternalAction: "",
+        replacementWorkpackProofAccepted: false,
+      },
+      latency_ms: { final_response: 10 },
+    },
+    events: [{ type: "mission_card" }],
+    latency: { final_response: 10 },
+  });
+  const valid = summarizeSmokeRun({
+    scenario,
+    observed: {
+      assistantMessages: [],
+      programV2: {
+        cardOrder: [
+          "office_hours_state_transition",
+          "office_hours_agent_workpack",
+          "program_scoreboard_snapshot",
+          "revenue_or_activation_gate",
+        ],
+        sameDebtRevived: false,
+        scoreboardsSeparateAcceptedExcluded: true,
+        gateRecoveryBranch: "g4-recovery-instrumentation",
+        submitResult: {
+          replacementCommitmentId: "cm-replacement",
+        },
+        replacementWorkpackSourceCommitmentId: "cm-replacement",
+        replacementWorkpackTargetExternalAction: "Ask Candidate B for a presale deposit.",
+        replacementWorkpackProofAccepted: true,
+      },
+      latency_ms: { final_response: 10 },
+    },
+    events: [{ type: "mission_card" }],
+    latency: { final_response: 10 },
+  });
+
+  assert.equal(malformed.verdict, DOGFOOD_VERDICTS.SMOKE_FAIL);
+  assert.match(malformed.regressions.join("\n"), /program_v2_card_order_valid failed/);
+  assert.match(malformed.regressions.join("\n"), /program_v2_same_debt_not_revived failed/);
+  assert.match(malformed.regressions.join("\n"), /program_v2_scoreboards_separate failed/);
+  assert.match(malformed.regressions.join("\n"), /program_v2_gate_recovery_branch failed/);
+  assert.match(malformed.regressions.join("\n"), /program_v2_replacement_workpack_source failed/);
+  assert.match(malformed.regressions.join("\n"), /program_v2_replacement_workpack_action failed/);
+  assert.match(malformed.regressions.join("\n"), /program_v2_replacement_workpack_proof_viable failed/);
+  assert.equal(valid.verdict, DOGFOOD_VERDICTS.SMOKE_PASS);
 });
 
 test("generic assistant plus expected event is smoke-only and cannot pass live judge gate", () => {

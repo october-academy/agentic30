@@ -1,4 +1,5 @@
 import CoreFoundation
+import CoreGraphics
 import Foundation
 import Testing
 @testable import agentic30
@@ -651,7 +652,7 @@ struct OpenDesignDayContentTests {
             visibleLoading: matchingLoading,
             requestId: prompt.requestId,
             remainingNanoseconds: 5_000_000_000
-        ) == 5_000_000_000)
+        ) == 600_000_000)
         #expect(OfficeHoursLoadingPolicy.pendingPromptRevealDelayNanoseconds(
             reduceMotion: true,
             session: session,
@@ -659,6 +660,26 @@ struct OpenDesignDayContentTests {
             requestId: prompt.requestId,
             remainingNanoseconds: 5_000_000_000
         ) == 0)
+    }
+
+    @Test func officeHoursReadyPromptRevealDelayStaysBelowOneSecond() {
+        let prompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-2")
+        let session = makeChatSession(status: .awaitingInput, pendingUserInput: prompt)
+        let matchingLoading = OfficeHoursLoadingSnapshot(
+            sessionId: "session",
+            requestId: prompt.requestId,
+            startedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let delay = OfficeHoursLoadingPolicy.pendingPromptRevealDelayNanoseconds(
+            reduceMotion: false,
+            session: session,
+            visibleLoading: matchingLoading,
+            requestId: prompt.requestId,
+            remainingNanoseconds: 3_000_000_000
+        )
+
+        #expect(delay < 1_000_000_000)
     }
 
     @Test func officeHoursCommandTypewriterPolicyKeepsRestoredAndRevealedSessionsComplete() {
@@ -1356,11 +1377,44 @@ struct OpenDesignDayContentTests {
         ])
         #expect(dynamic.competitors.first?.id == "agentic30")
         #expect(dynamic.competitors.first?.isAgentic30 == true)
-        #expect(dynamic.competitors.first { $0.id == "cursor" }?.category == .aiBuild)
+        let dynamicCursor = try #require(dynamic.competitors.first { $0.id == "cursor" })
+        #expect(dynamicCursor.category == .aiBuild)
+        #expect(dynamicCursor.sourceURL == "https://cursor.com")
+        #expect(dynamicCursor.sourceDisplay == "cursor.com")
+        #expect(dynamicCursor.sourceLinkButtonLabel == "근거 링크 열기 · cursor.com")
         #expect(dynamic.swotGroups.map(\.id) == ["strengths", "weaknesses", "opportunities", "threats"])
         #expect(dynamic.swotGroups.map(\.tone) == [.accent, .amber, .sky, .rose])
         #expect(dynamic.positioningStatement.contains("paid ask"))
         #expect(dynamic.searchableCopy.contains("동적 리서치"))
+    }
+
+    @Test func strategyMatrixSourceLinkHelperRequiresHTTPURL() {
+        func competitor(sourceURL: String) -> OpenDesignStrategyCompetitor {
+            OpenDesignStrategyCompetitor(
+                id: "source-link-fixture",
+                title: "Source Link Fixture",
+                category: .aiBuild,
+                tag: "fixture",
+                body: "fixture",
+                gap: "fixture",
+                sourceURL: sourceURL,
+                sourceLabel: "Fixture source",
+                sourceDisplay: "fixture.example",
+                verifiedAt: "2026-06",
+                scoreRationale: "fixture",
+                adaptiveScore: 50,
+                evidenceScore: 50
+            )
+        }
+
+        let valid = competitor(sourceURL: "https://www.example.com/path?q=1")
+        #expect(valid.sourceLinkURL?.absoluteString == "https://www.example.com/path?q=1")
+        #expect(valid.sourceLinkDisplay == "example.com")
+        #expect(valid.sourceLinkButtonLabel == "근거 링크 열기 · example.com")
+
+        #expect(competitor(sourceURL: "").sourceLinkURL == nil)
+        #expect(competitor(sourceURL: "file:///tmp/source").sourceLinkURL == nil)
+        #expect(competitor(sourceURL: "not a url").sourceLinkButtonLabel == nil)
     }
 
     @Test func strategyResearchStatusCopyUsesStreamingProgressTextAndStepCount() {
@@ -1402,7 +1456,7 @@ struct OpenDesignDayContentTests {
         #expect(strategyResearchStatusTitle(refreshing) == "전략 리서치 진행 중 3/6")
         #expect(strategyResearchStatusMessage(refreshing, isPreparing: false) == "Codex Exa MCP로 공개 근거를 검색하는 중")
         #expect(strategyResearchStatusMessage(refreshing, isPreparing: true) == "캐시와 진행 상태를 불러오는 중")
-        #expect(strategyResearchTimingLabel(refreshing, isPreparing: false) == "1초 경과")
+        #expect(strategyResearchTimingLabel(refreshing, isPreparing: false) == "3/6 · 1초 경과")
         #expect(strategyResearchStatusTitle(failed) == "리서치 실패")
         #expect(strategyResearchStatusMessage(failed, isPreparing: false).contains("summaryTiles"))
         #expect(strategyResearchTimingLabel(failed, isPreparing: false) == "2초 후 실패")
@@ -1566,8 +1620,8 @@ struct OpenDesignDayContentTests {
         #expect(agentic30.category == .agentic30)
         #expect(agentic30.adaptiveScore == 90)
         #expect(agentic30.evidenceScore == 84)
-        #expect(abs(Double(agentic30.x) - 0.90) < 0.0001)
-        #expect(abs(Double(agentic30.y) - 0.16) < 0.0001)
+        #expect(abs(Double(agentic30.plotX) - 0.90) < 0.0001)
+        #expect(abs(Double(agentic30.screenY) - 0.16) < 0.0001)
         #expect(agentic30.sourceURL == "https://agentic30.app")
         #expect(agentic30.sourceLabel == "Agentic30 source docs")
         #expect(agentic30.scoreRationale.contains("paid ask"))
@@ -1611,36 +1665,130 @@ struct OpenDesignDayContentTests {
 
     @Test func strategyMatrixLayoutKeepsEdgeCompetitorsInsideBoard() {
         let boardSize = CGSize(width: 1000, height: 430)
+        let chrome = OpenDesignStrategyMatrixChromeLayoutPolicy.layout(boardSize: boardSize)
+        let horizontalInset = OpenDesignStrategyMatrixLayoutPolicy.competitorFrameSize.width / 2
+        let verticalInset = OpenDesignStrategyMatrixLayoutPolicy.competitorFrameSize.height / 2
 
         let lowerLeadingEdge = OpenDesignStrategyMatrixLayoutPolicy.layout(
-            x: 0.04,
-            y: 0.95,
+            plotX: 0.04,
+            screenY: 0.95,
             preferredLabelPlacement: .leading,
-            boardSize: boardSize
+            plotRect: chrome.plotRect
         )
-        #expect(abs(Double(lowerLeadingEdge.point.x - 115)) < 0.0001)
-        #expect(abs(Double(lowerLeadingEdge.point.y - 389)) < 0.0001)
+        #expect(abs(Double(lowerLeadingEdge.point.x - (chrome.plotRect.minX + horizontalInset))) < 0.0001)
+        #expect(abs(Double(lowerLeadingEdge.point.y - (chrome.plotRect.maxY - verticalInset))) < 0.0001)
         #expect(lowerLeadingEdge.labelPlacement == .aboveTrailing)
 
         let upperTrailingEdge = OpenDesignStrategyMatrixLayoutPolicy.layout(
-            x: 0.98,
-            y: 0.03,
+            plotX: 0.98,
+            screenY: 0.03,
             preferredLabelPlacement: .trailing,
-            boardSize: boardSize
+            plotRect: chrome.plotRect
         )
-        #expect(abs(Double(upperTrailingEdge.point.x - 885)) < 0.0001)
-        #expect(abs(Double(upperTrailingEdge.point.y - 41)) < 0.0001)
+        #expect(abs(Double(upperTrailingEdge.point.x - (chrome.plotRect.maxX - horizontalInset))) < 0.0001)
+        #expect(abs(Double(upperTrailingEdge.point.y - (chrome.plotRect.minY + verticalInset))) < 0.0001)
         #expect(upperTrailingEdge.labelPlacement == .belowLeading)
 
         let normalPlacement = OpenDesignStrategyMatrixLayoutPolicy.layout(
-            x: 0.40,
-            y: 0.50,
+            plotX: 0.40,
+            screenY: 0.50,
             preferredLabelPlacement: .leading,
-            boardSize: boardSize
+            plotRect: chrome.plotRect
         )
-        #expect(abs(Double(normalPlacement.point.x - 400)) < 0.0001)
-        #expect(abs(Double(normalPlacement.point.y - 215)) < 0.0001)
+        #expect(abs(Double(normalPlacement.point.x - (chrome.plotRect.minX + chrome.plotRect.width * 0.40))) < 0.0001)
+        #expect(abs(Double(normalPlacement.point.y - chrome.plotRect.midY)) < 0.0001)
         #expect(normalPlacement.labelPlacement == .leading)
+    }
+
+    @Test func strategyMatrixCoordinatesUseCanonicalScores() {
+        let competitor = OpenDesignStrategyCompetitor(
+            id: "coordinate-fixture",
+            title: "Coordinate Fixture",
+            category: .aiBuild,
+            tag: "fixture",
+            body: "fixture",
+            gap: "fixture",
+            sourceURL: "https://example.com",
+            sourceLabel: "Fixture",
+            verifiedAt: "2026-06",
+            scoreRationale: "fixture",
+            adaptiveScore: 100,
+            evidenceScore: 100
+        )
+        let lowEvidence = OpenDesignStrategyCompetitor(
+            id: "low-evidence-fixture",
+            title: "Low Evidence Fixture",
+            category: .aiBuild,
+            tag: "fixture",
+            body: "fixture",
+            gap: "fixture",
+            sourceURL: "https://example.com",
+            sourceLabel: "Fixture",
+            verifiedAt: "2026-06",
+            scoreRationale: "fixture",
+            adaptiveScore: 0,
+            evidenceScore: 0
+        )
+        let chrome = OpenDesignStrategyMatrixChromeLayoutPolicy.layout(boardSize: CGSize(width: 1000, height: 430))
+
+        #expect(abs(Double(competitor.plotX - 1)) < 0.0001)
+        #expect(abs(Double(competitor.screenY - 0)) < 0.0001)
+        #expect(abs(Double(lowEvidence.plotX - 0)) < 0.0001)
+        #expect(abs(Double(lowEvidence.screenY - 1)) < 0.0001)
+
+        let topRight = OpenDesignStrategyMatrixLayoutPolicy.layout(
+            plotX: competitor.plotX,
+            screenY: competitor.screenY,
+            preferredLabelPlacement: .trailing,
+            plotRect: chrome.plotRect
+        )
+        let bottomLeft = OpenDesignStrategyMatrixLayoutPolicy.layout(
+            plotX: lowEvidence.plotX,
+            screenY: lowEvidence.screenY,
+            preferredLabelPlacement: .leading,
+            plotRect: chrome.plotRect
+        )
+
+        #expect(topRight.point.x > chrome.verticalAxisX)
+        #expect(topRight.point.y < chrome.horizontalAxisY)
+        #expect(bottomLeft.point.x < chrome.verticalAxisX)
+        #expect(bottomLeft.point.y > chrome.horizontalAxisY)
+    }
+
+    @Test func strategyMatrixChromeLayoutSeparatesAxisAndQuadrantLabels() {
+        let boardSizes = [
+            CGSize(width: 1550, height: 846),
+            CGSize(width: 760, height: 430),
+            CGSize(width: 540, height: 360),
+        ]
+
+        for boardSize in boardSizes {
+            let chrome = OpenDesignStrategyMatrixChromeLayoutPolicy.layout(boardSize: boardSize)
+
+            #expect(abs(Double(chrome.leftAxisLabel.point.y - chrome.rightAxisLabel.point.y)) < 0.0001)
+            #expect(abs(Double(chrome.leftAxisLabel.point.y - chrome.horizontalAxisY)) < 0.0001)
+            #expect(abs(Double(chrome.topAxisLabel.point.x - chrome.verticalAxisX)) < 0.0001)
+            #expect(abs(Double(chrome.bottomAxisLabel.point.x - chrome.verticalAxisX)) < 0.0001)
+
+            let axisRects = [
+                chrome.topAxisLabel.rect,
+                chrome.bottomAxisLabel.rect,
+                chrome.leftAxisLabel.rect,
+                chrome.rightAxisLabel.rect,
+            ]
+            let quadrantRects = [
+                chrome.topLeftQuadrantLabel.rect,
+                chrome.topRightQuadrantLabel.rect,
+                chrome.bottomLeftQuadrantLabel.rect,
+                chrome.bottomRightQuadrantLabel.rect,
+            ]
+
+            for axisRect in axisRects {
+                for quadrantRect in quadrantRects {
+                    #expect(!axisRect.intersects(quadrantRect))
+                }
+            }
+        }
     }
 
     @Test func strategyCanvasReferenceContainsSWOTAndStrategicJudgement() {

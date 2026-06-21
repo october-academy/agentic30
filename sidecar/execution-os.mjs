@@ -29,6 +29,7 @@ export const PROOF_EVENT_TYPES = Object.freeze({
   dayDecision: "day_decision",
   referral: "referral",
   paymentRecord: "payment_record",
+  presaleDeposit: "presale_deposit",
   paymentFailure: "payment_failure",
   refund: "refund",
   trafficSnapshot: "traffic_snapshot",
@@ -915,6 +916,7 @@ function inferProofStrength({ type, status }) {
   if (
     type === PROOF_EVENT_TYPES.paymentIntent
     || type === PROOF_EVENT_TYPES.paymentRecord
+    || type === PROOF_EVENT_TYPES.presaleDeposit
     || status === "verified"
   ) {
     return "strong";

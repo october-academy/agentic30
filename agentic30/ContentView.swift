@@ -1905,6 +1905,12 @@ struct OfficeHoursPreviousCommitmentGate: Equatable {
 }
 
 struct OfficeHoursLoadingPolicy {
+    static let officeHoursMaximumPromptRevealDelaySeconds: TimeInterval = 0.6
+
+    private static var officeHoursMaximumPromptRevealDelayNanoseconds: UInt64 {
+        UInt64(officeHoursMaximumPromptRevealDelaySeconds * 1_000_000_000)
+    }
+
     static func shouldStartLoading(for status: OfficeHoursLiveStatus?) -> Bool {
         guard let stage = status?.stage else { return false }
         return ["context_loaded", "specialist_routed", "provider_starting"].contains(stage)
@@ -1939,7 +1945,7 @@ struct OfficeHoursLoadingPolicy {
         guard !reduceMotion else { return 0 }
         guard session.pendingUserInput?.requestId == requestId else { return 0 }
         guard visibleLoading?.requestId == requestId else { return 0 }
-        return remainingNanoseconds
+        return min(remainingNanoseconds, officeHoursMaximumPromptRevealDelayNanoseconds)
     }
 }
 
@@ -2217,6 +2223,8 @@ struct ContentView: View {
     // reveals (instead of waiting forever) once that one request resolves either way.
     @State private var officeHoursCommitmentCandidateRequestedSessions: Set<String> = []
     @State private var officeHoursEvidenceDraft: OfficeHoursEvidenceDraft?
+    @State private var officeHoursDailyCardEvidenceDraft: OfficeHoursDailyCardEvidenceDraft?
+    @State private var officeHoursDailyCardReplacementDraft: OfficeHoursDailyCardReplacementDraft?
     @FocusState private var focusedOfficeHoursStructuredFreeTextID: String?
 
     private static let officeHoursQuestionOutputRowID = "office-hours-question-output-row"
@@ -2227,7 +2235,7 @@ struct ContentView: View {
     private static let officeHoursDay1CompleteButtonID = "opendesign.officeHours.day1.completeDay"
     private static let officeHoursDayCompleteButtonIDPrefix = "opendesign.officeHours.day"
     private static let officeHoursTranscriptBottomID = "office-hours-transcript-bottom"
-    private static let officeHoursMinimumQuestionLoadingSeconds: TimeInterval = 3
+    private static let officeHoursMaximumPromptRevealDelaySeconds = OfficeHoursLoadingPolicy.officeHoursMaximumPromptRevealDelaySeconds
 
     @MainActor
     init(
@@ -2893,7 +2901,17 @@ struct ContentView: View {
                         day1Content: day1Content,
                         activeDay: activeDay
                     )
-                    officeHoursMissionCardBanner()
+                    let activeDailyCards = viewModel.dailyCards.filter { $0.programDay == activeDay }
+                    if activeDailyCards.isEmpty {
+                        officeHoursMissionCardBanner()
+                    } else {
+                        officeHoursDailyCardStackBanner(
+                            cards: activeDailyCards,
+                            session: conversationSession,
+                            day1Content: day1Content,
+                            activeDay: activeDay
+                        )
+                    }
                     officeHoursMainColumn(
                         session: conversationSession,
                         day1Content: day1Content,
@@ -2962,6 +2980,53 @@ struct ContentView: View {
                 },
                 onCancel: {
                     officeHoursEvidenceDraft = nil
+                }
+            )
+        }
+        .sheet(item: $officeHoursDailyCardEvidenceDraft) { draft in
+            OfficeHoursDailyCardEvidenceSheet(
+                draft: draft,
+                onSubmit: { kind, locator, note in
+                    _ = viewModel.submitOfficeHoursDailyCard(
+                        draft.card,
+                        action: "attach_evidence",
+                        choiceId: "attach_evidence",
+                        evidenceRefs: [[
+                            "kind": kind,
+                            "url": locator,
+                            "note": note,
+                        ]],
+                        note: note
+                    )
+                    officeHoursDailyCardEvidenceDraft = nil
+                },
+                onCancel: {
+                    officeHoursDailyCardEvidenceDraft = nil
+                }
+            )
+        }
+        .sheet(item: $officeHoursDailyCardReplacementDraft) { draft in
+            OfficeHoursDailyCardReplacementSheet(
+                draft: draft,
+                onSubmit: { candidateName, actionText in
+                    guard let replacement = OfficeHoursDailyCardPresentation.replacementCandidate(
+                        candidateName: candidateName,
+                        actionText: actionText
+                    ) else {
+                        return
+                    }
+                    _ = viewModel.submitOfficeHoursDailyCard(
+                        draft.card,
+                        action: "replace_candidate",
+                        choiceId: "replace_candidate",
+                        resolutionReason: "replaced_by_next_candidate",
+                        replacementCandidate: replacement.payload,
+                        note: "교체: \(replacement.candidateName) · \(replacement.actionText)"
+                    )
+                    officeHoursDailyCardReplacementDraft = nil
+                },
+                onCancel: {
+                    officeHoursDailyCardReplacementDraft = nil
                 }
             )
         }
@@ -3903,6 +3968,78 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private func officeHoursDailyCardStackBanner(
+        cards: [SidecarEvent.MissionCard.DailyCard],
+        session: ChatSession?,
+        day1Content: OpenDesignDayContent,
+        activeDay: Int
+    ) -> some View {
+        let orderedCards = OfficeHoursDailyCardPresentation.orderedCards(cards)
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(orderedCards, id: \.stableID) { card in
+                switch card.type {
+                case .officeHoursStateTransition:
+                    OfficeHoursDailyStateTransitionCardView(
+                        card: card,
+                        onAttachEvidence: {
+                            officeHoursDailyCardEvidenceDraft = OfficeHoursDailyCardEvidenceDraft(card: card, title: "증거 붙이기")
+                        },
+                        onResolveWithoutEvidence: { reason in
+                            _ = viewModel.submitOfficeHoursDailyCard(
+                                card,
+                                action: "resolve_without_evidence",
+                                choiceId: "resolve_without_evidence",
+                                resolutionReason: reason,
+                                note: "고객 증거나 매출 진전으로 세지 않음"
+                            )
+                        },
+                        onReplaceCandidate: {
+                            officeHoursDailyCardReplacementDraft = OfficeHoursDailyCardReplacementDraft(card: card)
+                        },
+                        onKeepOpenToday: {
+                            _ = viewModel.submitOfficeHoursDailyCard(
+                                card,
+                                action: "keep_open_today",
+                                choiceId: "keep_open_today"
+                            )
+                        }
+                    )
+                case .officeHoursAgentWorkpack:
+                    OfficeHoursDailyWorkpackCardView(
+                        card: card,
+                        onSubmitProof: {
+                            officeHoursDailyCardEvidenceDraft = OfficeHoursDailyCardEvidenceDraft(card: card, title: "증거 제출")
+                        }
+                    )
+                case .programScoreboardSnapshot:
+                    OfficeHoursDailyScoreboardCardView(card: card)
+                case .revenueOrActivationGate:
+                    OfficeHoursDailyGateCardView(
+                        card: card,
+                        onRecovery: {
+                            startOfficeHours(
+                                mode: selectedOfficeHoursMode,
+                                session: session,
+                                day1Content: day1Content,
+                                day: activeDay,
+                                trigger: card.gateCard?.recoveryBranch
+                            )
+                        }
+                    )
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(OpenDesignOfficeHoursColor.bg)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.officeHours.dailyCardStack")
+    }
+
     // Day timeline sidebar (IA): cumulative Day list, today on top, past newest-first,
     // skipped days collapsed into a chip. Falls back to the legacy mode row pre-scan.
     private func officeHoursSessionsSidebar(session: ChatSession?, activeDay: Int) -> some View {
@@ -4025,11 +4162,12 @@ struct ContentView: View {
             return selectedTimelineDay
         }
         let fallbackDay = max(1, day)
-        if let currentDay = viewModel.dayProgress?.currentDayNumber(), currentDay > 0 {
-            if LocalDevelopmentDayFastForward.isEnabled, fallbackDay > currentDay {
+        if let progress = viewModel.dayProgress {
+            let workedDay = progress.officeHoursWorkedDay()
+            if LocalDevelopmentDayFastForward.isEnabled, fallbackDay > workedDay {
                 return fallbackDay
             }
-            return currentDay
+            return workedDay
         }
         return fallbackDay
     }
@@ -6820,6 +6958,17 @@ struct ContentView: View {
                 }
             }
 
+            Button {
+                guard !officeHoursDay1DocumentsWritten else { return }
+                startOfficeHoursDocumentHandoff(session: session)
+            } label: {
+                officeHoursDocumentHandoffButtonLabel(promptActive: promptActive)
+            }
+            .buttonStyle(.plain)
+            .disabled(officeHoursDocumentHandoffButtonDisabled(promptActive: promptActive))
+            .accessibilityLabel(officeHoursDocumentHandoffButtonTitle(promptActive: promptActive))
+            .accessibilityIdentifier("opendesign.officeHours.docHandoff.confirm")
+
             if let prompt = handoffPrompt {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("보완 질문")
@@ -6834,16 +6983,6 @@ struct ContentView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("opendesign.officeHours.docHandoff.followup")
             }
-
-            Button {
-                guard !officeHoursDay1DocumentsWritten else { return }
-                startOfficeHoursDocumentHandoff(session: session)
-            } label: {
-                officeHoursDocumentHandoffButtonLabel(promptActive: promptActive)
-            }
-            .buttonStyle(.plain)
-            .disabled(officeHoursDocumentHandoffButtonDisabled(promptActive: promptActive))
-            .accessibilityIdentifier("opendesign.officeHours.docHandoff.confirm")
 
             if let error = viewModel.day1DocHandoffError?.trimmingCharacters(in: .whitespacesAndNewlines),
                !error.isEmpty {
@@ -7254,7 +7393,7 @@ struct ContentView: View {
     private func officeHoursRemainingQuestionLoadingNanoseconds(startedAt: Date?) -> UInt64 {
         guard let startedAt else { return 0 }
         let elapsed = max(0, Date().timeIntervalSince(startedAt))
-        let remaining = max(0, Self.officeHoursMinimumQuestionLoadingSeconds - elapsed)
+        let remaining = max(0, Self.officeHoursMaximumPromptRevealDelaySeconds - elapsed)
         return UInt64(remaining * 1_000_000_000)
     }
 
@@ -7758,7 +7897,11 @@ struct ContentView: View {
         let isCompletedUnselected = !isHighlighted
         let statusText = isPending ? "수정 예정" : isSubmitted ? "제출됨" : nil
         let lockedUnselected = !editable && isCompletedUnselected
-        return Button {
+        let markerText = isPending ? "•" : isSubmitted ? "✓" : String(optionIndex + 1)
+        let markerSize: CGFloat = isHighlighted ? 13 : 11.5
+        let markerWeight: Font.Weight = isHighlighted ? .heavy : .semibold
+        let markerColor = isHighlighted ? OpenDesignOfficeHoursColor.bgDeep : OpenDesignOfficeHoursColor.mutedDeep
+        let stageRevision: () -> Void = {
             guard editable else { return }
             officeHoursStageSubmittedOptionRevision(
                 option,
@@ -7767,7 +7910,8 @@ struct ContentView: View {
                 snapshot: snapshot,
                 session: session
             )
-        } label: {
+        }
+        return Button(action: stageRevision) {
             HStack(alignment: .top, spacing: 12) {
                 ZStack {
                     Circle()
@@ -7780,9 +7924,9 @@ struct ContentView: View {
                                     .frame(width: 30, height: 30)
                             }
                         }
-                    Text(isPending ? "•" : isSubmitted ? "✓" : "\(optionIndex + 1)")
-                        .font(.system(size: isHighlighted ? 13 : 11.5, weight: isHighlighted ? .heavy : .semibold, design: .monospaced))
-                        .foregroundStyle(isHighlighted ? OpenDesignOfficeHoursColor.bgDeep : OpenDesignOfficeHoursColor.mutedDeep)
+                    Text(markerText)
+                        .font(.system(size: markerSize, weight: markerWeight, design: .monospaced))
+                        .foregroundStyle(markerColor)
                         .opacity(lockedUnselected ? 0.62 : 1)
                 }
                 .frame(width: 24, height: 24)
@@ -7858,6 +8002,9 @@ struct ContentView: View {
         .accessibilityLabel("\(option.label) \(isPending ? "수정 예정" : isSubmitted ? "제출됨" : "완료된 미선택")")
         .accessibilityHint(editable ? "선택 후 우측 하단 수정 버튼으로 확정합니다" : (isSubmitted ? "제출됨" : officeHoursOptionAccessibilityHint(option)))
         .accessibilityValue(isPending ? "수정 예정" : isSubmitted ? "제출됨" : "완료된 미선택")
+        .accessibilityAction {
+            stageRevision()
+        }
         .accessibilityAddTraits(.isButton)
     }
 
@@ -7979,7 +8126,13 @@ struct ContentView: View {
         in session: ChatSession
     ) -> Bool {
         guard snapshot.isEditable else { return false }
-        guard viewModel.isConnected else { return false }
+        #if DEBUG
+        let allowsUITestingSidecarBypass = CommandLine.arguments.contains("--ui-testing-disable-sidecar")
+            && ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] == "1"
+        #else
+        let allowsUITestingSidecarBypass = false
+        #endif
+        guard viewModel.isConnected || allowsUITestingSidecarBypass else { return false }
         guard session.runtime?.officeHours?.active == true else { return false }
         guard !officeHoursInterviewComplete(session: session) else { return false }
         guard !officeHoursRevisionInFlightSessionIDs.contains(session.id) else { return false }
@@ -14202,6 +14355,433 @@ private extension String {
 private extension Character {
     var officeHoursIsWhitespace: Bool {
         unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
+    }
+}
+
+private struct OfficeHoursDailyCardEvidenceDraft: Identifiable {
+    let card: SidecarEvent.MissionCard.DailyCard
+    let title: String
+
+    var id: String {
+        "\(card.stableID):\(title)"
+    }
+}
+
+private struct OfficeHoursDailyCardReplacementDraft: Identifiable {
+    let card: SidecarEvent.MissionCard.DailyCard
+
+    var id: String {
+        "\(card.stableID):replacement"
+    }
+}
+
+private struct OfficeHoursDailyCardEvidenceSheet: View {
+    let draft: OfficeHoursDailyCardEvidenceDraft
+    let onSubmit: (String, String, String) -> Void
+    let onCancel: () -> Void
+
+    @State private var evidenceKind = "url"
+    @State private var locator = ""
+    @State private var note = ""
+
+    private let evidenceKinds = ["url", "screenshot", "commit", "payment"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(draft.title)
+                    .font(.system(size: 16, weight: .semibold))
+                Text(draft.card.generation.signalLabel)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Picker("종류", selection: $evidenceKind) {
+                ForEach(evidenceKinds, id: \.self) { kind in
+                    Text(kind).tag(kind)
+                }
+            }
+            TextField("URL, 파일 경로, 커밋 SHA, 결제 기록 위치", text: $locator)
+                .textFieldStyle(.roundedBorder)
+            TextField("짧은 설명", text: $note)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("취소", action: onCancel)
+                Button("제출") {
+                    onSubmit(
+                        evidenceKind,
+                        locator.trimmingCharacters(in: .whitespacesAndNewlines),
+                        note.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(locator.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("opendesign.officeHours.dailyCard.evidence.submit")
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.officeHours.dailyCard.evidence.sheet")
+    }
+}
+
+private struct OfficeHoursDailyCardReplacementSheet: View {
+    let draft: OfficeHoursDailyCardReplacementDraft
+    let onSubmit: (String, String) -> Void
+    let onCancel: () -> Void
+
+    @State private var candidateName = ""
+    @State private var actionText = ""
+
+    private var replacementCandidate: OfficeHoursDailyCardReplacementCandidate? {
+        OfficeHoursDailyCardPresentation.replacementCandidate(
+            candidateName: candidateName,
+            actionText: actionText
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("다음 후보로 교체")
+                    .font(.system(size: 16, weight: .semibold))
+                if let state = draft.card.stateTransition {
+                    Text("\(state.candidateName) · \(state.actionText)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            TextField("다음 후보", text: $candidateName)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("opendesign.officeHours.dailyCard.replacement.candidate")
+            TextField("다음 행동", text: $actionText)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("opendesign.officeHours.dailyCard.replacement.action")
+            HStack {
+                Spacer()
+                Button("취소", action: onCancel)
+                Button("교체") {
+                    onSubmit(candidateName, actionText)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(replacementCandidate == nil)
+                .accessibilityIdentifier("opendesign.officeHours.dailyCard.replacement.submit")
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.officeHours.dailyCard.replacement.sheet")
+    }
+}
+
+private struct OfficeHoursDailyStateTransitionCardView: View {
+    let card: SidecarEvent.MissionCard.DailyCard
+    let onAttachEvidence: () -> Void
+    let onResolveWithoutEvidence: (String) -> Void
+    let onReplaceCandidate: () -> Void
+    let onKeepOpenToday: () -> Void
+
+    @State private var selectedReasonRaw: String
+
+    init(
+        card: SidecarEvent.MissionCard.DailyCard,
+        onAttachEvidence: @escaping () -> Void,
+        onResolveWithoutEvidence: @escaping (String) -> Void,
+        onReplaceCandidate: @escaping () -> Void,
+        onKeepOpenToday: @escaping () -> Void
+    ) {
+        self.card = card
+        self.onAttachEvidence = onAttachEvidence
+        self.onResolveWithoutEvidence = onResolveWithoutEvidence
+        self.onReplaceCandidate = onReplaceCandidate
+        self.onKeepOpenToday = onKeepOpenToday
+        _selectedReasonRaw = State(initialValue: card.stateTransition?.resolutionReasons.first?.rawValue ?? "not_sent")
+    }
+
+    var body: some View {
+        if let state = card.stateTransition {
+            VStack(alignment: .leading, spacing: 8) {
+                dailyCardHeader(systemName: "arrow.triangle.2.circlepath", title: "상태 정리", tint: OpenDesignOfficeHoursColor.rose) {
+                    Text("반복 \(state.repeatCountWithoutEvidence)")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                }
+                Text(state.candidateName)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Text(state.actionText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(OfficeHoursDailyCardPresentation.selfReportResolutionCopy)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                    .accessibilityIdentifier("opendesign.officeHours.dailyCard.selfReportCopy")
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) { controls(state: state) }
+                    VStack(alignment: .leading, spacing: 7) { controls(state: state) }
+                }
+            }
+            .dailyCardSurface(tint: OpenDesignOfficeHoursColor.rose)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("opendesign.officeHours.dailyCard.stateTransition")
+        }
+    }
+
+    @ViewBuilder
+    private func controls(state: SidecarEvent.MissionCard.DailyCard.StateTransitionCard) -> some View {
+        dailyCardActionButton(
+            systemName: "paperclip",
+            title: "증거",
+            accessibilityID: "opendesign.officeHours.dailyCard.stateTransition.attachEvidence",
+            action: onAttachEvidence
+        )
+        Picker("사유", selection: $selectedReasonRaw) {
+            ForEach(state.resolutionReasons, id: \.rawValue) { reason in
+                Text(reason.rawValue).tag(reason.rawValue)
+            }
+        }
+        .frame(width: 148)
+        .accessibilityIdentifier("opendesign.officeHours.dailyCard.stateTransition.reasonPicker")
+        dailyCardActionButton(
+            systemName: "checkmark.circle",
+            title: "증거 없이 닫기",
+            accessibilityID: "opendesign.officeHours.dailyCard.stateTransition.resolveWithoutEvidence"
+        ) {
+            onResolveWithoutEvidence(selectedReasonRaw)
+        }
+        dailyCardActionButton(
+            systemName: "arrow.left.arrow.right",
+            title: "교체",
+            accessibilityID: "opendesign.officeHours.dailyCard.stateTransition.replaceCandidate",
+            action: onReplaceCandidate
+        )
+        dailyCardActionButton(
+            systemName: "clock",
+            title: "오늘 열어둠",
+            accessibilityID: "opendesign.officeHours.dailyCard.stateTransition.keepOpenToday",
+            action: onKeepOpenToday
+        )
+    }
+}
+
+private struct OfficeHoursDailyWorkpackCardView: View {
+    let card: SidecarEvent.MissionCard.DailyCard
+    let onSubmitProof: () -> Void
+
+    var body: some View {
+        if let agentWorkpack = card.agentWorkpack {
+            let workpack = agentWorkpack.workpack
+            VStack(alignment: .leading, spacing: 8) {
+                dailyCardHeader(systemName: "wand.and.sparkles", title: "AI 준비", tint: OpenDesignOfficeHoursColor.accent) {
+                    Text(workpack.workType)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(agentWorkpack.selectedLens)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    Text(workpack.expectedProof)
+                        .font(.system(size: 11))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("대표 행동")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                    Text(workpack.targetExternalAction)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 8) {
+                    Text("not proof: \(workpack.notProof.joined(separator: ", "))")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    dailyCardActionButton(
+                        systemName: "tray.and.arrow.up",
+                        title: "증거 제출",
+                        accessibilityID: "opendesign.officeHours.dailyCard.workpack.submitProof",
+                        action: onSubmitProof
+                    )
+                }
+            }
+            .dailyCardSurface(tint: OpenDesignOfficeHoursColor.accent)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("opendesign.officeHours.dailyCard.workpack")
+        }
+    }
+}
+
+private struct OfficeHoursDailyScoreboardCardView: View {
+    let card: SidecarEvent.MissionCard.DailyCard
+
+    var body: some View {
+        if let scoreboard = card.scoreboard?.scoreboards {
+            VStack(alignment: .leading, spacing: 8) {
+                dailyCardHeader(systemName: "chart.bar.xaxis", title: "스코어보드", tint: OpenDesignOfficeHoursColor.amber) {
+                    Text(card.sourceState.rawValue)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                }
+                HStack(spacing: 8) {
+                    scoreboardColumn(title: "활성 100", entry: scoreboard.activeUsers100)
+                    scoreboardColumn(title: "첫 매출", entry: scoreboard.firstRevenue)
+                }
+            }
+            .dailyCardSurface(tint: OpenDesignOfficeHoursColor.amber)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("opendesign.officeHours.dailyCard.scoreboard")
+        }
+    }
+
+    private func scoreboardColumn(
+        title: String,
+        entry: SidecarEvent.MissionCard.DailyCard.ScoreboardEntry
+    ) -> some View {
+        let buckets = OfficeHoursDailyCardPresentation.scoreboardBuckets(for: entry)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            HStack(spacing: 8) {
+                Text("인정 \(buckets.accepted)")
+                    .accessibilityIdentifier("opendesign.officeHours.dailyCard.scoreboard.인정")
+                Text("제외 \(buckets.excluded)")
+                    .accessibilityIdentifier("opendesign.officeHours.dailyCard.scoreboard.제외")
+                Text("학습 \(buckets.learning)")
+                    .accessibilityIdentifier("opendesign.officeHours.dailyCard.scoreboard.학습")
+            }
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+            Text(entry.nextUnblockAction)
+                .font(.system(size: 10.5))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct OfficeHoursDailyGateCardView: View {
+    let card: SidecarEvent.MissionCard.DailyCard
+    let onRecovery: () -> Void
+
+    var body: some View {
+        if let gate = card.gateCard {
+            VStack(alignment: .leading, spacing: 8) {
+                dailyCardHeader(systemName: gate.satisfied ? "lock.open.fill" : "lock.fill", title: "\(gate.gate) 게이트", tint: gate.satisfied ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.rose) {
+                    Text(gate.satisfied ? "통과" : "복구")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(gate.satisfied ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.rose)
+                }
+                Text(gate.requires.joined(separator: " · "))
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !gate.blockingReasons.isEmpty {
+                    Text(gate.blockingReasons.joined(separator: " · "))
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !gate.satisfied && !gate.recoveryBranch.isEmpty {
+                    HStack(spacing: 8) {
+                        Text(gate.recoveryBranch)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        Spacer(minLength: 0)
+                        dailyCardActionButton(
+                            systemName: "arrow.right.circle",
+                            title: "Office Hours",
+                            accessibilityID: "opendesign.officeHours.dailyCard.gate.recovery",
+                            action: onRecovery
+                        )
+                    }
+                }
+            }
+            .dailyCardSurface(tint: gate.satisfied ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.rose)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("opendesign.officeHours.dailyCard.gate")
+        }
+    }
+}
+
+private func dailyCardHeader<Trailing: View>(
+    systemName: String,
+    title: String,
+    tint: Color,
+    @ViewBuilder trailing: () -> Trailing
+) -> some View {
+    HStack(spacing: 8) {
+        Image(systemName: systemName)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(tint)
+        Text(title)
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+        Spacer(minLength: 0)
+        trailing()
+    }
+}
+
+private func dailyCardActionButton(
+    systemName: String,
+    title: String,
+    accessibilityID: String,
+    action: @escaping () -> Void
+) -> some View {
+    Button(action: action) {
+        HStack(spacing: 5) {
+            Image(systemName: systemName)
+                .font(.system(size: 10.5, weight: .semibold))
+            Text(title)
+                .font(.system(size: 10.8, weight: .semibold))
+        }
+        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.bgDeep)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+    .buttonStyle(.plain)
+    .accessibilityIdentifier(accessibilityID)
+}
+
+private extension View {
+    func dailyCardSurface(tint: Color) -> some View {
+        self
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(OpenDesignOfficeHoursColor.surface)
+            )
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(tint)
+                    .frame(width: 3)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+            )
     }
 }
 

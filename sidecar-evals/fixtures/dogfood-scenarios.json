@@ -341,5 +341,27 @@
       "requires_one_next_action": false,
       "requires_proof_target": false
     }
+  },
+  {
+    "id": "v2-stale-resolution-to-workpack",
+    "repo_stage": "running",
+    "intent_mode": "startup",
+    "title": "Program v2 stale debt resolves into workpack",
+    "goal": "Verify repeated Office Hours debt becomes Card 1, resolving/replacing it prevents the same debt from reappearing, Card 2 remains available, scoreboards keep accepted and excluded counts separate, and gate cards expose source state recovery.",
+    "prompt": "Day 3 실행 화면에서 반복된 Candidate A paid ask 부채를 해결하고 다음 workpack으로 넘어간다.",
+    "fixture": {
+      "docs": [".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/GOAL.md", ".agentic30/docs/SPEC.md"],
+      "transcripts": ["day1-customer-interview"],
+      "state": { "bip": "running", "programV2": "stale-resolution" },
+      "iddSetup": "approved",
+      "proofs": ["https://threads.net/@october/post/day0-proof"]
+    },
+    "expected_visible_outcome": {
+      "must_include": [],
+      "must_not_include": [],
+      "requires_visible_output": false,
+      "requires_one_next_action": false,
+      "requires_proof_target": false
+    }
   }
 ]

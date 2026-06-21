@@ -218,6 +218,13 @@ test("normalization clears stale Codex runtime thread ids on startup", () => {
               "Codex Exec exited with code 1: Reading prompt from stdin...\nError: thread/resume: thread/resume failed: no rollout found for thread id 019dc32f-4182-7993-a7d7-58012553279d",
           },
           {
+            id: "message-empty-rollout",
+            role: "assistant",
+            state: "error",
+            content:
+              "Codex Exec exited with code 1: Reading prompt from stdin...\nError: thread/resume: thread/resume failed: failed to read thread: thread-store internal error: failed to read thread /Users/october/Library/Application Support/agentic30/codex-home/sessions/2026/06/21/rollout-2026-06-21T21-04-13-019eea11-2975-7660-a463-c631f7524b39.jsonl: rollout at /Users/october/Library/Application Support/agentic30/codex-home/sessions/2026/06/21/rollout-2026-06-21T21-04-13-019eea11-2975-7660-a463-c631f7524b39.jsonl is empty (code -32603)\n",
+          },
+          {
             id: "message-2",
             role: "assistant",
             state: "final",

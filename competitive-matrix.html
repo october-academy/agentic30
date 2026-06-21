@@ -45,32 +45,38 @@
   .plotcol{flex:1 1 auto;min-width:0}
   .plotbox{position:relative;width:100%;aspect-ratio:1.18/1;border:1px solid var(--line-strong);background:
       linear-gradient(var(--bg2),var(--bg2)) padding-box;
-      border-radius:4px;overflow:hidden}
+      border-radius:4px;overflow:hidden;
+      --plot-x:209px;
+      --plot-top:58px;
+      --plot-bottom:54px;
+      --axis-y:50%;
+      --quad-x:22px;
+      --quad-w:210px}
   .grid-h,.grid-v{position:absolute;background:var(--line)}
   .grid-h{left:0;right:0;height:1px}
   .grid-v{top:0;bottom:0;width:1px}
-  .axis-mid-h{position:absolute;left:0;right:0;top:50%;height:0;border-top:1px dashed rgba(94,234,212,.22)}
-  .axis-mid-v{position:absolute;top:0;bottom:0;left:50%;width:0;border-left:1px dashed rgba(94,234,212,.22)}
+  .axis-mid-h{position:absolute;left:var(--plot-x);right:var(--plot-x);top:var(--axis-y);height:0;border-top:1px dashed rgba(94,234,212,.22)}
+  .axis-mid-v{position:absolute;top:var(--plot-top);bottom:var(--plot-bottom);left:50%;width:0;border-left:1px dashed rgba(94,234,212,.22)}
 
   /* wedge glow top-right */
   .wedge{position:absolute;top:0;right:0;width:50%;height:50%;
     background:radial-gradient(120% 120% at 100% 0%, rgba(94,234,212,.10), rgba(244,114,182,.05) 45%, transparent 70%);
     pointer-events:none}
 
-  .quad{position:absolute;font-size:10px;letter-spacing:.05em;line-height:1.45;color:var(--muted2);max-width:34%;pointer-events:none}
+  .quad{position:absolute;font-size:10px;letter-spacing:.05em;line-height:1.45;color:var(--muted2);width:var(--quad-w);pointer-events:none;z-index:1}
   .quad b{display:block;color:var(--muted);font-size:10px;letter-spacing:.12em;margin-bottom:3px;font-weight:600}
-  .quad.tr{top:12px;right:14px;text-align:right}
+  .quad.tr{top:calc(var(--plot-top) + var(--quad-x));right:calc(var(--plot-x) + var(--quad-x));text-align:right}
   .quad.tr b{color:var(--magenta)}
-  .quad.tl{top:12px;left:14px}
-  .quad.br{bottom:34px;right:14px;text-align:right}
-  .quad.bl{bottom:34px;left:14px}
+  .quad.tl{top:calc(var(--plot-top) + var(--quad-x));left:calc(var(--plot-x) + var(--quad-x))}
+  .quad.br{bottom:calc(var(--plot-bottom) + var(--quad-x));right:calc(var(--plot-x) + var(--quad-x));text-align:right}
+  .quad.bl{bottom:calc(var(--plot-bottom) + var(--quad-x));left:calc(var(--plot-x) + var(--quad-x))}
 
   /* edge axis labels */
-  .edge{position:absolute;font-size:10px;letter-spacing:.08em;color:var(--teal-dim);opacity:.85;pointer-events:none;white-space:nowrap}
-  .edge.top{top:6px;left:50%;transform:translateX(-50%)}
-  .edge.bottom{bottom:8px;left:50%;transform:translateX(-50%)}
-  .edge.left{left:14px;top:calc(50% - 28px)}
-  .edge.right{right:14px;top:calc(50% - 28px);text-align:right}
+  .edge{position:absolute;font-size:10px;letter-spacing:.08em;color:var(--teal-dim);opacity:.88;pointer-events:none;white-space:nowrap;background:rgba(6,11,10,.78);z-index:2}
+  .edge.top{top:calc(var(--plot-top) / 2);left:50%;transform:translate(-50%,-50%);text-align:center}
+  .edge.bottom{bottom:calc(var(--plot-bottom) / 2);left:50%;transform:translate(-50%,50%);text-align:center}
+  .edge.left{left:14px;top:var(--axis-y);transform:translateY(-50%)}
+  .edge.right{right:14px;top:var(--axis-y);transform:translateY(-50%);text-align:right}
 
   /* nodes */
   .node{position:absolute;transform:translate(-50%,-50%);cursor:pointer;z-index:3}
@@ -301,13 +307,50 @@ const plot = document.getElementById('plot');
 const off = new Set(); // hidden categories
 let sel = 0;
 
+function clamp(value, lower, upper){
+  return Math.min(Math.max(value, lower), Math.max(lower, upper));
+}
+
+function applyMatrixChrome(){
+  const width = Math.max(plot.clientWidth, 1);
+  const height = Math.max(plot.clientHeight, 1);
+  const sidePadding = clamp(width * 0.012, 12, 20);
+  const topBand = clamp(height * 0.12, 44, 58);
+  const bottomBand = clamp(height * 0.11, 42, 54);
+  const horizontalAxisLabelWidth = clamp(width * 0.24, 206, 290);
+  const horizontalInsetCandidate = horizontalAxisLabelWidth + sidePadding + 14 - 115;
+  const plotX = Math.min(Math.max(horizontalInsetCandidate, 112), Math.max(112, width * 0.30));
+  const plotWidth = Math.max(1, width - plotX * 2);
+  const plotHeight = Math.max(1, height - topBand - bottomBand);
+  const axisY = topBand + plotHeight / 2;
+  const quadX = clamp(plotWidth * 0.018, 14, 22);
+  const quadW = Math.max(96, Math.min(210, (plotWidth - quadX * 2 - 18) / 2));
+
+  plot.style.setProperty('--plot-x', `${plotX}px`);
+  plot.style.setProperty('--plot-top', `${topBand}px`);
+  plot.style.setProperty('--plot-bottom', `${bottomBand}px`);
+  plot.style.setProperty('--axis-y', `${axisY}px`);
+  plot.style.setProperty('--quad-x', `${quadX}px`);
+  plot.style.setProperty('--quad-w', `${quadW}px`);
+
+  return { plotX, plotTop: topBand, plotWidth, plotHeight };
+}
+
+function positionNode(el, nd, chrome){
+  el.style.left = (chrome.plotX + chrome.plotWidth * (nd.x / 100)) + 'px';
+  el.style.top = (chrome.plotTop + chrome.plotHeight * (1 - nd.y / 100)) + 'px';
+}
+
+function positionNodes(){
+  const chrome = applyMatrixChrome();
+  els.forEach((el, i) => positionNode(el, NODES[i], chrome));
+}
+
 // build nodes
 const els = NODES.map((nd,i)=>{
   const a = CAT[nd.cat];
   const el = document.createElement('div');
   el.className = 'node' + (nd.star?' star':'') + (nd.historical?' historical':'') + (nd.x>=64?' left':'');
-  el.style.left = nd.x + '%';
-  el.style.top  = (100 - nd.y) + '%';
   el.style.setProperty('--c', a.c);
   if (nd.dy) el.style.setProperty('--label-y', nd.dy + 'px');
   el.innerHTML = (nd.star?'<div class="ring"></div>':'') + '<div class="dot"></div><div class="lab">'+nd.l+'</div>';
@@ -315,6 +358,8 @@ const els = NODES.map((nd,i)=>{
   plot.appendChild(el);
   return el;
 });
+positionNodes();
+window.addEventListener('resize', positionNodes);
 
 function select(i){
   sel = i;

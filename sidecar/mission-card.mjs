@@ -13,6 +13,17 @@
 
 import { IDD_BASE_CURRICULUM } from "./adaptive-curriculum.mjs";
 
+export {
+  PROGRAM_DAILY_CARD_TYPES,
+  ProgramDailyCardValidationError,
+  buildOfficeHoursAgentWorkpackCard,
+  buildOfficeHoursStateTransitionCard,
+  buildProgramDailyCardEvent,
+  buildProgramScoreboardSnapshotCard,
+  buildRevenueOrActivationGateCard,
+  validateProgramDailyCard,
+} from "./program-daily-card.mjs";
+
 export const MISSION_CARD_SCHEMA_VERSION = 1;
 export const MISSION_CARD_EVENT_TYPE = "mission_card";
 

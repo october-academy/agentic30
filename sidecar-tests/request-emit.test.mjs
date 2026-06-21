@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
 import {
   createUserInputRequest,
@@ -22,6 +22,11 @@ import {
 import {
   persistNewsMarketRadarSnapshot,
 } from "../sidecar/news-market-radar.mjs";
+import {
+  appendCommitment,
+  loadOfficeHoursMemory,
+} from "../sidecar/office-hours-memory.mjs";
+import { loadProofLedger } from "../sidecar/execution-os.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -377,6 +382,145 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
       ),
       false,
       "local stop_session cancellation must not be surfaced as provider_aborted",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("worked Office Hours routing uses worked day while preserving calendar metadata", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: { AGENTIC30_LOCAL_DEV_FAST_DAYS: "1" },
+  });
+  let ws;
+  try {
+    const calendarDay10Start = new Date();
+    calendarDay10Start.setDate(calendarDay10Start.getDate() - 9);
+    await seedDay1DoneProgress(harness.workspacePath, {
+      challengeStartedAt: localDateString(calendarDay10Start),
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: "Workspace: worked-day routing test. ICP: returning founder. Problem: calendar gaps skip Office Hours.",
+      visiblePrompt: "Test worked Office Hours routing",
+      source: "office_hours_screen",
+    }));
+
+    const started = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.runtime?.officeHours?.active === true
+        && event.session?.runtime?.officeHours?.day === 2,
+    );
+
+    assert.equal(started.session.runtime.officeHours.day, 2);
+    assert.equal(started.session.runtime.officeHours.calendarDay, 10);
+    assert.equal(started.session.runtime.officeHours.workedDayReason, "recorded_done");
+    const rawProgress = JSON.parse(
+      await fs.readFile(path.join(harness.workspacePath, ".agentic30", "day-progress.json"), "utf8"),
+    );
+    assert.equal(Object.prototype.hasOwnProperty.call(rawProgress.days, "10"), false);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("worked Office Hours resolution failure fails explicitly without calendar fallback", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: { AGENTIC30_LOCAL_DEV_FAST_DAYS: "1" },
+  });
+  let ws;
+  try {
+    const agentic30Dir = path.join(harness.workspacePath, ".agentic30");
+    await fs.mkdir(agentic30Dir, { recursive: true });
+    await fs.writeFile(path.join(agentic30Dir, "day-progress.json"), "{ invalid day progress", "utf8");
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: "Workspace: worked-day failure test. ICP: returning founder. Problem: hidden calendar fallback.",
+      visiblePrompt: "Test worked Office Hours resolution failure",
+      source: "office_hours_screen",
+    }));
+
+    const failedUpdate = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "error",
+    );
+    assert.match(failedUpdate.session.error, /Office Hours worked-day resolution failed/);
+    assert.match(failedUpdate.session.error, /Unable to parse day-progress/);
+    assert.match(failedUpdate.session.error, /Unexpected|JSON|Expected/);
+    assert.notEqual(failedUpdate.session.runtime?.officeHours?.active, true);
+    assert.equal(failedUpdate.session.runtime?.officeHours?.calendarDay, undefined);
+    assert.equal(failedUpdate.session.runtime?.officeHours?.workedDayReason, undefined);
+
+    const failedStatus = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "failed",
+    );
+    assert.match(failedStatus.detail, /Office Hours worked-day resolution failed/);
+    assert.match(failedStatus.detail, /Unable to parse day-progress/);
+
+    const errorEvent = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "error"
+        && event.sessionId === created.session.id
+        && event.errorKind === "office_hours_day_resolution_failed",
+    );
+    assert.equal(errorEvent.provider, "codex");
+    assert.equal(errorEvent.recoverable, true);
+    assert.match(errorEvent.message, /Office Hours worked-day resolution failed/);
+    assert.match(errorEvent.message, /Unable to parse day-progress/);
+
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "session_updated"
+          && event.session?.id === created.session.id
+          && event.session?.runtime?.officeHours?.active === true
+      ),
+      false,
+      "failed worked-day resolution must not fall through into active Office Hours runtime",
+    );
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "office_hours_status" && event.stage === "provider_starting"
+      ),
+      false,
+      "failed worked-day resolution must not fall through into provider routing",
     );
   } finally {
     ws?.close();
@@ -926,6 +1070,8 @@ test("office_hours_start restores a pending Day 3 card from workspace memory aft
     "Yesterday briefing: 고객 행동 증거 공백",
     "Goal text: Support leads will pay to avoid missed Slack escalations.",
   ].join("\n");
+  const pastDayStart = new Date();
+  pastDayStart.setDate(pastDayStart.getDate() - 4);
 
   try {
     await initGitRepo(firstHarness.workspacePath);
@@ -995,7 +1141,9 @@ test("office_hours_start restores a pending Day 3 card from workspace memory aft
       distinctPendingBeforeRestart.questions[0].question,
     );
     assert.equal(savedPending?.answeredTurnCount, 1);
-    await seedStandardInterviewActiveProgress(firstHarness.workspacePath, 3);
+    await seedStandardInterviewActiveProgress(firstHarness.workspacePath, 3, {
+      challengeStartedAt: localDateString(pastDayStart),
+    });
 
     firstWs.close();
     firstWs = null;
@@ -1053,6 +1201,11 @@ test("office_hours_start restores a pending Day 3 card from workspace memory aft
     );
     assert.equal(restoredStatus.stage, "question_ready");
     assert.equal(restoredUpdate.session.pendingUserInput.sessionId, secondCreated.session.id);
+    assert.equal(restoredUpdate.session.runtime.officeHours.day, 3);
+    assert.ok(
+      restoredUpdate.session.runtime.officeHours.calendarDay > 3,
+      "pending restore should run before past-day snapshot handling",
+    );
     assert.equal(
       restoredUpdate.session.pendingUserInput.questions[0].question,
       distinctPendingBeforeRestart.questions[0].question,
@@ -1214,6 +1367,120 @@ test("office_hours boot fails explicitly for detached pending card without recov
       "detached pending failure must not start a provider run",
     );
     assert.deepEqual(await listUserInputRequests(appSupportPath), []);
+  } finally {
+    ws?.close();
+    await harness?.close({ cleanup: false });
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("office_hours_start resumes a stranded active Day 3 session from answered turns", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-oh-stranded-active-"));
+  const workspacePath = path.join(tempRoot, "workspace");
+  const appSupportPath = path.join(tempRoot, "app-support");
+  const sessionId = "stranded-active-office-hours-session";
+  let harness;
+  let ws;
+
+  try {
+    await fs.mkdir(workspacePath, { recursive: true });
+    await fs.mkdir(appSupportPath, { recursive: true });
+    await initGitRepo(workspacePath);
+    const pastDayStart = new Date();
+    pastDayStart.setDate(pastDayStart.getDate() - 4);
+    await seedStandardInterviewActiveProgress(workspacePath, 3, {
+      challengeStartedAt: localDateString(pastDayStart),
+    });
+    await appendOfficeHoursTurn({
+      workspaceRoot: workspacePath,
+      turn: makeOfficeHoursTurn({
+        day: 3,
+        sessionId: "prior-day-3-session",
+        requestId: "answered-before-stranding",
+        question: "박조은님께 보낸 요청 증거가 있나요?",
+        answer: "아직 보내지 못했다",
+      }),
+    });
+    await fs.writeFile(
+      path.join(appSupportPath, "sessions.json"),
+      JSON.stringify({
+        sessions: [
+          {
+            id: sessionId,
+            title: "Office Hours · Day 3",
+            provider: "codex",
+            model: "gpt-5.1-codex-mini",
+            status: "idle",
+            error: null,
+            createdAt: "2026-06-16T15:20:00.000Z",
+            updatedAt: "2026-06-16T15:25:00.000Z",
+            messages: [],
+            pendingUserInput: null,
+            runtime: {
+              officeHours: {
+                active: true,
+                source: "office_hours_day_3",
+                day: 3,
+                startedAt: "2026-06-16T15:20:00.000Z",
+                context: "Office Hours mode: Startup\nOffice Hours day: 3\nExpected question count: 3",
+              },
+            },
+          },
+        ],
+      }, null, 2),
+      "utf8",
+    );
+
+    harness = await spawnSidecar({
+      tempRoot,
+      workspacePath,
+      appSupportPath,
+      cleanupOnClose: false,
+      extraEnv: {
+        AGENTIC30_RESTORE_SESSIONS_ON_BOOT: "1",
+        AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+      },
+    });
+    ws = await connectAndCollect(harness);
+    const ready = ws.events.find((event) => event.type === "ready");
+    const restored = ready?.sessions?.find((session) => session.id === sessionId);
+    assert.equal(restored?.status, "idle");
+    assert.equal(restored?.error, null);
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId,
+      context: "Office Hours mode: Startup\nOffice Hours day: 3\nExpected question count: 3",
+      visiblePrompt: "Retry stranded Day 3",
+      source: "office_hours_day_3_retry",
+      day: 3,
+      selectedSources: ["git"],
+    }));
+
+    const pendingUpdate = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === sessionId
+        && event.session?.status === "awaiting_input"
+        && event.session?.pendingUserInput?.requestId
+    );
+    assert.equal(pendingUpdate.session.runtime.officeHours.resumedTurns, 1);
+    assert.equal(
+      pendingUpdate.session.messages.some((message) =>
+        message.officeHoursSeededTurn === true
+          && message.role === "user"
+          && /아직 보내지 못했다/.test(message.content || "")
+      ),
+      true,
+    );
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "error"
+          && event.sessionId === sessionId
+      ),
+      false,
+    );
   } finally {
     ws?.close();
     await harness?.close({ cleanup: false });
@@ -1430,12 +1697,10 @@ test("office_hours_start fails explicitly when pending Day 3 snapshot points at 
   }
 });
 
-test("office_hours_start fails explicitly when answered Day 3 turns exist but pending snapshot is missing", async () => {
+test("office_hours_start continues from answered Day 3 turns when pending snapshot is missing", async () => {
   const harness = await spawnSidecar({
     extraEnv: {
-      AGENTIC30_TEST_STUB_PROVIDER: "",
-      CODEX_API_KEY: "",
-      OPENAI_API_KEY: "",
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
     },
   });
   let ws;
@@ -1445,10 +1710,14 @@ test("office_hours_start fails explicitly when answered Day 3 turns exist but pe
     "Expected question count: 3",
     "Goal text: Support leads will pay to avoid missed Slack escalations.",
   ].join("\n");
+  const pastDayStart = new Date();
+  pastDayStart.setDate(pastDayStart.getDate() - 4);
 
   try {
     await initGitRepo(harness.workspacePath);
-    await seedStandardInterviewActiveProgress(harness.workspacePath, 3);
+    await seedStandardInterviewActiveProgress(harness.workspacePath, 3, {
+      challengeStartedAt: localDateString(pastDayStart),
+    });
     await appendOfficeHoursTurn({
       workspaceRoot: harness.workspacePath,
       turn: makeOfficeHoursTurn({
@@ -1483,20 +1752,25 @@ test("office_hours_start fails explicitly when answered Day 3 turns exist but pe
       selectedSources: ["git"],
     }));
 
-    await waitForEvent(ws.events, (event) =>
+    const pendingUpdate = await waitForEvent(ws.events, (event) =>
       ws.events.indexOf(event) >= marker
         && event.type === "session_updated"
         && event.session?.id === created.session.id
-        && event.session?.status === "error"
-        && /pending 질문 스냅샷/.test(event.session?.error || "")
+        && event.session?.status === "awaiting_input"
+        && event.session?.pendingUserInput?.requestId
     );
-    const errorEvent = await waitForEvent(ws.events, (event) =>
+    const restored = await waitForEvent(ws.events, (event) =>
       ws.events.indexOf(event) >= marker
-        && event.type === "error"
-        && event.sessionId === created.session.id
-        && event.errorKind === "office_hours_pending_state_unrecoverable"
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.runtime?.officeHours?.resumedTurns === 1
+        && event.session?.messages?.some((message) =>
+          message.officeHoursSeededTurn === true
+            && message.role === "user"
+            && /박조은님에게 요청/.test(message.content || "")
+        )
     );
-    assert.equal(errorEvent.recoverable, false);
+    assert.equal(restored.session.runtime.officeHours.calendarDay > 3, true);
     await waitForEventSettle();
     assert.equal(
       ws.events.slice(marker).some((event) =>
@@ -1504,13 +1778,18 @@ test("office_hours_start fails explicitly when answered Day 3 turns exist but pe
           && event.sessionId === created.session.id
           && event.stage === "provider_starting"
       ),
-      false,
-      "missing pending snapshot must not use answered turns as a provider restart fallback",
+      true,
+      "answered-turn continuation should start the provider for the next question",
     );
     assert.equal(
-      await loadOfficeHoursPendingQuestion({ workspaceRoot: harness.workspacePath, day: 3 }),
-      null,
+      ws.events.slice(marker).some((event) =>
+        event.type === "error"
+          && event.sessionId === created.session.id
+      ),
+      false,
     );
+    const savedPending = await loadOfficeHoursPendingQuestion({ workspaceRoot: harness.workspacePath, day: 3 });
+    assert.equal(savedPending?.request?.requestId, pendingUpdate.session.pendingUserInput.requestId);
   } finally {
     ws?.close();
     await harness.close();
@@ -1571,7 +1850,7 @@ test("office_hours pending Codex tool result without request transport fails exp
   }
 });
 
-test("office_hours Day 1 stops at expected six questions and suppresses stray seventh request", async () => {
+test("Office Hours revision Day 1 stops at expected six questions and suppresses stray seventh request", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
@@ -1735,6 +2014,161 @@ test("office_hours Day 1 stops at expected six questions and suppresses stray se
   } finally {
     ws?.close();
     await harness.close();
+  }
+});
+
+test("office_hours revision with no next question fails visibly", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-oh-revision-no-next-"));
+  const workspacePath = path.join(tempRoot, "workspace");
+  const appSupportPath = path.join(tempRoot, "app-support");
+  const sessionId = "revision-no-next-question-session";
+  const requestId = "revision-no-next-question-q1";
+  let harness;
+  let ws;
+  try {
+    await fs.mkdir(workspacePath, { recursive: true });
+    await fs.mkdir(appSupportPath, { recursive: true });
+    await initGitRepo(workspacePath);
+    await seedStandardInterviewActiveProgress(workspacePath, 3);
+    const loaderPath = path.join(tempRoot, "office-hours-no-next-question-loader.mjs");
+    const registerPath = path.join(tempRoot, "register-office-hours-loader.mjs");
+    await fs.writeFile(
+      loaderPath,
+      `
+export async function load(url, context, nextLoad) {
+  const result = await nextLoad(url, context);
+  if (
+    process.env.AGENTIC30_TEST_STUB_OFFICE_HOURS_NO_NEXT_QUESTION === "1"
+    && url.endsWith("/sidecar/provider-runner.mjs")
+  ) {
+    const source = typeof result.source === "string"
+      ? result.source
+      : new TextDecoder().decode(result.source);
+    return {
+      ...result,
+      source: source.replace(
+        "if (/Agentic30 Day 1 STEP Office Hours|Office Hours를 시작한다/i.test(value)) {",
+        "if (false && /Agentic30 Day 1 STEP Office Hours|Office Hours를 시작한다/i.test(value)) {",
+      ),
+    };
+  }
+  return result;
+}
+`,
+      "utf8",
+    );
+    await fs.writeFile(
+      registerPath,
+      `import { register } from "node:module";\nregister(${JSON.stringify(pathToFileURL(loaderPath).href)}, import.meta.url);\n`,
+      "utf8",
+    );
+    const prompt = makeOfficeHoursPromptSnapshot({
+      sessionId,
+      requestId,
+      questionId: "revision_no_next_question",
+      question: "Q1: 어떤 고객에게 오늘 요청할 건가요?",
+    });
+    await appendOfficeHoursTurn({
+      workspaceRoot: workspacePath,
+      turn: makeOfficeHoursTurn({
+        day: 3,
+        index: 1,
+        sessionId,
+        requestId,
+        question: prompt.questions[0].question,
+        answer: "박조은님에게 paid pilot 조건을 확인한다",
+      }),
+    });
+    await fs.writeFile(
+      path.join(appSupportPath, "sessions.json"),
+      JSON.stringify({
+        sessions: [
+          {
+            id: sessionId,
+            title: "Office Hours · Day 3",
+            provider: "codex",
+            model: "gpt-5.1-codex-mini",
+            status: "idle",
+            error: null,
+            createdAt: "2026-06-16T15:20:00.000Z",
+            updatedAt: "2026-06-16T15:25:00.000Z",
+            messages: [],
+            pendingUserInput: null,
+            runtime: {
+              officeHours: {
+                active: true,
+                source: "office_hours_day_3",
+                day: 3,
+                startedAt: "2026-06-16T15:20:00.000Z",
+                context: "Office Hours mode: Startup\nOffice Hours day: 3\nExpected question count: 6",
+                expectedQuestionCount: 6,
+                promptSnapshots: [prompt],
+              },
+            },
+          },
+        ],
+      }, null, 2),
+      "utf8",
+    );
+
+    harness = await spawnSidecar({
+      tempRoot,
+      workspacePath,
+      appSupportPath,
+      cleanupOnClose: false,
+      extraEnv: {
+        AGENTIC30_RESTORE_SESSIONS_ON_BOOT: "1",
+        AGENTIC30_TEST_STUB_OFFICE_HOURS_NO_NEXT_QUESTION: "1",
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ? `${process.env.NODE_OPTIONS} ` : ""}--import=${pathToFileURL(registerPath).href}`,
+      },
+    });
+    ws = await connectAndCollect(harness);
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_revise_answer",
+      sessionId,
+      requestId,
+      prompt,
+      responses: [
+        {
+          question: prompt.questions[0].question,
+          selectedOptions: [prompt.questions[0].options[1].label],
+          freeText: "오늘 18시까지 DM으로 유료 파일럿 조건을 묻는다",
+        },
+      ],
+    }));
+
+    const failedUpdate = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === sessionId
+        && event.session?.status === "error"
+    );
+    assert.equal(failedUpdate.session.pendingUserInput, null);
+
+    const failedStatus = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "office_hours_status"
+        && event.sessionId === sessionId
+        && event.stage === "failed"
+    );
+    const errorEvent = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "error"
+        && event.sessionId === sessionId
+    );
+    const visibleFailureText = [
+      failedUpdate.session.error,
+      failedStatus.detail,
+      failedStatus.progressText,
+      errorEvent.message,
+    ].filter(Boolean).join("\n");
+    assert.match(visibleFailureText, /질문을 만들지 못했습니다/);
+  } finally {
+    ws?.close();
+    await harness?.close({ cleanup: false });
+    await fs.rm(tempRoot, { recursive: true, force: true });
   }
 });
 
@@ -2573,6 +3007,530 @@ test("day_progress_patch skips milestone gates in local dev fast-days mode", asy
   }
 });
 
+test("v2 daily card order", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_ENABLE_PROGRAM_V2: "1",
+      AGENTIC30_LOCAL_DEV_FAST_DAYS: "1",
+    },
+  });
+  let ws;
+  try {
+    await seedStandardInterviewDoneProgress(harness.workspacePath, 3);
+    await seedRepeatedOpenCommitments(harness.workspacePath, { day: 3 });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "day_progress_patch",
+      workspaceRoot: harness.workspacePath,
+      day: 3,
+      stepId: "execution",
+      status: "active",
+    }));
+
+    await waitForV2DailyCardTypes(ws, [
+      "office_hours_state_transition",
+      "office_hours_agent_workpack",
+      "program_scoreboard_snapshot",
+      "revenue_or_activation_gate",
+    ]);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("v2 disabled preserves mission card", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_ENABLE_PROGRAM_V2: "",
+      AGENTIC30_LOCAL_DEV_FAST_DAYS: "1",
+    },
+  });
+  let ws;
+  try {
+    await seedStandardInterviewDoneProgress(harness.workspacePath, 3);
+    await seedRepeatedOpenCommitments(harness.workspacePath, { day: 3 });
+    ws = await connectAndCollect(harness);
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.some((event) => event.type === "program_notification_schedule"),
+      false,
+      "feature flag off must not emit v2 program_notification_schedule events",
+    );
+
+    ws.send(JSON.stringify({
+      type: "day_progress_patch",
+      workspaceRoot: harness.workspacePath,
+      day: 3,
+      stepId: "execution",
+      status: "active",
+    }));
+
+    const legacy = await waitForEvent(ws.events, (event) =>
+      event.type === "mission_card"
+        && event.workspaceRoot === harness.workspacePath
+        && event.missionCard?.source === "idd",
+    );
+    assert.equal(legacy.missionCard.day, 3);
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.some((event) => event.type === "mission_card" && event.missionCard?.type),
+      false,
+      "feature flag off must not emit v2 daily-card union payloads",
+    );
+    assert.equal(
+      ws.events.some((event) => event.type === "program_notification_schedule"),
+      false,
+      "feature flag off must not emit v2 program_notification_schedule events after progress changes",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_daily_card_submit duplicate no-op", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_ENABLE_PROGRAM_V2: "1",
+      AGENTIC30_LOCAL_DEV_FAST_DAYS: "1",
+    },
+  });
+  let ws;
+  try {
+    await seedStandardInterviewDoneProgress(harness.workspacePath, 3);
+    const seeded = await seedRepeatedOpenCommitments(harness.workspacePath, { day: 3 });
+    ws = await connectAndCollect(harness);
+    const stateCard = await emitAndFindV2Card(ws, harness.workspacePath, "office_hours_state_transition");
+
+    const body = {
+      type: "office_hours_daily_card_submit",
+      workspaceRoot: harness.workspacePath,
+      cardId: stateCard.id,
+      cardGenerationId: stateCard.generation?.generationId,
+      sourceStateVersion: stateCard.sourceStateVersion,
+      cardType: stateCard.type,
+      sourceCommitmentId: seeded.activeCommitmentId,
+      action: "attach_evidence",
+      choiceId: "attach_evidence",
+      evidenceRefs: [
+        {
+          kind: "url",
+          url: "https://example.com/customer-proof",
+          note: "Customer accepted the paid ask.",
+        },
+      ],
+    };
+
+    ws.send(JSON.stringify(body));
+    const first = await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_daily_card_submit_result"
+        && event.workspaceRoot === harness.workspacePath
+        && event.cardId === stateCard.id,
+    );
+    assert.equal(first.success, true);
+    assert.equal(first.deduped, false);
+
+    ws.send(JSON.stringify(body));
+    const duplicate = await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_daily_card_submit_result"
+        && event.workspaceRoot === harness.workspacePath
+        && event.cardId === stateCard.id
+        && event.deduped === true,
+    );
+    assert.equal(duplicate.success, true);
+
+    const memory = await loadOfficeHoursMemory({ workspaceRoot: harness.workspacePath });
+    const resolved = memory.commitments.filter((commitment) =>
+      commitment.id === seeded.activeCommitmentId && commitment.status === "met"
+    );
+    assert.equal(resolved.length, 1);
+    const ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    assert.equal(ledger.events.filter((event) => event.sourceUrl === "https://example.com/customer-proof").length, 1);
+
+    ws.send(JSON.stringify({
+      ...body,
+      evidenceRefs: [
+        {
+          kind: "url",
+          url: "https://example.com/different-proof",
+          note: "Different body for the same card.",
+        },
+      ],
+    }));
+    const duplicateDifferent = await waitForEvent(ws.events, (event) =>
+      event.type === "error" && /ERR_DUPLICATE_DAILY_CARD_SUBMISSION/.test(event.message || ""),
+    );
+    assert.match(duplicateDifferent.message, /ERR_DUPLICATE_DAILY_CARD_SUBMISSION/);
+
+    ws.send(JSON.stringify({
+      ...body,
+      action: "keep_open_today",
+      choiceId: "keep_open_today",
+      evidenceRefs: [],
+    }));
+    const alreadyResolved = await waitForEvent(ws.events, (event) =>
+      event.type === "error" && /ERR_COMMITMENT_ALREADY_RESOLVED/.test(event.message || ""),
+    );
+    assert.match(alreadyResolved.message, /ERR_COMMITMENT_ALREADY_RESOLVED/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_daily_card_submit concurrent different body rejects one mutation", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_ENABLE_PROGRAM_V2: "1",
+      AGENTIC30_LOCAL_DEV_FAST_DAYS: "1",
+    },
+  });
+  let ws;
+  try {
+    await seedStandardInterviewDoneProgress(harness.workspacePath, 3);
+    const seeded = await seedRepeatedOpenCommitments(harness.workspacePath, { day: 3 });
+    ws = await connectAndCollect(harness);
+    const stateCard = await emitAndFindV2Card(ws, harness.workspacePath, "office_hours_state_transition");
+
+    const body = {
+      type: "office_hours_daily_card_submit",
+      workspaceRoot: harness.workspacePath,
+      cardId: stateCard.id,
+      cardGenerationId: stateCard.generation?.generationId,
+      sourceStateVersion: stateCard.sourceStateVersion,
+      cardType: stateCard.type,
+      sourceCommitmentId: seeded.activeCommitmentId,
+      action: "attach_evidence",
+      choiceId: "attach_evidence",
+      evidenceRefs: [
+        {
+          kind: "url",
+          url: "https://example.com/proof-a",
+          note: "First overlapping proof.",
+        },
+      ],
+    };
+
+    ws.events.length = 0;
+    ws.send(JSON.stringify(body));
+    ws.send(JSON.stringify({
+      ...body,
+      evidenceRefs: [
+        {
+          kind: "url",
+          url: "https://example.com/proof-b",
+          note: "Second overlapping proof with a different body.",
+        },
+      ],
+    }));
+
+    await waitForEvents(ws.events, (event) =>
+      (event.type === "office_hours_daily_card_submit_result" && event.cardId === stateCard.id)
+        || (event.type === "error" && /ERR_DUPLICATE_DAILY_CARD_SUBMISSION/.test(event.message || "")),
+    2);
+
+    const results = ws.events.filter((event) =>
+      event.type === "office_hours_daily_card_submit_result" && event.cardId === stateCard.id
+    );
+    const duplicateErrors = ws.events.filter((event) =>
+      event.type === "error" && /ERR_DUPLICATE_DAILY_CARD_SUBMISSION/.test(event.message || "")
+    );
+    assert.equal(results.length, 1);
+    assert.equal(results[0].success, true);
+    assert.equal(results[0].deduped, false);
+    assert.equal(duplicateErrors.length, 1);
+
+    const ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    const ledgerUrls = ledger.events
+      .filter((event) => event.actionId === seeded.activeCommitmentId)
+      .map((event) => event.sourceUrl)
+      .sort();
+    assert.equal(ledgerUrls.length, 1);
+    assert.equal(["https://example.com/proof-a", "https://example.com/proof-b"].includes(ledgerUrls[0]), true);
+
+    const memory = await loadOfficeHoursMemory({ workspaceRoot: harness.workspacePath });
+    const resolved = memory.commitments.filter((commitment) =>
+      commitment.id === seeded.activeCommitmentId && commitment.status === "met"
+    );
+    assert.equal(resolved.length, 1);
+
+    const receipts = JSON.parse(await fs.readFile(
+      path.join(harness.workspacePath, ".agentic30", "program-v2-daily-card-submissions.json"),
+      "utf8",
+    ));
+    const matchingReceipts = receipts.submissions.filter((entry) => entry.key === `${stateCard.id}:${seeded.activeCommitmentId}`);
+    assert.equal(matchingReceipts.length, 1);
+    const receiptBody = JSON.parse(matchingReceipts[0].canonicalBody);
+    assert.equal(receiptBody.action, "attach_evidence");
+    assert.equal(receiptBody.sourceCommitmentId, seeded.activeCommitmentId);
+    assert.equal(receiptBody.evidenceRefs.length, 1);
+    assert.equal(
+      ["https://example.com/proof-a", "https://example.com/proof-b"].includes(receiptBody.evidenceRefs[0].url),
+      true,
+    );
+    assert.equal(receiptBody.evidenceRefs[0].url, ledgerUrls[0]);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_daily_card_submit corrupt receipt fails explicitly", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_ENABLE_PROGRAM_V2: "1",
+      AGENTIC30_LOCAL_DEV_FAST_DAYS: "1",
+    },
+  });
+  let ws;
+  try {
+    await seedStandardInterviewDoneProgress(harness.workspacePath, 3);
+    const seeded = await seedRepeatedOpenCommitments(harness.workspacePath, { day: 3 });
+    ws = await connectAndCollect(harness);
+    const stateCard = await emitAndFindV2Card(ws, harness.workspacePath, "office_hours_state_transition");
+    const receiptPath = path.join(harness.workspacePath, ".agentic30", "program-v2-daily-card-submissions.json");
+    await fs.writeFile(receiptPath, "{not-json", "utf8");
+
+    ws.events.length = 0;
+    ws.send(JSON.stringify({
+      type: "office_hours_daily_card_submit",
+      workspaceRoot: harness.workspacePath,
+      cardId: stateCard.id,
+      cardGenerationId: stateCard.generation?.generationId,
+      sourceStateVersion: stateCard.sourceStateVersion,
+      cardType: stateCard.type,
+      sourceCommitmentId: seeded.activeCommitmentId,
+      action: "attach_evidence",
+      choiceId: "attach_evidence",
+      evidenceRefs: [
+        {
+          kind: "url",
+          url: "https://example.com/corrupt-receipt-proof",
+          note: "This proof must not be written when the receipt store is corrupt.",
+        },
+      ],
+    }));
+
+    const error = await waitForEvent(ws.events, (event) =>
+      event.type === "error" && /ERR_DAILY_CARD_SUBMISSION_RECEIPT_CORRUPT/.test(event.message || ""),
+    );
+    assert.match(error.message, /ERR_DAILY_CARD_SUBMISSION_RECEIPT_CORRUPT/);
+
+    const ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    assert.equal(ledger.events.filter((event) => event.sourceUrl === "https://example.com/corrupt-receipt-proof").length, 0);
+    const memory = await loadOfficeHoursMemory({ workspaceRoot: harness.workspacePath });
+    const commitment = memory.commitments.find((entry) => entry.id === seeded.activeCommitmentId);
+    assert.notEqual(commitment?.status, "met");
+    assert.equal(await fs.readFile(receiptPath, "utf8"), "{not-json");
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_daily_card_submit malformed receipt store fails explicitly", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_ENABLE_PROGRAM_V2: "1",
+      AGENTIC30_LOCAL_DEV_FAST_DAYS: "1",
+    },
+  });
+  let ws;
+  try {
+    await seedStandardInterviewDoneProgress(harness.workspacePath, 3);
+    const seeded = await seedRepeatedOpenCommitments(harness.workspacePath, { day: 3 });
+    ws = await connectAndCollect(harness);
+    const stateCard = await emitAndFindV2Card(ws, harness.workspacePath, "office_hours_state_transition");
+    const receiptPath = path.join(harness.workspacePath, ".agentic30", "program-v2-daily-card-submissions.json");
+    const malformedStore = JSON.stringify({ schemaVersion: 1, submissions: "not-an-array" });
+    await fs.writeFile(receiptPath, malformedStore, "utf8");
+
+    ws.events.length = 0;
+    ws.send(JSON.stringify({
+      type: "office_hours_daily_card_submit",
+      workspaceRoot: harness.workspacePath,
+      cardId: stateCard.id,
+      cardGenerationId: stateCard.generation?.generationId,
+      sourceStateVersion: stateCard.sourceStateVersion,
+      cardType: stateCard.type,
+      sourceCommitmentId: seeded.activeCommitmentId,
+      action: "attach_evidence",
+      choiceId: "attach_evidence",
+      evidenceRefs: [
+        {
+          kind: "url",
+          url: "https://example.com/malformed-receipt-proof",
+          note: "This proof must not be written when the receipt store schema is malformed.",
+        },
+      ],
+    }));
+
+    const observed = await waitForEvent(ws.events, (event) =>
+      (event.type === "error" && /ERR_DAILY_CARD_SUBMISSION_RECEIPT_CORRUPT/.test(event.message || ""))
+        || (event.type === "office_hours_daily_card_submit_result" && event.cardId === stateCard.id),
+    );
+    if (observed.type !== "error") {
+      const ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+      const memory = await loadOfficeHoursMemory({ workspaceRoot: harness.workspacePath });
+      const commitment = memory.commitments.find((entry) => entry.id === seeded.activeCommitmentId);
+      assert.fail(
+        `malformed receipt store was accepted; proofCount=${ledger.events.filter((event) => event.sourceUrl === "https://example.com/malformed-receipt-proof").length}; commitmentStatus=${commitment?.status}; receiptBytes=${await fs.readFile(receiptPath, "utf8")}`,
+      );
+    }
+    assert.match(observed.message, /ERR_DAILY_CARD_SUBMISSION_RECEIPT_CORRUPT/);
+
+    const ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    assert.equal(ledger.events.filter((event) => event.sourceUrl === "https://example.com/malformed-receipt-proof").length, 0);
+    const memory = await loadOfficeHoursMemory({ workspaceRoot: harness.workspacePath });
+    const commitment = memory.commitments.find((entry) => entry.id === seeded.activeCommitmentId);
+    assert.notEqual(commitment?.status, "met");
+    assert.equal(await fs.readFile(receiptPath, "utf8"), malformedStore);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_daily_card_submit concurrent identical body dedupes one mutation", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_ENABLE_PROGRAM_V2: "1",
+      AGENTIC30_LOCAL_DEV_FAST_DAYS: "1",
+    },
+  });
+  let ws;
+  try {
+    await seedStandardInterviewDoneProgress(harness.workspacePath, 3);
+    const seeded = await seedRepeatedOpenCommitments(harness.workspacePath, { day: 3 });
+    ws = await connectAndCollect(harness);
+    const stateCard = await emitAndFindV2Card(ws, harness.workspacePath, "office_hours_state_transition");
+
+    const body = {
+      type: "office_hours_daily_card_submit",
+      workspaceRoot: harness.workspacePath,
+      cardId: stateCard.id,
+      cardGenerationId: stateCard.generation?.generationId,
+      sourceStateVersion: stateCard.sourceStateVersion,
+      cardType: stateCard.type,
+      sourceCommitmentId: seeded.activeCommitmentId,
+      action: "attach_evidence",
+      choiceId: "attach_evidence",
+      evidenceRefs: [
+        {
+          kind: "url",
+          url: "https://example.com/same-proof",
+          note: "Same overlapping proof.",
+        },
+      ],
+    };
+
+    ws.events.length = 0;
+    ws.send(JSON.stringify(body));
+    ws.send(JSON.stringify(body));
+
+    await waitForEvents(ws.events, (event) =>
+      event.type === "office_hours_daily_card_submit_result" && event.cardId === stateCard.id,
+    2);
+
+    const results = ws.events.filter((event) =>
+      event.type === "office_hours_daily_card_submit_result" && event.cardId === stateCard.id
+    );
+    assert.equal(results.length, 2);
+    assert.equal(results.filter((event) => event.success === true && event.deduped === false).length, 1);
+    assert.equal(results.filter((event) => event.success === true && event.deduped === true).length, 1);
+    assert.equal(
+      new Set(results.map((event) => event.proofEventId).filter(Boolean)).size,
+      1,
+    );
+
+    const ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    assert.equal(ledger.events.filter((event) => event.sourceUrl === "https://example.com/same-proof").length, 1);
+
+    const receipts = JSON.parse(await fs.readFile(
+      path.join(harness.workspacePath, ".agentic30", "program-v2-daily-card-submissions.json"),
+      "utf8",
+    ));
+    assert.equal(receipts.submissions.filter((entry) => entry.key === `${stateCard.id}:${seeded.activeCommitmentId}`).length, 1);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_daily_card_submit stale card id", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_ENABLE_PROGRAM_V2: "1",
+      AGENTIC30_LOCAL_DEV_FAST_DAYS: "1",
+    },
+  });
+  let ws;
+  try {
+    await seedStandardInterviewDoneProgress(harness.workspacePath, 3);
+    const seeded = await seedRepeatedOpenCommitments(harness.workspacePath, { day: 3 });
+    ws = await connectAndCollect(harness);
+    const stateCard = await emitAndFindV2Card(ws, harness.workspacePath, "office_hours_state_transition");
+
+    ws.send(JSON.stringify({
+      type: "office_hours_daily_card_submit",
+      workspaceRoot: harness.workspacePath,
+      cardId: "daily-card-stale",
+      cardGenerationId: stateCard.generation?.generationId,
+      sourceStateVersion: stateCard.sourceStateVersion,
+      cardType: stateCard.type,
+      sourceCommitmentId: seeded.activeCommitmentId,
+      action: "keep_open_today",
+      choiceId: "keep_open_today",
+    }));
+
+    const error = await waitForEvent(ws.events, (event) =>
+      event.type === "error" && /ERR_STALE_DAILY_CARD_SUBMISSION/.test(event.message || ""),
+    );
+    assert.match(error.message, /ERR_STALE_DAILY_CARD_SUBMISSION/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_daily_card_submit out-of-order", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_ENABLE_PROGRAM_V2: "1",
+      AGENTIC30_LOCAL_DEV_FAST_DAYS: "1",
+    },
+  });
+  let ws;
+  try {
+    await seedStandardInterviewDoneProgress(harness.workspacePath, 3);
+    const seeded = await seedRepeatedOpenCommitments(harness.workspacePath, { day: 3 });
+    ws = await connectAndCollect(harness);
+    const workpackCard = await emitAndFindV2Card(ws, harness.workspacePath, "office_hours_agent_workpack");
+
+    ws.send(JSON.stringify({
+      type: "office_hours_daily_card_submit",
+      workspaceRoot: harness.workspacePath,
+      cardId: workpackCard.id,
+      cardGenerationId: workpackCard.generation?.generationId,
+      sourceStateVersion: workpackCard.sourceStateVersion,
+      cardType: workpackCard.type,
+      sourceCommitmentId: seeded.activeCommitmentId,
+      action: "attach_evidence",
+      choiceId: "attach_evidence",
+    }));
+
+    const error = await waitForEvent(ws.events, (event) =>
+      event.type === "error" && /ERR_OUT_OF_ORDER_DAILY_CARD_SUBMISSION/.test(event.message || ""),
+    );
+    assert.match(error.message, /ERR_OUT_OF_ORDER_DAILY_CARD_SUBMISSION/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("day_progress_get returns an empty default state when no file exists", async () => {
   const harness = await spawnSidecar();
   let ws;
@@ -2805,6 +3763,70 @@ function assertStatusOrder(actualStages, expectedStages) {
     assert.notEqual(next, -1, `Expected office_hours_status stage ${stage}; saw ${actualStages.join(", ")}`);
     cursor = next;
   }
+}
+
+async function emitAndFindV2Card(ws, workspacePath, cardType) {
+  ws.events.length = 0;
+  ws.send(JSON.stringify({
+    type: "day_progress_patch",
+    workspaceRoot: workspacePath,
+    day: 3,
+    stepId: "execution",
+    status: "active",
+  }));
+  const event = await waitForEvent(ws.events, (candidate) =>
+    candidate.type === "mission_card"
+      && candidate.workspaceRoot === workspacePath
+      && candidate.missionCard?.type === cardType,
+  );
+  return event.missionCard;
+}
+
+async function waitForV2DailyCardTypes(ws, expectedTypes) {
+  await waitForEvent(ws.events, (event) =>
+    event.type === "mission_card"
+      && event.missionCard?.type === expectedTypes.at(-1),
+  );
+  const actualTypes = ws.events
+    .filter((event) => event.type === "mission_card" && event.missionCard?.type)
+    .map((event) => event.missionCard.type);
+  assert.deepEqual(actualTypes.slice(0, expectedTypes.length), expectedTypes);
+}
+
+async function seedRepeatedOpenCommitments(workspacePath, { day = 3 } = {}) {
+  const baseCommitment = {
+    customer: "Candidate A",
+    channel: "email",
+    message: "Ask for a paid pilot by Friday",
+    expectedEvidenceKind: "url",
+    dueDay: day + 1,
+    confirmedByUser: true,
+    candidateName: "Candidate A",
+    actionKind: "paid_ask",
+    actionText: "Ask for a paid pilot by Friday",
+  };
+  await appendCommitment({
+    workspaceRoot: workspacePath,
+    text: "Candidate A에게 paid pilot 요청",
+    cycle: day - 1,
+    day: day - 1,
+    originText: "Candidate A에게 paid pilot 요청",
+    commitment: baseCommitment,
+    now: new Date("2026-06-15T00:00:00.000Z"),
+  });
+  await appendCommitment({
+    workspaceRoot: workspacePath,
+    text: "Candidate A에게 paid pilot 요청",
+    cycle: day,
+    day,
+    originText: "Candidate A에게 paid pilot 요청",
+    commitment: baseCommitment,
+    now: new Date("2026-06-16T00:00:00.000Z"),
+  });
+  const memory = await loadOfficeHoursMemory({ workspaceRoot: workspacePath });
+  return {
+    activeCommitmentId: memory.commitments.at(-1)?.id ?? "",
+  };
 }
 
 async function spawnSidecar({
@@ -3102,7 +4124,7 @@ async function seedDay1ActiveProgress(workspacePath) {
   );
 }
 
-async function seedDay1DoneProgress(workspacePath) {
+async function seedDay1DoneProgress(workspacePath, { challengeStartedAt = localDateString(new Date()) } = {}) {
   const agentic30Dir = path.join(workspacePath, ".agentic30");
   await fs.mkdir(agentic30Dir, { recursive: true });
   await fs.writeFile(
@@ -3110,7 +4132,7 @@ async function seedDay1DoneProgress(workspacePath) {
     JSON.stringify({
       schemaVersion: 1,
       schema: "agentic30.day_progress.v1",
-      challengeStartedAt: localDateString(new Date()),
+      challengeStartedAt,
       days: {
         1: {
           day: 1,
@@ -3128,7 +4150,11 @@ async function seedDay1DoneProgress(workspacePath) {
   );
 }
 
-async function seedStandardInterviewActiveProgress(workspacePath, day = 3) {
+async function seedStandardInterviewActiveProgress(
+  workspacePath,
+  day = 3,
+  { challengeStartedAt = localDateString(new Date()) } = {},
+) {
   const dayNumber = Number.parseInt(String(day || ""), 10);
   const agentic30Dir = path.join(workspacePath, ".agentic30");
   await fs.mkdir(agentic30Dir, { recursive: true });
@@ -3137,7 +4163,7 @@ async function seedStandardInterviewActiveProgress(workspacePath, day = 3) {
     JSON.stringify({
       schemaVersion: 1,
       schema: "agentic30.day_progress.v1",
-      challengeStartedAt: localDateString(new Date()),
+      challengeStartedAt,
       days: {
         [String(dayNumber)]: {
           day: dayNumber,
@@ -3379,6 +4405,21 @@ async function waitForEvent(events, predicate, timeoutMs = 10_000) {
     return event.type;
   });
   throw new Error(`Timed out waiting for event. Saw: ${summary.join(", ")}`);
+}
+
+async function waitForEvents(events, predicate, expectedCount, timeoutMs = 10_000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const found = events.filter(predicate);
+    if (found.length >= expectedCount) return found;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const summary = events.map((event) => {
+    if (event.type === "error") return `error:${event.message || ""}`;
+    if (event.type === "office_hours_daily_card_submit_result") return `office_hours_daily_card_submit_result:${event.deduped ? "deduped" : "new"}`;
+    return event.type || JSON.stringify(event);
+  });
+  throw new Error(`Timed out waiting for ${expectedCount} events. Saw: ${summary.join(", ")}`);
 }
 
 async function waitForEventSettle(ms = 250) {
