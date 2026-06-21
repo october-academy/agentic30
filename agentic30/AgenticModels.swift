@@ -506,6 +506,8 @@ struct OfficeHoursRuntime: Codable, Hashable {
     var startedAt: String?
     var context: String?
     var day: Int?
+    var calendarDay: Int?
+    var workedDayReason: String?
     var promptSnapshots: [OfficeHoursStoredPromptSnapshot]?
     /// 사이드카가 인터뷰 종결 카드(대안 비교) 답변 제출 시점에 스탬프하는
     /// 완료 신호. 프롬프트가 이미 답이 분명한 질문을 건너뛰므로(smart-skip)

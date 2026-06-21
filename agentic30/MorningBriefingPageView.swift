@@ -822,8 +822,13 @@ struct MorningBriefingPageView: View {
     // MARK: - Sync bar
 
     private var syncBar: some View {
-        HStack(spacing: 8) {
-            ForEach(displayBriefing?.sync?.sources ?? []) { source in
+        let sources = displayBriefing?.sync?.sources ?? []
+        let accessibilityLabel = (sources.map { source in
+            "\(source.label ?? source.id) \(syncPillStatusLabel(source.state))"
+        } + ["지난 24시간"]).joined(separator: ", ")
+
+        return HStack(spacing: 8) {
+            ForEach(sources) { source in
                 syncPill(source)
             }
             Spacer(minLength: 8)
@@ -838,7 +843,8 @@ struct MorningBriefingPageView: View {
         }
         .padding(.horizontal, 28)
         .frame(height: 50)
-        .accessibilityElement(children: .contain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("morningBriefing.syncbar")
     }
 
@@ -1374,6 +1380,17 @@ struct MorningBriefingPageView: View {
         let progress = viewingPrevious ? nil : sourceProgress[card.id]
         let isCollectingCard = progress?.isCollecting == true
         let isFailedCard = card.state == "failed"
+        let accessibilitySummary = [
+            card.label ?? card.id,
+            card.subtitle,
+            card.isReady ? metricValueLabel(card.metric?.value) : card.note,
+            card.isReady ? card.metric?.unit : nil,
+            card.isReady ? card.metric?.deltaLabel : nil,
+            isFailedCard ? "수집 실패" : nil,
+        ]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
         return VStack(alignment: .leading, spacing: 11) {
             HStack(spacing: 9) {
                 sourceLogoBadge(card.id)
@@ -1471,6 +1488,7 @@ struct MorningBriefingPageView: View {
                 )
         )
         .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilitySummary)
         .accessibilityIdentifier("morningBriefing.card.\(card.id)")
     }
 
