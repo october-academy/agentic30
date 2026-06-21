@@ -2271,7 +2271,7 @@ struct SidecarEventDecodingTests {
         #expect(viewModel.dailyCards.first?.id == "office_hours_agent_workpack:14:commitment_14:state-v2")
     }
 
-    @MainActor @Test func repairV2DailyCardDoesNotOverwriteLegacyExecutionMissionCard() throws {
+    @MainActor @Test func v2DailyCardClearsLegacyExecutionMissionCard() throws {
         let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
         let legacyEvent = try decoder.decode(SidecarEvent.self, from: Data(Self.legacyMissionCardPayload.utf8))
         let dailyCardEvent = try decoder.decode(SidecarEvent.self, from: Data(Self.v2WorkpackPayload.utf8))
@@ -2279,9 +2279,38 @@ struct SidecarEventDecodingTests {
         viewModel.applySidecarEventForTesting(legacyEvent)
         viewModel.applySidecarEventForTesting(dailyCardEvent)
 
-        #expect(viewModel.executionMissionCard?.mission?.shortTitle == "Input Flow")
+        #expect(viewModel.executionMissionCard == nil)
         #expect(viewModel.dailyCards.count == 1)
         #expect(viewModel.dailyCards.first?.agentWorkpack != nil)
+    }
+
+    @MainActor @Test func v2DailyCardRefreshPrunesCardsFromOlderSourceStateVersion() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        let statePayload = Self.v2StateTransitionPayload
+            .replacingOccurrences(
+                of: #""schemaVersion": 1,"#,
+                with: #""id": "office_hours_state_transition:14:commitment_14:state-v1", "schemaVersion": 1,"#
+            )
+            .replacingOccurrences(
+                of: #""sourceState": "stale","#,
+                with: #""sourceState": "stale", "sourceStateVersion": "state-v1","#
+            )
+        let refreshedWorkpackPayload = Self.v2WorkpackPayload
+            .replacingOccurrences(
+                of: #""schemaVersion": 1,"#,
+                with: #""id": "office_hours_agent_workpack:14:commitment_14:state-v2", "schemaVersion": 1,"#
+            )
+            .replacingOccurrences(
+                of: #""sourceState": "ready","#,
+                with: #""sourceState": "ready", "sourceStateVersion": "state-v2","#
+            )
+
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(statePayload.utf8)))
+        viewModel.applySidecarEventForTesting(try decoder.decode(SidecarEvent.self, from: Data(refreshedWorkpackPayload.utf8)))
+
+        #expect(viewModel.dailyCards.count == 1)
+        #expect(viewModel.dailyCards.first?.type == .officeHoursAgentWorkpack)
+        #expect(viewModel.dailyCards.first?.sourceStateVersion == "state-v2")
     }
 
     @MainActor @Test func repairV2DailyCardDayChangeClearsPreviousDayCards() throws {

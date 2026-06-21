@@ -2894,14 +2894,14 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     officeHoursMemoryBanner(presentation: bannerPresentation)
                     officeHoursSourceGateBanner(activeDay: activeDay)
+                    officeHoursGateBlockedBanner()
+                    officeHoursInterventionBanner(
+                        presentation: bannerPresentation,
+                        session: conversationSession,
+                        day1Content: day1Content,
+                        activeDay: activeDay
+                    )
                     if viewModel.dailyCards.isEmpty {
-                        officeHoursGateBlockedBanner()
-                        officeHoursInterventionBanner(
-                            presentation: bannerPresentation,
-                            session: conversationSession,
-                            day1Content: day1Content,
-                            activeDay: activeDay
-                        )
                         officeHoursMissionCardBanner()
                     } else {
                         officeHoursDailyCardStackBanner(
@@ -14420,7 +14420,6 @@ private struct OfficeHoursDailyCardEvidenceSheet: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(
                     locator.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        && note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 )
                 .accessibilityIdentifier("opendesign.officeHours.dailyCard.evidence.submit")
             }
@@ -14698,17 +14697,19 @@ private struct OfficeHoursDailyGateCardView: View {
                         .foregroundStyle(OpenDesignOfficeHoursColor.rose)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                HStack(spacing: 8) {
-                    Text(gate.recoveryBranch)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-                    Spacer(minLength: 0)
-                    dailyCardActionButton(
-                        systemName: "arrow.right.circle",
-                        title: "Office Hours",
-                        accessibilityID: "opendesign.officeHours.dailyCard.gate.recovery",
-                        action: onRecovery
-                    )
+                if !gate.satisfied {
+                    HStack(spacing: 8) {
+                        Text(gate.recoveryBranch)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        Spacer(minLength: 0)
+                        dailyCardActionButton(
+                            systemName: "arrow.right.circle",
+                            title: "Office Hours",
+                            accessibilityID: "opendesign.officeHours.dailyCard.gate.recovery",
+                            action: onRecovery
+                        )
+                    }
                 }
             }
             .dailyCardSurface(tint: gate.satisfied ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.rose)

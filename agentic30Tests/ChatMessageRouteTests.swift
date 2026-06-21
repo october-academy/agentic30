@@ -547,9 +547,9 @@ struct StructuredPromptSubmissionStateTests {
         viewModel.activateStructuredPromptFreeText(for: question, in: prompt)
 
         let activated = viewModel.structuredPromptDraft(for: question, in: prompt)
-        #expect(activated.selectedOptions == ["Provider"])
+        #expect(activated.selectedOptions.isEmpty)
         #expect(activated.freeText.isEmpty)
-        #expect(viewModel.canSubmitStructuredPrompt(prompt) == true)
+        #expect(viewModel.canSubmitStructuredPrompt(prompt) == false)
 
         viewModel.updateStructuredPromptFreeText(
             "  macOS 메뉴바 앱을 쓰는 1인 개발자  ",
@@ -560,7 +560,7 @@ struct StructuredPromptSubmissionStateTests {
         viewModel.activateStructuredPromptFreeText(for: question, in: prompt)
 
         let captured = viewModel.structuredPromptDraft(for: question, in: prompt)
-        #expect(captured.selectedOptions == ["Provider"])
+        #expect(captured.selectedOptions.isEmpty)
         #expect(captured.freeText == "  macOS 메뉴바 앱을 쓰는 1인 개발자  ")
         #expect(viewModel.canSubmitStructuredPrompt(prompt) == true)
 
@@ -572,7 +572,7 @@ struct StructuredPromptSubmissionStateTests {
 
         let submissions = viewModel.structuredPromptSubmissions(for: prompt)
         #expect(submissions.count == 1)
-        #expect(submissions[0].selectedOptions == ["Provider"])
+        #expect(submissions[0].selectedOptions.isEmpty)
         #expect(submissions[0].freeText == "macOS 메뉴바 앱을 쓰는 1인 개발자")
     }
 

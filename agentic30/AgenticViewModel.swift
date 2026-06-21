@@ -3855,9 +3855,11 @@ final class AgenticViewModel: ObservableObject {
             requestId: prompt.requestId,
             answersByQuestionID: [:]
         )
-        if state.answersByQuestionID[question.id] == nil {
-            state.answersByQuestionID[question.id] = StructuredPromptAnswerDraft()
+        var draft = state.answersByQuestionID[question.id] ?? StructuredPromptAnswerDraft()
+        if question.allowFreeText == true || question.requiresFreeText == true {
+            draft.selectedOptions.removeAll()
         }
+        state.answersByQuestionID[question.id] = draft
         structuredPromptDraftBySession[prompt.sessionId] = state
     }
 
@@ -9047,6 +9049,7 @@ final class AgenticViewModel: ObservableObject {
         case "mission_card":
             if let card = event.missionCard {
                 if let dailyCard = card.dailyCard {
+                    executionMissionCard = nil
                     upsertDailyCard(dailyCard)
                 } else {
                     executionMissionCard = card
@@ -13103,6 +13106,12 @@ final class AgenticViewModel: ObservableObject {
         if let currentDay = dailyCards.first?.programDay, currentDay != card.programDay {
             dailyCards = []
         }
+        if let sourceStateVersion = card.sourceStateVersion {
+            dailyCards.removeAll {
+                $0.programDay == card.programDay
+                    && $0.sourceStateVersion != sourceStateVersion
+            }
+        }
         dailyCards.removeAll { $0.stableID == card.stableID }
         dailyCards.append(card)
         dailyCards.sort { lhs, rhs in
@@ -13148,9 +13157,9 @@ final class AgenticViewModel: ObservableObject {
     private func syncProgramNotificationRequests(_ requests: [ProgramLocalNotificationRequest]) async {
         let center = UNUserNotificationCenter.current()
         let managedIdentifiers = Array(ProgramLocalNotificationRequest.allowedIdentifiers).sorted()
-        center.removePendingNotificationRequests(withIdentifiers: managedIdentifiers)
 
         guard !requests.isEmpty else {
+            center.removePendingNotificationRequests(withIdentifiers: managedIdentifiers)
             PostHogTelemetry.capture(
                 "mac_program_notification_schedule_synced",
                 properties: [
@@ -13162,6 +13171,7 @@ final class AgenticViewModel: ObservableObject {
             return
         }
         guard await localNotificationAuthorizationGranted(center: center) else { return }
+        center.removePendingNotificationRequests(withIdentifiers: managedIdentifiers)
 
         var scheduledIdentifiers: [String] = []
         for request in requests {
