@@ -9,7 +9,7 @@ import { evaluateProgramGates } from "../sidecar/program-gate-engine.mjs";
 
 const T0 = new Date("2026-06-12T09:00:00.000Z");
 
-test("mission card loads the IDD mission for the day with evidence spec", () => {
+test("existing IDD mission card loads the IDD mission for the day with evidence spec", () => {
   const card = buildMissionCardEvent({
     workspaceRoot: "/tmp/product",
     day: 9,

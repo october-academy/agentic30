@@ -4,6 +4,7 @@ import os from "node:os";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import * as dayProgressState from "../sidecar/day-progress-state.mjs";
 import {
   DAY_PROGRESS_SCHEMA,
   DAY_PROGRESS_SCHEMA_VERSION,
@@ -23,6 +24,18 @@ import {
 
 async function tmpWorkspace() {
   return await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-dayprog-"));
+}
+
+const OFFICE_HOURS_CALENDAR_DAY_10 = new Date(2026, 5, 10, 10, 0, 0);
+
+function dayProgressForWorkedDayTest(days) {
+  return normalizeDayProgress(
+    {
+      challengeStartedAt: "2026-06-01",
+      days,
+    },
+    { now: OFFICE_HOURS_CALENDAR_DAY_10 },
+  );
 }
 
 test("stepDefsForDay gates step count by Day kind", () => {
@@ -57,6 +70,65 @@ test("computeDayNumber is elapsed-days-from-start + 1 on local dates", () => {
   );
   // no start recorded yet → null
   assert.equal(computeDayNumber({ challengeStartedAt: null, now: new Date(2026, 5, 3) }), null);
+});
+
+test("worked Office Hours day resolves from recorded completion, not calendar gaps", () => {
+  const { resolveOfficeHoursWorkedDay } = dayProgressState;
+  assert.equal(
+    typeof resolveOfficeHoursWorkedDay,
+    "function",
+    "sidecar/day-progress-state.mjs must export resolveOfficeHoursWorkedDay",
+  );
+
+  const cases = [
+    {
+      name: "calendar Day 10 with Day 1 first_interview active resumes worked Day 1",
+      expectedWorkedDay: 1,
+      days: {
+        "1": { day: 1, steps: { first_interview: "active" } },
+      },
+    },
+    {
+      name: "calendar Day 10 with only Day 1 first_interview done advances to worked Day 2",
+      expectedWorkedDay: 2,
+      days: {
+        "1": { day: 1, steps: { first_interview: "done" } },
+      },
+    },
+    {
+      name: "calendar Day 10 with Days 1-2 interviews done advances to worked Day 3",
+      expectedWorkedDay: 3,
+      days: {
+        "1": { day: 1, steps: { first_interview: "done" } },
+        "2": { day: 2, steps: { interview: "done" } },
+      },
+    },
+    {
+      name: "calendar Day 10 with Day 3 interview active resumes worked Day 3",
+      expectedWorkedDay: 3,
+      days: {
+        "1": { day: 1, steps: { first_interview: "done" } },
+        "2": { day: 2, steps: { interview: "done" } },
+        "3": { day: 3, steps: { interview: "active" } },
+      },
+    },
+  ];
+
+  for (const { name, days, expectedWorkedDay } of cases) {
+    const progress = dayProgressForWorkedDayTest(days);
+    const beforeProgress = JSON.stringify(progress);
+    const beforeDayKeys = Object.keys(progress.days).sort();
+    const resolved = resolveOfficeHoursWorkedDay({
+      progress,
+      now: OFFICE_HOURS_CALENDAR_DAY_10,
+    });
+
+    assert.equal(resolved.calendarDay, 10, `${name}: calendar metadata remains elapsed Day 10`);
+    assert.equal(resolved.workedDay, expectedWorkedDay, name);
+    assert.deepEqual(progress, JSON.parse(beforeProgress), `${name}: resolver must not mutate stored progress`);
+    assert.deepEqual(Object.keys(progress.days).sort(), beforeDayKeys, `${name}: resolver must not synthesize skipped day records`);
+    assert.equal(Object.prototype.hasOwnProperty.call(progress.days, "10"), false, `${name}: skipped elapsed Day 10 is not recorded`);
+  }
 });
 
 test("normalizeDayRecord fills steps by kind and coerces bad status to pending", () => {
