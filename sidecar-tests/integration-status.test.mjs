@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   collectIntegrationStatus,
+  integrationProbeLogLevel,
   mergeMcpOauthConnectResultIntoIntegrationStatus,
   probeCloudflareIntegration,
   probeExaIntegration,
@@ -22,6 +23,14 @@ test.beforeEach(() => {
 function jsonResponse(payload, ok = true, status = 200) {
   return { ok, status, json: async () => payload };
 }
+
+test("integrationProbeLogLevel reserves warnings for actionable failures", () => {
+  assert.equal(integrationProbeLogLevel("failed"), "error");
+  assert.equal(integrationProbeLogLevel("missing"), "info");
+  assert.equal(integrationProbeLogLevel("ready"), null);
+  assert.equal(integrationProbeLogLevel("oauth"), null);
+  assert.equal(integrationProbeLogLevel(""), null);
+});
 
 test("probeGithubIntegration: gh login drives both CLI and MCP states", async () => {
   const loggedIn = await probeGithubIntegration({

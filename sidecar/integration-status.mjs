@@ -36,6 +36,13 @@ function status(state, detail, extra = null) {
   };
 }
 
+export function integrationProbeLogLevel(state) {
+  const stateName = String(state || "");
+  if (stateName === "failed") return "error";
+  if (stateName === "missing") return "info";
+  return null;
+}
+
 function statusFromMcpOauthResult(result = {}) {
   const stateName = String(result?.state || "");
   if (stateName === "ready") return status("ready", result.detail);

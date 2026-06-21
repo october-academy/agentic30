@@ -83,6 +83,7 @@ import {
 } from "./morning-briefing-verdict.mjs";
 import {
   collectIntegrationStatus,
+  integrationProbeLogLevel,
   mergeMcpOauthConnectResultIntoIntegrationStatus,
 } from "./integration-status.mjs";
 import {
@@ -17340,7 +17341,7 @@ function reportIntegrationStatusFailures(integrationStatus = {}) {
       provider: integrationStatus.provider || "",
     };
     telemetry.captureEvent("mac_sidecar_integration_probe_unhealthy", properties);
-    captureSidecarLog("integration probe unhealthy", stateName === "failed" ? "error" : "warn", properties);
+    captureSidecarLog("integration probe unhealthy", integrationProbeLogLevel(stateName), properties);
   }
 }
 
