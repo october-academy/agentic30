@@ -390,6 +390,8 @@ const StrategyReportProviderCompetitorSchema = z.object({
   adaptiveScore: z.number().min(0).max(100),
   evidenceScore: z.number().min(0).max(100),
   sourceLabel: StrategyReportProviderStringSchema.max(160),
+  sourceURL: StrategyReportProviderStringSchema.max(500),
+  sourceDisplay: StrategyReportProviderStringSchema.max(160),
   scoreRationale: StrategyReportProviderStringSchema.max(500),
   isAgentic30: z.boolean(),
 }).strict();
@@ -445,7 +447,7 @@ const STRATEGY_REPORT_STRUCTURED_OUTPUT_CONTRACT = [
   "summaryTiles: 3-6 items, each {id,label,title,detail}; never omit this field.",
   "criteriaRows: at least 4 items, each {id,label,value}.",
   "canvasBlocks: at least 9 items covering partners, activities, resources, value-proposition, relationships, channels, customer-segments, cost-structure, revenue-streams; each has {id,title,bullets}.",
-  "competitors: 3-12 items, maximum 12, including {id:\"agentic30\", isAgentic30:true}; if you find more than 12 candidates, keep only the most strategically important matrix items. Every item has title, tag, body, gap, adaptiveScore, evidenceScore, sourceLabel, scoreRationale. adaptiveScore and evidenceScore must be 0-100 integers.",
+  "competitors: 3-12 items, maximum 12, including {id:\"agentic30\", isAgentic30:true}; if you find more than 12 candidates, keep only the most strategically important matrix items. Every item has title, tag, body, gap, adaptiveScore, evidenceScore, sourceLabel, sourceURL, sourceDisplay, scoreRationale. sourceURL must be the primary http/https source for that competitor and sourceDisplay must be its domain or compact display label. adaptiveScore and evidenceScore must be 0-100 integers.",
   "swotGroups: exactly/at least strengths, weaknesses, opportunities, threats; each has {id,title,tag,bullets}.",
   "Optional but preferred: tone, swotMatrixColumnCount, swotMatrixRows, sourceRefs, searchableCopy, generatedBadge, canvasMeta, matrixMeta, swotMeta.",
 ].join("\n");
@@ -745,11 +747,13 @@ export async function loadStrategyReportSnapshot({
   const cachePath = resolveStrategyReportCachePath(workspaceRoot);
   const raw = await readJsonFile(cachePath, fsImpl);
   const configured = exaConfigured || Boolean(String(exaApiKey || "").trim());
+  const sourceHints = await loadStrategyReportSourceHints({ workspaceRoot, fsImpl });
   if (raw?.snapshot) {
     try {
       const snapshot = normalizeStrategyReportSnapshot(raw.snapshot, {
         now,
         fallbackStatus: statusForSnapshot(raw.snapshot.status, now),
+        sourceHints,
       });
       if (!configured && snapshot.report) {
         return {
@@ -830,6 +834,7 @@ export async function refreshStrategyReport({
     now,
     fsImpl,
   });
+  const sourceHints = await loadStrategyReportSourceHints({ workspaceRoot, fsImpl });
   const contextFingerprint = fingerprintStrategyReportContext(context);
   if (!force && previous.status?.state === "ready" && previous.generatedAt) {
     const ageMs = now.getTime() - Date.parse(previous.generatedAt);
@@ -923,7 +928,7 @@ export async function refreshStrategyReport({
       }),
     });
     researchResult = annotateStrategyReportProviderResult(researchResult, reportStructuredOutput.metadata);
-    const candidateReport = extractStrategyReport(researchResult, { now });
+    const candidateReport = extractStrategyReport(researchResult, { now, sourceHints });
 
     notifyStrategyReportProgress(onProgress, {
       stage: "running_adversarial_review",
@@ -980,7 +985,7 @@ export async function refreshStrategyReport({
       structuredOutputSchemaLimits: reportStructuredOutput.metadata.structuredOutputSchemaLimits,
     });
     finalResult = annotateStrategyReportProviderResult(finalResult, reportStructuredOutput.metadata);
-    const finalReport = extractStrategyReport(finalResult, { now });
+    const finalReport = extractStrategyReport(finalResult, { now, sourceHints });
 
     notifyStrategyReportProgress(onProgress, {
       stage: "saving_results",
@@ -1080,9 +1085,10 @@ export async function refreshStrategyReport({
 export function normalizeStrategyReportSnapshot(value = {}, {
   now = new Date(),
   fallbackStatus = null,
+  sourceHints = new Map(),
 } = {}) {
   const report = value.report
-    ? normalizeStrategyReport(value.report, { now })
+    ? normalizeStrategyReport(value.report, { now, sourceHints })
     : null;
   const status = normalizeStrategyReportStatus(value.status || fallbackStatus, {
     now,
@@ -1178,6 +1184,66 @@ export async function buildStrategyReportResearchContext({
       "positioning statement",
     ],
   };
+}
+
+async function loadStrategyReportSourceHints({
+  workspaceRoot,
+  fsImpl = fs,
+} = {}) {
+  const root = path.resolve(String(workspaceRoot || "."));
+  const hints = new Map();
+  for (const candidate of STRATEGY_EVIDENCE_CANDIDATES) {
+    if (candidate.relativePath !== "docs/strategy/agentic30-business-strategy-data.md") continue;
+    const relativePath = normalizeSafeRelativePath(candidate.relativePath);
+    if (!relativePath || isDeniedRelativePath(relativePath)) continue;
+    try {
+      const raw = await fsImpl.readFile(path.join(root, relativePath), "utf8");
+      mergeStrategyDataSourceHints(hints, raw);
+    } catch {
+      // Source hints are optional; missing strategy docs must not block cached reports.
+    }
+  }
+  return hints;
+}
+
+function mergeStrategyDataSourceHints(hints, markdown = "") {
+  for (const line of String(markdown || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) continue;
+    const cells = trimmed
+      .slice(1, -1)
+      .split("|")
+      .map((cell) => cell.trim());
+    if (cells.length < 2) continue;
+    const title = cleanString(cells[0], 160);
+    if (!title || /^-+$/.test(title) || title.toLowerCase() === "competitor") continue;
+    const sourceURL = cells.map((cell) => normalizeHttpSourceURL(cell)).find(Boolean);
+    if (!sourceURL) continue;
+    const display = domainFromUrl(sourceURL) || sourceURL.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    const hint = { url: sourceURL, display };
+    for (const key of sourceHintKeys(title, sourceURL)) {
+      if (!key || hints.has(key)) continue;
+      hints.set(key, hint);
+    }
+  }
+}
+
+function sourceHintKeys(title, sourceURL) {
+  const keys = new Set();
+  const titleKey = slugify(title);
+  if (titleKey) {
+    keys.add(titleKey);
+    keys.add(titleKey.replace(/-os$/, "os"));
+  }
+  const domain = domainFromUrl(sourceURL);
+  if (domain) {
+    const domainKey = slugify(domain);
+    const firstDomainSegment = slugify(domain.split(".")[0]);
+    if (domainKey) keys.add(domainKey);
+    if (firstDomainSegment) keys.add(firstDomainSegment);
+    if (domain.includes("threads.com") && titleKey) keys.add(`${titleKey}-threads`);
+  }
+  return [...keys].filter(Boolean);
 }
 
 function buildStrategyReportResearchPrompt(context) {
@@ -1306,11 +1372,14 @@ function makeStrategyReportFailureSnapshot({
   };
 }
 
-function extractStrategyReport(rawProviderResult, { now = new Date() } = {}) {
+function extractStrategyReport(rawProviderResult, {
+  now = new Date(),
+  sourceHints = new Map(),
+} = {}) {
   try {
     const parsed = extractProviderJson(rawProviderResult);
     const report = parsed?.report || parsed?.strategyReport || parsed?.strategy_report || parsed;
-    const normalized = normalizeStrategyReport(report, { now });
+    const normalized = normalizeStrategyReport(report, { now, sourceHints });
     parseStrategyReportContract(
       StrategyReportContentContract,
       normalized,
@@ -1333,7 +1402,10 @@ function parseStrategyReportContract(schema, value, label) {
   throw error;
 }
 
-function normalizeStrategyReport(value = {}, { now = new Date() } = {}) {
+function normalizeStrategyReport(value = {}, {
+  now = new Date(),
+  sourceHints = new Map(),
+} = {}) {
   if (!value || typeof value !== "object") {
     throw new Error("strategy report missing report object");
   }
@@ -1365,7 +1437,10 @@ function normalizeStrategyReport(value = {}, { now = new Date() } = {}) {
     summaryTiles: normalizeSummaryTiles(sanitized.summaryTiles || sanitized.summary_tiles),
     criteriaRows: normalizeCriteriaRows(sanitized.criteriaRows || sanitized.criteria_rows),
     canvasBlocks: normalizeCanvasBlocks(sanitized.canvasBlocks || sanitized.canvas_blocks),
-    competitors: normalizeCompetitors(sanitized.competitors || sanitized.competitorMatrix || sanitized.competitor_matrix),
+    competitors: normalizeCompetitors(
+      sanitized.competitors || sanitized.competitorMatrix || sanitized.competitor_matrix,
+      { sourceHints },
+    ),
     swotGroups: normalizeSwotGroups(sanitized.swotGroups || sanitized.swot_groups),
     swotMatrixColumnCount: clampInt(
       sanitized.swotMatrixColumnCount ?? sanitized.swot_matrix_column_count,
@@ -1545,7 +1620,7 @@ function normalizeCanvasBlockNumber(value) {
   return match[1].padStart(2, "0");
 }
 
-function normalizeCompetitors(value) {
+function normalizeCompetitors(value, { sourceHints = new Map() } = {}) {
   const seenIds = new Set();
   const seenTitles = new Set();
   const competitors = [];
@@ -1570,6 +1645,17 @@ function normalizeCompetitors(value) {
       rawEvidenceScore,
       0,
     );
+    const sourceHint = findCompetitorSourceHint(sourceHints, {
+      id,
+      title,
+      sourceLabel: competitor?.sourceLabel || competitor?.source_label,
+    });
+    const sourceURL = normalizeHttpSourceURL(
+      competitor?.sourceURL || competitor?.sourceUrl || competitor?.source_url,
+    ) || sourceHint?.url || "";
+    const sourceDisplay = cleanString(competitor?.sourceDisplay || competitor?.source_display, 160)
+      || sourceHint?.display
+      || (sourceURL ? domainFromUrl(sourceURL) : "");
     const normalized = {
       id,
       title,
@@ -1581,8 +1667,8 @@ function normalizeCompetitors(value) {
       adaptiveScore,
       evidenceScore,
       sourceLabel: cleanString(competitor?.sourceLabel || competitor?.source_label, 160),
-      sourceURL: cleanString(competitor?.sourceURL || competitor?.sourceUrl || competitor?.source_url, 500),
-      sourceDisplay: cleanString(competitor?.sourceDisplay || competitor?.source_display, 160),
+      sourceURL,
+      sourceDisplay,
       verifiedAt: cleanString(competitor?.verifiedAt || competitor?.verified_at, 80),
       scoreRationale: cleanString(competitor?.scoreRationale || competitor?.score_rationale, 500),
       category: normalizeCompetitorCategory(competitor?.category, isAgentic30),
@@ -2144,6 +2230,27 @@ function cleanString(value, maxLength = 400) {
     .trim();
   if (!text) return "";
   return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…` : text;
+}
+
+function normalizeHttpSourceURL(value) {
+  const raw = cleanString(value, 500);
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname) return "";
+    return raw;
+  } catch {
+    return "";
+  }
+}
+
+function findCompetitorSourceHint(sourceHints, competitor = {}) {
+  if (!(sourceHints instanceof Map) || sourceHints.size === 0) return null;
+  for (const value of [competitor.id, competitor.title, competitor.sourceLabel]) {
+    const key = slugify(value);
+    if (key && sourceHints.has(key)) return sourceHints.get(key);
+  }
+  return null;
 }
 
 function normalizeStringArray(value, maxItems = 8, maxLength = 240) {
