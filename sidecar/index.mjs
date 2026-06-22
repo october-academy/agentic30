@@ -9824,17 +9824,16 @@ function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption =
   const isBuilder = intentMode === "builder";
   const isComplete = repoStage === "complete";
 
-  // Startup paths must diagnose ICP fit condition-by-condition against docs/ICP.md
-  // instead of emitting a generic "조건부 ICP fit". Deterministic so the fast path
-  // stays fast (no extra provider call).
-  const icpFit = isBuilder
-    ? null
-    : assessIcpFitConditions({
-        prompt,
-        hypothesis,
-        contextText: String(context?.text || ""),
-        hasProjectPath: Boolean(config?.workspace?.root),
-      });
+  // Every coaching path diagnoses ICP fit condition-by-condition against
+  // docs/ICP.md instead of emitting a generic "조건부 ICP fit". The founder is an
+  // Agentic30 ICP regardless of startup/builder intent. Deterministic so the fast
+  // path stays fast (no extra provider call).
+  const icpFit = assessIcpFitConditions({
+    prompt,
+    hypothesis,
+    contextText: String(context?.text || ""),
+    hasProjectPath: Boolean(config?.workspace?.root),
+  });
 
   let verdict;
   let nextAction;
