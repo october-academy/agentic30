@@ -31,7 +31,7 @@ The copied report includes runtime, storage, session, provider, and preflight st
 ## Failure Interpretation
 
 - `failed` preflight checks block reliable sidecar startup or packaging.
-- `warning` preflight checks indicate degraded functionality, usually missing provider auth or isolated ACP credentials.
+- `warning` preflight checks indicate degraded functionality, usually missing provider auth or unavailable optional support such as QMD.
 - `ok` preflight checks mean the current direct-DMG child-process runtime is viable, not that Mac App Store sandboxing is supported.
 
 ## SourceKit And Xcode Build Server

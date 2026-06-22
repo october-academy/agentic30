@@ -791,6 +791,29 @@ final class IntakeV2SourceManagerTests: XCTestCase {
         XCTAssertEqual(firstContent, secondContent)
     }
 
+    func test_onboardingHelperInstaller_failsExplicitlyWhenNodeIsMissing() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-helper-installer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+
+        let installer = OnboardingHelperInstaller(
+            appSupportURL: appSupport,
+            nodeResolver: NodeExecutableResolver(
+                environment: ["NODE_BINARY": "/tmp/missing-agentic30-node"],
+                homeDirectory: "/tmp",
+                shellLookup: { nil },
+                isExecutable: { _ in false },
+                directoryContentsProvider: { _ in [] }
+            )
+        )
+
+        XCTAssertThrowsError(try installer.installOrRefresh()) { error in
+            XCTAssertEqual((error as NSError).domain, "NodeExecutableResolver")
+            XCTAssertTrue(error.localizedDescription.contains("Could not find a usable node executable"))
+        }
+    }
+
     func test_localFolderStatusText_prefersFolderNameOverDetail() {
         let source = IntakeSourceState(
             id: .localFolder,

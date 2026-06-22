@@ -2402,8 +2402,9 @@ enum OpenDesignStrategyMatrixChromeLayoutPolicy {
         )
         let horizontalAxisY = plotRect.midY
         let verticalAxisX = plotRect.midX
-        let quadrantInset = clamp(plotRect.width * 0.018, lower: 14, upper: 22)
-        let quadrantLabelWidth = max(96, min(210, (plotRect.width - quadrantInset * 2 - 18) / 2))
+        let quadrantHorizontalInset = clamp(plotRect.width * 0.008, lower: 4, upper: 8)
+        let quadrantVerticalInset = clamp(plotRect.width * 0.018, lower: 14, upper: 22)
+        let quadrantLabelWidth = max(96, min(210, (plotRect.width - quadrantHorizontalInset * 2 - 18) / 2))
 
         return OpenDesignStrategyMatrixChromeLayout(
             boardSize: CGSize(width: width, height: height),
@@ -2435,26 +2436,26 @@ enum OpenDesignStrategyMatrixChromeLayoutPolicy {
                 height: axisLabelHeight
             ),
             topLeftQuadrantLabel: labelFrame(
-                x: plotRect.minX + quadrantInset + quadrantLabelWidth / 2,
-                y: plotRect.minY + quadrantInset + quadrantLabelHeight / 2,
+                x: plotRect.minX + quadrantHorizontalInset + quadrantLabelWidth / 2,
+                y: plotRect.minY + quadrantVerticalInset + quadrantLabelHeight / 2,
                 width: quadrantLabelWidth,
                 height: quadrantLabelHeight
             ),
             topRightQuadrantLabel: labelFrame(
-                x: plotRect.maxX - quadrantInset - quadrantLabelWidth / 2,
-                y: plotRect.minY + quadrantInset + quadrantLabelHeight / 2,
+                x: plotRect.maxX - quadrantHorizontalInset - quadrantLabelWidth / 2,
+                y: plotRect.minY + quadrantVerticalInset + quadrantLabelHeight / 2,
                 width: quadrantLabelWidth,
                 height: quadrantLabelHeight
             ),
             bottomLeftQuadrantLabel: labelFrame(
-                x: plotRect.minX + quadrantInset + quadrantLabelWidth / 2,
-                y: plotRect.maxY - quadrantInset - quadrantLabelHeight / 2,
+                x: plotRect.minX + quadrantHorizontalInset + quadrantLabelWidth / 2,
+                y: plotRect.maxY - quadrantVerticalInset - quadrantLabelHeight / 2,
                 width: quadrantLabelWidth,
                 height: quadrantLabelHeight
             ),
             bottomRightQuadrantLabel: labelFrame(
-                x: plotRect.maxX - quadrantInset - quadrantLabelWidth / 2,
-                y: plotRect.maxY - quadrantInset - quadrantLabelHeight / 2,
+                x: plotRect.maxX - quadrantHorizontalInset - quadrantLabelWidth / 2,
+                y: plotRect.maxY - quadrantVerticalInset - quadrantLabelHeight / 2,
                 width: quadrantLabelWidth,
                 height: quadrantLabelHeight
             )

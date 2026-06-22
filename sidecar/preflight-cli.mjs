@@ -4,6 +4,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { buildPreflightReport } from "./preflight.mjs";
 import { getProviderAuthState } from "./provider-runner.mjs";
+import { getQmdState } from "./qmd-support.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(readArg("--workspace") ?? path.join(__dirname, ".."));
@@ -20,6 +21,7 @@ const environment = {
   gemini: getProviderAuthState("gemini"),
   cursor: getProviderAuthState("cursor"),
   acp: getAcpAdapterState(),
+  qmd: getQmdState({ sidecarRoot: __dirname }),
 };
 
 const report = buildPreflightReport({
@@ -39,12 +41,19 @@ process.exitCode = report.status === "failed" ? 1 : 0;
 
 function getAcpAdapterState() {
   const adapterPath = path.join(__dirname, "acp-adapter.mjs");
-  const available = Boolean(process.env.ANTHROPIC_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY);
+  const claudeApiReady = Boolean(process.env.ANTHROPIC_API_KEY);
+  const codexApiReady = Boolean(process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY);
+  const apiKeyConfigured = claudeApiReady || codexApiReady;
   return {
-    available,
-    message: available
-      ? "ACP adapter가 격리된 에디터 연동에 사용할 준비가 되었습니다."
-      : "ACP adapter를 사용하려면 ANTHROPIC_API_KEY 또는 CODEX_API_KEY / OPENAI_API_KEY가 필요합니다.",
+    available: true,
+    apiKeyConfigured,
+    isolatedModeReady: apiKeyConfigured,
+    message: apiKeyConfigured
+      ? `ACP adapter가 격리된 에디터 연동에 사용할 준비가 되었습니다 (${[
+          claudeApiReady ? "Claude API" : null,
+          codexApiReady ? "OpenAI API" : null,
+        ].filter(Boolean).join(", ")}).`
+      : "ACP adapter가 설치되어 있습니다. 격리 provider API-key 모드는 선택 기능이며, 필요할 때만 ANTHROPIC_API_KEY 또는 CODEX_API_KEY / OPENAI_API_KEY를 설정하세요.",
     adapterPath,
     command: `${process.execPath} ${adapterPath} --workspace ${workspaceRoot}`,
   };

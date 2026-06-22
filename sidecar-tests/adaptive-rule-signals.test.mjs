@@ -55,9 +55,66 @@ test("assembler derives revenue, quota, weak-only and stall signals from persist
     assert.equal(signals.appActive, true);
     // Empty work-history snapshot → AR-01 input stays null (rule silent).
     assert.equal(signals.buildWithoutCustomerEvidenceDays, null);
-    // AR-08 source not wired → unavailable, rule silent (§12-③).
+    // No persisted traffic source → unavailable, rule silent (§12-③).
     assert.equal(sources.cloudflareAvailable, null);
     assert.equal(signals.maxActionCarryOverCount, null);
+  } finally {
+    await fs.rm(ws, { recursive: true, force: true });
+  }
+});
+
+test("assembler derives AR-05 carry-over and AR-08 zero-traffic signals from persisted stores", async () => {
+  const ws = await tmpWorkspace();
+  try {
+    const agentic30Dir = path.join(ws, ".agentic30");
+    await fs.mkdir(agentic30Dir, { recursive: true });
+    await fs.writeFile(
+      path.join(agentic30Dir, "curriculum-progress.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        updatedAt: T0.toISOString(),
+        carryOverQueue: [
+          {
+            actionId: "send-pricing-ask",
+            sourceDay: 11,
+            targetDay: 14,
+            actionDescription: "Send pricing ask to one named customer",
+            timesCarried: 3,
+            carryOverStatus: "active",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    for (const day of [12, 13, 14]) {
+      await appendProofLedgerEvent({
+        workspaceRoot: ws,
+        event: {
+          id: `traffic-${day}`,
+          type: "traffic_snapshot",
+          day,
+          status: "verified",
+          sourceUrl: "https://example.com",
+          metadata: {
+            provider: "cloudflare",
+            counts: { visits: 0, pageviews: 8 },
+          },
+        },
+        now: T0,
+      });
+    }
+
+    const { signals, sources } = await assembleAdaptiveRuleSignals({
+      workspaceRoot: ws,
+      day: 14,
+      now: T0,
+    });
+
+    assert.equal(signals.maxActionCarryOverCount, 3);
+    assert.equal(sources.cloudflareAvailable, true);
+    assert.equal(signals.deployVerifiedUrlExists, true);
+    assert.equal(signals.cloudflareVisitsZeroDays, 3);
   } finally {
     await fs.rm(ws, { recursive: true, force: true });
   }

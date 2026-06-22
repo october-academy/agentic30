@@ -6,7 +6,6 @@
 //
 
 import AppKit
-import CryptoKit
 import Darwin
 import Foundation
 import XCTest
@@ -46,7 +45,6 @@ final class agentic30UITests: XCTestCase {
         }
 
         advanceToIntakeFocusAreaStep(in: app, timeout: 10)
-        XCTAssertFalse(app.buttons["Sign in with Google"].exists)
         XCTAssertTrue(app.staticTexts["요즘 어디에 시간을 가장 많이 쓰고 있나요?"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Next"].exists)
     }
@@ -2858,11 +2856,6 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testCredentialedGoogleLoginCompletesMacAuth() throws {
-        throw XCTSkip("Google sign-in UI is disabled while the macOS app runs in loginless local mode.")
-    }
-
-    @MainActor
     func testAgentSettingsModelPickersSaveClaudeCodexAndGeminiModels() throws {
         let workspacePath = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-ui-settings-workspace-\(UUID().uuidString)", isDirectory: true)
@@ -3065,9 +3058,11 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(openSettingsSection(in: app, "integrations"))
 
         XCTAssertTrue(app.staticTexts["Vercel"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Notion"].exists)
         XCTAssertTrue(app.staticTexts["Exa"].exists)
         XCTAssertTrue(app.staticTexts["Cloudflare"].exists)
         XCTAssertTrue(app.staticTexts["PostHog"].exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "settings.notion.oauthButton").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "settings.vercel.mcpConnectButton").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "settings.exa.refreshStatusButton").exists)
         let exaConnectButton = elementWithIdentifier(in: app, "settings.exa.mcpConnectButton")
@@ -3244,6 +3239,368 @@ final class agentic30UITests: XCTestCase {
             ])
             app.terminate()
         }
+    }
+
+    @MainActor
+    func testAppMenuCommandsExposeSettingsUpdatesAndSearch() throws {
+        let workspacePath = "/tmp/agentic30-ui-app-menu-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-show-app-command-fixture",
+            "--ui-testing-opaque-window",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "uiTesting.appCommands.searchButton").waitForExistence(timeout: 5))
+
+        elementWithIdentifier(in: app, "uiTesting.appCommands.searchButton").click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.searchPalette").waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+
+        elementWithIdentifier(in: app, "uiTesting.appCommands.checkUpdatesButton").click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "uiTesting.appCommands.updateInvoked").waitForExistence(timeout: 5))
+
+        elementWithIdentifier(in: app, "uiTesting.appCommands.settingsButton").click()
+        XCTAssertTrue(waitForSettingsWindow(in: app, timeout: 5))
+    }
+
+    @MainActor
+    func testMenuBarExtraShowsWorkspaceChatSettingsAndQuitActions() throws {
+        let workspacePath = "/tmp/agentic30-ui-status-menu-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-show-status-menu-fixture",
+            "--ui-testing-opaque-window",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "statusMenu.openWorkspaceButton").waitForExistence(timeout: 10))
+        for label in ["Open Workspace", "New Codex Chat", "New Claude Chat", "Settings…", "Quit"] {
+            XCTAssertTrue(
+                app.buttons[label].waitForExistence(timeout: 1),
+                "Expected status menu action \(label)"
+            )
+        }
+
+        elementWithIdentifier(in: app, "statusMenu.settingsButton").click()
+        XCTAssertTrue(waitForSettingsWindow(in: app, timeout: 5))
+    }
+
+    @MainActor
+    func testSettingsPrivacyDiagnosticsAndUpdatesControlsAreReachable() throws {
+        let workspacePath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-ui-settings-trust-\(UUID().uuidString)", isDirectory: true)
+            .path
+        let appSupportPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-ui-settings-trust-support-\(UUID().uuidString)", isDirectory: true)
+            .path
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-open-settings",
+                "--ui-testing-open-settings-section=privacy",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            ]
+        )
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(openSettingsWindow(in: app))
+        XCTAssertTrue(openSettingsSection(in: app, "privacy"))
+        let diagnosticsExport = elementWithIdentifier(in: app, "settings.privacy.exportDiagnosticsButton")
+        XCTAssertTrue(diagnosticsExport.waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "settings.privacy.resetLocalDataButton").exists)
+
+        XCTAssertTrue(openSettingsSection(in: app, "updates"))
+        let checkNow = elementWithIdentifier(in: app, "settings.updates.checkNowButton")
+        XCTAssertTrue(checkNow.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["현재 버전"].exists)
+        XCTAssertTrue(app.staticTexts["서명 확인"].exists)
+    }
+
+    @MainActor
+    func testSettingsMenuBarAndNotificationTogglesAreReachable() throws {
+        let workspacePath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-ui-settings-menubar-\(UUID().uuidString)", isDirectory: true)
+            .path
+        let appSupportPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-ui-settings-menubar-support-\(UUID().uuidString)", isDirectory: true)
+            .path
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-open-settings",
+                "--ui-testing-open-settings-section=menubar",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            ]
+        )
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(openSettingsWindow(in: app))
+        XCTAssertTrue(openSettingsSection(in: app, "menubar"))
+
+        let launchAtLogin = elementWithIdentifier(in: app, "settings.menubar.launchAtLogin.toggle")
+        let questionReady = elementWithIdentifier(in: app, "settings.menubar.questionReadyNotification.toggle")
+        let longRunning = elementWithIdentifier(in: app, "settings.menubar.longRunningCompletionNotification.toggle")
+        XCTAssertTrue(launchAtLogin.waitForExistence(timeout: 5))
+        XCTAssertTrue(questionReady.waitForExistence(timeout: 3))
+        XCTAssertTrue(longRunning.waitForExistence(timeout: 3))
+
+        clickCenter(of: questionReady)
+        clickCenter(of: longRunning)
+        XCTAssertTrue(elementWithIdentifier(in: app, "settings.saveButton").waitForExistence(timeout: 3))
+    }
+
+    @MainActor
+    func testBipCompletedMissionShowsCompletionCard() throws {
+        let workspacePath = "/tmp/agentic30-ui-bip-completed-\(UUID().uuidString)"
+        let appSupportPath = "/tmp/agentic30-ui-bip-completed-support-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-bip-completed-mission",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-open-bip-mission-route",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.bipMissionRoute").waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "bip.completionCard.title").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "bip.completionCard.questionCount").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "bip.completionCard.nextDayTeaser").exists)
+    }
+
+    @MainActor
+    func testAssistantFailedTurnCanBeRetriedWithInlineStub() throws {
+        let workspacePath = "/tmp/agentic30-ui-assistant-retry-\(UUID().uuidString)"
+        let appSupportPath = "/tmp/agentic30-ui-assistant-retry-support-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-failed-assistant-turn",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        let retryButton = elementWithIdentifier(in: app, "opendesign.officeHours.failure.retry")
+        XCTAssertTrue(retryButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(retryButton.isEnabled)
+        clickCenter(of: retryButton)
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").exists)
+    }
+
+    @MainActor
+    func testBipCoachErrorBannerRendersWithSeededFailure() throws {
+        let workspacePath = "/tmp/agentic30-ui-bip-error-\(UUID().uuidString)"
+        let appSupportPath = "/tmp/agentic30-ui-bip-error-support-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-bip-coach-error",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-open-bip-mission-route",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.bipMissionRoute").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["연결 확인 필요"].waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForStaticText(containing: "UI 테스트: BIP coach 요청이 실패했습니다", in: app, timeout: 5))
+    }
+
+    @MainActor
+    func testBipCoachSidecarFailureShowsRetryAction() throws {
+        let workspacePath = "/tmp/agentic30-ui-bip-sidecar-failure-\(UUID().uuidString)"
+        let appSupportPath = "/tmp/agentic30-ui-bip-sidecar-failure-support-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-bip-current-mission",
+            "--ui-testing-sidecar-failure",
+            "--ui-testing-open-workspace",
+            "--ui-testing-open-bip-mission-route",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.bipMissionRoute").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["미션 생성 준비가 멈췄어요"].waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.bipCoach.retrySidecar").exists)
+    }
+
+    @MainActor
+    func testFoundationIddStructuredPromptRendersFromQueueSeed() throws {
+        let workspacePath = "/tmp/agentic30-ui-foundation-idd-\(UUID().uuidString)"
+        let appSupportPath = "/tmp/agentic30-ui-foundation-idd-support-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-office-hours-structured-prompt",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "assistant.structuredPrompt").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "assistant.structuredContinueButton").exists)
     }
 
     @MainActor
@@ -3691,13 +4048,6 @@ final class agentic30UITests: XCTestCase {
             if !stillRunning { return }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
-    }
-
-    private func macAuthBaseURLArguments() -> [String] {
-        guard let baseURL = ProcessInfo.processInfo.environment["AGENTIC30_MAC_AUTH_BASE_URL"]?.trimmedNonEmpty else {
-            return []
-        }
-        return ["--ui-testing-web-base-url=\(baseURL)"]
     }
 
     @MainActor
@@ -4589,175 +4939,6 @@ final class agentic30UITests: XCTestCase {
         return matches.allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable })
     }
 
-    @MainActor
-    private func advanceToGoogleSignIn(in app: XCUIApplication) {
-        let primary = button(in: app, matching: [
-            "macOnboarding.primaryButton",
-            "Next",
-            "Sign in with Google",
-        ])
-        for _ in 0..<4 where !app.staticTexts["Sign in to get started"].exists {
-            XCTAssertTrue(primary.waitForExistence(timeout: 5))
-            primary.click()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        }
-
-        XCTAssertTrue(app.staticTexts["Sign in to get started"].waitForExistence(timeout: 5))
-        let termsCheckbox = button(in: app, matching: [
-            "macOnboarding.termsCheckbox",
-            "Accept Terms and Privacy Policy",
-        ])
-        XCTAssertTrue(termsCheckbox.exists)
-        if !button(in: app, matching: ["macOnboarding.primaryButton", "Sign in with Google"]).isEnabled {
-            termsCheckbox.click()
-        }
-        let signInButton = button(in: app, matching: [
-            "macOnboarding.primaryButton",
-            "Sign in with Google",
-        ])
-        XCTAssertTrue(waitUntilEnabled(signInButton, timeout: 5))
-        signInButton.click()
-    }
-
-    @MainActor
-    private func completeGoogleSignIn(
-        credentials: GoogleE2ECredentials,
-        hostApp: XCUIApplication
-    ) throws {
-        let authApps = googleAuthApplications(hostApp: hostApp)
-
-        if let existingAccount = waitForGoogleElement(
-            in: authApps,
-            timeout: 12,
-            candidates: { app in
-                [
-                    app.staticTexts[credentials.email],
-                    app.buttons[credentials.email],
-                    app.staticTexts["Use another account"],
-                    app.buttons["Use another account"],
-                ]
-            }
-        ) {
-            existingAccount.click()
-        }
-
-        if !hostApp.staticTexts["Choose your project folder"].exists {
-            if let emailField = waitForGoogleTextInput(
-                in: authApps,
-                labels: ["Email or phone", "Email", "Enter your email"],
-                timeout: 45
-            ) {
-                emailField.click()
-                emailField.typeText(credentials.email)
-                clickGoogleNext(in: authApps)
-            }
-        }
-
-        if !hostApp.staticTexts["Choose your project folder"].exists {
-            let passwordField = try XCTUnwrap(
-                waitForGoogleSecureInput(in: authApps, timeout: 45),
-                "Google password field did not appear."
-            )
-            passwordField.click()
-            passwordField.typeText(credentials.password)
-            clickGoogleNext(in: authApps)
-        }
-
-        if !hostApp.staticTexts["Choose your project folder"].waitForExistence(timeout: 8) {
-            let code = try currentTOTPCode(secret: credentials.totpSecret)
-            if let codeField = waitForGoogleTextInput(
-                in: authApps,
-                labels: ["Enter code", "Enter the code", "Code", "인증 코드"],
-                timeout: 45
-            ) {
-                codeField.click()
-                codeField.typeText(code)
-                clickGoogleNext(in: authApps)
-            }
-        }
-    }
-
-    @MainActor
-    private func googleAuthApplications(hostApp: XCUIApplication) -> [XCUIApplication] {
-        [
-            hostApp,
-            XCUIApplication(bundleIdentifier: "com.apple.SafariViewService"),
-            XCUIApplication(bundleIdentifier: "com.apple.AuthenticationServicesUI"),
-            XCUIApplication(bundleIdentifier: "com.apple.Safari"),
-            XCUIApplication(bundleIdentifier: "com.google.Chrome"),
-            XCUIApplication(bundleIdentifier: "company.thebrowser.Browser"),
-        ]
-    }
-
-    @MainActor
-    private func waitForGoogleTextInput(
-        in apps: [XCUIApplication],
-        labels: [String],
-        timeout: TimeInterval
-    ) -> XCUIElement? {
-        waitForGoogleElement(in: apps, timeout: timeout) { app in
-            labels.flatMap { label in
-                [
-                    app.textFields[label],
-                    app.textFields.matching(NSPredicate(format: "label CONTAINS[c] %@", label)).element(boundBy: 0),
-                    app.textFields.matching(NSPredicate(format: "value CONTAINS[c] %@", label)).element(boundBy: 0),
-                ]
-            } + [
-                app.textFields.element(boundBy: 0),
-            ]
-        }
-    }
-
-    @MainActor
-    private func waitForGoogleSecureInput(
-        in apps: [XCUIApplication],
-        timeout: TimeInterval
-    ) -> XCUIElement? {
-        waitForGoogleElement(in: apps, timeout: timeout) { app in
-            [
-                app.secureTextFields["Enter your password"],
-                app.secureTextFields["Password"],
-                app.secureTextFields.matching(NSPredicate(format: "label CONTAINS[c] %@", "password")).element(boundBy: 0),
-                app.secureTextFields.element(boundBy: 0),
-            ]
-        }
-    }
-
-    @MainActor
-    private func clickGoogleNext(in apps: [XCUIApplication]) {
-        if let nextButton = waitForGoogleElement(in: apps, timeout: 15, candidates: { app in
-            [
-                app.buttons["Next"],
-                app.buttons["다음"],
-                app.buttons["Continue"],
-                app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Next")).element(boundBy: 0),
-            ]
-        }) {
-            nextButton.click()
-        }
-    }
-
-    @MainActor
-    private func waitForGoogleElement(
-        in apps: [XCUIApplication],
-        timeout: TimeInterval,
-        candidates: (XCUIApplication) -> [XCUIElement]
-    ) -> XCUIElement? {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            for app in apps {
-                for candidate in candidates(app) where candidate.exists && candidate.isHittable {
-                    return candidate
-                }
-                for candidate in candidates(app) where candidate.exists {
-                    return candidate
-                }
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-        return nil
-    }
-
     private func dismissOAuthHandoffIfPresent(in app: XCUIApplication? = nil) {
         if let app {
             app.typeKey(.escape, modifierFlags: [])
@@ -5461,6 +5642,26 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    private func waitForStaticText(
+        containing marker: String,
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if app.staticTexts.allElementsBoundByIndex.contains(where: { element in
+                element.exists && self.element(element, contains: marker)
+            }) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return app.staticTexts.allElementsBoundByIndex.contains(where: { element in
+            element.exists && self.element(element, contains: marker)
+        })
+    }
+
+    @MainActor
     private func waitForAnyElement(
         in app: XCUIApplication,
         identifiers: [String],
@@ -5572,75 +5773,4 @@ final class agentic30UITests: XCTestCase {
         return app.textFields[names[0]]
     }
 
-    private func currentTOTPCode(secret: String, date: Date = Date()) throws -> String {
-        let keyData = try base32Decode(secret)
-        let counter = UInt64(floor(date.timeIntervalSince1970 / 30.0))
-        var bigEndianCounter = counter.bigEndian
-        let counterData = Data(bytes: &bigEndianCounter, count: MemoryLayout<UInt64>.size)
-        let key = SymmetricKey(data: keyData)
-        let digest = HMAC<Insecure.SHA1>.authenticationCode(for: counterData, using: key)
-        let bytes = Array(digest)
-        let offset = Int(bytes[bytes.count - 1] & 0x0f)
-        let truncated = (UInt32(bytes[offset] & 0x7f) << 24)
-            | (UInt32(bytes[offset + 1]) << 16)
-            | (UInt32(bytes[offset + 2]) << 8)
-            | UInt32(bytes[offset + 3])
-        return String(format: "%06d", truncated % 1_000_000)
-    }
-
-    private func base32Decode(_ input: String) throws -> Data {
-        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
-        let lookup = Dictionary(uniqueKeysWithValues: alphabet.enumerated().map { ($0.element, UInt8($0.offset)) })
-        let normalized = input
-            .uppercased()
-            .filter { !$0.isWhitespace && $0 != "=" }
-        var buffer = 0
-        var bitsLeft = 0
-        var output = Data()
-
-        for character in normalized {
-            guard let value = lookup[character] else {
-                throw GoogleE2EError.invalidTOTPSecret
-            }
-            buffer = (buffer << 5) | Int(value)
-            bitsLeft += 5
-            if bitsLeft >= 8 {
-                output.append(UInt8((buffer >> (bitsLeft - 8)) & 0xff))
-                bitsLeft -= 8
-            }
-        }
-
-        guard !output.isEmpty else {
-            throw GoogleE2EError.invalidTOTPSecret
-        }
-        return output
-    }
-}
-
-private struct GoogleE2ECredentials {
-    let email: String
-    let password: String
-    let totpSecret: String
-
-    static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> GoogleE2ECredentials? {
-        guard
-            let email = environment["AGENTIC30_GOOGLE_E2E_EMAIL"]?.trimmedNonEmpty,
-            let password = environment["AGENTIC30_GOOGLE_E2E_PASSWORD"]?.trimmedNonEmpty,
-            let totpSecret = environment["AGENTIC30_GOOGLE_E2E_TOTP_SECRET"]?.trimmedNonEmpty
-        else {
-            return nil
-        }
-        return GoogleE2ECredentials(email: email, password: password, totpSecret: totpSecret)
-    }
-}
-
-private enum GoogleE2EError: Error {
-    case invalidTOTPSecret
-}
-
-private extension String {
-    var trimmedNonEmpty: String? {
-        let value = trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
-    }
 }

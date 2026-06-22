@@ -2283,6 +2283,39 @@ function buildStubResponse(prompt) {
       ],
     });
   }
+  if (value.includes("You are the Agentic30 action evidence judge.")) {
+    const status = process.env.AGENTIC30_TEST_STUB_ACTION_EVIDENCE_JUDGE_STATUS;
+    if (status === "accepted" || status === "insufficient") {
+      const accepted = status === "accepted";
+      return JSON.stringify({
+        status,
+        confidence: accepted ? 0.92 : 0.38,
+        agent_assessment: accepted
+          ? "Stub judge accepted the submitted revenue evidence."
+          : "Stub judge found the revenue evidence relevant but incomplete.",
+        criterion_results: [
+          {
+            type: "evidence",
+            label: "원문/캡처",
+            passed: true,
+            reason: "Submitted locator is present.",
+          },
+          {
+            type: "quality",
+            label: "시각·발신 식별",
+            passed: accepted,
+            reason: accepted
+              ? "Submitted evidence includes enough identifying detail."
+              : "Submitted evidence is missing time or customer identity.",
+          },
+        ],
+        missing_elements: accepted ? [] : ["time_or_customer_identity"],
+        mini_action_suggestion: accepted
+          ? "수익 증거로 기록했어."
+          : "시각과 상대를 확인할 수 있는 캡처를 다시 제출해줘.",
+      });
+    }
+  }
   if (
     process.env.AGENTIC30_TEST_STUB_MORNING_BRIEFING_EXTERNAL_DIGEST === "ready"
     && value.includes("Agentic30 Day 2+ Office Hours source digest")

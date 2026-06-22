@@ -157,13 +157,37 @@ function checkAcpAvailability(environment) {
     };
   }
 
+  if (isAcpOptionalApiKeyState(environment?.acp)) {
+    return {
+      id: "acp-adapter",
+      title: "ACP adapter is available",
+      status: "ok",
+      message: environment.acp.message,
+    };
+  }
+
   return {
     id: "acp-adapter",
     title: "ACP adapter is available",
     status: "warning",
     message: environment?.acp?.message || "ACP adapter status is unknown.",
-    recovery: "격리된 ACP 에디터 연동을 사용하려면 ANTHROPIC_API_KEY 또는 CODEX_API_KEY를 설정하세요.",
+    recovery: "ACP 어댑터 파일이 번들에 포함됐는지 확인하세요. 격리 provider API-key 모드는 선택 기능이므로 필요할 때만 ANTHROPIC_API_KEY 또는 CODEX_API_KEY를 설정하세요.",
   };
+}
+
+function isAcpOptionalApiKeyState(acp) {
+  const message = String(acp?.message || "").toLowerCase();
+  return Boolean(
+    acp
+      && message.includes("api")
+      && (
+        message.includes("anthropic_api_key")
+          || message.includes("codex_api_key")
+          || message.includes("openai_api_key")
+          || message.includes("missing api key")
+          || message.includes("api key")
+      ),
+  );
 }
 
 function checkQmdAvailability(environment) {

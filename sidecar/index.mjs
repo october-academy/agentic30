@@ -16516,18 +16516,21 @@ function getAcpAdapterState() {
   const codexApiReady = Boolean(
     process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY,
   );
+  const apiKeyConfigured = claudeApiReady || codexApiReady;
   if (fsSync.existsSync(adapterPath)) {
     return {
-      available: claudeApiReady || codexApiReady,
+      available: true,
+      apiKeyConfigured,
+      isolatedModeReady: apiKeyConfigured,
       message:
-        claudeApiReady || codexApiReady
+        apiKeyConfigured
           ? `ACP adapter ready (${[
               claudeApiReady ? "Claude API" : null,
               codexApiReady ? "OpenAI API" : null,
             ]
               .filter(Boolean)
               .join(", ")})`
-          : "ACP adapter is installed, but isolated ACP mode requires ANTHROPIC_API_KEY and/or CODEX_API_KEY / OPENAI_API_KEY",
+          : "ACP adapter is installed. Isolated provider API-key mode is optional; set ANTHROPIC_API_KEY and/or CODEX_API_KEY / OPENAI_API_KEY only when that mode is needed.",
       adapterPath,
       command: `${process.execPath} ${adapterPath} --workspace ${workspaceRoot}`,
     };
@@ -18141,6 +18144,21 @@ async function handleBipReadinessAction(request) {
     return;
   }
 
+  // gwsAuth: recheck without starting login
+  if (rowId === "gwsAuth" && action === "recheck") {
+    fireAndForget(
+      "check_gws_auth_status_recheck",
+      checkGwsAuthStatus({ env: process.env }).then(({ done, error }) => {
+        emitRow("gwsAuth", done ? "done" : "blocked", undefined, done ? undefined : error);
+        if (done) {
+          emitRow("docUrl", "pending");
+          emitRow("sheetUrl", "pending");
+        }
+      }),
+    );
+    return;
+  }
+
   // Individual row recheck
   if (action === "recheck") {
     const keychainSettings = getAuthContextSummary().authenticated
@@ -18406,18 +18424,4 @@ async function handleBipReadinessAction(request) {
     return;
   }
 
-  // gwsAuth: recheck without starting login
-  if (rowId === "gwsAuth" && action === "recheck") {
-    fireAndForget(
-      "check_gws_auth_status_recheck",
-      checkGwsAuthStatus({ env: process.env }).then(({ done, error }) => {
-        emitRow("gwsAuth", done ? "done" : "blocked", undefined, done ? undefined : error);
-        if (done) {
-          emitRow("docUrl", "pending");
-          emitRow("sheetUrl", "pending");
-        }
-      }),
-    );
-    return;
-  }
 }

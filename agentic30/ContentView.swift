@@ -2360,6 +2360,13 @@ struct ContentView: View {
             .onAppear {
                 viewModel.start()
                 syncPromptDrafts(bindingToken: viewModel.pendingStructuredPrompt?.uiBindingToken)
+                applyUITestingInitialRouteIfNeeded()
+            }
+            .onChange(of: viewModel.selectedSessionID) { _, _ in
+                applyUITestingInitialRouteIfNeeded()
+            }
+            .onChange(of: viewModel.visibleBipCoach?.currentMission?.id) { _, _ in
+                applyUITestingInitialRouteIfNeeded()
             }
             .onDisappear {
                 if !isWorkspaceWindow {
@@ -2446,6 +2453,19 @@ struct ContentView: View {
 
     private var isWorkspaceWindow: Bool {
         surfaceOverride == .workspace
+    }
+
+    private func applyUITestingInitialRouteIfNeeded() {
+        #if DEBUG
+        guard isWorkspaceWindow,
+              CommandLine.arguments.contains("--ui-testing-open-bip-mission-route"),
+              !isBipMissionRoutePresented else {
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            routeToBipMissionCompletion()
+        }
+        #endif
     }
 
     private func settingsSection(from notification: Notification) -> SettingsSection? {
@@ -5000,6 +5020,7 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            officeHoursStatusPill(session: session, activeDay: activeDay)
         }
         .padding(.horizontal, 28)
         .frame(height: 70)
@@ -5080,7 +5101,11 @@ struct ContentView: View {
             .padding(.horizontal, 4)
     }
 
-    private func officeHoursStatusPill(session: ChatSession?, activeDay: Int) -> some View {
+    private func officeHoursStatusPill(
+        session: ChatSession?,
+        activeDay: Int,
+        accessibilityIdentifier: String = "opendesign.officeHours.bridgeStatus"
+    ) -> some View {
         let label: String
         if let session {
             switch session.status {
@@ -5112,7 +5137,10 @@ struct ContentView: View {
         .frame(height: 19)
         .background(Capsule().fill(OpenDesignOfficeHoursColor.surface))
         .overlay(Capsule().stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1))
-        .accessibilityIdentifier("opendesign.officeHours.bridgeStatus")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(label)
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 
     private func officeHoursMainScroll(
@@ -8873,7 +8901,11 @@ struct ContentView: View {
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(OpenDesignOfficeHoursColor.fg)
                 Spacer(minLength: 0)
-                officeHoursStatusPill(session: session, activeDay: activeDay)
+                officeHoursStatusPill(
+                    session: session,
+                    activeDay: activeDay,
+                    accessibilityIdentifier: "opendesign.officeHours.metaBridgeStatus"
+                )
             }
             .padding(.horizontal, 16)
             .frame(height: 47)
@@ -14764,9 +14796,9 @@ private struct OfficeHoursDailyScoreboardCardView: View {
                 .font(.system(size: 10.5))
                 .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
                 .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
 }
 
 private struct OfficeHoursDailyGateCardView: View {

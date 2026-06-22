@@ -32,6 +32,6 @@
 
 | Limitation | Details |
 |---|---|
-| ACP isolated mode needs API keys | The ACP adapter can be installed while unavailable if neither `ANTHROPIC_API_KEY` nor `CODEX_API_KEY` / `OPENAI_API_KEY` is set. |
+| ACP isolated provider mode needs API keys | The ACP adapter can be installed and registered without API keys. Set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` / `OPENAI_API_KEY` only when intentionally running isolated ACP provider execution through API-key mode. |
 | Workspace access depends on user selection | Preflight only verifies the current workspace root is readable. Broader sandbox-scoped bookmarks are not implemented. |
 | Settings migrations are forward-planned | Current settings have schema versioning and a migration hook, but there is no multi-version migration history yet. |

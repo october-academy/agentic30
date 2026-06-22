@@ -1066,6 +1066,7 @@ struct SettingsView: View {
                                 viewModel.startNotionOAuth()
                             }
                         }
+                        .accessibilityIdentifier(viewModel.notionConnected ? "settings.notion.disconnectButton" : "settings.notion.oauthButton")
                     }
                 }
                 odSettingsRow(title: "Exa", detail: "Exa MCP로 공개 웹 검색과 원문 fetch 도구를 AI 실행과 Market Radar에 연결합니다.", iconName: "BrandExa") {
@@ -1554,7 +1555,13 @@ struct SettingsView: View {
                     odSettingsToggle(isOn: telemetryEnabledBinding)
                 }
                 odSettingsRow(title: "진단 스냅샷 내보내기", detail: "제출 전 미리보기 — sanitized runtime snapshot을 클립보드로 복사합니다.") {
-                    odSettingsGhostButton(title: "내보내기…", systemImage: "square.and.arrow.down", width: 112, action: copyDiagnostics)
+                    odSettingsGhostButton(
+                        title: "내보내기…",
+                        systemImage: "square.and.arrow.down",
+                        width: 112,
+                        identifier: "settings.privacy.exportDiagnosticsButton",
+                        action: copyDiagnostics
+                    )
                 }
                 odSettingsRow(title: "모든 로컬 데이터 삭제", detail: "sessions, day-task 히스토리, 캐시. 기록 폴더 자체는 건드리지 않습니다.") {
                     Button("데이터 초기화…") {

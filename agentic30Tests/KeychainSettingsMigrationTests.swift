@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 import Testing
 @testable import agentic30
 
@@ -21,6 +23,34 @@ struct KeychainSettingsMigrationTests {
         #expect(AgentModelCatalog.normalizedModelID("composer-2.5", provider: .cursor) == "composer-2.5")
         #expect(AgentModelCatalog.normalizedModelID("unknown", provider: .cursor) == AgentModelCatalog.defaultCursorModelID)
         #expect(AgentAuthMode.modes(for: .cursor) == [.local, .apiKey])
+    }
+
+    @Test func appearanceThemeNormalizesAndPersistsSelection() {
+        let defaults = UserDefaults.standard
+        let key = Agentic30Theme.storageKey
+        let previousValue = defaults.object(forKey: key)
+        defer {
+            if let previousValue {
+                defaults.set(previousValue, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+
+        defaults.removeObject(forKey: key)
+        #expect(Agentic30Theme.current == .dark)
+        #expect(Agentic30Theme.normalized(nil) == .dark)
+        #expect(Agentic30Theme.normalized("unknown") == .dark)
+
+        defaults.set(Agentic30Theme.white.rawValue, forKey: key)
+        #expect(Agentic30Theme.current == .white)
+        #expect(Agentic30Theme.white.colorScheme == ColorScheme.light)
+        #expect(Agentic30Theme.white.appKitAppearanceName == NSAppearance.Name.aqua)
+
+        defaults.set(Agentic30Theme.dark.rawValue, forKey: key)
+        #expect(Agentic30Theme.current == .dark)
+        #expect(Agentic30Theme.dark.colorScheme == ColorScheme.dark)
+        #expect(Agentic30Theme.dark.appKitAppearanceName == NSAppearance.Name.darkAqua)
     }
 
     @Test func decodesLegacySettingsWithoutSchemaVersion() throws {

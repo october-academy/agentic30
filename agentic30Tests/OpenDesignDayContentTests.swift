@@ -1755,6 +1755,30 @@ struct OpenDesignDayContentTests {
         #expect(bottomLeft.point.y > chrome.horizontalAxisY)
     }
 
+    @Test func strategyMatrixChromeKeepsAgentic30WedgeLabelClearOfAgentic30Marker() {
+        let chrome = OpenDesignStrategyMatrixChromeLayoutPolicy.layout(boardSize: CGSize(width: 1550, height: 846))
+        let agentic30Layout = OpenDesignStrategyMatrixLayoutPolicy.layout(
+            plotX: 0.78,
+            screenY: 0.22,
+            preferredLabelPlacement: .leading,
+            plotRect: chrome.plotRect
+        )
+        let markerRect = CGRect(
+            x: agentic30Layout.point.x - 10,
+            y: agentic30Layout.point.y - 10,
+            width: 20,
+            height: 20
+        )
+        let visibleWedgeTextRect = CGRect(
+            x: chrome.topRightQuadrantLabel.rect.maxX - 96,
+            y: chrome.topRightQuadrantLabel.point.y - 14,
+            width: 96,
+            height: 28
+        )
+
+        #expect(!markerRect.intersects(visibleWedgeTextRect))
+    }
+
     @Test func strategyMatrixChromeLayoutSeparatesAxisAndQuadrantLabels() {
         let boardSizes = [
             CGSize(width: 1550, height: 846),

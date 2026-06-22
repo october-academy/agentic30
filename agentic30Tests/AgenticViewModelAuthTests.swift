@@ -2438,6 +2438,150 @@ final class AgenticViewModelAuthTests {
         #expect(sidecar.sentPayloads.isEmpty)
     }
 
+    @Test @MainActor func retryLastFailedChatTurnResendsPreviousUserPrompt() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/agentic30-retry-test")
+        let viewModel = AgenticViewModel(
+            disablesSidecarStartForTesting: true,
+            sidecar: sidecar,
+            activateAppForAuth: {}
+        )
+        let session = ChatSession(
+            id: "retry-session",
+            title: "Retry Session",
+            provider: .codex,
+            model: AgentModelCatalog.defaultModelID(for: .codex),
+            status: .idle,
+            createdAt: Date(),
+            updatedAt: Date(),
+            error: nil,
+            messages: [
+                ChatMessage(
+                    id: "user-1",
+                    role: .user,
+                    provider: .codex,
+                    content: "다시 보낼 원래 질문",
+                    state: .final,
+                    createdAt: Date(),
+                    error: nil,
+                    bipMissionChoices: nil,
+                    providerAuthActions: nil
+                ),
+                ChatMessage(
+                    id: "assistant-error",
+                    role: .assistant,
+                    provider: .codex,
+                    content: "provider failed",
+                    state: .error,
+                    createdAt: Date(),
+                    error: "provider_usage_limit",
+                    bipMissionChoices: nil,
+                    providerAuthActions: nil
+                ),
+            ],
+            pendingUserInput: nil,
+            runtime: nil
+        )
+        viewModel.replaceSessionsForTesting([session], selectedSessionID: session.id)
+        sidecar.resetSentPayloads()
+
+        viewModel.retryLastFailedChatTurn()
+
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "send_prompt")
+        #expect(payload["sessionId"] as? String == "retry-session")
+        #expect(payload["prompt"] as? String == "다시 보낼 원래 질문")
+        #expect(payload["mode"] as? String == "free_chat")
+        #expect(viewModel.draft.isEmpty)
+    }
+
+    @Test @MainActor func bipCoachErrorEventUpdatesVisibleErrorState() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/agentic30-bip-error-test")
+        let viewModel = AgenticViewModel(
+            disablesSidecarStartForTesting: true,
+            sidecar: sidecar,
+            activateAppForAuth: {}
+        )
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent("""
+        {
+          "type": "bip_coach_error",
+          "message": "gws CLI 인증이 필요합니다.",
+          "bipCoach": {
+            "schemaVersion": 2,
+            "updatedAt": "2026-06-22T00:00:00.000Z",
+            "sessionId": "bip-session",
+            "config": {
+              "provider": "codex",
+              "threadsHandle": "october",
+              "sheetId": "sheet-1",
+              "docId": "doc-1"
+            },
+            "evidence": null,
+            "currentMission": null,
+            "streak": {
+              "current": 0,
+              "longest": 0,
+              "lastCompletedDate": null
+            },
+            "lastError": "gws CLI 인증이 필요합니다."
+          }
+        }
+        """))
+
+        #expect(viewModel.lastError == "gws CLI 인증이 필요합니다.")
+        #expect(viewModel.bipCoach?.sessionId == "bip-session")
+        #expect(viewModel.bipCoach?.lastError == "gws CLI 인증이 필요합니다.")
+    }
+
+    @Test @MainActor func notionOAuthConnectCallbackAndDisconnectUseExplicitSidecarRoutes() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/agentic30-notion-oauth-test")
+        let viewModel = AgenticViewModel(
+            disablesSidecarStartForTesting: true,
+            sidecar: sidecar,
+            activateAppForAuth: {}
+        )
+
+        viewModel.startNotionOAuth()
+
+        var payload = try #require(sidecar.sentPayloads.last)
+        #expect(payload["type"] as? String == "notion_start_oauth")
+        #expect(viewModel.notionOAuthInProgress == true)
+        #expect(viewModel.notionOAuthError == nil)
+
+        viewModel.handleNotionOAuthCode("oauth-code-1")
+
+        payload = try #require(sidecar.sentPayloads.last)
+        #expect(payload["type"] as? String == "notion_oauth_callback")
+        #expect(payload["code"] as? String == "oauth-code-1")
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent("""
+        {
+          "type": "notion_oauth_result",
+          "success": true
+        }
+        """))
+
+        #expect(viewModel.notionOAuthInProgress == false)
+        #expect(viewModel.notionConnected == true)
+        #expect(viewModel.notionOAuthError == nil)
+
+        viewModel.disconnectNotion()
+
+        payload = try #require(sidecar.sentPayloads.last)
+        #expect(payload["type"] as? String == "notion_disconnect")
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent("""
+        {
+          "type": "notion_oauth_result",
+          "success": false,
+          "disconnected": true
+        }
+        """))
+
+        #expect(viewModel.notionConnected == false)
+        #expect(viewModel.notionOAuthError == nil)
+    }
+
     @Test @MainActor func officeHoursStepStartSendsContextPayload() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }

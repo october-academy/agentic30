@@ -1,7 +1,7 @@
 # Agentic30 Product Spec
 
-> **최종 업데이트:** 2026-06-12
-> **상태:** ICP 인터뷰 evidence 기반 private pilot loop 검증 중
+> **최종 업데이트:** 2026-06-22
+> **상태:** 30일 엔진 구현 완료 · 외부 활성 사용자/매출 증거 0건 — 검증 wedge는 여전히 Day 0-3 (→ [known-limitations.md](./known-limitations.md))
 
 Agentic30은 전업 1인 개발자가 30일 안에 활성 사용자 100명과 첫 매출 가능성을 검증하도록 돕는 local-first macOS assistant다. 고정 강의가 아니라 사용자의 프로젝트와 실행 기록을 읽고 다음 행동을 바꾼다.
 
@@ -76,12 +76,22 @@ Q2의 제품 wedge는 **Day 0-3 private pilot loop**다.
 ### Out of Scope
 
 - 대규모 외부 사용자 모집
-- 결제/가격 책정
+- 결제 처리·가격 책정 UI (증거 *수집*은 구현됨 → 아래 "구현 상태 vs 의도된 wedge" 참조)
 - 커뮤니티/멘토 시스템
-- Day 8-30 전체 자동화
-- `/bip-draft`, `/analyze-ads` deep integration
 - Windows/Linux/iOS 네이티브 앱
 - 사용자를 대신해 인터뷰, 빌드, 마케팅을 실행하는 agency 기능
+
+---
+
+## 구현 상태 vs 의도된 wedge
+
+이 문서는 의도된 제품 형태를 기술하며, **현재 shipped 상태를 주장하지 않는다.** 빌드는 검증 wedge를 한참 넘어섰다.
+
+- **검증 wedge:** 여전히 Day 0-3 private pilot loop (위 In Scope).
+- **구현은 됐으나 wedge 밖** (gated/실험적, 테스트 green이지만 외부 검증 0): Day 8-30 적응형 프로그램 엔진(일차 게이트·adaptive rules·Execution OS 증명 원장), BIP 코치+리서치(`/bip-draft` 계열, Google Docs/Sheets 연동), 수익/액션 증거 판정기, 모닝 브리핑·시장 레이더·전략 리포트.
+- **미배선/게이트 상세:** [known-limitations.md](./known-limitations.md) — traffic collector 없음, AR-05/AR-08 신호 unwired(rules silent), 100-user count는 PostHog 의존 후 hard-block.
+- **상세 30일 설계:** [specs/agentic30-30day-adaptive-program-v2.md](./specs/agentic30-30day-adaptive-program-v2.md).
+- **외부 사용자 증거: N=0.** "구현됨·테스트 green"은 "검증됨"이 아니다.
 
 ---
 
@@ -93,11 +103,15 @@ Q2의 제품 wedge는 **Day 0-3 private pilot loop**다.
 
 ### MVP Success
 
-- 외부 ICP 인터뷰나 problem evidence가 Mac 앱/sidecar 입력으로 들어온다.
-- 입력된 evidence가 generic 조언이 아니라 customer-specific 다음 행동으로 바뀐다.
-- 사용자가 맞춤 작업을 실행하고 feedback을 남긴다.
-- 같은 ICP 조건에서 pain point와 행동 신호가 반복된다.
-- 관심/칭찬이 아니라 인터뷰 응답, 반복 사용, 결제 의사, 첫 매출 같은 행동 증거를 남긴다.
+**N = 비창업자 외부 사용자의 기록된 행동 수. 오늘 N=0.** 아래는 달성된 능력이 아니라 미충족 통과 기준이다.
+
+- [ ] 외부 ICP 인터뷰나 problem evidence가 Mac 앱/sidecar 입력으로 들어온다.
+- [ ] 입력된 evidence가 generic 조언이 아니라 customer-specific 다음 행동으로 바뀐다.
+- [ ] 사용자가 맞춤 작업을 실행하고 feedback을 남긴다.
+- [ ] 같은 ICP 조건에서 pain point와 행동 신호가 반복된다.
+- [ ] 관심/칭찬이 아니라 인터뷰 응답, 반복 사용, 결제 의사, 첫 매출 같은 행동 증거를 남긴다.
+
+**현재 충족: 0/5** — 테스트 통과·수동 QA는 이 기준을 충족하지 못한다(본인 기계 검증일 뿐).
 
 ### Warning
 

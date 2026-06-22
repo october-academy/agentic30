@@ -87,6 +87,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let sparkleNoUpdateErrorCode = 1001
     private var openWorkspaceHandler: (() -> Void)?
     private var pendingWorkspaceOpen = false
+    #if DEBUG
+    private var uiTestingMenuFixtureWindow: NSWindow?
+    private weak var uiTestingUpdateInvokedLabel: NSTextField?
+    #endif
     private(set) var shouldMaximizeWorkspaceWindowOnFirstAppear = AppDelegate.shouldMaximizeWorkspaceWindowOnLaunch(
         isFirstLaunchEver: !PostHogTelemetry.hasPreviouslyGeneratedDistinctID,
         isUITesting: AppDelegate.isUITestingLaunch()
@@ -162,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         #if DEBUG
+        presentUITestingMenuFixtureWindowIfNeeded()
         if CommandLine.arguments.contains("--ui-testing-open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 self?.openSettingsInWorkspace(source: "ui_test_launch_argument")
@@ -177,6 +182,170 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
+
+    #if DEBUG
+    private func presentUITestingMenuFixtureWindowIfNeeded() {
+        let showsAppCommandFixture = CommandLine.arguments.contains("--ui-testing-show-app-command-fixture")
+        let showsStatusMenuFixture = CommandLine.arguments.contains("--ui-testing-show-status-menu-fixture")
+        guard showsAppCommandFixture || showsStatusMenuFixture else { return }
+
+        if let uiTestingMenuFixtureWindow {
+            uiTestingMenuFixtureWindow.orderFront(nil)
+            return
+        }
+
+        let stackView = NSStackView()
+        stackView.orientation = .vertical
+        stackView.alignment = .leading
+        stackView.spacing = 8
+        stackView.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+
+        if showsAppCommandFixture {
+            let title = NSTextField(labelWithString: "App Commands")
+            title.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+            stackView.addArrangedSubview(title)
+            stackView.addArrangedSubview(makeUITestingFixtureButton(
+                title: "Settings…",
+                identifier: "uiTesting.appCommands.settingsButton",
+                action: #selector(uiTestingOpenSettingsFromAppCommandsFixture)
+            ))
+            stackView.addArrangedSubview(makeUITestingFixtureButton(
+                title: "Check for Updates...",
+                identifier: "uiTesting.appCommands.checkUpdatesButton",
+                action: #selector(uiTestingCheckForUpdatesFromAppCommandsFixture)
+            ))
+            stackView.addArrangedSubview(makeUITestingFixtureButton(
+                title: "Search",
+                identifier: "uiTesting.appCommands.searchButton",
+                action: #selector(uiTestingOpenSearchFromAppCommandsFixture)
+            ))
+
+            let updateInvokedLabel = NSTextField(labelWithString: "Update command invoked")
+            updateInvokedLabel.identifier = NSUserInterfaceItemIdentifier("uiTesting.appCommands.updateInvoked")
+            updateInvokedLabel.isHidden = true
+            uiTestingUpdateInvokedLabel = updateInvokedLabel
+            stackView.addArrangedSubview(updateInvokedLabel)
+        }
+
+        if showsStatusMenuFixture {
+            if showsAppCommandFixture {
+                let separator = NSBox()
+                separator.boxType = .separator
+                stackView.addArrangedSubview(separator)
+            }
+            let title = NSTextField(labelWithString: "Status Menu")
+            title.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+            stackView.addArrangedSubview(title)
+            stackView.addArrangedSubview(makeUITestingFixtureButton(
+                title: "Open Workspace",
+                identifier: "statusMenu.openWorkspaceButton",
+                action: #selector(uiTestingOpenWorkspaceFromStatusMenuFixture)
+            ))
+            stackView.addArrangedSubview(makeUITestingFixtureButton(
+                title: "New Codex Chat",
+                identifier: "statusMenu.newCodexChatButton",
+                action: #selector(uiTestingNewCodexChatFromStatusMenuFixture)
+            ))
+            stackView.addArrangedSubview(makeUITestingFixtureButton(
+                title: "New Claude Chat",
+                identifier: "statusMenu.newClaudeChatButton",
+                action: #selector(uiTestingNewClaudeChatFromStatusMenuFixture)
+            ))
+            stackView.addArrangedSubview(makeUITestingFixtureButton(
+                title: "Settings…",
+                identifier: "statusMenu.settingsButton",
+                action: #selector(uiTestingOpenSettingsFromStatusMenuFixture)
+            ))
+            stackView.addArrangedSubview(makeUITestingFixtureButton(
+                title: "Quit",
+                identifier: "statusMenu.quitButton",
+                action: #selector(uiTestingQuitFromStatusMenuFixture)
+            ))
+        }
+
+        let container = NSView()
+        container.addSubview(stackView)
+        NSLayoutConstraint.activate([
+            stackView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: container.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+
+        let fixtureWindow = NSWindow(
+            contentRect: NSRect(x: 80, y: 80, width: 260, height: showsAppCommandFixture && showsStatusMenuFixture ? 330 : 200),
+            styleMask: [.titled, .utilityWindow],
+            backing: .buffered,
+            defer: false
+        )
+        fixtureWindow.title = "Agentic30 UI Test Commands"
+        fixtureWindow.identifier = NSUserInterfaceItemIdentifier("uiTesting.menuFixtures")
+        fixtureWindow.contentView = container
+        fixtureWindow.isReleasedWhenClosed = false
+        fixtureWindow.level = .floating
+        uiTestingMenuFixtureWindow = fixtureWindow
+        fixtureWindow.orderFront(nil)
+    }
+
+    private func makeUITestingFixtureButton(title: String, identifier: String, action: Selector) -> NSButton {
+        let button = NSButton(title: title, target: self, action: action)
+        button.identifier = NSUserInterfaceItemIdentifier(identifier)
+        button.setButtonType(.momentaryPushIn)
+        button.bezelStyle = .rounded
+        return button
+    }
+
+    @objc private func uiTestingOpenSettingsFromAppCommandsFixture() {
+        openSettingsInWorkspace(source: "ui_test_app_command_fixture")
+    }
+
+    @objc private func uiTestingCheckForUpdatesFromAppCommandsFixture() {
+        uiTestingUpdateInvokedLabel?.isHidden = false
+        checkForUpdates(nil)
+    }
+
+    @objc private func uiTestingOpenSearchFromAppCommandsFixture() {
+        NotificationCenter.default.post(name: .agenticOpenDesignSearchRequested, object: nil)
+    }
+
+    @objc private func uiTestingOpenWorkspaceFromStatusMenuFixture() {
+        PostHogTelemetry.capture(
+            "mac_menu_bar_action",
+            properties: ["action": "open_workspace"],
+            authSession: viewModel.macAuthSession
+        )
+        openWorkspaceWindow()
+    }
+
+    @objc private func uiTestingNewCodexChatFromStatusMenuFixture() {
+        viewModel.createSession(provider: .codex, source: "menu_bar")
+        openWorkspaceWindow()
+    }
+
+    @objc private func uiTestingNewClaudeChatFromStatusMenuFixture() {
+        viewModel.createSession(provider: .claude, source: "menu_bar")
+        openWorkspaceWindow()
+    }
+
+    @objc private func uiTestingOpenSettingsFromStatusMenuFixture() {
+        PostHogTelemetry.capture(
+            "mac_menu_bar_action",
+            properties: ["action": "open_settings"],
+            authSession: viewModel.macAuthSession
+        )
+        openSettingsInWorkspace(source: "menu_bar")
+    }
+
+    @objc private func uiTestingQuitFromStatusMenuFixture() {
+        PostHogTelemetry.captureBlocking(
+            "mac_menu_bar_action",
+            properties: ["action": "quit"],
+            authSession: viewModel.macAuthSession
+        )
+        NSApplication.shared.terminate(nil)
+    }
+    #endif
 
     private func installOnboardingHelper() {
         do {
@@ -233,6 +402,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             authSession: viewModel.macAuthSession
         )
         guard let updaterController else {
+            if Self.isUITestingLaunch() {
+                openWorkspaceWindow()
+                requestAppUpdateStatusPanel()
+                if !viewModel.requiresMacOnboarding {
+                    requestOpenDesignSettingsRoute(section: .updates)
+                }
+                return
+            }
             let alert = NSAlert()
             alert.messageText = "Updates are not configured for this build."
             alert.informativeText = "Release builds must include a Sparkle public EdDSA key."
@@ -835,16 +1012,19 @@ private struct StatusMenuContent: View {
                 )
                 openWorkspaceWindow()
             }
+            .accessibilityIdentifier("statusMenu.openWorkspaceButton")
 
             Button("New Codex Chat") {
                 viewModel.createSession(provider: .codex, source: "menu_bar")
                 openWorkspaceWindow()
             }
+            .accessibilityIdentifier("statusMenu.newCodexChatButton")
 
             Button("New Claude Chat") {
                 viewModel.createSession(provider: .claude, source: "menu_bar")
                 openWorkspaceWindow()
             }
+            .accessibilityIdentifier("statusMenu.newClaudeChatButton")
 
             if let selectedSession = viewModel.selectedSession,
                selectedSession.status == .running || selectedSession.status == .awaitingInput {
@@ -859,6 +1039,7 @@ private struct StatusMenuContent: View {
                     )
                     viewModel.stopSelectedSession()
                 }
+                .accessibilityIdentifier("statusMenu.stopCurrentSessionButton")
             }
 
             let visibleSessions = viewModel.sessions.filter { $0.archivedAt == nil }
@@ -920,6 +1101,7 @@ private struct StatusMenuContent: View {
                     Label("업데이트 \(pendingUpdateVersion) 설치…", systemImage: "arrow.down.circle.fill")
                         .foregroundStyle(Agentic30BrandColor.green)
                 }
+                .accessibilityIdentifier("statusMenu.installUpdateButton")
             }
 
             Button {
@@ -932,6 +1114,7 @@ private struct StatusMenuContent: View {
             } label: {
                 Text("Settings…")
             }
+            .accessibilityIdentifier("statusMenu.settingsButton")
 
             Button("Quit") {
                 PostHogTelemetry.captureBlocking(
@@ -941,6 +1124,7 @@ private struct StatusMenuContent: View {
                 )
                 NSApplication.shared.terminate(nil)
             }
+            .accessibilityIdentifier("statusMenu.quitButton")
         }
         .padding(.vertical, 4)
         .onAppear {
@@ -982,6 +1166,8 @@ private struct StatusMenuLabel: View {
     var body: some View {
         Image("StatusBarIcon")
             .renderingMode(.template)
+            .accessibilityLabel("Agentic30")
+            .accessibilityIdentifier("agentic30.menuBarExtra")
             .onAppear {
                 appDelegate.installWorkspaceOpenHandler {
                     openWindow(id: "workspace")

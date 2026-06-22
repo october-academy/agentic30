@@ -75,8 +75,17 @@ case "$mode" in
     require_blocking_ui_approval "test:swift:ui:smoke"
     exec "$xcodebuild_bin" "${base_args[@]}" \
       -scheme agentic30UITests \
+      -only-testing:agentic30UITests/agentic30UITests/testAppMenuCommandsExposeSettingsUpdatesAndSearch \
+      -only-testing:agentic30UITests/agentic30UITests/testMenuBarExtraShowsWorkspaceChatSettingsAndQuitActions \
       -only-testing:agentic30UITests/agentic30UITests/testSettingsWorkspaceMainProjectMatchesOpenDesignPathRow \
       -only-testing:agentic30UITests/agentic30UITests/testAgentSettingsModelPickersSaveClaudeCodexAndGeminiModels \
+      -only-testing:agentic30UITests/agentic30UITests/testSettingsPrivacyDiagnosticsAndUpdatesControlsAreReachable \
+      -only-testing:agentic30UITests/agentic30UITests/testSettingsMenuBarAndNotificationTogglesAreReachable \
+      -only-testing:agentic30UITests/agentic30UITests/testBipCompletedMissionShowsCompletionCard \
+      -only-testing:agentic30UITests/agentic30UITests/testAssistantFailedTurnCanBeRetriedWithInlineStub \
+      -only-testing:agentic30UITests/agentic30UITests/testBipCoachErrorBannerRendersWithSeededFailure \
+      -only-testing:agentic30UITests/agentic30UITests/testBipCoachSidecarFailureShowsRetryAction \
+      -only-testing:agentic30UITests/agentic30UITests/testFoundationIddStructuredPromptRendersFromQueueSeed \
       -only-testing:agentic30UITests/agentic30UITests/testWorkspaceStartupDay1RoutesToOfficeHours \
       -only-testing:agentic30UITests/agentic30UITests/testOfficeHoursV2DailyCardStackOrdersCardsAndOpensStaleReplacementAction \
       -only-testing:agentic30UITests/agentic30UITests/testStrategyRailOpensStrategyBusinessCanvasScreenWithMatrixAndSections \

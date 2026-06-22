@@ -16,10 +16,12 @@ import {
   loadDayMemory,
   loadOfficeHoursPendingQuestion,
   loadOfficeHoursTurnLog,
+  loadOnboardingMemory,
   saveOfficeHoursPendingQuestion,
   saveOnboardingMemory,
 } from "../sidecar/workspace-memory.mjs";
 import {
+  loadCurriculumAnswerLog,
   persistNewsMarketRadarSnapshot,
 } from "../sidecar/news-market-radar.mjs";
 import {
@@ -27,6 +29,18 @@ import {
   loadOfficeHoursMemory,
 } from "../sidecar/office-hours-memory.mjs";
 import { loadProofLedger } from "../sidecar/execution-os.mjs";
+import {
+  evaluateAdaptiveRules,
+  recordFiredAdaptiveRules,
+} from "../sidecar/adaptive-rules.mjs";
+import {
+  loadBipCoachState,
+  persistBipCoachState,
+} from "../sidecar/bip-coach-state.mjs";
+import {
+  IDD_FOUNDATION_DOCS,
+  persistIddSetupState,
+} from "../sidecar/idd-doc-gate.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -3744,6 +3758,650 @@ test("sidecar rejects websocket clients with an invalid auth token", async () =>
     assert.equal(events.some((event) => event.type === "ready"), false);
   } finally {
     ws?.terminate();
+    await harness.close();
+  }
+});
+
+test("curriculum_answer_saved persists OpenDesign Day answers through the websocket route", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "curriculum_answer_saved",
+      workspaceRoot: harness.workspacePath,
+      day: 2,
+      dayType: "standard",
+      questionId: "q-market-risk",
+      question: {
+        id: "q-market-risk",
+        dimension: "market",
+        title: "Market risk",
+        prompt: "Which risk should you test first?",
+      },
+      answerId: "a-paid-pilot",
+      answer: {
+        id: "a-paid-pilot",
+        title: "Paid pilot",
+        detail: "Ask one customer for a paid pilot.",
+        freeform: "Support lead pilot",
+        isAntiSignal: false,
+      },
+      occurredAt: "2026-06-22T00:00:00.000Z",
+    }));
+
+    const saved = await waitForEvent(ws.events, (event) =>
+      event.type === "curriculum_answer_saved_result"
+        && event.success === true,
+    );
+    assert.equal(saved.success, true);
+    assert.equal(saved.answerCount, 1);
+
+    const log = await loadCurriculumAnswerLog({ workspaceRoot: harness.workspacePath });
+    assert.equal(log.records.length, 1);
+    assert.equal(log.records[0].day, 2);
+    assert.equal(log.records[0].questionId, "q-market-risk");
+    assert.equal(log.records[0].answerId, "a-paid-pilot");
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("execution_os_get and proof_ledger_append return updated execution state", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "execution_os_get",
+      workspaceRoot: harness.workspacePath,
+      day: 14,
+    }));
+    const initial = await waitForEvent(ws.events, (event) =>
+      event.type === "execution_os_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.success === true,
+    );
+    assert.equal(initial.executionOs.currentDay, 14);
+    assert.equal(initial.proofLedger.schema, "agentic30.proof_ledger.v2");
+
+    ws.events.length = 0;
+    ws.send(JSON.stringify({
+      type: "proof_ledger_append",
+      workspaceRoot: harness.workspacePath,
+      day: 14,
+      event: {
+        id: "proof-route-1",
+        type: "payment_record",
+        day: 14,
+        status: "accepted",
+        strength: "strong",
+        sourceUrl: "https://example.com/payment-route-proof",
+      },
+    }));
+    const updated = await waitForEvent(ws.events, (event) =>
+      event.type === "execution_os_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.appendedProofEvent?.id === "proof-route-1",
+    );
+    assert.equal(updated.success, true);
+    assert.equal(updated.proofLedger.events.length, 1);
+    assert.equal(updated.proofLedger.events[0].type, "payment_record");
+
+    const ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    assert.equal(ledger.events.length, 1);
+    assert.equal(ledger.events[0].sourceUrl, "https://example.com/payment-route-proof");
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("onboarding_memory_save and onboarding_memory_request sync workspace memory explicitly", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "onboarding_memory_save",
+      workspaceRoot: harness.workspacePath,
+      memory: {
+        projectPath: harness.workspacePath,
+        onboardingContext: {
+          businessDescription: "SupportLens for B2B support leads",
+          goal: "Reduce missed escalations",
+          focusArea: "B2B support leads",
+          productBottleneck: "Missed escalations",
+        },
+        answers: {
+          primaryFocus: { answer: "B2B support leads" },
+          primaryBottleneck: { answer: "Missed escalations" },
+        },
+      },
+    }));
+
+    const saved = await waitForEvent(ws.events, (event) =>
+      event.type === "onboarding_memory_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.success === true,
+    );
+    assert.equal(saved.onboardingMemory.projectPath, harness.workspacePath);
+    assert.equal(saved.onboardingMemory.onboardingContext.goal, "Reduce missed escalations");
+
+    const persisted = await loadOnboardingMemory({ workspaceRoot: harness.workspacePath });
+    assert.equal(persisted.onboardingContext.product_bottleneck, "Missed escalations");
+
+    ws.events.length = 0;
+    ws.send(JSON.stringify({
+      type: "onboarding_memory_request",
+      workspaceRoot: harness.workspacePath,
+    }));
+    const loaded = await waitForEvent(ws.events, (event) =>
+      event.type === "onboarding_memory_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.success === true,
+    );
+    assert.equal(loaded.onboardingMemory.answers.primaryFocus.answer, "B2B support leads");
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("provider_settings_update returns a diagnostics snapshot after syncing settings", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "provider_settings_update",
+      providers: {
+        codex: {
+          authMode: "api_key",
+          model: "gpt-5.4-mini",
+          reasoningEffort: "medium",
+        },
+      },
+      integrations: {
+        exa: {
+          apiKey: "test-exa-key",
+        },
+      },
+    }));
+
+    const diagnostics = await waitForEvent(ws.events, (event) =>
+      event.type === "diagnostics_snapshot"
+        && event.diagnostics?.environment,
+    );
+    assert.equal(Boolean(diagnostics.diagnostics.preflight), true);
+    assert.equal(Boolean(diagnostics.diagnostics.runtime.node), true);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("bip_coach_configure persists user source settings through the websocket route", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "bip_coach_configure",
+      provider: "codex",
+      threadsHandle: "@october",
+      sheetUrl: "https://docs.google.com/spreadsheets/d/1SheetRouteConfigId1234567890/edit#gid=0",
+      docUrl: "https://docs.google.com/document/d/1DocRouteConfigId1234567890/edit",
+      morningHour: 9,
+      eveningHour: 22,
+    }));
+
+    const state = await waitForEvent(ws.events, (event) =>
+      event.type === "bip_coach_state"
+        && event.bipCoach?.config?.sheetId === "1SheetRouteConfigId1234567890",
+    );
+    assert.equal(state.bipCoach.config.docId, "1DocRouteConfigId1234567890");
+    assert.equal(state.bipCoach.config.threadsHandle, "october");
+    assert.equal(state.bipCoach.config.morningHour, 9);
+
+    const persisted = await loadBipCoachState(path.join(harness.appSupportPath, "bip-coach-state.json"));
+    assert.equal(persisted.config.sheetId, "1SheetRouteConfigId1234567890");
+    assert.equal(persisted.config.docId, "1DocRouteConfigId1234567890");
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("bip_coach_refresh_evidence fails explicitly when coach sources are not configured", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({ type: "bip_coach_refresh_evidence" }));
+
+    const error = await waitForEvent(ws.events, (event) =>
+      event.type === "bip_coach_error"
+        && /Google Docs/.test(event.message || "")
+        && /Google Sheets/.test(event.message || ""),
+    );
+    assert.equal(error.bipCoach.lastError, error.message);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("bip_readiness gwsAuth recheck probes gws CLI and emits row result", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-gws-recheck-route-"));
+  const gwsPath = path.join(tempRoot, "gws");
+  await fs.writeFile(gwsPath, `#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  echo '{"has_refresh_token":true,"encrypted_credentials_exists":true,"token_valid":true}'
+  exit 0
+fi
+if [ "$1" = "drive" ] && [ "$2" = "about" ] && [ "$3" = "get" ]; then
+  echo '{"user":{"emailAddress":"qa@example.invalid"}}'
+  exit 0
+fi
+echo "unexpected gws args: $*" >&2
+exit 2
+`);
+  await fs.chmod(gwsPath, 0o755);
+  const harness = await spawnSidecar({
+    tempRoot,
+    extraEnv: {
+      AGENTIC30_GWS_BIN: gwsPath,
+      PATH: "",
+    },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "bip_readiness_action",
+      rowId: "gwsAuth",
+      action: "recheck",
+    }));
+
+    const done = await waitForEvent(ws.events, (event) =>
+      event.type === "bip_readiness_event"
+        && event.rowId === "gwsAuth"
+        && event.status === "done",
+    );
+    assert.equal(done.error, undefined);
+    assert.equal(done.id, undefined);
+    await waitForEvent(ws.events, (event) =>
+      event.type === "bip_readiness_event"
+        && event.rowId === "docUrl"
+        && event.status === "pending",
+    );
+    await waitForEvent(ws.events, (event) =>
+      event.type === "bip_readiness_event"
+        && event.rowId === "sheetUrl"
+        && event.status === "pending",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("bip_coach_select_mission promotes a generated mission choice", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-bip-select-route-"));
+  const appSupportPath = path.join(tempRoot, "app-support");
+  await fs.mkdir(appSupportPath, { recursive: true });
+  await persistBipCoachState(path.join(appSupportPath, "bip-coach-state.json"), {
+    config: { provider: "codex", sheetId: "1SheetRouteSelectId1234567890", docId: "1DocRouteSelectId1234567890" },
+    evidence: {
+      fullRead: true,
+      allRows: [{ rowNumber: 2, date: "2026-06-22", posts: ["route proof"] }],
+      recentRows: [{ rowNumber: 2, date: "2026-06-22", posts: ["route proof"] }],
+      docText: "route doc",
+      sheetRowsRead: 1,
+      docCharsRead: 9,
+    },
+    missionChoices: [
+      {
+        id: "mission-route-1",
+        title: "Route mission",
+        mission: "Publish one proof note.",
+        provider: "codex",
+      },
+    ],
+  });
+
+  const harness = await spawnSidecar({ tempRoot, appSupportPath });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "bip_coach_select_mission",
+      missionId: "mission-route-1",
+    }));
+
+    const selected = await waitForEvent(ws.events, (event) =>
+      event.type === "bip_coach_state"
+        && event.bipCoach?.currentMission?.id === "mission-route-1",
+    );
+    assert.equal(selected.bipCoach.currentMission.status, "drafted");
+
+    const persisted = await loadBipCoachState(path.join(appSupportPath, "bip-coach-state.json"));
+    assert.equal(persisted.currentMission.id, "mission-route-1");
+    assert.equal(persisted.currentMission.status, "drafted");
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("exa_codex_mcp_config_assure writes Codex MCP config and redacts status output", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: { EXA_API_KEY: "exa_route_secret" },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "exa_codex_mcp_config_assure",
+      preferredProvider: "codex",
+    }));
+
+    const result = await waitForEvent(ws.events, (event) =>
+      event.type === "integration_status_result"
+        && ["ready", "failed", "missing"].includes(String(event.integrationStatus?.exa?.state || "")),
+    );
+    assert.equal(result.integrationStatus.exa.state, "ready");
+    assert.equal(JSON.stringify(result).includes("exa_route_secret"), false);
+
+    const configPath = path.join(harness.tempRoot, "home", ".codex", "config.toml");
+    const config = await fs.readFile(configPath, "utf8");
+    assert.match(config, /\[mcp_servers\.exa\]/);
+    assert.match(config, /web_search_exa/);
+    assert.match(config, /exa_route_secret/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("idd_setup_approve writes approved foundation documents through the websocket route", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-approve-route-"));
+  const workspacePath = path.join(tempRoot, "workspace");
+  await fs.mkdir(workspacePath, { recursive: true });
+  const drafts = {
+    goal: [
+      "# GOAL",
+      "이번 주 검증 목표는 B2B support leads 3명에게 paid pilot reply를 받는 것이다.",
+      "지표 metric은 응답 count와 결제 의향 전환이며 기준값 threshold는 3명 중 1명 이상이다.",
+      "금요일 deadline까지 no reply면 실패 조건으로 보고 pivot한다.",
+    ].join("\n\n"),
+    icp: [
+      "# ICP",
+      "좁은 세그먼트는 Slack handoff가 많은 B2B SaaS support lead다.",
+      "reachable person은 @supportlead 계정과 김지원님에게 DM 인터뷰로 연락한다.",
+      "현재 대안은 Notion과 스프레드시트에 수작업으로 복사하는 workflow다.",
+      "pressure cost는 주당 3시간 지연과 월 매출 손실이다.",
+    ].join("\n\n"),
+    values: [
+      "# VALUES",
+      "고객 대화 증거를 자동화보다 우선 선택하는 tradeoff를 감수한다.",
+      "이번 주에는 dashboard 확장을 하지 않을 것이며 nice-to-have는 포기한다.",
+      "고객 응답이 없을 때 trigger로 범위를 줄인다.",
+      "위반 예시는 새 기능을 더 만들고 고객 ask를 skip하는 것이다.",
+    ].join("\n\n"),
+    spec: [
+      "# SPEC",
+      "사용자 workflow는 Slack thread를 열고 먼저 누락 escalation을 입력한 다음 다음 행동을 저장한다.",
+      "MVP wedge는 이번 주 작은 첫 버전으로 한 고객의 handoff note만 처리한다.",
+      "Non-goal은 analytics dashboard와 team billing을 만들지 않을 것이다.",
+      "observable success는 1명이 실제 handoff를 완료했다고 측정되는 signal이다.",
+      "core risk는 support lead가 이 문제가 틀리거나 중요하지 않다고 보는 가정이다.",
+    ].join("\n\n"),
+  };
+  await persistIddSetupState(workspacePath, {
+    status: "preview_ready",
+    drafts,
+    ambiguityScore: 0,
+    ambiguityRubric: { docs: [] },
+    unresolvedAssumptions: [],
+  });
+
+  const harness = await spawnSidecar({ tempRoot, workspacePath });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({ type: "idd_setup_approve" }));
+
+    const approved = await waitForEvent(ws.events, (event) =>
+      event.type === "idd_setup_approved"
+        && event.iddSetupStatus === "approved",
+    );
+    assert.equal(approved.iddSetupComplete, true);
+
+    for (const doc of IDD_FOUNDATION_DOCS) {
+      const written = await fs.readFile(path.join(workspacePath, doc.canonicalPath), "utf8");
+      assert.equal(written, drafts[doc.type]);
+    }
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("adaptive_rule_label labels the latest matching adaptive rule event", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    const evaluation = evaluateAdaptiveRules({
+      signals: { buildWithoutCustomerEvidenceDays: 2 },
+      now: new Date("2026-06-22T00:00:00.000Z"),
+    });
+    await recordFiredAdaptiveRules({
+      workspaceRoot: harness.workspacePath,
+      fired: evaluation.fired,
+      now: new Date("2026-06-22T00:00:00.000Z"),
+    });
+
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+    ws.send(JSON.stringify({
+      type: "adaptive_rule_label",
+      workspaceRoot: harness.workspacePath,
+      ruleId: "AR-01",
+      label: "false_positive",
+    }));
+
+    const labeled = await waitForEvent(ws.events, (event) =>
+      event.type === "adaptive_rule_label_result"
+        && event.workspaceRoot === harness.workspacePath,
+    );
+    assert.equal(labeled.success, true);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("submit_revenue_evidence validates required kind and content explicitly", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "submit_revenue_evidence",
+      workspaceRoot: harness.workspacePath,
+      kind: "payment_record",
+      content: "",
+    }));
+
+    const missingContent = await waitForEvent(ws.events, (event) =>
+      event.type === "error"
+        && /submit_revenue_evidence requires content/.test(event.message || ""),
+    );
+    assert.match(missingContent.message, /requires content/);
+
+    ws.events.length = 0;
+    ws.send(JSON.stringify({
+      type: "submit_revenue_evidence",
+      workspaceRoot: harness.workspacePath,
+      kind: "unknown",
+      content: "https://example.com/payment",
+    }));
+
+    const badKind = await waitForEvent(ws.events, (event) =>
+      event.type === "error"
+        && /submit_revenue_evidence requires kind/.test(event.message || ""),
+    );
+    assert.match(badKind.message, /payment_record/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("submit_revenue_evidence records accepted revenue evidence and dedupes repeated locator", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_ACTION_EVIDENCE_JUDGE_STATUS: "accepted",
+    },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "submit_revenue_evidence",
+      workspaceRoot: harness.workspacePath,
+      day: 12,
+      kind: "payment_record",
+      content: "https://example.com/payments/receipt-123",
+      amount: 120,
+      note: "Stripe receipt from ACME",
+    }));
+
+    const accepted = await waitForEvent(ws.events, (event) =>
+      event.type === "submit_revenue_evidence_result"
+        && event.workspaceRoot === harness.workspacePath,
+    );
+    assert.equal(accepted.success, true);
+    assert.equal(accepted.status, "accepted");
+    assert.match(accepted.message, /수익 증거/);
+
+    let ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    assert.equal(ledger.events.length, 1);
+    assert.equal(ledger.events[0].type, "payment_record");
+    assert.equal(ledger.events[0].status, "accepted");
+    assert.equal(ledger.events[0].strength, "strong");
+    assert.equal(ledger.events[0].sourceUrl, "https://example.com/payments/receipt-123");
+    assert.equal(ledger.events[0].metadata.kind, "payment_record");
+
+    ws.events.length = 0;
+    ws.send(JSON.stringify({
+      type: "submit_revenue_evidence",
+      workspaceRoot: harness.workspacePath,
+      day: 12,
+      kind: "payment_record",
+      content: "https://example.com/payments/receipt-123",
+      amount: 120,
+    }));
+
+    const duplicate = await waitForEvent(ws.events, (event) =>
+      event.type === "submit_revenue_evidence_result"
+        && event.workspaceRoot === harness.workspacePath,
+    );
+    assert.equal(duplicate.success, true);
+    assert.equal(duplicate.status, "already_recorded");
+    assert.match(duplicate.message, /중복 저장은 건너뛰었어/);
+
+    ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    assert.equal(ledger.events.length, 1);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("submit_revenue_evidence records insufficient revenue evidence and dedupes weak proof", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_ACTION_EVIDENCE_JUDGE_STATUS: "insufficient",
+    },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "submit_revenue_evidence",
+      workspaceRoot: harness.workspacePath,
+      day: 14,
+      kind: "refusal",
+      content: "/tmp/refusal-note.txt",
+      note: "Customer declined without timestamp",
+    }));
+
+    const insufficient = await waitForEvent(ws.events, (event) =>
+      event.type === "submit_revenue_evidence_result"
+        && event.workspaceRoot === harness.workspacePath,
+    );
+    assert.equal(insufficient.success, false);
+    assert.equal(insufficient.status, "insufficient");
+    assert.match(insufficient.message, /다시 제출/);
+
+    let ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    assert.equal(ledger.events.length, 1);
+    assert.equal(ledger.events[0].type, "payment_failure");
+    assert.equal(ledger.events[0].status, "insufficient");
+    assert.equal(ledger.events[0].strength, "weak");
+    assert.equal(ledger.events[0].artifactPath, "/tmp/refusal-note.txt");
+    assert.equal(ledger.events[0].metadata.kind, "refusal");
+
+    ws.events.length = 0;
+    ws.send(JSON.stringify({
+      type: "submit_revenue_evidence",
+      workspaceRoot: harness.workspacePath,
+      day: 14,
+      kind: "refusal",
+      content: "/tmp/refusal-note.txt",
+    }));
+
+    const duplicate = await waitForEvent(ws.events, (event) =>
+      event.type === "submit_revenue_evidence_result"
+        && event.workspaceRoot === harness.workspacePath,
+    );
+    assert.equal(duplicate.success, false);
+    assert.equal(duplicate.status, "already_recorded");
+
+    ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    assert.equal(ledger.events.length, 1);
+  } finally {
+    ws?.close();
     await harness.close();
   }
 });

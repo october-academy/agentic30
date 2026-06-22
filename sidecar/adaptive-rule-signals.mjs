@@ -5,18 +5,22 @@
  * office-hours ledger, work-history snapshot, day-progress) so evaluation is
  * deterministic and replayable. Signals that would need a live external
  * source (Cloudflare visits for AR-08) report their source as unavailable —
- * §12 오탐대응 ③ keeps those rules silent (fail-closed). AR-05's
- * carry-over input arrives when the curriculum loop integration lands; a
- * missing signal never fires a rule.
+ * §12 오탐대응 ③ keeps those rules silent (fail-closed). Missing persisted
+ * curriculum or traffic signals never fire a rule.
  */
+
+import path from "node:path";
 
 import { loadProofLedger, PROOF_EVENT_TYPES } from "./execution-os.mjs";
 import { loadOfficeHoursMemory } from "./office-hours-memory.mjs";
 import { loadWorkHistorySnapshot } from "./work-history.mjs";
 import { loadDayProgress } from "./day-progress-state.mjs";
+import { loadCurriculumProgressState } from "./adaptive-curriculum.mjs";
+import { resolveAgentic30Dir } from "./news-market-radar.mjs";
 
 const SUBMITTED_STATUSES = new Set(["submitted", "accepted", "verified", "complete", "completed"]);
 const COMPLETED_STATUSES = new Set(["accepted", "verified", "complete", "completed"]);
+const CLOSED_CARRY_OVER_STATUSES = new Set(["accepted", "cancelled", "canceled", "closed", "complete", "completed", "done", "resolved", "verified"]);
 const CUSTOMER_CONTACT_TYPES = new Set([
   PROOF_EVENT_TYPES.interview,
   PROOF_EVENT_TYPES.dmAsk,
@@ -39,11 +43,12 @@ export async function assembleAdaptiveRuleSignals({
   if (!workspaceRoot || currentDay === null) {
     return { signals: {}, sources: { cloudflareAvailable: null } };
   }
-  const [ledger, memory, workHistory, progress] = await Promise.all([
+  const [ledger, memory, workHistory, progress, curriculumProgress] = await Promise.all([
     loadProofLedger({ workspaceRoot }),
     loadOfficeHoursMemory({ workspaceRoot }),
     loadWorkHistorySnapshot({ workspaceRoot, now }),
     loadDayProgress({ workspaceRoot }),
+    loadCurriculumProgressState(resolveCurriculumProgressPath(workspaceRoot)),
   ]);
   const events = ledger.events;
 
@@ -108,6 +113,8 @@ export async function assembleAdaptiveRuleSignals({
     progress,
     currentDay,
   });
+  const maxActionCarryOverCount = computeMaxActionCarryOverCount(curriculumProgress);
+  const trafficSignals = computeTrafficSignals({ events, currentDay });
 
   return {
     signals: {
@@ -122,16 +129,18 @@ export async function assembleAdaptiveRuleSignals({
       newCommitmentsSinceAbandoned,
       daysSinceDayProgressUpdate,
       appActive: true,
-      // AR-05 입력은 curriculum 루프 통합 시 carryOverQueue에서 채워진다.
-      maxActionCarryOverCount: null,
-      // AR-08 입력은 §12-③에 따라 소스 가용 시에만 채워진다.
-      deployVerifiedUrlExists: null,
-      cloudflareVisitsZeroDays: null,
+      maxActionCarryOverCount,
+      deployVerifiedUrlExists: trafficSignals.deployVerifiedUrlExists,
+      cloudflareVisitsZeroDays: trafficSignals.cloudflareVisitsZeroDays,
     },
     sources: {
-      cloudflareAvailable: null,
+      cloudflareAvailable: trafficSignals.cloudflareAvailable,
     },
   };
+}
+
+function resolveCurriculumProgressPath(workspaceRoot) {
+  return path.join(resolveAgentic30Dir(workspaceRoot), "curriculum-progress.json");
 }
 
 function countByType(events, type, statuses) {
@@ -144,6 +153,121 @@ function hasCommitmentEvidence(commitment) {
   const evidence = commitment?.evidence;
   if (!evidence || typeof evidence !== "object") return false;
   return Boolean(evidence.kind || evidence.url || evidence.note || evidence.recordedAt);
+}
+
+function computeMaxActionCarryOverCount(curriculumProgress) {
+  const entries = collectCarryOverEntries(curriculumProgress);
+  if (!entries.length) return null;
+  let max = null;
+  for (const entry of entries) {
+    const rawStatus = String(entry.carryOverStatus ?? entry.carry_over_status ?? entry.status ?? "").toLowerCase();
+    if (CLOSED_CARRY_OVER_STATUSES.has(rawStatus)) continue;
+    const count = normalizeNonNegativeInt(entry.timesCarried ?? entry.times_carried);
+    max = Math.max(max ?? 0, count ?? 1);
+  }
+  return max;
+}
+
+function collectCarryOverEntries(curriculumProgress) {
+  const root = curriculumProgress && typeof curriculumProgress === "object" ? curriculumProgress : {};
+  const candidates = [
+    root.carryOverQueue,
+    root.carry_over_queue,
+    ...asArray(root.dayRecords ?? root.day_records).flatMap((record) => [
+      record?.carryOverQueue,
+      record?.carry_over_queue,
+    ]),
+  ].flatMap(asArray);
+  const seen = new Set();
+  const entries = [];
+  for (const entry of candidates) {
+    if (!entry || typeof entry !== "object") continue;
+    const key = [
+      entry.id,
+      entry.actionId ?? entry.action_id,
+      entry.sourceDay ?? entry.source_day,
+      entry.targetDay ?? entry.target_day,
+      entry.actionDescription ?? entry.action_description,
+    ].filter((value) => value !== undefined && value !== null && value !== "").join(":");
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    entries.push(entry);
+  }
+  return entries;
+}
+
+function computeTrafficSignals({ events, currentDay }) {
+  const snapshots = events
+    .filter((event) =>
+      event.type === PROOF_EVENT_TYPES.trafficSnapshot
+        && COMPLETED_STATUSES.has(String(event.status || ""))
+        && Number.isFinite(Number(event.day)),
+    )
+    .map((event) => ({
+      event,
+      day: Number(event.day),
+      visits: trafficVisitCount(event),
+      hasDeployUrl: hasDeployUrl(event),
+    }))
+    .filter((entry) => entry.visits !== null);
+
+  if (!snapshots.length) {
+    return {
+      cloudflareAvailable: null,
+      deployVerifiedUrlExists: null,
+      cloudflareVisitsZeroDays: null,
+    };
+  }
+
+  const byDay = new Map();
+  for (const snapshot of snapshots) {
+    const existing = byDay.get(snapshot.day);
+    if (!existing || snapshot.visits > existing.visits) byDay.set(snapshot.day, snapshot);
+  }
+
+  let zeroDays = 0;
+  for (let d = currentDay; d > Math.max(0, currentDay - MAX_LOOKBACK_DAYS); d -= 1) {
+    const snapshot = byDay.get(d);
+    if (!snapshot || snapshot.visits !== 0) break;
+    zeroDays += 1;
+  }
+
+  return {
+    cloudflareAvailable: true,
+    deployVerifiedUrlExists: snapshots.some((snapshot) => snapshot.hasDeployUrl),
+    cloudflareVisitsZeroDays: zeroDays,
+  };
+}
+
+function trafficVisitCount(event) {
+  const metadata = event?.metadata && typeof event.metadata === "object" ? event.metadata : {};
+  const counts = metadata.counts && typeof metadata.counts === "object" ? metadata.counts : {};
+  return normalizeNonNegativeInt(
+    event?.visits
+      ?? event?.visitCount
+      ?? event?.visit_count
+      ?? counts.visits
+      ?? counts.uniqueVisitors
+      ?? counts.unique_visitors
+      ?? metadata.visits
+      ?? metadata.uniqueVisitors
+      ?? metadata.unique_visitors,
+  );
+}
+
+function hasDeployUrl(event) {
+  const metadata = event?.metadata && typeof event.metadata === "object" ? event.metadata : {};
+  return event?.sourceUrl
+    || event?.source_url
+    || metadata.deployVerifiedUrlExists === true
+    || metadata.deploy_verified_url_exists === true
+    || metadata.deployUrl
+    || metadata.deploy_url
+    || metadata.url
+    || metadata.sourceUrl
+    || metadata.source_url
+    ? true
+    : null;
 }
 
 function computeDaysSinceProgressUpdate(progress, now) {
@@ -182,6 +306,17 @@ function computeBuildEscapeDays({ workHistory, events, progress, currentDay }) {
     consecutive += 1;
   }
   return consecutive;
+}
+
+function normalizeNonNegativeInt(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const int = Math.trunc(number);
+  return int >= 0 ? int : null;
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
 function programDayToDate(startedAt, day) {

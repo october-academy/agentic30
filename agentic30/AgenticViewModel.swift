@@ -3884,7 +3884,8 @@ final class AgenticViewModel: ObservableObject {
         let supportsFreeText = question.allowFreeText == true
             || question.requiresFreeText == true
             || question.options?.isEmpty != false
-        if supportsFreeText {
+        let hasOptions = question.options?.isEmpty == false
+        if supportsFreeText && !hasOptions {
             draft.selectedOptions.removeAll()
         }
         state.answersByQuestionID[question.id] = draft
@@ -3950,7 +3951,8 @@ final class AgenticViewModel: ObservableObject {
         let message = connectionLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard message.localizedCaseInsensitiveContains("sidecar failed")
             || message.localizedCaseInsensitiveContains("failed to start sidecar")
-            || message.localizedCaseInsensitiveContains("sidecar is not connected") else {
+            || message.localizedCaseInsensitiveContains("sidecar is not connected")
+            || (message.contains("실행 보조 앱") && message.contains("실패")) else {
             return nil
         }
         return message.nonEmpty
@@ -9945,6 +9947,78 @@ final class AgenticViewModel: ObservableObject {
         }
 
         let now = Date()
+        if CommandLine.arguments.contains("--ui-testing-seed-failed-assistant-turn") {
+            if day1GoalSelection == nil {
+                day1GoalSelection = Day1GoalSelection(
+                    goalType: .getUsers,
+                    goalText: "이번 주 유료 진입점을 보여줄 실명 고객 1명을 고정한다",
+                    customer: "macOS에서 AI 코딩 도구를 매일 쓰는 전업 1인 개발자",
+                    problem: "AI로 제품은 만들지만 고객 행동 증거가 남지 않는다",
+                    validationAction: "가장 적합한 사용자 1명에게 이번 주 유료 진입점 보여주기",
+                    evidenceRefs: [".agentic30/docs/GOAL.md", ".agentic30/docs/ICP.md"],
+                    proofSink: .local,
+                    sourcePlanFingerprint: "ui-test-failed-assistant-turn",
+                    selectedAt: ISO8601DateFormatter().string(from: now)
+                )
+            }
+            installUITestingOfficeHoursDay1ActiveProgressIfNeeded()
+            let session = ChatSession(
+                id: UUID().uuidString,
+                title: "Office Hours",
+                provider: selectedProvider,
+                model: preferredModel(for: selectedProvider),
+                status: .error,
+                createdAt: now,
+                updatedAt: now,
+                error: "UI 테스트 provider 실패",
+                messages: [
+                    ChatMessage(
+                        id: UUID().uuidString,
+                        role: .user,
+                        provider: selectedProvider,
+                        content: "실패한 assistant turn을 다시 시도해줘.",
+                        state: .final,
+                        createdAt: now,
+                        error: nil,
+                        bipMissionChoices: nil,
+                        providerAuthActions: nil
+                    ),
+                    ChatMessage(
+                        id: UUID().uuidString,
+                        role: .assistant,
+                        provider: selectedProvider,
+                        content: "응답 생성에 실패했습니다.",
+                        state: .error,
+                        createdAt: now,
+                        error: "UI 테스트 provider 실패",
+                        bipMissionChoices: nil,
+                        providerAuthActions: nil
+                    ),
+                ],
+                pendingUserInput: nil,
+                runtime: ChatSessionRuntime(
+                    codexThreadId: nil,
+                    codexThreadMeta: nil,
+                    codexWarm: nil,
+                    startupTiming: nil,
+                    iddDocumentType: "day1_step",
+                    iddMode: "office_hours",
+                    officeHours: OfficeHoursRuntime(
+                        active: true,
+                        source: "ui_testing_failed_assistant_turn",
+                        startedAt: ISO8601DateFormatter().string(from: now),
+                        context: "UI test failed Office Hours turn",
+                        day: 1
+                    )
+                )
+            )
+            sessions = [session]
+            selectedSessionID = session.id
+            seedInlineUITestBipCoachIfNeeded()
+            refreshPresentationState()
+            return
+        }
+
         if CommandLine.arguments.contains("--ui-testing-seed-running-idd-session") {
             let session = ChatSession(
                 id: UUID().uuidString,
@@ -10835,7 +10909,7 @@ final class AgenticViewModel: ObservableObject {
                 "1": DayRecord(
                     day: 1,
                     kind: .day1,
-                    steps: ["onboarding": .done, "scan": .done, "goal": .done, "first_interview": .done],
+                    steps: ["onboarding": .done, "scan": .done, "goal": .done, "first_interview": .active],
                     goalText: "이번 주 유료 진입점을 보여줄 실명 고객 1명을 고정한다",
                     updatedAt: today
                 )
@@ -11921,12 +11995,13 @@ final class AgenticViewModel: ObservableObject {
         let seedCurrentMission = CommandLine.arguments.contains("--ui-testing-seed-bip-current-mission")
         let seedCompletedMission = CommandLine.arguments.contains("--ui-testing-seed-bip-completed-mission")
         let seedLocalMissionChoices = CommandLine.arguments.contains("--ui-testing-seed-bip-local-mission-choices")
-        guard (seedCurrentMission || seedCompletedMission || seedLocalMissionChoices),
+        let seedCoachError = CommandLine.arguments.contains("--ui-testing-seed-bip-coach-error")
+        guard (seedCurrentMission || seedCompletedMission || seedLocalMissionChoices || seedCoachError),
               let sessionID = selectedSessionID else {
             return
         }
 
-        if seedCurrentMission || seedCompletedMission {
+        if seedCurrentMission || seedCompletedMission || seedCoachError {
             var readiness = BipReadinessState.loading
             for rowID in BipReadinessRowId.bipCoachSetupCases {
                 readiness.rows[rowID] = BipReadinessRow(
@@ -11938,6 +12013,10 @@ final class AgenticViewModel: ObservableObject {
                 )
             }
             bipReadiness = readiness
+        }
+        if seedCoachError {
+            bipCoach = Self.makeUITestingBipCoachErrorState(sessionID: sessionID)
+            return
         }
         bipCoach = seedLocalMissionChoices
             ? Self.makeUITestingLocalBipCoachState(sessionID: sessionID)
@@ -12004,6 +12083,48 @@ final class AgenticViewModel: ObservableObject {
             ),
             streak: BipCoachStreak(current: 1, longest: 2, lastCompletedDate: nil),
             lastError: nil
+        )
+    }
+
+    private static func makeUITestingBipCoachErrorState(sessionID: String) -> BipCoachState {
+        BipCoachState(
+            schemaVersion: 1,
+            updatedAt: Date(),
+            sessionId: sessionID,
+            config: BipCoachConfig(
+                provider: .codex,
+                threadsHandle: "october",
+                sheetUrl: nil,
+                sheetId: "sheet-1",
+                sheetTabName: nil,
+                docUrl: nil,
+                docId: "doc-1",
+                morningHour: 10,
+                eveningHour: 21
+            ),
+            evidence: nil,
+            missionChoices: [],
+            currentMission: BipCoachMission(
+                id: "ui-test-bip-error-mission",
+                date: "2026-04-27",
+                provider: AgentProvider.codex.rawValue,
+                status: "drafted",
+                compact: false,
+                title: "오류 재시도 표면 확인",
+                angle: "실패를 명확히 보여주고 다시 시도할 수 있게 하기",
+                mission: "BIP coach 오류 배너와 복구 동작을 확인합니다.",
+                curriculumDay: BipCoachCurriculumDay(day: 1),
+                drafts: [],
+                eveningChecklist: ["오류 메시지 확인", "다시 시도 버튼 확인"],
+                evidenceRefs: [],
+                generatedAt: Date(),
+                completedAt: nil,
+                completedQuestionCount: nil,
+                threadsUrl: nil,
+                sheetRowNote: nil
+            ),
+            streak: BipCoachStreak(current: 0, longest: 0, lastCompletedDate: nil),
+            lastError: "UI 테스트: BIP coach 요청이 실패했습니다. 다시 시도하세요."
         )
     }
 

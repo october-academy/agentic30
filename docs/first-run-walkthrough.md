@@ -27,7 +27,7 @@ Treat `failed` as blocking. Follow the recovery line before launching the app.
 
 Treat `warning` as conditional:
 
-- ACP warnings only matter if you are using isolated ACP editor integrations.
+- ACP API keys are optional and only matter when you intentionally run isolated ACP editor integrations through provider API-key mode.
 - QMD memory warnings do not block first-run onboarding or Day 1 Mission.
 - Provider auth warnings must be resolved before real chat or coaching will work.
 

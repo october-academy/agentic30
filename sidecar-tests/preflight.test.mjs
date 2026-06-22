@@ -32,6 +32,7 @@ test("buildPreflightReport passes required local checks and warns for missing pr
   assert.equal(report.status, "warning");
   assert.equal(report.checks.find((check) => check.id === "node-version").status, "ok");
   assert.equal(report.checks.find((check) => check.id === "provider-auth").status, "warning");
+  assert.equal(report.checks.find((check) => check.id === "acp-adapter").status, "ok");
   assert.equal(report.checks.find((check) => check.id === "qmd-mcp").status, "ok");
 });
 
@@ -59,8 +60,11 @@ test("buildPreflightReport passes provider auth when only Gemini is available", 
   });
 
   const providerCheck = report.checks.find((check) => check.id === "provider-auth");
+  const acpCheck = report.checks.find((check) => check.id === "acp-adapter");
+  assert.equal(report.status, "ok");
   assert.equal(providerCheck.status, "ok");
   assert.equal(providerCheck.message, "Gemini");
+  assert.equal(acpCheck.status, "ok");
 });
 
 test("buildPreflightReport warns when QMD MCP is unavailable", async () => {

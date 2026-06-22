@@ -10,15 +10,12 @@ XCTest UI tests that drive the macOS app with `XCUIApplication`. Default mode is
 | Task | Location | Notes |
 |------|----------|-------|
 | Main UI suite | `agentic30UITests.swift` | Intake, settings pickers, Open Design Day, Morning Briefing, seeded flows |
-| Launch screenshot | `agentic30UITestsLaunchTests.swift` | Standard Xcode launch screenshot coverage |
 | Runner gate | `../scripts/xcode-test.sh` | Blocks local UI E2E unless explicitly allowed |
 | App-side fixtures | `../agentic30/AgenticViewModel.swift`, `../agentic30/MorningBriefingPageView.swift` | Launch args and stub sample payloads |
 
 ## CONVENTIONS
 - Hermetic launch uses `--ui-testing-opaque-window` and `AGENTIC30_TEST_STUB_PROVIDER=1`.
 - Live provider chat canary is opt-in with `AGENTIC30_RUN_LIVE_PROVIDER_E2E=1`.
-- Credentialed Google E2E requires `AGENTIC30_GOOGLE_E2E_EMAIL`, `AGENTIC30_GOOGLE_E2E_PASSWORD`, and `AGENTIC30_GOOGLE_E2E_TOTP_SECRET`.
-- `AGENTIC30_MAC_AUTH_BASE_URL` can point Mac auth tests at staging.
 - Keep screenshots pixel-stable. New screens must honor the stub-provider and opaque-window flags.
 
 ## ANTI-PATTERNS
