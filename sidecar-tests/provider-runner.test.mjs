@@ -242,10 +242,18 @@ test("isCodexContextOverflowError detects Codex context exhaustion signals", () 
   assert.equal(isCodexContextOverflowError(undefined), false);
 });
 
-test("isCodexRecoverableThreadResumeError detects missing rollout resume failures", () => {
+test("isCodexRecoverableThreadResumeError detects missing or empty rollout resume failures", () => {
   assert.equal(
     isCodexRecoverableThreadResumeError(
       new Error("thread/resume: thread/resume failed: no rollout found for thread id 019dc32f-4182"),
+    ),
+    true,
+  );
+  assert.equal(
+    isCodexRecoverableThreadResumeError(
+      new Error(
+        "thread/resume: thread/resume failed: failed to read thread: thread-store internal error: failed to read thread /Users/october/Library/Application Support/agentic30/codex-home/sessions/2026/06/21/rollout-2026-06-21T21-04-13-019eea11-2975-7660-a463-c631f7524b39.jsonl: rollout at /Users/october/Library/Application Support/agentic30/codex-home/sessions/2026/06/21/rollout-2026-06-21T21-04-13-019eea11-2975-7660-a463-c631f7524b39.jsonl is empty (code -32603)",
+      ),
     ),
     true,
   );

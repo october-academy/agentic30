@@ -4,6 +4,15 @@ export const CURRICULUM_NOTIFICATION_SCHEDULE_SCHEMA_VERSION = 1;
 export const CURRICULUM_INCOMPLETE_DAY_NOTIFICATION_IDENTIFIER =
   "agentic30.curriculum.incomplete-day-reminder";
 export const CURRICULUM_INCOMPLETE_DAY_NOTIFICATION_FIXED_TIME = "21:00";
+export const PROGRAM_NOTIFICATION_SCHEDULE_SCHEMA_VERSION = 1;
+export const GATE_BLOCKED_MORNING_NOTIFICATION_IDENTIFIER =
+  "agentic30.program.gate-blocked-morning";
+export const COMMITMENT_DUE_NOTIFICATION_IDENTIFIER =
+  "agentic30.program.commitment-due";
+// §19: 아침 알림은 브리핑 시각 — 브리핑은 탭 진입 트리거라 고정 시각이 없어
+// 로컬 09:00을 아침 기준으로 채택한다 (dueDay 알림과 동일, §19-2).
+export const PROGRAM_NOTIFICATION_MORNING_TIME = "09:00";
+export const PROGRAM_NOTIFICATION_DAILY_LIMIT = 2;
 
 export function buildCurriculumNotificationSchedule({
   progressState = {},
@@ -79,22 +88,11 @@ export function buildCurriculumNotificationSchedule({
   };
 }
 
-// ── §19 확장: program 알림 2종 (같은 스케줄러, 일일 상한 2건 + lastSent dedup) ──
-
-export const GATE_BLOCKED_MORNING_NOTIFICATION_IDENTIFIER =
-  "agentic30.program.gate-blocked-morning";
-export const COMMITMENT_DUE_NOTIFICATION_IDENTIFIER =
-  "agentic30.program.commitment-due";
-// §19: 아침 알림은 브리핑 시각 — 브리핑은 탭 진입 트리거라 고정 시각이 없어
-// 로컬 09:00을 아침 기준으로 채택한다 (dueDay 알림과 동일, §19-2).
-export const PROGRAM_NOTIFICATION_MORNING_TIME = "09:00";
-export const PROGRAM_NOTIFICATION_DAILY_LIMIT = 2;
-
 /**
  * §19-1/§19-2: gate-blocked 아침 알림 + 커밋먼트 dueDay 알림.
- * `lastSent` (`{ [identifier]: "YYYY-MM-DD" }`)가 기존 중복 방지 패턴을
- * 재사용하고, 하루 최대 2건만 반환한다. graduated/terminal 중지는 기존
- * eligibility(§19-4)가 21:00 리마인더와 함께 처리한다.
+ * `lastSent` (`{ [identifier]: "YYYY-MM-DD" }`)는 외부 저장소가 있는 호출자용
+ * 중복 방지 입력이다. Mac host 연결 경로는 같은 identifier로 pending request를
+ * 교체하므로 별도 저장 없이도 중복 배너를 만들지 않는다.
  */
 export function buildProgramNotificationSchedule({
   gates = {},
@@ -106,6 +104,8 @@ export function buildProgramNotificationSchedule({
   const todayKey = localDateKey(now);
   const notifications = [];
   const skipped = [];
+  const day = Number(currentDay);
+  const notificationTimeElapsed = hasLocalTimeElapsed(now, 9, 0);
   const morningTrigger = {
     type: "local_calendar_time",
     calendar: "local",
@@ -119,12 +119,20 @@ export function buildProgramNotificationSchedule({
   const blockedGate = Object.values(gates && typeof gates === "object" ? gates : {})
     .find((gate) => gate?.state === "blocked" && gate?.provisional?.active !== true);
   if (blockedGate) {
-    if (lastSent?.[GATE_BLOCKED_MORNING_NOTIFICATION_IDENTIFIER] === todayKey) {
+    if (notificationTimeElapsed) {
+      skipped.push({ identifier: GATE_BLOCKED_MORNING_NOTIFICATION_IDENTIFIER, reason: "notification_time_elapsed" });
+    } else if (lastSent?.[GATE_BLOCKED_MORNING_NOTIFICATION_IDENTIFIER] === todayKey) {
       skipped.push({ identifier: GATE_BLOCKED_MORNING_NOTIFICATION_IDENTIFIER, reason: "already_sent_today" });
     } else {
       const firstEvidence = Array.isArray(blockedGate.requiredEvidence)
         ? blockedGate.requiredEvidence[0]?.label ?? ""
         : "";
+      const userInfo = {
+        kind: "program_gate_blocked_morning",
+        gateId: blockedGate.gateId ?? "",
+        gate_id: blockedGate.gateId ?? "",
+        ...(Number.isFinite(day) ? { day, day_id: day } : {}),
+      };
       notifications.push({
         identifier: GATE_BLOCKED_MORNING_NOTIFICATION_IDENTIFIER,
         title: `${blockedGate.gateId ?? "milestone"} 게이트가 잠겨 있어`,
@@ -133,21 +141,12 @@ export function buildProgramNotificationSchedule({
           : "필요한 증거를 제출하면 다음 Day가 열려.",
         sound: "default",
         trigger: morningTrigger,
-        userInfo: {
-          kind: "program_gate_blocked_morning",
-          gateId: blockedGate.gateId ?? "",
-          gate_id: blockedGate.gateId ?? "",
-        },
-        user_info: {
-          kind: "program_gate_blocked_morning",
-          gateId: blockedGate.gateId ?? "",
-          gate_id: blockedGate.gateId ?? "",
-        },
+        userInfo,
+        user_info: userInfo,
       });
     }
   }
 
-  const day = Number(currentDay);
   const dueCommitment = Array.isArray(commitments)
     ? commitments.find((commitment) =>
         commitment?.status === "open"
@@ -155,26 +154,25 @@ export function buildProgramNotificationSchedule({
       )
     : null;
   if (dueCommitment && Number.isFinite(day)) {
-    if (lastSent?.[COMMITMENT_DUE_NOTIFICATION_IDENTIFIER] === todayKey) {
+    if (notificationTimeElapsed) {
+      skipped.push({ identifier: COMMITMENT_DUE_NOTIFICATION_IDENTIFIER, reason: "notification_time_elapsed" });
+    } else if (lastSent?.[COMMITMENT_DUE_NOTIFICATION_IDENTIFIER] === todayKey) {
       skipped.push({ identifier: COMMITMENT_DUE_NOTIFICATION_IDENTIFIER, reason: "already_sent_today" });
     } else {
       const text = String(dueCommitment.text ?? "").slice(0, 80);
+      const userInfo = {
+        kind: "program_commitment_due",
+        day,
+        day_id: day,
+      };
       notifications.push({
         identifier: COMMITMENT_DUE_NOTIFICATION_IDENTIFIER,
         title: "오늘이 기한인 약속이 있어",
         body: text || "기한이 오늘인 커밋먼트의 증거를 제출해줘.",
         sound: "default",
         trigger: morningTrigger,
-        userInfo: {
-          kind: "program_commitment_due",
-          day,
-          day_id: day,
-        },
-        user_info: {
-          kind: "program_commitment_due",
-          day,
-          day_id: day,
-        },
+        userInfo,
+        user_info: userInfo,
       });
     }
   }
@@ -185,8 +183,8 @@ export function buildProgramNotificationSchedule({
   }
   return {
     schema: "agentic30.program.notification_schedule.v1",
-    schemaVersion: CURRICULUM_NOTIFICATION_SCHEDULE_SCHEMA_VERSION,
-    schema_version: CURRICULUM_NOTIFICATION_SCHEDULE_SCHEMA_VERSION,
+    schemaVersion: PROGRAM_NOTIFICATION_SCHEDULE_SCHEMA_VERSION,
+    schema_version: PROGRAM_NOTIFICATION_SCHEDULE_SCHEMA_VERSION,
     dailyLimit: PROGRAM_NOTIFICATION_DAILY_LIMIT,
     daily_limit: PROGRAM_NOTIFICATION_DAILY_LIMIT,
     notifications: capped,
@@ -201,6 +199,12 @@ function localDateKey(now = new Date()) {
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${mm}-${dd}`;
+}
+
+function hasLocalTimeElapsed(now = new Date(), hour = 9, minute = 0) {
+  const date = now instanceof Date ? now : new Date(now);
+  const currentMinutes = date.getHours() * 60 + date.getMinutes();
+  return currentMinutes >= hour * 60 + minute;
 }
 
 export async function registerCurriculumNotificationSchedule({

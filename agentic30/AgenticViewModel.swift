@@ -295,6 +295,297 @@ enum McpOauthConnectedNotifier {
     }
 }
 
+struct ProgramNotificationSchedule: Decodable, Equatable {
+    let schema: String?
+    let schemaVersion: Int?
+    let notifications: [ProgramLocalNotificationRequest]
+
+    var validLocalNotificationRequests: [ProgramLocalNotificationRequest] {
+        notifications.filter(\.isAllowedLocalProgramNotification)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schema
+        case schemaVersion
+        case schemaVersionSnake = "schema_version"
+        case notifications
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try container.decodeIfPresent(String.self, forKey: .schema)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
+            ?? container.decodeIfPresent(Int.self, forKey: .schemaVersionSnake)
+        notifications = try container.decodeIfPresent(
+            [ProgramLocalNotificationRequest].self,
+            forKey: .notifications
+        ) ?? []
+    }
+}
+
+struct ProgramLocalNotificationRequest: Decodable, Equatable, Hashable, Sendable {
+    static let gateBlockedMorningIdentifier = "agentic30.program.gate-blocked-morning"
+    static let commitmentDueIdentifier = "agentic30.program.commitment-due"
+    static let allowedIdentifiers: Set<String> = [
+        gateBlockedMorningIdentifier,
+        commitmentDueIdentifier,
+    ]
+
+    let identifier: String
+    let title: String
+    let body: String?
+    let sound: String?
+    let trigger: ProgramLocalNotificationTrigger?
+    let userInfo: ProgramNotificationUserInfo?
+
+    var isAllowedLocalProgramNotification: Bool {
+        guard Self.allowedIdentifiers.contains(identifier),
+              title.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil,
+              trigger?.localNineAmDateComponents != nil else {
+            return false
+        }
+        return true
+    }
+
+    var localDateComponents: DateComponents? {
+        trigger?.localNineAmDateComponents
+    }
+
+    var notificationTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var notificationBody: String? {
+        body?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+    }
+
+    var notificationSound: UNNotificationSound? {
+        sound?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "default"
+            ? .default
+            : nil
+    }
+
+    var notificationUserInfo: [AnyHashable: Any] {
+        var info: [AnyHashable: Any] = [
+            "agentic30.program.notification.identifier": identifier,
+        ]
+        if let kind = userInfo?.kind?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            info["agentic30.program.notification.kind"] = kind
+        }
+        if let gateId = userInfo?.gateIdValue {
+            info["agentic30.program.notification.gateId"] = gateId
+        }
+        if let day = userInfo?.dayValue {
+            info["agentic30.program.notification.day"] = day
+        }
+        info.merge(AgenticAppRoute.routeURLUserInfo(appRoute)) { _, latest in latest }
+        return info
+    }
+
+    private var appRoute: AgenticAppRoute {
+        let anchor = identifier == Self.gateBlockedMorningIdentifier
+            ? OpenDesignSectionAnchor.gate.rawValue
+            : OpenDesignSectionAnchor.missionAction.rawValue
+        return AgenticAppRoute.openDesignRoute(
+            .day1,
+            day: userInfo?.dayValue,
+            anchor: anchor,
+            placement: .action,
+            telemetrySource: "program_notification"
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case identifier
+        case title
+        case body
+        case sound
+        case trigger
+        case userInfo
+        case userInfoSnake = "user_info"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        identifier = try container.decode(String.self, forKey: .identifier)
+        title = try container.decode(String.self, forKey: .title)
+        body = try container.decodeIfPresent(String.self, forKey: .body)
+        sound = try container.decodeIfPresent(String.self, forKey: .sound)
+        trigger = try container.decodeIfPresent(ProgramLocalNotificationTrigger.self, forKey: .trigger)
+        userInfo = try container.decodeIfPresent(ProgramNotificationUserInfo.self, forKey: .userInfo)
+            ?? container.decodeIfPresent(ProgramNotificationUserInfo.self, forKey: .userInfoSnake)
+    }
+}
+
+struct ProgramLocalNotificationTrigger: Decodable, Equatable, Hashable, Sendable {
+    let type: String?
+    let calendar: String?
+    let hour: Int?
+    let minute: Int?
+    let repeats: Bool
+
+    var localNineAmDateComponents: DateComponents? {
+        guard type == "local_calendar_time",
+              calendar == "local",
+              hour == 9,
+              minute == 0,
+              repeats == false else {
+            return nil
+        }
+        var components = DateComponents()
+        components.calendar = Calendar.current
+        components.hour = 9
+        components.minute = 0
+        return components
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case calendar
+        case hour
+        case minute
+        case repeats
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decodeIfPresent(String.self, forKey: .type)
+        calendar = try container.decodeIfPresent(String.self, forKey: .calendar)
+        hour = try container.decodeIfPresent(Int.self, forKey: .hour)
+        minute = try container.decodeIfPresent(Int.self, forKey: .minute)
+        repeats = try container.decodeIfPresent(Bool.self, forKey: .repeats) ?? false
+    }
+}
+
+struct ProgramNotificationUserInfo: Decodable, Equatable, Hashable, Sendable {
+    let kind: String?
+    let gateId: String?
+    let gateIdSnake: String?
+    let day: Int?
+    let daySnake: Int?
+
+    var gateIdValue: String? {
+        (gateId ?? gateIdSnake)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty
+    }
+
+    var dayValue: Int? {
+        day ?? daySnake
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case gateId
+        case gateIdSnake = "gate_id"
+        case day
+        case daySnake = "day_id"
+    }
+}
+
+struct OfficeHoursDailyCardReplacementCandidate: Equatable {
+    let candidateName: String
+    let actionText: String
+
+    var payload: [String: Any] {
+        [
+            "text": actionText,
+            "customer": candidateName,
+            "channel": "manual",
+            "message": actionText,
+            "expectedEvidenceKind": "url",
+            "confirmedByUser": true,
+            "candidateName": candidateName,
+            "actionKind": "outreach",
+            "actionText": actionText,
+        ]
+    }
+}
+
+struct OfficeHoursDailyCardScoreboardBuckets: Equatable {
+    let accepted: Int
+    let excluded: Int
+    let learning: Int
+}
+
+enum OfficeHoursDailyCardPresentation {
+    static let selfReportResolutionCopy = "자기 보고 해소는 고객 증거나 매출 진전으로 세지 않음"
+
+    static func orderedCards(
+        _ cards: [SidecarEvent.MissionCard.DailyCard]
+    ) -> [SidecarEvent.MissionCard.DailyCard] {
+        cards.sorted { lhs, rhs in
+            if lhs.displayOrder != rhs.displayOrder {
+                return lhs.displayOrder < rhs.displayOrder
+            }
+            return lhs.stableID < rhs.stableID
+        }
+    }
+
+    static func actionIDs(for card: SidecarEvent.MissionCard.DailyCard) -> [String] {
+        switch card.type {
+        case .officeHoursStateTransition:
+            let choiceIDs = Set(card.stateTransition?.choices.map(\.id) ?? [])
+            return [
+                "attach_evidence",
+                "resolve_without_evidence",
+                "replace_candidate",
+                "keep_open_today",
+            ].filter { choiceIDs.contains($0) }
+        case .officeHoursAgentWorkpack:
+            return ["attach_evidence"]
+        case .programScoreboardSnapshot:
+            return []
+        case .revenueOrActivationGate:
+            return card.gateCard?.recoveryBranch.isEmpty == false ? ["gate_recovery"] : []
+        }
+    }
+
+    static func replacementCandidate(
+        candidateName: String,
+        actionText: String
+    ) -> OfficeHoursDailyCardReplacementCandidate? {
+        let candidateName = candidateName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let actionText = actionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidateName.isEmpty, !actionText.isEmpty else { return nil }
+        return OfficeHoursDailyCardReplacementCandidate(
+            candidateName: candidateName,
+            actionText: actionText
+        )
+    }
+
+    static func scoreboardBuckets(
+        for entry: SidecarEvent.MissionCard.DailyCard.ScoreboardEntry
+    ) -> OfficeHoursDailyCardScoreboardBuckets {
+        let excludedCounts = entry.excludedCounts ?? [:]
+        var excluded = 0
+        var learning = 0
+        for (key, value) in excludedCounts {
+            if isLearningBucket(key) {
+                learning += value
+            } else {
+                excluded += value
+            }
+        }
+        return OfficeHoursDailyCardScoreboardBuckets(
+            accepted: entry.acceptedCount,
+            excluded: excluded,
+            learning: learning
+        )
+    }
+
+    private static func isLearningBucket(_ key: String) -> Bool {
+        let normalized = key
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        return normalized.contains("self")
+            || normalized.contains("learning")
+            || normalized.contains("paymentintent")
+    }
+}
+
 enum LongRunningCompletionNotificationKind: String, CaseIterable, Hashable, Sendable {
     case morningBriefing
     case workspaceScan
@@ -2331,6 +2622,22 @@ struct DayProgress: Codable, Equatable, Hashable {
         days.values.sorted { $0.day > $1.day }
     }
 
+    func officeHoursWorkedDay(now: Date = Date()) -> Int {
+        let records = days.values.sorted { $0.day < $1.day }
+        guard !records.isEmpty else { return 1 }
+
+        var maxDoneDay = 0
+        for record in records {
+            let stepID = record.day == 1 ? "first_interview" : "interview"
+            if record.steps[stepID] == .done {
+                maxDoneDay = max(maxDoneDay, record.day)
+                continue
+            }
+            return max(1, record.day)
+        }
+        return max(1, min(maxDoneDay + 1, 400))
+    }
+
     /// Elapsed-days-from-start + 1, on local calendar dates.
     /// Mirrors computeDayNumber() in day-progress-state.mjs.
     func currentDayNumber(now: Date = Date()) -> Int? {
@@ -2801,6 +3108,7 @@ final class AgenticViewModel: ObservableObject {
     /// sidecar emits `mission_card` on execution-step entry. The execution surface
     /// renders the mission + evidence spec + gate chips from this.
     @Published private(set) var executionMissionCard: SidecarEvent.MissionCard?
+    @Published private(set) var dailyCards: [SidecarEvent.MissionCard.DailyCard] = []
     /// System-triggered Office Hours intervention (spec §13.1): the latest
     /// `office_hours_intervention_required` payload. Severity "immediate" renders
     /// as a blocking card, "scheduled" as a briefing banner (P2 surface).
@@ -2985,7 +3293,7 @@ final class AgenticViewModel: ObservableObject {
     static var workspaceScanResultAppSupportURLOverrideForTesting: URL?
     #endif
     private var workspaceSetupTelemetryGate = WorkspaceSetupTelemetryGate()
-    private var requestedWarmSessionIDs = Set<String>()
+    private var requestedWarmSessionKeys = Set<String>()
     private var requestedInitialBipGate = false
     private var requestedInitialBipMission = false
     private var activeOnboardingWorkspacePrefetchFingerprint: String?
@@ -3325,6 +3633,7 @@ final class AgenticViewModel: ObservableObject {
             if let seededDraft = Self.uiTestingArgumentValue("--ui-testing-seed-draft", arguments: arguments) {
                 draft = seededDraft
             }
+            _ = installUITestingOfficeHoursSeedSessionIfNeeded()
         } else if Self.isXCTestHost(arguments: arguments) {
             macAuthSession = nil
             onboardingContext = nil
@@ -4027,24 +4336,7 @@ final class AgenticViewModel: ObservableObject {
     func ensureOfficeHoursSession(forDay day: Int? = nil) -> Bool {
         let scopedDay = normalizedOfficeHoursDay(day)
         #if DEBUG
-        // UI-testing seed installers are gated solely by their own CommandLine
-        // arg (and are idempotent). They must run regardless of the requested
-        // day: the day-scoped Office Hours screen always calls this with a
-        // concrete `activeDay` (>= 1, see `activeOfficeHoursDay`), so a
-        // `scopedDay == nil` precondition would orphan the seeds entirely.
-        if installUITestingOfficeHoursDay2CompletedSessionIfNeeded() {
-            return true
-        }
-        if installUITestingOfficeHoursCommitmentGateSessionIfNeeded() {
-            return true
-        }
-        if installUITestingOfficeHoursDay1DocReadySessionIfNeeded() {
-            return true
-        }
-        if installUITestingOfficeHoursRunningSessionIfNeeded() {
-            return true
-        }
-        if installUITestingOfficeHoursStructuredPromptSessionIfNeeded() {
+        if installUITestingOfficeHoursSeedSessionIfNeeded() {
             return true
         }
         #endif
@@ -4073,6 +4365,36 @@ final class AgenticViewModel: ObservableObject {
         officeHoursSessionCreateInFlight = false
         return false
     }
+
+    #if DEBUG
+    @discardableResult
+    private func installUITestingOfficeHoursSeedSessionIfNeeded() -> Bool {
+        // UI-testing seed installers are gated solely by their own CommandLine
+        // arg (and are idempotent). They must run regardless of the requested
+        // day: the day-scoped Office Hours screen always calls this with a
+        // concrete `activeDay` (>= 1, see `activeOfficeHoursDay`), so a
+        // `scopedDay == nil` precondition would orphan the seeds entirely.
+        if installUITestingOfficeHoursDailyCardStackSessionIfNeeded() {
+            return true
+        }
+        if installUITestingOfficeHoursDay2CompletedSessionIfNeeded() {
+            return true
+        }
+        if installUITestingOfficeHoursCommitmentGateSessionIfNeeded() {
+            return true
+        }
+        if installUITestingOfficeHoursDay1DocReadySessionIfNeeded() {
+            return true
+        }
+        if installUITestingOfficeHoursRunningSessionIfNeeded() {
+            return true
+        }
+        if installUITestingOfficeHoursStructuredPromptSessionIfNeeded() {
+            return true
+        }
+        return false
+    }
+    #endif
 
     func officeHoursSession(forDay day: Int) -> ChatSession? {
         let scopedDay = normalizedOfficeHoursDay(day)
@@ -4405,20 +4727,20 @@ final class AgenticViewModel: ObservableObject {
         workspaceRoot explicitRoot: String? = nil
     ) -> Bool {
         let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        #if DEBUG
+        if Self.isUITesting(arguments: CommandLine.arguments),
+           CommandLine.arguments.contains("--ui-testing-disable-sidecar"),
+           ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] == "1" {
+            applyUITestingDayStepPatchLocally(
+                day: day,
+                stepId: stepId,
+                status: status,
+                goalText: goalText
+            )
+            return true
+        }
+        #endif
         guard isConnected else {
-            #if DEBUG
-            if Self.isUITesting(arguments: CommandLine.arguments),
-               CommandLine.arguments.contains("--ui-testing-disable-sidecar"),
-               ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] == "1" {
-                applyUITestingDayStepPatchLocally(
-                    day: day,
-                    stepId: stepId,
-                    status: status,
-                    goalText: goalText
-                )
-                return true
-            }
-            #endif
             return false
         }
         guard !root.isEmpty else { return false }
@@ -4618,6 +4940,76 @@ final class AgenticViewModel: ObservableObject {
             "commitmentId": id,
             "reason": reason.trimmingCharacters(in: .whitespacesAndNewlines),
         ])
+    }
+
+    @discardableResult
+    func submitOfficeHoursDailyCard(
+        _ card: SidecarEvent.MissionCard.DailyCard,
+        action: String,
+        choiceId: String? = nil,
+        resolutionReason: String? = nil,
+        evidenceRefs: [[String: String]] = [],
+        replacementCandidate: [String: Any]? = nil,
+        note: String? = nil,
+        workspaceRoot explicitRoot: String? = nil
+    ) -> Bool {
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        let cardId = (card.id ?? card.stableID).trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceCommitmentId = (card.sourceCommitmentId
+            ?? card.stateTransition?.sourceCommitmentId
+            ?? card.stateTransition?.commitmentId
+            ?? card.agentWorkpack?.sourceCommitmentId
+            ?? ""
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAction = action.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cardGenerationId = card.generation.generationId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceStateVersion = card.sourceStateVersion?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty, !cardId.isEmpty, !sourceCommitmentId.isEmpty, !trimmedAction.isEmpty else {
+            lastError = "Daily card submission is missing card, source commitment, action, or workspace."
+            return false
+        }
+        guard (cardGenerationId?.isEmpty == false) || (sourceStateVersion?.isEmpty == false) else {
+            lastError = "Daily card submission is missing card generation or source-state version."
+            return false
+        }
+        guard trimmedAction != "replace_candidate" || replacementCandidate != nil else {
+            lastError = "Daily card replacement requires the next candidate and next action."
+            return false
+        }
+        guard isConnected else {
+            lastError = "Daily card submission could not be sent because the sidecar is disconnected."
+            return false
+        }
+        var payload: [String: Any] = [
+            "type": "office_hours_daily_card_submit",
+            "workspaceRoot": root,
+            "cardId": cardId,
+            "cardType": card.type.rawValue,
+            "sourceCommitmentId": sourceCommitmentId,
+            "action": trimmedAction,
+            "choiceId": (choiceId ?? trimmedAction).trimmingCharacters(in: .whitespacesAndNewlines),
+            "programDay": card.programDay,
+        ]
+        if let cardGenerationId, !cardGenerationId.isEmpty {
+            payload["cardGenerationId"] = cardGenerationId
+        }
+        if let sourceStateVersion, !sourceStateVersion.isEmpty {
+            payload["sourceStateVersion"] = sourceStateVersion
+        }
+        if let reason = resolutionReason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
+            payload["resolutionReason"] = reason
+        }
+        if !evidenceRefs.isEmpty {
+            payload["evidenceRefs"] = evidenceRefs
+        }
+        if let replacementCandidate {
+            payload["replacementCandidate"] = replacementCandidate
+        }
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            payload["note"] = note
+            payload["originText"] = note
+        }
+        return sidecar.send(payload: payload)
     }
 
     @discardableResult
@@ -8185,13 +8577,6 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
-    /// Maps a sidecar `error` event's `errorKind` to the telemetry event name we
-    /// `capture` for it, or `nil` when the error should be routed through
-    /// `captureException` as a crash-style report. Expected, recoverable failures
-    /// (usage limits, auth gaps, aborts, sidecar-connection blips, and the
-    /// office-hours incomplete-interview provider-miss) are normal events, not
-    /// exceptions — they keep their user-facing error state and retry path but
-    /// must not pollute error tracking.
     static func nonExceptionSidecarErrorTelemetryEvent(forErrorKind errorKind: String?) -> String? {
         switch errorKind {
         case "provider_usage_limit":
@@ -8202,10 +8587,8 @@ final class AgenticViewModel: ObservableObject {
             return "mac_provider_aborted"
         case "sidecar_connection_state":
             return "mac_sidecar_connection_state"
-        case "office_hours_incomplete_interview":
-            // Interview ended with no question card on deck. The user keeps the
-            // failure block + retry, so this is not an app exception.
-            return "mac_office_hours_incomplete_interview"
+        case "office_hours_no_next_question":
+            return "mac_office_hours_no_next_question"
         default:
             return nil
         }
@@ -8671,9 +9054,30 @@ final class AgenticViewModel: ObservableObject {
                 dayGateBlocked = nil
                 dayGateBlockedMessage = nil
             }
+        case "program_notification_schedule":
+            if event.success == false {
+                PostHogTelemetry.captureLog(
+                    "program notification schedule failed",
+                    level: .error,
+                    properties: [
+                        "error": event.error ?? event.message ?? "",
+                    ],
+                    authSession: macAuthSession
+                )
+                return
+            }
+            if let schedule = event.programNotificationSchedule {
+                syncProgramNotificationSchedule(schedule)
+            }
         case "mission_card":
             if let card = event.missionCard {
-                executionMissionCard = card
+                if let dailyCard = card.dailyCard {
+                    executionMissionCard = nil
+                    upsertDailyCard(dailyCard)
+                } else {
+                    executionMissionCard = card
+                    dailyCards = []
+                }
             }
         case "office_hours_intervention_required":
             if let intervention = event.intervention {
@@ -10093,6 +10497,244 @@ final class AgenticViewModel: ObservableObject {
     }
 
     @discardableResult
+    private func installUITestingOfficeHoursDailyCardStackSessionIfNeeded() -> Bool {
+        #if DEBUG
+        guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-v2-daily-cards") else {
+            return false
+        }
+        if let selectedSession,
+           selectedSession.title.range(of: "Office Hours", options: [.caseInsensitive, .diacriticInsensitive]) != nil,
+           selectedSession.runtime?.officeHours?.day == 14,
+           !dailyCards.isEmpty {
+            return true
+        }
+
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let now = Date()
+        let today = formatter.string(from: now)
+        dayProgress = DayProgress(
+            challengeStartedAt: today,
+            days: [
+                "14": DayRecord(
+                    day: 14,
+                    kind: .standard,
+                    steps: ["scan": .done, "retro": .done, "goal": .done, "interview": .active, "execution": .pending],
+                    goalText: "유료 ask 증거와 first_value를 같은 날 만든다",
+                    updatedAt: today
+                )
+            ]
+        )
+
+        let sessionID = "ui-test-office-hours-v2-cards-\(UUID().uuidString)"
+        let session = ChatSession(
+            id: sessionID,
+            title: "Office Hours",
+            provider: selectedProvider,
+            model: preferredModel(for: selectedProvider),
+            status: .idle,
+            createdAt: now,
+            updatedAt: now,
+            error: nil,
+            messages: [],
+            pendingUserInput: nil,
+            runtime: ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: "program_v2_daily_cards",
+                iddMode: "office_hours",
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "ui_testing_program_v2_daily_cards",
+                    startedAt: ISO8601DateFormatter().string(from: now),
+                    context: "PROGRAM_V2_DAILY_CARD_STACK_UI_TEST",
+                    day: 14
+                )
+            )
+        )
+        sessions = [session]
+        selectedSessionID = sessionID
+        officeHoursSessionCreateInFlight = false
+        dailyCards = []
+        do {
+            for payload in Self.uiTestingV2DailyCardPayloads {
+                let event = try JSONDecoder().decode(SidecarEvent.self, from: Data(payload.utf8))
+                handle(event)
+            }
+        } catch {
+            lastError = "UI testing v2 daily-card fixture failed to decode: \(error)"
+            assertionFailure(lastError ?? "UI testing v2 daily-card fixture failed to decode")
+            return false
+        }
+        refreshPresentationState()
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    private static let uiTestingV2DailyCardPayloads: [String] = [
+        """
+        {
+          "type": "mission_card",
+          "workspaceRoot": "/tmp/agentic30-ui-v2-daily-cards",
+          "missionCard": {
+            "id": "ui-state-transition-card",
+            "type": "office_hours_state_transition",
+            "schemaVersion": 1,
+            "programDay": 14,
+            "generation": {
+              "signalId": "office-hours-state-transition",
+              "signalLabel": "Office Hours stale commitment",
+              "generationId": "ui-generation-state"
+            },
+            "sourceState": "stale",
+            "sourceStateVersion": "ui-state-v1",
+            "requiresUserAction": true,
+            "proofLedgerMapping": {
+              "self_report": "officeHoursResolution.negativeEvidenceOnly",
+              "customer_screenshot": "customerEvidence.acceptedProof"
+            },
+            "commitmentId": "commitment_14",
+            "sourceCommitmentId": "commitment_14",
+            "candidateName": "Candidate A",
+            "actionText": "Request validation material by 18:00.",
+            "repeatCountWithoutEvidence": 2,
+            "choices": [
+              { "id": "attach_evidence", "label": "Attach evidence" },
+              { "id": "resolve_without_evidence", "label": "Resolve without evidence" },
+              { "id": "replace_candidate", "label": "Replace candidate" },
+              { "id": "keep_open_today", "label": "Keep open today" }
+            ],
+            "resolutionReasons": [
+              "not_sent",
+              "message_not_ready",
+              "channel_blocked",
+              "wrong_candidate",
+              "candidate_exhausted",
+              "replaced_by_next_candidate"
+            ]
+          }
+        }
+        """,
+        """
+        {
+          "type": "mission_card",
+          "workspaceRoot": "/tmp/agentic30-ui-v2-daily-cards",
+          "missionCard": {
+            "id": "ui-workpack-card",
+            "type": "office_hours_agent_workpack",
+            "schemaVersion": 1,
+            "programDay": 14,
+            "generation": {
+              "signalId": "office-hours-workpack",
+              "signalLabel": "Office Hours agent workpack",
+              "generationId": "ui-generation-workpack"
+            },
+            "sourceState": "ready",
+            "sourceStateVersion": "ui-state-v1",
+            "requiresUserAction": true,
+            "proofLedgerMapping": {
+              "paymentIntent": "firstRevenue.learningSignal",
+              "paymentRecord": "firstRevenue.acceptedProof"
+            },
+            "sourceCommitmentId": "commitment_14",
+            "selectedLens": "service_planning",
+            "workpack": {
+              "id": "workpack_day_14_g4",
+              "workType": "offer/paid ask",
+              "targetExternalAction": "Send one paid ask DM with price, outcome, and deadline.",
+              "expectedProof": "Sent screenshot, sent time, recipient identifier, and reply text.",
+              "notProof": ["AI draft", "self-report that it will be sent"],
+              "owner": "founder",
+              "deadline": "2026-06-20T18:00:00+09:00"
+            }
+          }
+        }
+        """,
+        """
+        {
+          "type": "mission_card",
+          "workspaceRoot": "/tmp/agentic30-ui-v2-daily-cards",
+          "missionCard": {
+            "id": "ui-scoreboard-card",
+            "type": "program_scoreboard_snapshot",
+            "schemaVersion": 1,
+            "programDay": 14,
+            "generation": {
+              "signalId": "program-scoreboard",
+              "signalLabel": "Program scoreboard",
+              "generationId": "ui-generation-scoreboard"
+            },
+            "sourceState": "ready",
+            "sourceStateVersion": "ui-state-v1",
+            "requiresUserAction": false,
+            "proofLedgerMapping": {
+              "first_value": "activeUsers100.acceptedProof",
+              "paymentIntent": "firstRevenue.learningSignal",
+              "paymentRecord": "firstRevenue.acceptedProof"
+            },
+            "scoreboards": {
+              "activeUsers100": {
+                "acceptedCount": 7,
+                "excludedCounts": {
+                  "signup": 42,
+                  "visitor": 1380,
+                  "self-report": 3
+                },
+                "sourceState": "ready",
+                "nextUnblockAction": "activation friction fix workpack"
+              },
+              "firstRevenue": {
+                "acceptedCount": 0,
+                "excludedCounts": {
+                  "paymentIntent": 2
+                },
+                "sourceState": "manual_proof_required",
+                "nextUnblockAction": "offer/paid ask follow-up plan"
+              }
+            }
+          }
+        }
+        """,
+        """
+        {
+          "type": "mission_card",
+          "workspaceRoot": "/tmp/agentic30-ui-v2-daily-cards",
+          "missionCard": {
+            "id": "ui-gate-card",
+            "type": "revenue_or_activation_gate",
+            "schemaVersion": 1,
+            "programDay": 14,
+            "generation": {
+              "signalId": "revenue-or-activation-gate",
+              "signalLabel": "Revenue or activation gate",
+              "generationId": "ui-generation-gate"
+            },
+            "sourceState": "missing",
+            "sourceStateVersion": "ui-state-v1",
+            "requiresUserAction": true,
+            "proofLedgerMapping": {
+              "first_value": "activeUsers100.acceptedProof",
+              "paymentIntent": "firstRevenue.learningSignal"
+            },
+            "gate": "G4",
+            "requires": ["first_value", "paymentIntent"],
+            "satisfied": false,
+            "blockingReasons": ["missing first_value source", "paymentRecord missing"],
+            "recoveryBranch": "g4-recovery-instrumentation",
+            "nextCardType": "office_hours_agent_workpack"
+          }
+        }
+        """,
+    ]
+
+    @discardableResult
     fileprivate func installUITestingOfficeHoursDay1DocReadySessionIfNeeded() -> Bool {
         #if DEBUG
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-doc-ready") else {
@@ -10392,7 +11034,7 @@ final class AgenticViewModel: ObservableObject {
         sessions = [session]
         selectedSessionID = sessionID
         officeHoursSessionCreateInFlight = false
-        installUITestingDay1BulkDocPreviews()
+        installUITestingDay1BulkDocPreviews(completingSessionID: sessionID)
         refreshPresentationState()
         return true
         #else
@@ -10406,12 +11048,20 @@ final class AgenticViewModel: ObservableObject {
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt") else {
             return false
         }
-        // Day timeline fixture: seed a cumulative Day list (Day 2 today + a past
-        // Day 1 record) so the sidebar focus-highlight can be screenshotted. Runs
-        // before the goal guard so the timeline renders even pre-goal-confirm.
         seedUITestingTimelineFixtureIfNeeded()
-        guard day1GoalSelection != nil else {
-            return false
+        if day1GoalSelection == nil {
+            let now = Date()
+            day1GoalSelection = Day1GoalSelection(
+                goalType: .getUsers,
+                goalText: "이번 주 유료 진입점을 보여줄 실명 고객 1명을 고정한다",
+                customer: "macOS에서 AI 코딩 도구를 매일 쓰는 전업 1인 개발자",
+                problem: "AI로 제품은 만들지만 고객 행동 증거가 남지 않는다",
+                validationAction: "가장 적합한 사용자 1명에게 이번 주 유료 진입점 보여주기",
+                evidenceRefs: [".agentic30/docs/GOAL.md", ".agentic30/docs/ICP.md"],
+                proofSink: .local,
+                sourcePlanFingerprint: "ui-test-office-hours-structured-prompt",
+                selectedAt: ISO8601DateFormatter().string(from: now)
+            )
         }
         if let selectedSession,
            selectedSession.pendingUserInput?.title?.caseInsensitiveCompare("Office Hours") == .orderedSame
@@ -10445,7 +11095,14 @@ final class AgenticViewModel: ObservableObject {
                 codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "day1_step",
-                iddMode: "office_hours"
+                iddMode: "office_hours",
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "ui_testing_structured_prompt",
+                    startedAt: ISO8601DateFormatter().string(from: now),
+                    context: "UI test Office Hours structured prompt",
+                    day: 1
+                )
             )
         )
         sessions = [session]
@@ -10616,15 +11273,22 @@ final class AgenticViewModel: ObservableObject {
             return false
         }
 
+        guard let sessionID = selectedSessionID else {
+            day1DocHandoffPendingDocType = nil
+            day1DocHandoffAwaitingFollowupPrompt = false
+            day1DocHandoffError = "UI testing Day 1 document handoff requires a selected Office Hours session."
+            return true
+        }
+
         if arguments.contains("--ui-testing-seed-day1-handoff-judge-block") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                 self?.installUITestingDay1HandoffJudgeBlock(attempt: 1)
             }
             return true
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            self?.installUITestingDay1BulkDocPreviews()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.installUITestingDay1BulkDocPreviews(completingSessionID: sessionID)
         }
         return true
     }
@@ -10648,6 +11312,7 @@ final class AgenticViewModel: ObservableObject {
             ),
             questions: [
                 StructuredPromptQuestion(
+                    questionId: "day1_doc_handoff_judge_blocked",
                     header: "보완 질문",
                     question: attempt == 1
                         ? "이번 주 유료 진입점을 보여줄 실명 고객 행동 증거는 무엇인가요?"
@@ -10708,7 +11373,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private func installUITestingDay1HandoffJudgePrompt(attempt: Int) {
-        let sessionID = "ui-test-day1-handoff-review-session"
+        let sessionID = selectedSession?.id ?? "ui-test-day1-handoff-review-session"
         let now = Date()
         let prompt = Self.makeUITestingDay1HandoffJudgePrompt(
             sessionID: sessionID,
@@ -10732,7 +11397,9 @@ final class AgenticViewModel: ObservableObject {
             )
         )
         if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
-            sessions[index].title = "Day 1 문서 리뷰"
+            if sessions[index].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sessions[index].title = "Day 1 문서 리뷰"
+            }
             sessions[index].status = .awaitingInput
             sessions[index].pendingUserInput = prompt
             sessions[index].runtime = runtime
@@ -10758,7 +11425,7 @@ final class AgenticViewModel: ObservableObject {
         refreshPresentationState()
     }
 
-    private func installUITestingDay1BulkDocPreviews() {
+    private func installUITestingDay1BulkDocPreviews(completingSessionID sessionID: String) {
         let order = ["goal", "icp", "values", "spec"]
         let seededPreviews = [
             IddDocPreview(type: "goal", title: "GOAL", path: ".agentic30/docs/GOAL.md", status: "written", content: "UI test GOAL handoff response"),
@@ -10778,6 +11445,19 @@ final class AgenticViewModel: ObservableObject {
         day1DocHandoffAwaitingFollowupPrompt = false
         day1DocHandoffPendingDocType = nil
         day1DocHandoffError = nil
+        guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionID }) else {
+            day1DocHandoffError = "UI testing Day 1 document handoff completed without a matching Office Hours session: \(sessionID)"
+            assertionFailure(day1DocHandoffError ?? "Missing Office Hours session")
+            refreshPresentationState()
+            return
+        }
+        sessions[sessionIndex].pendingUserInput = nil
+        sessions[sessionIndex].status = .idle
+        sessions[sessionIndex].error = nil
+        sessions[sessionIndex].updatedAt = .now
+        submittedStructuredPromptBySession.removeValue(forKey: sessionID)
+        structuredPromptDraftBySession.removeValue(forKey: sessionID)
+        officeHoursLiveStatusBySession.removeValue(forKey: sessionID)
         refreshPresentationState()
     }
 
@@ -10961,10 +11641,10 @@ final class AgenticViewModel: ObservableObject {
         day1DocHandoffError = nil
         refreshPresentationState()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self else { return }
             if hasHardEvidence {
-                self.installUITestingDay1BulkDocPreviews()
+                self.installUITestingDay1BulkDocPreviews(completingSessionID: sessionId)
             } else {
                 self.installUITestingDay1HandoffJudgeBlock(attempt: currentAttempt + 1)
             }
@@ -10993,35 +11673,93 @@ final class AgenticViewModel: ObservableObject {
 
         let currentStep = prompt.generation?.dimensionStepIndex ?? (requestId == "ui-test-office-hours-request" ? 1 : 6)
         let totalSteps = prompt.generation?.dimensionTotal ?? 6
-        if currentStep < totalSteps {
-            let nextStep = currentStep + 1
-            sessions[sessionIndex].pendingUserInput = Self.makeUITestingOfficeHoursStructuredPrompt(
-                sessionID: sessionId,
-                requestId: "ui-test-office-hours-request-\(nextStep)",
-                createdAt: .now,
-                step: nextStep
-            )
-            sessions[sessionIndex].status = .awaitingInput
-        } else {
-            sessions[sessionIndex].pendingUserInput = nil
-            sessions[sessionIndex].status = .idle
-            sessions[sessionIndex].messages.append(ChatMessage(
-                id: UUID().uuidString,
-                role: .assistant,
-                provider: sessions[sessionIndex].provider,
-                content: "선택지를 확인했어요. 답변이 모두 기록됐습니다.",
-                state: .final,
-                createdAt: .now,
-                error: nil,
-                bipMissionChoices: nil,
-                providerAuthActions: nil
-            ))
-        }
+        let now = Date()
+        sessions[sessionIndex].pendingUserInput = nil
+        sessions[sessionIndex].status = .running
         sessions[sessionIndex].error = nil
-        sessions[sessionIndex].updatedAt = .now
+        sessions[sessionIndex].updatedAt = now
+        officeHoursLiveStatusBySession[sessionId] = OfficeHoursLiveStatus(
+            sessionId: sessionId,
+            stage: "specialist_routed",
+            title: "다음 질문 생성 중",
+            detail: "UI test Office Hours structured prompt is generating the next question.",
+            progressText: nil,
+            messageId: nil,
+            requestId: requestId,
+            elapsedMs: nil,
+            updatedAt: now
+        )
         submittedStructuredPromptBySession.removeValue(forKey: sessionId)
         structuredPromptDraftBySession.removeValue(forKey: sessionId)
         refreshPresentationState()
+
+        if currentStep < totalSteps {
+            let nextStep = currentStep + 1
+            let nextPrompt = Self.makeUITestingOfficeHoursStructuredPrompt(
+                sessionID: sessionId,
+                requestId: "ui-test-office-hours-request-\(nextStep)",
+                createdAt: now,
+                step: nextStep
+            )
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard let self,
+                      let refreshedIndex = self.sessions.firstIndex(where: { $0.id == sessionId }) else {
+                    return
+                }
+                self.sessions[refreshedIndex].pendingUserInput = nextPrompt
+                self.sessions[refreshedIndex].status = .awaitingInput
+                self.sessions[refreshedIndex].error = nil
+                self.sessions[refreshedIndex].updatedAt = Date()
+                self.officeHoursLiveStatusBySession[sessionId] = OfficeHoursLiveStatus(
+                    sessionId: sessionId,
+                    stage: "question_ready",
+                    title: "다음 질문 준비됨",
+                    detail: nil,
+                    progressText: nil,
+                    messageId: nil,
+                    requestId: nextPrompt.requestId,
+                    elapsedMs: nil,
+                    updatedAt: Date()
+                )
+                self.refreshPresentationState()
+            }
+        } else {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                guard let self,
+                      let refreshedIndex = self.sessions.firstIndex(where: { $0.id == sessionId }) else {
+                    return
+                }
+                self.sessions[refreshedIndex].status = .idle
+                self.sessions[refreshedIndex].pendingUserInput = nil
+                self.sessions[refreshedIndex].error = nil
+                self.officeHoursLiveStatusBySession[sessionId] = OfficeHoursLiveStatus(
+                    sessionId: sessionId,
+                    stage: "completed",
+                    title: "Office Hours completed",
+                    detail: nil,
+                    progressText: nil,
+                    messageId: nil,
+                    requestId: requestId,
+                    elapsedMs: nil,
+                    updatedAt: Date()
+                )
+                self.sessions[refreshedIndex].messages.append(ChatMessage(
+                    id: UUID().uuidString,
+                    role: .assistant,
+                    provider: self.sessions[refreshedIndex].provider,
+                    content: "선택지를 확인했어요. 답변이 모두 기록됐습니다.",
+                    state: .final,
+                    createdAt: .now,
+                    error: nil,
+                    bipMissionChoices: nil,
+                    providerAuthActions: nil
+                ))
+                self.sessions[refreshedIndex].updatedAt = Date()
+                self.refreshPresentationState()
+            }
+        }
         return true
     }
 
@@ -12020,11 +12758,17 @@ final class AgenticViewModel: ObservableObject {
               officeHours.active == true,
               let officeHoursContext = officeHours.context?.trimmingCharacters(in: .whitespacesAndNewlines),
               !officeHoursContext.isEmpty else { return }
-        guard !requestedWarmSessionIDs.contains(session.id) else { return }
-        guard session.runtime?.codexWarm?.state != "ready" else { return }
         guard session.runtime?.codexWarm?.state != "warming" else { return }
+        let officeHoursSource = officeHours.source?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let warmupKey = codexWarmupRequestKey(
+            sessionID: session.id,
+            context: officeHoursContext,
+            day: officeHours.day,
+            source: officeHoursSource
+        )
+        guard !requestedWarmSessionKeys.contains(warmupKey) else { return }
 
-        requestedWarmSessionIDs.insert(session.id)
+        requestedWarmSessionKeys.insert(warmupKey)
         var payload: [String: Any] = [
             "type": "warm_session",
             "sessionId": session.id,
@@ -12034,11 +12778,27 @@ final class AgenticViewModel: ObservableObject {
         if let day = officeHours.day {
             payload["day"] = day
         }
-        if let source = officeHours.source?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let source = officeHoursSource,
            !source.isEmpty {
             payload["source"] = source
         }
         sidecar.send(payload: payload)
+    }
+
+    private func codexWarmupRequestKey(
+        sessionID: String,
+        context: String,
+        day: Int?,
+        source: String?
+    ) -> String {
+        [
+            sessionID,
+            context,
+            day.map(String.init) ?? "",
+            source ?? "",
+        ]
+            .map { "\($0.count):\($0)" }
+            .joined(separator: "|")
     }
 
     private func appendSentPromptPreview(sessionID: String, prompt: String) {
@@ -12167,6 +12927,9 @@ final class AgenticViewModel: ObservableObject {
             appendSidecarOutput(sessionID: status.sessionId, summary: progressText)
         }
         maybePostQuestionReadyNotification(for: status)
+        if status.stage == "question_ready", selectedSession?.id == status.sessionId {
+            requestCodexWarmupIfNeeded()
+        }
     }
 
     /// requestIds already turned into a local notification this app run; the
@@ -12345,6 +13108,133 @@ final class AgenticViewModel: ObservableObject {
         return "근거 기반 실행 미션을 확인할 수 있어요."
     }
 
+    private func normalizedDailyCardSourceStateVersion(_ value: String?) -> String? {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+    }
+
+    private func upsertDailyCard(_ card: SidecarEvent.MissionCard.DailyCard) {
+        if dailyCards.contains(where: { $0.programDay != card.programDay }) {
+            dailyCards = []
+        }
+        let nextVersion = normalizedDailyCardSourceStateVersion(card.sourceStateVersion)
+        dailyCards.removeAll { existing in
+            guard existing.programDay == card.programDay else { return false }
+            let existingVersion = normalizedDailyCardSourceStateVersion(existing.sourceStateVersion)
+            if let nextVersion {
+                return existingVersion != nextVersion
+            }
+            return existingVersion != nil
+        }
+        dailyCards.removeAll { $0.stableID == card.stableID }
+        dailyCards.append(card)
+        dailyCards.sort { lhs, rhs in
+            if lhs.programDay != rhs.programDay {
+                return lhs.programDay < rhs.programDay
+            }
+            if lhs.displayOrder != rhs.displayOrder {
+                return lhs.displayOrder < rhs.displayOrder
+            }
+            return lhs.stableID < rhs.stableID
+        }
+    }
+
+    private func localNotificationAuthorizationGranted(center: UNUserNotificationCenter) async -> Bool {
+        let settings = await withCheckedContinuation { continuation in
+            center.getNotificationSettings { settings in
+                continuation.resume(returning: settings)
+            }
+        }
+
+        if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional {
+            return true
+        }
+        guard settings.authorizationStatus == .notDetermined else { return false }
+        do {
+            return try await center.requestAuthorization(options: [.alert, .sound])
+        } catch {
+            PostHogTelemetry.captureException(
+                error,
+                properties: ["operation": "request_notification_authorization"],
+                authSession: macAuthSession
+            )
+            return false
+        }
+    }
+
+    private func syncProgramNotificationSchedule(_ schedule: ProgramNotificationSchedule) {
+        guard !Self.isUITestingOrStubProviderLaunch() else { return }
+        let requests = schedule.validLocalNotificationRequests
+        Task { await syncProgramNotificationRequests(requests) }
+    }
+
+    private func syncProgramNotificationRequests(_ requests: [ProgramLocalNotificationRequest]) async {
+        let center = UNUserNotificationCenter.current()
+        let managedIdentifiers = Array(ProgramLocalNotificationRequest.allowedIdentifiers).sorted()
+
+        guard !requests.isEmpty else {
+            center.removePendingNotificationRequests(withIdentifiers: managedIdentifiers)
+            PostHogTelemetry.capture(
+                "mac_program_notification_schedule_synced",
+                properties: [
+                    "scheduled_count": 0,
+                    "identifiers": [String](),
+                ],
+                authSession: macAuthSession
+            )
+            return
+        }
+        guard await localNotificationAuthorizationGranted(center: center) else { return }
+
+        var desiredIdentifiers = Set<String>()
+        var scheduledIdentifiers: [String] = []
+        for request in requests {
+            guard let dateComponents = request.localDateComponents else { continue }
+            desiredIdentifiers.insert(request.identifier)
+            let content = UNMutableNotificationContent()
+            content.title = request.notificationTitle
+            if let body = request.notificationBody {
+                content.body = body
+            }
+            content.sound = request.notificationSound
+            content.userInfo = request.notificationUserInfo
+
+            let trigger = UNCalendarNotificationTrigger(
+                dateMatching: dateComponents,
+                repeats: false
+            )
+            do {
+                try await center.add(UNNotificationRequest(
+                    identifier: request.identifier,
+                    content: content,
+                    trigger: trigger
+                ))
+                scheduledIdentifiers.append(request.identifier)
+            } catch {
+                PostHogTelemetry.captureException(
+                    error,
+                    properties: [
+                        "operation": "schedule_program_notification",
+                        "identifier": request.identifier,
+                    ],
+                    authSession: macAuthSession
+                )
+            }
+        }
+        let obsoleteIdentifiers = managedIdentifiers.filter { !desiredIdentifiers.contains($0) }
+        if !obsoleteIdentifiers.isEmpty {
+            center.removePendingNotificationRequests(withIdentifiers: obsoleteIdentifiers)
+        }
+
+        PostHogTelemetry.capture(
+            "mac_program_notification_schedule_synced",
+            properties: [
+                "scheduled_count": scheduledIdentifiers.count,
+                "identifiers": scheduledIdentifiers,
+            ],
+            authSession: macAuthSession
+        )
+    }
+
     @discardableResult
     private func postLocalNotification(
         identifier: String,
@@ -12354,18 +13244,7 @@ final class AgenticViewModel: ObservableObject {
         removeDeliveredIdentifiers: [String] = []
     ) async -> Bool {
         let center = UNUserNotificationCenter.current()
-        let settings = await withCheckedContinuation { continuation in
-            center.getNotificationSettings { settings in
-                continuation.resume(returning: settings)
-            }
-        }
-
-        var authorized = settings.authorizationStatus == .authorized
-            || settings.authorizationStatus == .provisional
-        if settings.authorizationStatus == .notDetermined {
-            authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-        }
-        guard authorized else { return false }
+        guard await localNotificationAuthorizationGranted(center: center) else { return false }
 
         let content = UNMutableNotificationContent()
         content.title = title
@@ -13509,6 +14388,7 @@ private extension AgenticViewModel {
         dayGateBlocked = nil
         dayGateBlockedMessage = nil
         executionMissionCard = nil
+        dailyCards = []
         ohInterventionRequired = nil
         providerAuthInProgress = nil
         providerAuthMessage = nil
@@ -13540,7 +14420,7 @@ private extension AgenticViewModel {
         pendingWorkspaceScanRoot = nil
         pendingWorkspaceScanProvider = nil
         workspaceSetupTelemetryGate = WorkspaceSetupTelemetryGate()
-        requestedWarmSessionIDs = []
+        requestedWarmSessionKeys = []
         requestedInitialBipGate = false
         requestedInitialBipMission = false
         activeOnboardingWorkspacePrefetchFingerprint = nil
@@ -13852,6 +14732,7 @@ struct SidecarEvent: Decodable {
     let officeHoursHistory: OfficeHoursHistorySummary?
     let evidenceOS: EvidenceOSSummary?
     let dayClosePolicy: OfficeHoursDayClosePolicy?
+    let programNotificationSchedule: ProgramNotificationSchedule?
     // Interview-gate block fields (day_progress_state): when the founder tries to close a
     // gated interview step without naming a next customer action, the sidecar withholds the
     // patch and sends needsCommitment=true + a soft `message`. `message` is shared (declared
@@ -13876,8 +14757,8 @@ struct SidecarEvent: Decodable {
     /// IDD mission card for the execution step (`type: "mission_card"`,
     /// spec §11.0/§17.2): the day's curriculum mission + evidence spec +
     /// milestone-gate context, emitted when the Day 2+ loop reaches execution.
-    struct MissionCard: Codable, Equatable {
-        struct Mission: Codable, Equatable {
+    struct MissionCard: Decodable, Equatable {
+        struct Mission: Decodable, Equatable {
             let day: Int?
             let title: String?
             let shortTitle: String?
@@ -13891,17 +14772,488 @@ struct SidecarEvent: Decodable {
             let substitutionReason: String?
             let exitCondition: String?
         }
-        struct EvidenceSpec: Codable, Equatable {
+        struct EvidenceSpec: Decodable, Equatable {
             let evidenceRequired: Bool?
             let artifact: String?
             let allowedEvidenceTypes: [String]?
             let minimumStrength: String?
             let completionSignal: String?
         }
-        struct GateContext: Codable, Equatable {
+        struct GateContext: Decodable, Equatable {
             let day: Int?
             let blockingGateId: String?
             let states: [String: String]?
+        }
+        struct DailyCard: Decodable, Equatable, Identifiable {
+            enum CardType: String, Decodable, Equatable {
+                case officeHoursStateTransition = "office_hours_state_transition"
+                case officeHoursAgentWorkpack = "office_hours_agent_workpack"
+                case programScoreboardSnapshot = "program_scoreboard_snapshot"
+                case revenueOrActivationGate = "revenue_or_activation_gate"
+            }
+            enum SourceState: String, Decodable, Equatable {
+                case ready
+                case missing
+                case stale
+                case manualProofRequired = "manual_proof_required"
+                case rejected
+            }
+            enum ResolutionReason: String, Decodable, Equatable {
+                case notSent = "not_sent"
+                case messageNotReady = "message_not_ready"
+                case channelBlocked = "channel_blocked"
+                case wrongCandidate = "wrong_candidate"
+                case candidateExhausted = "candidate_exhausted"
+                case replacedByNextCandidate = "replaced_by_next_candidate"
+            }
+            struct Generation: Decodable, Equatable {
+                let signalId: String
+                let signalLabel: String
+                let generationId: String?
+                let sourceStateVersion: String?
+
+                private enum CodingKeys: String, CodingKey {
+                    case signalId
+                    case signalLabel
+                    case generationId
+                    case generationIdSnake = "generation_id"
+                    case sourceStateVersion
+                    case sourceStateVersionSnake = "source_state_version"
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    signalId = try DailyCard.requiredString(.signalId, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                    signalLabel = try DailyCard.requiredString(.signalLabel, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                    generationId = try container.decodeIfPresent(String.self, forKey: .generationId)
+                        ?? container.decodeIfPresent(String.self, forKey: .generationIdSnake)
+                    sourceStateVersion = try container.decodeIfPresent(String.self, forKey: .sourceStateVersion)
+                        ?? container.decodeIfPresent(String.self, forKey: .sourceStateVersionSnake)
+                }
+            }
+            struct ProofLedgerMapping: Decodable, Equatable {
+                let entries: [String: String]
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.singleValueContainer()
+                    let entries = try container.decode([String: String].self)
+                    guard !entries.isEmpty else {
+                        throw DailyCard.corrupted(decoder, code: "ERR_INVALID_PROOF_MAPPING", message: "proofLedgerMapping must be non-empty")
+                    }
+                    let allowed: [String: Set<String>] = [
+                        "self_report": ["officeHoursResolution.negativeEvidenceOnly"],
+                        "self-report": ["officeHoursResolution.negativeEvidenceOnly"],
+                        "customer_screenshot": ["customerEvidence.acceptedProof"],
+                        "paymentIntent": ["firstRevenue.learningSignal"],
+                        "paymentRecord": ["firstRevenue.acceptedProof"],
+                        "first_value": ["activeUsers100.acceptedProof"],
+                        "signup": ["activeUsers100.excludedCount"],
+                        "visitor": ["activeUsers100.excludedCount"],
+                    ]
+                    for (source, destination) in entries {
+                        if source == "self_report" || source == "self-report",
+                           destination != "officeHoursResolution.negativeEvidenceOnly" {
+                            throw DailyCard.corrupted(
+                                decoder,
+                                code: "ERR_SELF_REPORT_COUNTED_AS_PROOF",
+                                message: "self-report cannot count as proof"
+                            )
+                        }
+                        guard allowed[source]?.contains(destination) == true else {
+                            throw DailyCard.corrupted(
+                                decoder,
+                                code: "ERR_INVALID_PROOF_MAPPING",
+                                message: "invalid proof mapping \(source) -> \(destination)"
+                            )
+                        }
+                    }
+                    self.entries = entries
+                }
+            }
+            struct Choice: Decodable, Equatable {
+                let id: String
+                let label: String
+
+                private enum CodingKeys: String, CodingKey {
+                    case id
+                    case label
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    id = try DailyCard.requiredString(.id, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                    label = try DailyCard.requiredString(.label, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                }
+            }
+            struct StateTransitionCard: Decodable, Equatable {
+                let commitmentId: String
+                let sourceCommitmentId: String?
+                let candidateName: String
+                let actionText: String
+                let repeatCountWithoutEvidence: Int
+                let choices: [Choice]
+                let resolutionReasons: [ResolutionReason]
+
+                private enum CodingKeys: String, CodingKey {
+                    case commitmentId
+                    case sourceCommitmentId
+                    case sourceCommitmentIdSnake = "source_commitment_id"
+                    case candidateName
+                    case actionText
+                    case repeatCountWithoutEvidence
+                    case choices
+                    case resolutionReasons
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    commitmentId = try DailyCard.requiredString(.commitmentId, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                    sourceCommitmentId = try container.decodeIfPresent(String.self, forKey: .sourceCommitmentId)
+                        ?? container.decodeIfPresent(String.self, forKey: .sourceCommitmentIdSnake)
+                    candidateName = try DailyCard.requiredString(.candidateName, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                    actionText = try DailyCard.requiredString(.actionText, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                    repeatCountWithoutEvidence = try container.decode(Int.self, forKey: .repeatCountWithoutEvidence)
+                    choices = try DailyCard.nonEmptyArray(.choices, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                    resolutionReasons = try DailyCard.nonEmptyArray(.resolutionReasons, in: container, code: "ERR_INVALID_RESOLUTION_REASON")
+                }
+            }
+            struct Workpack: Decodable, Equatable {
+                let id: String
+                let workType: String
+                let targetExternalAction: String
+                let expectedProof: String
+                let notProof: [String]
+                let owner: String
+                let deadline: String
+
+                private enum CodingKeys: String, CodingKey {
+                    case id
+                    case workType
+                    case targetExternalAction
+                    case expectedProof
+                    case notProof
+                    case owner
+                    case deadline
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    id = try DailyCard.requiredString(.id, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
+                    workType = try DailyCard.requiredString(.workType, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
+                    targetExternalAction = try DailyCard.requiredString(
+                        .targetExternalAction,
+                        in: container,
+                        code: "ERR_MALFORMED_AGENT_WORKPACK"
+                    )
+                    expectedProof = try DailyCard.requiredString(.expectedProof, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
+                    notProof = try DailyCard.nonEmptyStringArray(.notProof, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
+                    owner = try DailyCard.optionalString(.owner, in: container) ?? ""
+                    deadline = try DailyCard.optionalString(.deadline, in: container) ?? ""
+                }
+            }
+            struct AgentWorkpackCard: Decodable, Equatable {
+                let sourceCommitmentId: String?
+                let selectedLens: String
+                let workpack: Workpack
+
+                private enum CodingKeys: String, CodingKey {
+                    case sourceCommitmentId
+                    case sourceCommitmentIdSnake = "source_commitment_id"
+                    case selectedLens
+                    case workpack
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    sourceCommitmentId = try container.decodeIfPresent(String.self, forKey: .sourceCommitmentId)
+                        ?? container.decodeIfPresent(String.self, forKey: .sourceCommitmentIdSnake)
+                    selectedLens = try DailyCard.requiredString(.selectedLens, in: container, code: "ERR_MALFORMED_AGENT_WORKPACK")
+                    workpack = try container.decode(Workpack.self, forKey: .workpack)
+                }
+            }
+            struct ScoreboardEntry: Decodable, Equatable {
+                let acceptedCount: Int
+                let excludedCounts: [String: Int]?
+                let sourceState: SourceState
+                let nextUnblockAction: String
+
+                private enum CodingKeys: String, CodingKey {
+                    case acceptedCount
+                    case excludedCounts
+                    case sourceState
+                    case nextUnblockAction
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    acceptedCount = try container.decode(Int.self, forKey: .acceptedCount)
+                    guard acceptedCount >= 0 else {
+                        throw DecodingError.dataCorruptedError(
+                            forKey: .acceptedCount,
+                            in: container,
+                            debugDescription: "ERR_MISSING_SOURCE_STATE: acceptedCount must be non-negative"
+                        )
+                    }
+                    excludedCounts = try container.decodeIfPresent([String: Int].self, forKey: .excludedCounts)
+                    sourceState = try DailyCard.requiredSourceState(.sourceState, in: container)
+                    nextUnblockAction = try DailyCard.requiredString(.nextUnblockAction, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                }
+            }
+            struct ProgramScoreboards: Decodable, Equatable {
+                let activeUsers100: ScoreboardEntry
+                let firstRevenue: ScoreboardEntry
+            }
+            struct ProgramScoreboardCard: Decodable, Equatable {
+                let scoreboards: ProgramScoreboards
+            }
+            struct GateCard: Decodable, Equatable {
+                let gate: String
+                let requires: [String]
+                let satisfied: Bool
+                let blockingReasons: [String]
+                let recoveryBranch: String
+                let nextCardType: String
+
+                private enum CodingKeys: String, CodingKey {
+                    case gate
+                    case requires
+                    case satisfied
+                    case blockingReasons
+                    case recoveryBranch
+                    case nextCardType
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    gate = try DailyCard.requiredString(.gate, in: container, code: "ERR_UNKNOWN_CARD_TYPE")
+                    requires = try DailyCard.nonEmptyStringArray(.requires, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                    satisfied = try container.decode(Bool.self, forKey: .satisfied)
+                    blockingReasons = satisfied
+                        ? (try container.decodeIfPresent([String].self, forKey: .blockingReasons) ?? [])
+                        : try DailyCard.nonEmptyStringArray(.blockingReasons, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                    recoveryBranch = try DailyCard.requiredString(.recoveryBranch, in: container, code: "ERR_MISSING_SOURCE_STATE")
+                    nextCardType = try DailyCard.requiredString(.nextCardType, in: container, code: "ERR_UNKNOWN_CARD_TYPE")
+                }
+            }
+
+            let id: String?
+            let type: CardType
+            let schemaVersion: Int
+            let programDay: Int
+            let generation: Generation
+            let sourceState: SourceState
+            let sourceStateVersion: String?
+            let sourceCommitmentId: String?
+            let requiresUserAction: Bool
+            let proofLedgerMapping: ProofLedgerMapping
+            let stateTransition: StateTransitionCard?
+            let agentWorkpack: AgentWorkpackCard?
+            let scoreboard: ProgramScoreboardCard?
+            let gateCard: GateCard?
+
+            var stableID: String {
+                return [
+                    "\(programDay)",
+                    type.rawValue,
+                    logicalSourceID,
+                ].joined(separator: ":")
+            }
+
+            private var logicalSourceID: String {
+                switch type {
+                case .officeHoursStateTransition:
+                    return sourceCommitmentId
+                        ?? stateTransition?.sourceCommitmentId
+                        ?? stateTransition?.commitmentId
+                        ?? generation.signalId
+                case .officeHoursAgentWorkpack:
+                    return sourceCommitmentId
+                        ?? agentWorkpack?.sourceCommitmentId
+                        ?? generation.signalId
+                case .programScoreboardSnapshot:
+                    return generation.signalId
+                case .revenueOrActivationGate:
+                    return gateCard?.gate ?? generation.signalId
+                }
+            }
+
+            var displayOrder: Int {
+                switch type {
+                case .officeHoursStateTransition:
+                    return 0
+                case .officeHoursAgentWorkpack:
+                    return 1
+                case .programScoreboardSnapshot:
+                    return 2
+                case .revenueOrActivationGate:
+                    return 3
+                }
+            }
+
+            private enum CodingKeys: String, CodingKey {
+                case id
+                case type
+                case schemaVersion
+                case programDay
+                case generation
+                case sourceState
+                case sourceStateVersion
+                case sourceStateVersionSnake = "source_state_version"
+                case sourceCommitmentId
+                case sourceCommitmentIdSnake = "source_commitment_id"
+                case requiresUserAction
+                case proofLedgerMapping
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                let rawType = try DailyCard.requiredString(.type, in: container, code: "ERR_UNKNOWN_CARD_TYPE")
+                guard let type = CardType(rawValue: rawType) else {
+                    throw DecodingError.dataCorruptedError(
+                        forKey: .type,
+                        in: container,
+                        debugDescription: "ERR_UNKNOWN_CARD_TYPE: unknown daily card type"
+                    )
+                }
+                self.type = type
+                id = try container.decodeIfPresent(String.self, forKey: .id)
+                schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+                guard schemaVersion >= 1 else {
+                    throw DecodingError.dataCorruptedError(
+                        forKey: .schemaVersion,
+                        in: container,
+                        debugDescription: "ERR_MISSING_SOURCE_STATE: schemaVersion is required"
+                    )
+                }
+                programDay = try container.decode(Int.self, forKey: .programDay)
+                guard programDay >= 1 else {
+                    throw DecodingError.dataCorruptedError(
+                        forKey: .programDay,
+                        in: container,
+                        debugDescription: "ERR_MISSING_SOURCE_STATE: programDay is required"
+                    )
+                }
+                generation = try container.decode(Generation.self, forKey: .generation)
+                sourceState = try DailyCard.requiredSourceState(.sourceState, in: container)
+                sourceStateVersion = try container.decodeIfPresent(String.self, forKey: .sourceStateVersion)
+                    ?? container.decodeIfPresent(String.self, forKey: .sourceStateVersionSnake)
+                    ?? generation.sourceStateVersion
+                sourceCommitmentId = try container.decodeIfPresent(String.self, forKey: .sourceCommitmentId)
+                    ?? container.decodeIfPresent(String.self, forKey: .sourceCommitmentIdSnake)
+                requiresUserAction = try container.decode(Bool.self, forKey: .requiresUserAction)
+                proofLedgerMapping = try container.decode(ProofLedgerMapping.self, forKey: .proofLedgerMapping)
+
+                switch type {
+                case .officeHoursStateTransition:
+                    stateTransition = try StateTransitionCard(from: decoder)
+                    agentWorkpack = nil
+                    scoreboard = nil
+                    gateCard = nil
+                case .officeHoursAgentWorkpack:
+                    stateTransition = nil
+                    agentWorkpack = try AgentWorkpackCard(from: decoder)
+                    scoreboard = nil
+                    gateCard = nil
+                case .programScoreboardSnapshot:
+                    stateTransition = nil
+                    agentWorkpack = nil
+                    scoreboard = try ProgramScoreboardCard(from: decoder)
+                    gateCard = nil
+                case .revenueOrActivationGate:
+                    stateTransition = nil
+                    agentWorkpack = nil
+                    scoreboard = nil
+                    gateCard = try GateCard(from: decoder)
+                }
+            }
+
+            private static func requiredSourceState<K>(
+                _ key: K,
+                in container: KeyedDecodingContainer<K>
+            ) throws -> SourceState where K: CodingKey {
+                guard let value = try container.decodeIfPresent(SourceState.self, forKey: key) else {
+                    throw DecodingError.dataCorruptedError(
+                        forKey: key,
+                        in: container,
+                        debugDescription: "ERR_MISSING_SOURCE_STATE: \(key.stringValue) is required"
+                    )
+                }
+                return value
+            }
+
+            private static func requiredString<K>(
+                _ key: K,
+                in container: KeyedDecodingContainer<K>,
+                code: String
+            ) throws -> String where K: CodingKey {
+                let value = try optionalString(key, in: container)
+                guard let value, !value.isEmpty else {
+                    throw DecodingError.dataCorruptedError(
+                        forKey: key,
+                        in: container,
+                        debugDescription: "\(code): \(key.stringValue) is required"
+                    )
+                }
+                return value
+            }
+
+            private static func optionalString<K>(
+                _ key: K,
+                in container: KeyedDecodingContainer<K>
+            ) throws -> String? where K: CodingKey {
+                if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+                    return value.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+                }
+                if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+                    return String(value)
+                }
+                if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+                    return String(value)
+                }
+                if let value = try? container.decodeIfPresent(Bool.self, forKey: key) {
+                    return String(value)
+                }
+                return nil
+            }
+
+            private static func nonEmptyArray<T, K>(
+                _ key: K,
+                in container: KeyedDecodingContainer<K>,
+                code: String
+            ) throws -> [T] where T: Decodable, K: CodingKey {
+                let values = try container.decodeIfPresent([T].self, forKey: key)
+                guard let values, !values.isEmpty else {
+                    throw DecodingError.dataCorruptedError(
+                        forKey: key,
+                        in: container,
+                        debugDescription: "\(code): \(key.stringValue) must be non-empty"
+                    )
+                }
+                return values
+            }
+
+            private static func nonEmptyStringArray<K>(
+                _ key: K,
+                in container: KeyedDecodingContainer<K>,
+                code: String
+            ) throws -> [String] where K: CodingKey {
+                let values: [String] = try DailyCard.nonEmptyArray(key, in: container, code: code)
+                guard values.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+                    throw DecodingError.dataCorruptedError(
+                        forKey: key,
+                        in: container,
+                        debugDescription: "\(code): \(key.stringValue) must contain only non-empty strings"
+                    )
+                }
+                return values
+            }
+
+            private static func corrupted(_ decoder: Decoder, code: String, message: String) -> DecodingError {
+                DecodingError.dataCorrupted(DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "\(code): \(message)"
+                ))
+            }
         }
         let day: Int?
         let source: String?
@@ -13909,6 +15261,41 @@ struct SidecarEvent: Decodable {
         let evidenceSpec: EvidenceSpec?
         let gateContext: GateContext?
         let generatedAt: String?
+        let dailyCard: DailyCard?
+
+        private enum CodingKeys: String, CodingKey {
+            case type
+            case day
+            case programDay
+            case source
+            case mission
+            case evidenceSpec
+            case gateContext
+            case generatedAt
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if try container.decodeIfPresent(String.self, forKey: .type) != nil {
+                let dailyCard = try DailyCard(from: decoder)
+                self.dailyCard = dailyCard
+                day = dailyCard.programDay
+                source = try container.decodeIfPresent(String.self, forKey: .source) ?? "program_v2"
+                mission = nil
+                evidenceSpec = nil
+                gateContext = nil
+                generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt)
+                return
+            }
+            day = try container.decodeIfPresent(Int.self, forKey: .day)
+                ?? container.decodeIfPresent(Int.self, forKey: .programDay)
+            source = try container.decodeIfPresent(String.self, forKey: .source)
+            mission = try container.decodeIfPresent(Mission.self, forKey: .mission)
+            evidenceSpec = try container.decodeIfPresent(EvidenceSpec.self, forKey: .evidenceSpec)
+            gateContext = try container.decodeIfPresent(GateContext.self, forKey: .gateContext)
+            generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt)
+            dailyCard = nil
+        }
     }
     let missionCard: MissionCard?
     /// System-triggered Office Hours intervention (spec §13.1,
@@ -14058,6 +15445,7 @@ struct SidecarEvent: Decodable {
         officeHoursHistory: OfficeHoursHistorySummary? = nil,
         evidenceOS: EvidenceOSSummary? = nil,
         dayClosePolicy: OfficeHoursDayClosePolicy? = nil,
+        programNotificationSchedule: ProgramNotificationSchedule? = nil,
         needsCommitment: Bool? = nil,
         gatedStep: String? = nil,
         gateBlocked: DayGateBlocked? = nil,
@@ -14174,6 +15562,7 @@ struct SidecarEvent: Decodable {
         self.officeHoursHistory = officeHoursHistory
         self.evidenceOS = evidenceOS
         self.dayClosePolicy = dayClosePolicy
+        self.programNotificationSchedule = programNotificationSchedule
         self.needsCommitment = needsCommitment
         self.gatedStep = gatedStep
         self.gateBlocked = gateBlocked
@@ -14578,6 +15967,7 @@ extension SidecarEvent {
         case officeHoursHistory
         case evidenceOS
         case dayClosePolicy
+        case programNotificationSchedule
         case needsCommitment
         case gatedStep
         case gateBlocked
@@ -14708,10 +16098,11 @@ extension SidecarEvent {
         officeHoursHistory = Self.decodeIfPresent(OfficeHoursHistorySummary.self, from: container, forKey: .officeHoursHistory)
         evidenceOS = Self.decodeIfPresent(EvidenceOSSummary.self, from: container, forKey: .evidenceOS)
         dayClosePolicy = Self.decodeIfPresent(OfficeHoursDayClosePolicy.self, from: container, forKey: .dayClosePolicy)
+        programNotificationSchedule = Self.decodeIfPresent(ProgramNotificationSchedule.self, from: container, forKey: .programNotificationSchedule)
         needsCommitment = Self.decodeIfPresent(Bool.self, from: container, forKey: .needsCommitment)
         gatedStep = Self.decodeIfPresent(String.self, from: container, forKey: .gatedStep)
         gateBlocked = Self.decodeIfPresent(DayGateBlocked.self, from: container, forKey: .gateBlocked)
-        missionCard = Self.decodeIfPresent(MissionCard.self, from: container, forKey: .missionCard)
+        missionCard = try container.decodeIfPresent(MissionCard.self, forKey: .missionCard)
         intervention = Self.decodeIfPresent(OhInterventionRequired.self, from: container, forKey: .intervention)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)

@@ -2344,52 +2344,189 @@ struct OpenDesignStrategyMatrixLayout {
     let labelPlacement: OpenDesignStrategyLabelPlacement
 }
 
+struct OpenDesignStrategyMatrixLabelFrame {
+    let point: CGPoint
+    let size: CGSize
+
+    var rect: CGRect {
+        CGRect(
+            x: point.x - size.width / 2,
+            y: point.y - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+}
+
+struct OpenDesignStrategyMatrixChromeLayout {
+    let boardSize: CGSize
+    let plotRect: CGRect
+    let horizontalAxisY: CGFloat
+    let verticalAxisX: CGFloat
+    let topAxisLabel: OpenDesignStrategyMatrixLabelFrame
+    let bottomAxisLabel: OpenDesignStrategyMatrixLabelFrame
+    let leftAxisLabel: OpenDesignStrategyMatrixLabelFrame
+    let rightAxisLabel: OpenDesignStrategyMatrixLabelFrame
+    let topLeftQuadrantLabel: OpenDesignStrategyMatrixLabelFrame
+    let topRightQuadrantLabel: OpenDesignStrategyMatrixLabelFrame
+    let bottomLeftQuadrantLabel: OpenDesignStrategyMatrixLabelFrame
+    let bottomRightQuadrantLabel: OpenDesignStrategyMatrixLabelFrame
+}
+
+enum OpenDesignStrategyMatrixChromeLayoutPolicy {
+    static let axisLabelHeight: CGFloat = 18
+    static let quadrantLabelHeight: CGFloat = 42
+
+    static func layout(boardSize: CGSize) -> OpenDesignStrategyMatrixChromeLayout {
+        let width = max(boardSize.width, 1)
+        let height = max(boardSize.height, 1)
+        let sidePadding = clamp(width * 0.012, lower: 12, upper: 20)
+        let topBandHeight = clamp(height * 0.12, lower: 44, upper: 58)
+        let bottomBandHeight = clamp(height * 0.11, lower: 42, upper: 54)
+        let horizontalAxisLabelWidth = clamp(width * 0.24, lower: 206, upper: 290)
+        let topAxisLabelWidth = clamp(width * 0.32, lower: 250, upper: 320)
+        let bottomAxisLabelWidth = clamp(width * 0.24, lower: 200, upper: 240)
+        let horizontalInsetCandidate = horizontalAxisLabelWidth
+            + sidePadding
+            + 14
+            - OpenDesignStrategyMatrixLayoutPolicy.competitorFrameSize.width / 2
+        let horizontalPlotInset = min(
+            max(horizontalInsetCandidate, 112),
+            max(112, width * 0.30)
+        )
+        let plotRect = CGRect(
+            x: horizontalPlotInset,
+            y: topBandHeight,
+            width: max(1, width - horizontalPlotInset * 2),
+            height: max(1, height - topBandHeight - bottomBandHeight)
+        )
+        let horizontalAxisY = plotRect.midY
+        let verticalAxisX = plotRect.midX
+        let quadrantInset = clamp(plotRect.width * 0.018, lower: 14, upper: 22)
+        let quadrantLabelWidth = max(96, min(210, (plotRect.width - quadrantInset * 2 - 18) / 2))
+
+        return OpenDesignStrategyMatrixChromeLayout(
+            boardSize: CGSize(width: width, height: height),
+            plotRect: plotRect,
+            horizontalAxisY: horizontalAxisY,
+            verticalAxisX: verticalAxisX,
+            topAxisLabel: labelFrame(
+                x: verticalAxisX,
+                y: topBandHeight / 2,
+                width: topAxisLabelWidth,
+                height: axisLabelHeight
+            ),
+            bottomAxisLabel: labelFrame(
+                x: verticalAxisX,
+                y: height - bottomBandHeight / 2,
+                width: bottomAxisLabelWidth,
+                height: axisLabelHeight
+            ),
+            leftAxisLabel: labelFrame(
+                x: sidePadding + horizontalAxisLabelWidth / 2,
+                y: horizontalAxisY,
+                width: horizontalAxisLabelWidth,
+                height: axisLabelHeight
+            ),
+            rightAxisLabel: labelFrame(
+                x: width - sidePadding - horizontalAxisLabelWidth / 2,
+                y: horizontalAxisY,
+                width: horizontalAxisLabelWidth,
+                height: axisLabelHeight
+            ),
+            topLeftQuadrantLabel: labelFrame(
+                x: plotRect.minX + quadrantInset + quadrantLabelWidth / 2,
+                y: plotRect.minY + quadrantInset + quadrantLabelHeight / 2,
+                width: quadrantLabelWidth,
+                height: quadrantLabelHeight
+            ),
+            topRightQuadrantLabel: labelFrame(
+                x: plotRect.maxX - quadrantInset - quadrantLabelWidth / 2,
+                y: plotRect.minY + quadrantInset + quadrantLabelHeight / 2,
+                width: quadrantLabelWidth,
+                height: quadrantLabelHeight
+            ),
+            bottomLeftQuadrantLabel: labelFrame(
+                x: plotRect.minX + quadrantInset + quadrantLabelWidth / 2,
+                y: plotRect.maxY - quadrantInset - quadrantLabelHeight / 2,
+                width: quadrantLabelWidth,
+                height: quadrantLabelHeight
+            ),
+            bottomRightQuadrantLabel: labelFrame(
+                x: plotRect.maxX - quadrantInset - quadrantLabelWidth / 2,
+                y: plotRect.maxY - quadrantInset - quadrantLabelHeight / 2,
+                width: quadrantLabelWidth,
+                height: quadrantLabelHeight
+            )
+        )
+    }
+
+    private static func labelFrame(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -> OpenDesignStrategyMatrixLabelFrame {
+        OpenDesignStrategyMatrixLabelFrame(
+            point: CGPoint(x: x, y: y),
+            size: CGSize(width: max(1, width), height: max(1, height))
+        )
+    }
+
+    private static func clamp(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+        min(max(value, lower), max(lower, upper))
+    }
+}
+
 enum OpenDesignStrategyMatrixLayoutPolicy {
     static let competitorFrameSize = CGSize(width: 230, height: 82)
     static let edgeThreshold: CGFloat = 0.12
 
     static func layout(
-        x: CGFloat,
-        y: CGFloat,
+        plotX: CGFloat,
+        screenY: CGFloat,
         preferredLabelPlacement: OpenDesignStrategyLabelPlacement,
-        boardSize: CGSize
+        plotRect: CGRect
     ) -> OpenDesignStrategyMatrixLayout {
-        let unitX = clamp(x, lower: 0, upper: 1)
-        let unitY = clamp(y, lower: 0, upper: 1)
+        let unitX = clamp(plotX, lower: 0, upper: 1)
+        let unitY = clamp(screenY, lower: 0, upper: 1)
         return OpenDesignStrategyMatrixLayout(
-            point: safePoint(x: unitX, y: unitY, boardSize: boardSize),
+            point: safePoint(plotX: unitX, screenY: unitY, plotRect: plotRect),
             labelPlacement: edgeAwareLabelPlacement(
                 preferredLabelPlacement,
-                x: unitX,
-                y: unitY
+                plotX: unitX,
+                screenY: unitY
             )
         )
     }
 
-    private static func safePoint(x: CGFloat, y: CGFloat, boardSize: CGSize) -> CGPoint {
-        let horizontalInset = min(competitorFrameSize.width / 2, boardSize.width / 2)
-        let verticalInset = min(competitorFrameSize.height / 2, boardSize.height / 2)
+    private static func safePoint(plotX: CGFloat, screenY: CGFloat, plotRect: CGRect) -> CGPoint {
+        let horizontalInset = min(competitorFrameSize.width / 2, plotRect.width / 2)
+        let verticalInset = min(competitorFrameSize.height / 2, plotRect.height / 2)
         return CGPoint(
-            x: clamp(boardSize.width * x, lower: horizontalInset, upper: boardSize.width - horizontalInset),
-            y: clamp(boardSize.height * y, lower: verticalInset, upper: boardSize.height - verticalInset)
+            x: clamp(
+                plotRect.minX + plotRect.width * plotX,
+                lower: plotRect.minX + horizontalInset,
+                upper: plotRect.maxX - horizontalInset
+            ),
+            y: clamp(
+                plotRect.minY + plotRect.height * screenY,
+                lower: plotRect.minY + verticalInset,
+                upper: plotRect.maxY - verticalInset
+            )
         )
     }
 
     private static func edgeAwareLabelPlacement(
         _ preferred: OpenDesignStrategyLabelPlacement,
-        x: CGFloat,
-        y: CGFloat
+        plotX: CGFloat,
+        screenY: CGFloat
     ) -> OpenDesignStrategyLabelPlacement {
         var horizontalDirection = preferred.horizontalDirection
         var verticalDirection = preferred.verticalDirection
-        if x <= edgeThreshold {
+        if plotX <= edgeThreshold {
             horizontalDirection = 1
-        } else if x >= 1 - edgeThreshold {
+        } else if plotX >= 1 - edgeThreshold {
             horizontalDirection = -1
         }
-        if y <= edgeThreshold {
+        if screenY <= edgeThreshold {
             verticalDirection = 1
-        } else if y >= 1 - edgeThreshold {
+        } else if screenY >= 1 - edgeThreshold {
             verticalDirection = -1
         }
         return OpenDesignStrategyLabelPlacement.resolved(
@@ -2489,6 +2626,7 @@ struct OpenDesignStrategyCompetitor: Hashable, Identifiable {
     let gap: String
     let sourceURL: String
     let sourceLabel: String
+    let sourceDisplay: String
     let verifiedAt: String
     let scoreRationale: String
     let adaptiveScore: Int
@@ -2497,17 +2635,32 @@ struct OpenDesignStrategyCompetitor: Hashable, Identifiable {
     let isAgentic30: Bool
     let isHistorical: Bool
 
-    var x: CGFloat { CGFloat(max(0, min(100, adaptiveScore))) / 100 }
-    var y: CGFloat { 1 - CGFloat(max(0, min(100, evidenceScore))) / 100 }
+    var plotX: CGFloat { Self.normalizedScore(adaptiveScore, label: "adaptiveScore", competitorID: id) }
+    var screenY: CGFloat { 1 - Self.normalizedScore(evidenceScore, label: "evidenceScore", competitorID: id) }
 
-    var sourceDisplay: String {
-        if !sourceLabel.isEmpty {
-            return sourceLabel
+    var sourceLinkURL: URL? {
+        let raw = sourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return nil
         }
-        return sourceURL
-            .replacingOccurrences(of: "https://", with: "")
-            .replacingOccurrences(of: "http://", with: "")
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return url
+    }
+
+    var sourceLinkDisplay: String? {
+        guard let url = sourceLinkURL,
+              let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !host.isEmpty else {
+            return nil
+        }
+        return host.replacingOccurrences(of: #"^www\."#, with: "", options: .regularExpression)
+    }
+
+    var sourceLinkButtonLabel: String? {
+        guard let sourceLinkDisplay else { return nil }
+        return "근거 링크 열기 · \(sourceLinkDisplay)"
     }
 
     init(
@@ -2519,6 +2672,7 @@ struct OpenDesignStrategyCompetitor: Hashable, Identifiable {
         gap: String,
         sourceURL: String,
         sourceLabel: String,
+        sourceDisplay: String = "",
         verifiedAt: String,
         scoreRationale: String,
         adaptiveScore: Int,
@@ -2535,6 +2689,7 @@ struct OpenDesignStrategyCompetitor: Hashable, Identifiable {
         self.gap = gap
         self.sourceURL = sourceURL
         self.sourceLabel = sourceLabel
+        self.sourceDisplay = sourceDisplay
         self.verifiedAt = verifiedAt
         self.scoreRationale = scoreRationale
         self.adaptiveScore = adaptiveScore
@@ -2542,6 +2697,14 @@ struct OpenDesignStrategyCompetitor: Hashable, Identifiable {
         self.labelPlacement = labelPlacement
         self.isAgentic30 = isAgentic30
         self.isHistorical = isHistorical
+    }
+
+    private static func normalizedScore(_ score: Int, label: String, competitorID: String) -> CGFloat {
+        precondition(
+            (0...100).contains(score),
+            "OpenDesignStrategyCompetitor \(competitorID) \(label) must be 0...100; got \(score)."
+        )
+        return CGFloat(score) / 100
     }
 }
 
@@ -2803,6 +2966,7 @@ struct OpenDesignStrategyDisplayContent: Hashable {
                 gap: competitor.gap,
                 sourceURL: competitor.sourceURL,
                 sourceLabel: competitor.sourceLabel.isEmpty ? competitor.sourceDisplay : competitor.sourceLabel,
+                sourceDisplay: competitor.sourceDisplay,
                 verifiedAt: competitor.verifiedAt,
                 scoreRationale: competitor.scoreRationale,
                 adaptiveScore: competitor.adaptiveScore,
@@ -4181,7 +4345,7 @@ struct OpenDesignDayPageView: View {
     @State private var requestedDayCompletionID: String?
     @State private var keyboardMonitor: Any?
     @State private var isRightSidebarExpanded = false
-    @State private var isOfficeHoursRightSidebarExpanded = true
+    @State private var isOfficeHoursRightSidebarExpanded = false
 
     init(
         content: OpenDesignDayContent = .day1,
@@ -6180,7 +6344,17 @@ nonisolated func strategyResearchTimingLabel(
         return openDesignRefreshFailedTimingLabel(status.durationMs ?? status.elapsedMs)
     }
     guard status.state == "refreshing" || isPreparing else { return nil }
-    return openDesignRefreshRunningTimingLabel(status.elapsedMs)
+    let runningLabel = openDesignRefreshRunningTimingLabel(status.elapsedMs)
+    if let stepIndex = status.stepIndex,
+       let stepCount = status.stepCount,
+       stepIndex > 0,
+       stepCount > 0 {
+        if let runningLabel {
+            return "\(stepIndex)/\(stepCount) · \(runningLabel)"
+        }
+        return "\(stepIndex)/\(stepCount)"
+    }
+    return runningLabel
 }
 
 nonisolated func strategyReportShowsColdLoading(
@@ -6286,6 +6460,15 @@ nonisolated struct OpenDesignLoadingCardRow: Hashable, Identifiable {
         self.logLines = logLines
         self.iconID = iconID ?? id
     }
+
+    var accessibilitySummary: String {
+        var parts = [title, detail ?? openDesignLoadingStateLabel(state)]
+        parts.append(contentsOf: logLines.suffix(3))
+        return parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+    }
 }
 
 struct OpenDesignColdLoadingStateView: View {
@@ -6297,6 +6480,18 @@ struct OpenDesignColdLoadingStateView: View {
     let spinnerAccessibilityLabel: String
     var maxWidth: CGFloat = 780
     var fillsAvailableHeight: Bool = true
+
+    private var accessibilitySummary: String {
+        var parts = [title, detail]
+        if let timingLabel, !timingLabel.isEmpty {
+            parts.append(timingLabel)
+        }
+        parts.append(contentsOf: rows.map(\.accessibilitySummary))
+        return parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -6338,6 +6533,9 @@ struct OpenDesignColdLoadingStateView: View {
         .frame(maxWidth: maxWidth, alignment: .leading)
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: fillsAvailableHeight ? .infinity : nil)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilitySummary)
+        .accessibilityValue(accessibilitySummary)
         .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
@@ -6401,6 +6599,9 @@ private struct OpenDesignLoadingCardRowView: View {
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(OpenDesignDayColor.surface))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(row.accessibilitySummary)
+        .accessibilityValue(row.accessibilitySummary)
         .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
@@ -7123,44 +7324,71 @@ private struct StrategyPositioningMatrixView: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let chrome = OpenDesignStrategyMatrixChromeLayoutPolicy.layout(boardSize: proxy.size)
             ZStack {
                 StrategyMatrixBoardBackground()
 
                 Path { path in
-                    let midX = proxy.size.width * 0.5
-                    let midY = proxy.size.height * 0.5
-                    path.move(to: CGPoint(x: 0, y: midY))
-                    path.addLine(to: CGPoint(x: proxy.size.width, y: midY))
-                    path.move(to: CGPoint(x: midX, y: 0))
-                    path.addLine(to: CGPoint(x: midX, y: proxy.size.height))
+                    path.move(to: CGPoint(x: chrome.plotRect.minX, y: chrome.horizontalAxisY))
+                    path.addLine(to: CGPoint(x: chrome.plotRect.maxX, y: chrome.horizontalAxisY))
+                    path.move(to: CGPoint(x: chrome.verticalAxisX, y: chrome.plotRect.minY))
+                    path.addLine(to: CGPoint(x: chrome.verticalAxisX, y: chrome.plotRect.maxY))
                 }
                 .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
 
-                matrixAxisLabel("↑ PMF Evidence · 고객 행동 · 첫 매출", alignment: .center, width: 290, isAccent: true)
-                    .accessibilityIdentifier("strategy.matrix")
-                    .position(x: proxy.size.width * 0.5, y: 28)
-                matrixAxisLabel("Build Speed · 코드 생산 ↓", alignment: .center, width: 210, isAccent: false)
-                    .position(x: proxy.size.width * 0.5, y: proxy.size.height - 18)
-                matrixAxisLabel("← 정적 커리큘럼 · 범용 조언", alignment: .leading, width: 210, isAccent: true)
-                    .position(x: 126, y: proxy.size.height - 116)
-                matrixAxisLabel("내 프로젝트 기록 기반 Adaptive →", alignment: .trailing, width: 240, isAccent: true)
-                    .position(x: proxy.size.width - 150, y: proxy.size.height * 0.5 - 18)
+                matrixQuadrantLabel(
+                    "검증/교육",
+                    detail: "증거는 있으나 정적",
+                    identifier: "validation",
+                    isAccent: false,
+                    frame: chrome.topLeftQuadrantLabel,
+                    horizontalAlignment: .leading,
+                    textAlignment: .leading,
+                    frameAlignment: .leading
+                )
+                matrixQuadrantLabel(
+                    "AGENTIC30 WEDGE",
+                    detail: "기록 기반 PMF 루프",
+                    identifier: "agentic30",
+                    isAccent: true,
+                    frame: chrome.topRightQuadrantLabel,
+                    horizontalAlignment: .trailing,
+                    textAlignment: .trailing,
+                    frameAlignment: .trailing
+                )
+                matrixQuadrantLabel(
+                    "콘텐츠/학습",
+                    detail: "빌드·소비 중심",
+                    identifier: "content",
+                    isAccent: false,
+                    frame: chrome.bottomLeftQuadrantLabel,
+                    horizontalAlignment: .leading,
+                    textAlignment: .leading,
+                    frameAlignment: .leading
+                )
+                matrixQuadrantLabel(
+                    "AI 빌드 도구",
+                    detail: "적응은 하나 PMF 밖",
+                    identifier: "ai-build",
+                    isAccent: false,
+                    frame: chrome.bottomRightQuadrantLabel,
+                    horizontalAlignment: .trailing,
+                    textAlignment: .trailing,
+                    frameAlignment: .trailing
+                )
 
-                matrixQuadrantLabel("검증/교육", detail: "증거는 있으나 정적", identifier: "validation", isAccent: false)
-                    .position(x: 88, y: 64)
-                matrixQuadrantLabel("AGENTIC30 WEDGE", detail: "기록 기반 PMF 루프", identifier: "agentic30", isAccent: true)
-                    .position(x: proxy.size.width - 116, y: 38)
-                matrixQuadrantLabel("콘텐츠/학습", detail: "빌드·소비 중심", identifier: "content", isAccent: false)
-                    .position(x: 92, y: proxy.size.height - 78)
-                matrixQuadrantLabel("AI 빌드 도구", detail: "적응은 하나 PMF 밖", identifier: "ai-build", isAccent: false)
-                    .position(x: proxy.size.width - 100, y: proxy.size.height - 40)
+                matrixAxisLabel("↑ PMF Evidence · 고객 행동 · 첫 매출", alignment: .center, frame: chrome.topAxisLabel, isAccent: true)
+                    .accessibilityIdentifier("strategy.matrix")
+                matrixAxisLabel("Build Speed · 코드 생산 ↓", alignment: .center, frame: chrome.bottomAxisLabel, isAccent: false)
+                matrixAxisLabel("← 정적 커리큘럼 · 범용 조언", alignment: .leading, frame: chrome.leftAxisLabel, isAccent: true)
+                matrixAxisLabel("내 프로젝트 기록 기반 Adaptive →", alignment: .trailing, frame: chrome.rightAxisLabel, isAccent: true)
 
                 ForEach(competitors) { competitor in
                     let layout = OpenDesignStrategyMatrixLayoutPolicy.layout(
-                        x: competitor.x,
-                        y: competitor.y,
+                        plotX: competitor.plotX,
+                        screenY: competitor.screenY,
                         preferredLabelPlacement: competitor.labelPlacement,
-                        boardSize: proxy.size
+                        plotRect: chrome.plotRect
                     )
                     StrategyMatrixCompetitorButton(
                         competitor: competitor,
@@ -7175,23 +7403,37 @@ private struct StrategyPositioningMatrixView: View {
         .frame(height: 430)
     }
 
-    private func matrixAxisLabel(_ text: String, alignment: Alignment, width: CGFloat, isAccent: Bool) -> some View {
+    private func matrixAxisLabel(_ text: String, alignment: Alignment, frame: OpenDesignStrategyMatrixLabelFrame, isAccent: Bool) -> some View {
         Text(text)
             .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
             .foregroundStyle(isAccent ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
-            .frame(width: width, alignment: alignment)
+            .frame(width: frame.size.width, height: frame.size.height, alignment: alignment)
+            .background(OpenDesignDayColor.bgDeep.opacity(0.78))
+            .position(frame.point)
     }
 
-    private func matrixQuadrantLabel(_ title: String, detail: String, identifier: String, isAccent: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+    private func matrixQuadrantLabel(
+        _ title: String,
+        detail: String,
+        identifier: String,
+        isAccent: Bool,
+        frame: OpenDesignStrategyMatrixLabelFrame,
+        horizontalAlignment: HorizontalAlignment,
+        textAlignment: TextAlignment,
+        frameAlignment: Alignment
+    ) -> some View {
+        VStack(alignment: horizontalAlignment, spacing: 3) {
             Text(title)
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
             Text(detail)
                 .font(.system(size: 9.5, weight: .medium, design: .monospaced))
         }
+        .multilineTextAlignment(textAlignment)
         .foregroundStyle(isAccent ? OpenDesignDayColor.magenta : OpenDesignDayColor.mutedDeep)
         .padding(.horizontal, 4)
         .padding(.vertical, 2)
+        .frame(width: frame.size.width, height: frame.size.height, alignment: frameAlignment)
+        .position(frame.point)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("strategy.matrix.quadrant.\(identifier)")
     }
@@ -7272,15 +7514,18 @@ private struct StrategyMatrixDetailPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let url = URL(string: competitor.sourceURL) {
+            if let url = competitor.sourceLinkURL,
+               let label = competitor.sourceLinkButtonLabel {
                 Link(destination: url) {
-                    Label(competitor.sourceDisplay, systemImage: "arrow.up.right")
+                    Label(label, systemImage: "arrow.up.right")
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         .foregroundStyle(visuals.foreground)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .accessibilityIdentifier("strategy.matrix.sourceLink")
             }
 
             if competitor.isAgentic30 {

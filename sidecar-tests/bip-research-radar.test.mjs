@@ -111,6 +111,7 @@ test("BIP research context builds adaptive social query seeds from Day and answe
       workspaceRoot: root,
       dayNumber: 8,
       curriculumDay: { day: 8, title: "MVP를 핵심 기능 1개로 자른다", shortTitle: "MVP 범위" },
+      now: new Date("2026-05-21T01:00:00.000Z"),
     });
     const joined = context.querySeeds.join("\n");
 

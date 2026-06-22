@@ -97,6 +97,7 @@ function isDiscardableRuntimeFailureMessage(message) {
   if (content.trim() === "structured input unavailable") return true;
   if (/ran out of room in the model'?s context window/i.test(content)) return true;
   if (/thread\/resume failed: no rollout found for thread id/i.test(content)) return true;
+  if (/thread\/resume failed:[\s\S]*rollout at [^\n]+ is empty/i.test(content)) return true;
   return false;
 }
 

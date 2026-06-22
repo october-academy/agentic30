@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
+<!-- Generated: 2026-06-20 | Commit: 6f0fc7e | Branch: main -->
 
 # sidecar-tests
 

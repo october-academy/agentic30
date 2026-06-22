@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
+<!-- Generated: 2026-06-20 | Commit: 6f0fc7e | Branch: main -->
 
 # docs
 
@@ -14,7 +14,7 @@ Product, program, diagnostics, release, and operations documentation. Some files
 | First run / diagnostics | `first-run-walkthrough.md`, `diagnostics-guide.md`, `known-limitations.md` | Linked from README |
 | Release operations | `release-checklist.md`, `release-automation.md` | Signing, notarization, Sparkle, updater, automation |
 | Performance/evals | `response-time-improvement-plan.md`, `productization-benchmark.md`, `qmd-advice-setup.md` | Consumed by scripts and operator workflows |
-| Program specs | `specs/agentic30-30day-adaptive-program.md`, `specs/agentic30-office-hours-redesign-v1.md` | Cross-linked to sidecar program modules |
+| Program specs | `specs/` | Cross-linked to sidecar program modules; specs can be draft/change docs |
 | Alignment/private refs | `private/alignment/`, `october-academy/` | Treat as source/reference material, not public copy text |
 
 ## CONVENTIONS
@@ -22,10 +22,11 @@ Product, program, diagnostics, release, and operations documentation. Some files
 - `/office-hours-docs` should update the four product source docs instead of ad hoc manual edits.
 - Schema-breaking heading changes must update sidecar prompt builders and run sidecar tests.
 - README links to operational docs; keep relative links live.
+- Private alignment docs are source/reference material for operators; do not quote them into public docs by default.
 
 ## ANTI-PATTERNS
 - Do not rewrite `ICP.md`, `GOAL.md`, `VALUES.md`, or `SPEC.md` without considering `sidecar/office-hours-docs-prompt.mjs` and `sidecar/foundation-summary/`.
-- Do not copy private/alignment content into public-facing docs casually.
+- Do not copy `private/alignment/` content into public-facing docs casually.
 - Do not commit generated eval artifacts, screenshots, or local `.DS_Store` churn.
 
 ## TESTS

@@ -364,6 +364,24 @@ function buildSmokeChecks({ scenario, observed, events, eventTypeSet }) {
       checks.gate_substitution_recorded = Array.isArray(observed.gateSubstitutions)
         && observed.gateSubstitutions.some((row) => row.day === 8);
       break;
+    case "v2-stale-resolution-to-workpack": {
+      const programV2 = observed.programV2 && typeof observed.programV2 === "object" && !Array.isArray(observed.programV2)
+        ? observed.programV2
+        : null;
+      const cardOrder = Array.isArray(programV2?.cardOrder) ? programV2.cardOrder : [];
+      const transitionIndex = cardOrder.indexOf("office_hours_state_transition");
+      const workpackIndex = cardOrder.indexOf("office_hours_agent_workpack");
+      checks.program_v2_observed = Boolean(programV2);
+      checks.program_v2_card_order_valid = transitionIndex >= 0 && workpackIndex > transitionIndex;
+      checks.program_v2_same_debt_not_revived = programV2?.sameDebtRevived === false;
+      checks.program_v2_scoreboards_separate = programV2?.scoreboardsSeparateAcceptedExcluded === true;
+      checks.program_v2_gate_recovery_branch = String(programV2?.gateRecoveryBranch || "").trim().length > 0;
+      checks.program_v2_replacement_workpack_source = String(programV2?.replacementWorkpackSourceCommitmentId || "").trim().length > 0
+        && programV2?.replacementWorkpackSourceCommitmentId === programV2?.submitResult?.replacementCommitmentId;
+      checks.program_v2_replacement_workpack_action = String(programV2?.replacementWorkpackTargetExternalAction || "").trim().length > 0;
+      checks.program_v2_replacement_workpack_proof_viable = programV2?.replacementWorkpackProofAccepted === true;
+      break;
+    }
     default:
       checks.assistant_output_observed = hasAssistantOutput(observed);
       break;

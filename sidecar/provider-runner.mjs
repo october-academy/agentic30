@@ -1319,6 +1319,9 @@ export function isCodexRecoverableThreadResumeError(error) {
     isCodexContextOverflowError(error)
     || message.includes("thread/resume failed: no rollout found")
     || message.includes("no rollout found for thread id")
+    || (message.includes("thread/resume failed")
+      && message.includes("rollout at")
+      && message.includes(" is empty"))
   );
 }
 

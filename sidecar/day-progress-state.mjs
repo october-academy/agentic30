@@ -199,6 +199,37 @@ export function computeDayNumber({ challengeStartedAt, now = new Date() } = {}) 
   return diffDays >= 0 ? diffDays + 1 : 1;
 }
 
+export function resolveOfficeHoursWorkedDay({ progress, now = new Date() } = {}) {
+  const calendarDay = computeDayNumber({ challengeStartedAt: progress?.challengeStartedAt, now });
+  const days = progress?.days && typeof progress.days === "object" && !Array.isArray(progress.days)
+    ? Object.values(progress.days)
+    : [];
+  const recordedOfficeHoursDays = days
+    .filter((record) => record && typeof record === "object")
+    .map((record) => ({
+      day: normalizeDayInt(record.day),
+      status: record.steps?.[officeHoursStepIdForDay(record.day)],
+    }))
+    .filter((record) => record.day)
+    .sort((a, b) => a.day - b.day);
+
+  if (recordedOfficeHoursDays.length === 0) {
+    return { calendarDay, workedDay: 1, reason: "no_records" };
+  }
+
+  const firstIncomplete = recordedOfficeHoursDays.find((record) => record.status !== "done");
+  if (firstIncomplete) {
+    return { calendarDay, workedDay: firstIncomplete.day, reason: "recorded_incomplete" };
+  }
+
+  const maxRecordedDoneDay = recordedOfficeHoursDays.at(-1).day;
+  return {
+    calendarDay,
+    workedDay: Math.min(maxRecordedDoneDay + 1, MAX_DAY),
+    reason: "recorded_done",
+  };
+}
+
 export function normalizeDayProgress(value = {}, { now = new Date() } = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return makeDefaultDayProgress();
@@ -274,6 +305,10 @@ function normalizeDayInt(value) {
   const num = Number.parseInt(value, 10);
   if (!Number.isFinite(num) || num < 1 || num > MAX_DAY) return null;
   return num;
+}
+
+function officeHoursStepIdForDay(day) {
+  return Number(day) === 1 ? "first_interview" : "interview";
 }
 
 function localDateKey(date) {

@@ -1196,7 +1196,8 @@ struct SettingsView: View {
     }
 
     private func exaMcpControls() -> some View {
-        let actionLocked = viewModel.integrationStatusChecking || viewModel.exaMcpConnecting || !viewModel.isConnected
+        let refreshLocked = viewModel.integrationStatusChecking || viewModel.exaMcpConnecting || !viewModel.isConnected
+        let connectLocked = viewModel.exaMcpConnecting
         let caption = exaMcpCaption
         let isConnected = exaMcpIsConnected
         return VStack(alignment: .trailing, spacing: 6) {
@@ -1206,27 +1207,24 @@ struct SettingsView: View {
                     color: exaMcpStatusColor,
                     isLoading: viewModel.integrationStatusChecking || viewModel.exaMcpConnecting
                 )
-                if isConnected {
-                    odSettingsGhostButton(
-                        title: "상태 확인",
-                        systemImage: "arrow.clockwise",
-                        width: 88,
-                        identifier: "settings.exa.refreshStatusButton",
-                        isDisabled: actionLocked
-                    ) {
-                        viewModel.refreshIntegrationStatus()
-                    }
-                } else {
-                    odSettingsGhostButton(
-                        title: "MCP 연결",
-                        systemImage: "link",
-                        width: 96,
-                        identifier: "settings.exa.mcpConnectButton",
-                        isDisabled: actionLocked,
-                        isLoading: viewModel.exaMcpConnecting
-                    ) {
-                        presentExaMcpModal()
-                    }
+                odSettingsGhostButton(
+                    title: "상태 확인",
+                    systemImage: "arrow.clockwise",
+                    width: 88,
+                    identifier: "settings.exa.refreshStatusButton",
+                    isDisabled: refreshLocked
+                ) {
+                    viewModel.refreshIntegrationStatus()
+                }
+                odSettingsGhostButton(
+                    title: isConnected ? "키 교체" : "MCP 연결",
+                    systemImage: "link",
+                    width: 96,
+                    identifier: "settings.exa.mcpConnectButton",
+                    isDisabled: connectLocked,
+                    isLoading: viewModel.exaMcpConnecting
+                ) {
+                    presentExaMcpModal()
                 }
             }
 
@@ -1274,15 +1272,20 @@ struct SettingsView: View {
                     .foregroundStyle(settingsAccentColor)
             }
 
-            SecureField("Exa API Key", text: $exaMcpApiKeyDraft)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .regular, design: .monospaced))
-                .foregroundStyle(settingsText)
-                .padding(.horizontal, 12)
-                .frame(height: 36)
-                .background(fieldBackground)
-                .disabled(viewModel.exaMcpConnecting)
-                .accessibilityIdentifier("settings.exa.apiKeyField")
+            VStack(spacing: 0) {
+                SecureField("Exa API Key", text: $exaMcpApiKeyDraft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, weight: .regular, design: .monospaced))
+                    .foregroundStyle(settingsText)
+                    .padding(.horizontal, 12)
+                    .frame(height: 36)
+                    .background(fieldBackground)
+                    .disabled(viewModel.exaMcpConnecting)
+                    .accessibilityLabel("Exa API Key")
+                    .accessibilityIdentifier("settings.exa.apiKeySecureField")
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("settings.exa.apiKeyField")
 
             if !exaMcpModalMessage.isEmpty || viewModel.exaMcpConnecting {
                 HStack(spacing: 8) {

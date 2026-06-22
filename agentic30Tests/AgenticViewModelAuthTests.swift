@@ -2935,6 +2935,99 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.officeHoursLiveStatus(for: session.id) == nil)
     }
 
+    @Test @MainActor func officeHoursCodexWarmupStartsForActiveSessionAndDedupesContext() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        let prompt = StructuredPromptRequest(
+            requestId: "request-1",
+            sessionId: "office-hours-session",
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: Date(),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "office_hours_demand_evidence",
+                    header: "수요 증거",
+                    question: "가장 강한 증거는 무엇인가요?",
+                    helperText: nil,
+                    options: nil,
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: nil,
+                    textMode: .short
+                ),
+            ],
+            generation: StructuredPromptGeneration(mode: "office_hours", docType: "day1_step")
+        )
+        var session = ChatSession(
+            id: "office-hours-session",
+            title: "Office Hours",
+            provider: .codex,
+            model: AgentModelCatalog.defaultModelID(for: .codex),
+            status: .running,
+            createdAt: Date(),
+            updatedAt: Date(),
+            error: nil,
+            messages: [],
+            pendingUserInput: nil,
+            runtime: ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: nil,
+                iddMode: nil,
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "office_hours_screen",
+                    startedAt: "2026-06-03T00:00:00.000Z",
+                    context: "context v1",
+                    day: 1
+                )
+            )
+        )
+        sidecar.resetSentPayloads()
+
+        viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
+        let firstWarmPayloads = sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }
+        try #require(firstWarmPayloads.count == 1)
+        #expect(firstWarmPayloads[0]["sessionId"] as? String == session.id)
+        #expect(firstWarmPayloads[0]["purpose"] as? String == "office_hours_question")
+        #expect(firstWarmPayloads[0]["context"] as? String == "context v1")
+        #expect(firstWarmPayloads[0]["day"] as? Int == 1)
+        #expect(firstWarmPayloads[0]["source"] as? String == "office_hours_screen")
+
+        session.status = .awaitingInput
+        session.pendingUserInput = prompt
+        viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
+        #expect(sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }.count == 1)
+
+        viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
+        viewModel.applySidecarEventForTesting(try sidecar.decodeEvent("""
+        {
+          "type": "office_hours_status",
+          "sessionId": "\(session.id)",
+          "requestId": "\(prompt.requestId)",
+          "stage": "question_ready",
+          "title": "질문 준비 완료"
+        }
+        """))
+        #expect(sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }.count == 1)
+
+        session.runtime?.officeHours?.context = "context v2"
+        viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
+        let allWarmPayloads = sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }
+        try #require(allWarmPayloads.count == 2)
+        #expect(allWarmPayloads[1]["context"] as? String == "context v2")
+    }
+
     @Test @MainActor func missionBeforeSessionQueuesStartupAction() throws {
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-startup-mission-\(UUID().uuidString)", isDirectory: true)
@@ -3364,5 +3457,19 @@ final class AgenticViewModelAuthTests {
         sidecar.resetSentPayloads()
         #expect(viewModel.workspaceRoot == workspace.path)
         return viewModel
+    }
+
+    private static func sessionUpdatedEvent(
+        for session: ChatSession,
+        sidecar: FakeSidecarTransport
+    ) throws -> SidecarEvent {
+        let data = try JSONEncoder().encode(session)
+        let json = try #require(String(data: data, encoding: .utf8))
+        return try sidecar.decodeEvent("""
+        {
+          "type": "session_updated",
+          "session": \(json)
+        }
+        """)
     }
 }

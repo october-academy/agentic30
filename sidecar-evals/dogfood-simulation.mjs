@@ -104,6 +104,9 @@ async function runScenarioInIsolatedSidecar({
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_CODEX_MODEL: process.env.AGENTIC30_CODEX_MODEL || "gpt-5.4-mini",
+      ...(scenario.id === "v2-stale-resolution-to-workpack"
+        ? { AGENTIC30_ENABLE_PROGRAM_V2: "1" }
+        : {}),
       ...(mode === "stub"
         ? {
             AGENTIC30_TEST_STUB_PROVIDER: "1",
@@ -242,6 +245,8 @@ async function runScenario({ ws, events, sessionId, scenario, transcript, starte
       return missionCompletionScenario({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset });
     case "gate-blocked-day-entry":
       return gateBlockedDayEntryScenario({ ws, events, scenario, transcript, startedAt, eventOffset, workspaceRoot });
+    case "v2-stale-resolution-to-workpack":
+      return programV2StaleResolutionScenario({ ws, events, scenario, transcript, startedAt, eventOffset, workspaceRoot });
     default:
       return sendPromptScenario({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset });
   }
@@ -600,6 +605,145 @@ async function missionCompletionScenario({ ws, events, sessionId, scenario, tran
   };
 }
 
+async function programV2StaleResolutionScenario({ ws, events, scenario, transcript, startedAt, eventOffset, workspaceRoot }) {
+  ws.send(JSON.stringify({
+    type: "day_progress_patch",
+    workspaceRoot,
+    day: 3,
+    stepId: "execution",
+    status: "active",
+  }));
+  await waitForEventAfter(events, eventOffset, (event) =>
+    event.type === "mission_card"
+      && event.workspaceRoot === workspaceRoot
+      && event.missionCard?.type === "revenue_or_activation_gate"
+  , 30_000);
+
+  const initialCards = programV2CardsAfter(events, eventOffset, workspaceRoot);
+  const stateCard = initialCards.find((card) => card.type === "office_hours_state_transition");
+  const workpackCard = initialCards.find((card) => card.type === "office_hours_agent_workpack");
+  const scoreboardCard = initialCards.find((card) => card.type === "program_scoreboard_snapshot");
+  const gateCard = initialCards.find((card) => card.type === "revenue_or_activation_gate");
+  if (!stateCard || !workpackCard || !scoreboardCard || !gateCard) {
+    throw new Error(`Program v2 scenario expected all daily cards, saw: ${initialCards.map((card) => card.type).join(", ")}`);
+  }
+
+  const submitOffset = events.length;
+  const replacementCandidate = {
+    text: "Candidate B에게 paid pilot 요청",
+    customer: "Candidate B",
+    channel: "email",
+    message: "Ask Candidate B for a paid pilot by tomorrow",
+    expectedEvidenceKind: "url",
+    dueDay: 4,
+    confirmedByUser: true,
+    candidateName: "Candidate B",
+    actionKind: "paid_ask",
+    actionText: "Ask Candidate B for a paid pilot by tomorrow",
+  };
+  ws.send(JSON.stringify({
+    type: "office_hours_daily_card_submit",
+    workspaceRoot,
+    cardId: stateCard.id,
+    cardGenerationId: stateCard.generation?.generationId,
+    sourceStateVersion: stateCard.sourceStateVersion,
+    cardType: stateCard.type,
+    sourceCommitmentId: stateCard.sourceCommitmentId,
+    action: "replace_candidate",
+    choiceId: "replace_candidate",
+    resolutionReason: "replaced_by_next_candidate",
+    replacementCandidate,
+    note: "Candidate A did not respond after repeated asks; replace with Candidate B.",
+    originText: "Candidate A는 반복 요청에도 응답이 없어 Candidate B로 바꾼다.",
+    day: 3,
+  }));
+  const submitResult = await waitForEventAfter(events, submitOffset, (event) =>
+    event.type === "office_hours_daily_card_submit_result"
+      && event.workspaceRoot === workspaceRoot
+      && event.cardId === stateCard.id
+  , 30_000);
+  await waitForEventAfter(events, submitOffset, (event) =>
+    event.type === "mission_card"
+      && event.workspaceRoot === workspaceRoot
+      && event.missionCard?.type === "revenue_or_activation_gate"
+  , 30_000);
+  const afterSubmitCards = programV2CardsAfter(events, submitOffset, workspaceRoot);
+  const afterSubmitWorkpack = afterSubmitCards.find((card) => card.type === "office_hours_agent_workpack");
+  const proofOffset = events.length;
+  let proofSubmitResult = null;
+  if (afterSubmitWorkpack?.sourceCommitmentId) {
+    ws.send(JSON.stringify({
+      type: "office_hours_daily_card_submit",
+      workspaceRoot,
+      cardId: afterSubmitWorkpack.id,
+      cardGenerationId: afterSubmitWorkpack.generation?.generationId,
+      sourceStateVersion: afterSubmitWorkpack.sourceStateVersion,
+      cardType: afterSubmitWorkpack.type,
+      sourceCommitmentId: afterSubmitWorkpack.sourceCommitmentId,
+      action: "attach_evidence",
+      choiceId: "attach_evidence",
+      evidenceRefs: [
+        {
+          kind: "url",
+          url: "https://example.com/candidate-b-paid-pilot-proof",
+          note: "Candidate B paid-pilot proof attached for dogfood viability.",
+        },
+      ],
+      day: 3,
+    }));
+    proofSubmitResult = await waitForEventAfter(events, proofOffset, (event) =>
+      event.type === "office_hours_daily_card_submit_result"
+        && event.workspaceRoot === workspaceRoot
+        && event.cardId === afterSubmitWorkpack.id
+    , 30_000).catch(() => null);
+  }
+  const sameDebtRevived = afterSubmitCards.some((card) =>
+    card.type === "office_hours_state_transition"
+      && (
+        card.sourceCommitmentId === stateCard.sourceCommitmentId
+        || card.actionText === stateCard.actionText
+        || card.candidateName === stateCard.candidateName
+      )
+  );
+  const programV2 = {
+    cardOrder: initialCards.map((card) => card.type),
+    sameDebtRevived,
+    scoreboardsSeparateAcceptedExcluded: scoreboardsSeparateAcceptedExcluded(scoreboardCard),
+    gateRecoveryBranch: String(gateCard.recoveryBranch || ""),
+    gateSourceState: String(gateCard.sourceState || ""),
+    replacementWorkpackSourceCommitmentId: String(afterSubmitWorkpack?.sourceCommitmentId || ""),
+    replacementWorkpackTargetExternalAction: String(afterSubmitWorkpack?.workpack?.targetExternalAction || ""),
+    replacementWorkpackProofAccepted: proofSubmitResult?.success === true
+      && proofSubmitResult?.commitmentId === submitResult.replacementCommitmentId,
+    submitResult: {
+      success: submitResult.success === true,
+      action: submitResult.action || "",
+      commitmentId: submitResult.commitmentId || "",
+      replacementCommitmentId: submitResult.replacementCommitmentId || "",
+    },
+    afterSubmitCardOrder: afterSubmitCards.map((card) => card.type),
+  };
+  transcript.push(
+    `USER: ${scenario.prompt}`,
+    `SYSTEM: initial v2 cards: ${programV2.cardOrder.join(" -> ")}`,
+    `SYSTEM: submitted ${programV2.submitResult.action} for ${programV2.submitResult.commitmentId}; replacement=${programV2.submitResult.replacementCommitmentId}`,
+    `SYSTEM: after submit cards: ${programV2.afterSubmitCardOrder.join(" -> ")}`,
+    `SYSTEM: replacement workpack source=${programV2.replacementWorkpackSourceCommitmentId || "(missing)"} action=${programV2.replacementWorkpackTargetExternalAction || "(missing)"} proofAccepted=${programV2.replacementWorkpackProofAccepted}`,
+  );
+  return {
+    latency_ms: elapsedLatency(startedAt),
+    observed: {
+      assistantMessages: [],
+      systemOutcomes: [
+        "Program v2 daily cards emitted",
+        "Office Hours stale commitment submitted with replacement candidate",
+        "Program v2 daily cards re-emitted after stale resolution",
+      ],
+      programV2,
+    },
+  };
+}
+
 async function createWorkspaceFixture(referenceDocs, scenario = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-dogfood-workspace-"));
   await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
@@ -651,7 +795,139 @@ async function createWorkspaceFixture(referenceDocs, scenario = {}) {
       ].join("\n"),
     );
   }
+  if (scenario.id === "v2-stale-resolution-to-workpack") {
+    await seedProgramV2DogfoodSurface(root);
+  }
   return root;
+}
+
+async function seedProgramV2DogfoodSurface(workspaceRoot) {
+  const agenticRoot = path.join(workspaceRoot, ".agentic30");
+  const memoryRoot = path.join(agenticRoot, "memory");
+  const metricsRoot = path.join(agenticRoot, "metrics");
+  await fs.mkdir(memoryRoot, { recursive: true });
+  await fs.mkdir(metricsRoot, { recursive: true });
+  const createdAt = "2026-06-15T00:00:00.000Z";
+  const updatedAt = "2026-06-16T00:00:00.000Z";
+  const baseCommitment = {
+    text: "Candidate A에게 paid pilot 요청",
+    status: "open",
+    evidence: null,
+    origin: "user",
+    customer: "Candidate A",
+    channel: "email",
+    message: "Ask for a paid pilot by Friday",
+    expectedEvidenceKind: "url",
+    dueDay: 4,
+    confirmedByUser: true,
+    candidateName: "Candidate A",
+    actionKind: "paid_ask",
+    actionText: "Ask for a paid pilot by Friday",
+    repeatCountWithoutEvidence: 0,
+    resolution: null,
+  };
+  await fs.writeFile(path.join(memoryRoot, "office-hours-ledger.json"), JSON.stringify({
+    schemaVersion: 4,
+    schema: "agentic30.office_hours_memory.v1",
+    updatedAt,
+    compiledTruth: {
+      text: "Candidate A paid pilot ask repeated without hard evidence.",
+      openThreads: ["Candidate A에게 paid pilot 요청"],
+      updatedAt,
+      previous: null,
+    },
+    timeline: [],
+    cycles: [
+      { cycle: 2, day: 2, date: createdAt, step: "interview", outcome: "success", lastAssignment: "Candidate A에게 paid pilot 요청", note: "" },
+      { cycle: 3, day: 3, date: updatedAt, step: "interview", outcome: "success", lastAssignment: "Candidate A에게 paid pilot 요청", note: "" },
+    ],
+    commitments: [
+      {
+        ...baseCommitment,
+        id: "cm-dogfood-candidate-a-day2",
+        cycle: 2,
+        createdDay: 2,
+        createdAt,
+      },
+      {
+        ...baseCommitment,
+        id: "cm-dogfood-candidate-a-day3",
+        cycle: 3,
+        createdDay: 3,
+        createdAt: updatedAt,
+      },
+    ],
+    predictions: [],
+    entities: [],
+  }, null, 2) + "\n");
+  await fs.writeFile(path.join(metricsRoot, "active-users.json"), JSON.stringify({
+    schemaVersion: 1,
+    schema_version: 1,
+    schema: "agentic30.active_users.v1",
+    createdAt,
+    created_at: createdAt,
+    updatedAt,
+    updated_at: updatedAt,
+    snapshots: [
+      {
+        at: updatedAt,
+        day: 3,
+        activeUserCount: 2,
+        active_user_count: 2,
+        firstValueEventName: "first_value",
+        first_value_event_name: "first_value",
+        source: "posthog_hogql",
+        queryFingerprint: "dogfood-first-value",
+        query_fingerprint: "dogfood-first-value",
+      },
+    ],
+  }, null, 2) + "\n");
+  await fs.writeFile(path.join(agenticRoot, "proof-ledger.json"), JSON.stringify({
+    schemaVersion: 2,
+    schema_version: 2,
+    schema: "agentic30.proof_ledger.v2",
+    createdAt,
+    created_at: createdAt,
+    updatedAt,
+    updated_at: updatedAt,
+    events: [
+      {
+        id: "proof-dogfood-payment-intent",
+        type: "payment_intent",
+        status: "accepted",
+        strength: "strong",
+        day: 3,
+        createdAt,
+        title: "Paid ask sent",
+        summary: "Candidate A received the paid pilot ask.",
+        sourceUrl: "https://example.com/dogfood-paid-ask",
+      },
+      {
+        id: "proof-dogfood-payment-record",
+        type: "payment_record",
+        status: "accepted",
+        strength: "strong",
+        day: 3,
+        createdAt: updatedAt,
+        title: "Payment recorded",
+        summary: "A presale payment record exists.",
+        amount: 100,
+        currency: "USD",
+        sourceUrl: "https://example.com/dogfood-payment-record",
+      },
+      {
+        id: "proof-dogfood-rejected-payment-record",
+        type: "payment_record",
+        status: "rejected",
+        strength: "weak",
+        day: 3,
+        createdAt: updatedAt,
+        title: "Rejected payment record",
+        summary: "A screenshot was rejected as insufficient payment proof.",
+        sourceUrl: "https://example.com/dogfood-rejected-payment-record",
+      },
+    ],
+  }, null, 2) + "\n");
 }
 
 async function writeBipConfig({ workspaceRoot, appSupportPath, scenario = {} }) {
@@ -1269,6 +1545,7 @@ function finalizeObserved({ scenario = {}, observed = {}, events, latency }) {
     gateBlocked: observed.gateBlocked,
     gateMessage: observed.gateMessage,
     gateSubstitutions: observed.gateSubstitutions,
+    programV2: observed.programV2,
     error: observed.error,
     visible_outputs: {
       assistant_messages: assistantMessages,
@@ -1285,6 +1562,29 @@ function finalizeObserved({ scenario = {}, observed = {}, events, latency }) {
     },
     latency_ms: latencyMs,
   };
+}
+
+function programV2CardsAfter(events, offset, workspaceRoot) {
+  return events.slice(offset)
+    .filter((event) =>
+      event.type === "mission_card"
+        && event.workspaceRoot === workspaceRoot
+        && event.missionCard?.type
+    )
+    .map((event) => event.missionCard);
+}
+
+function scoreboardsSeparateAcceptedExcluded(scoreboardCard = {}) {
+  const scoreboards = scoreboardCard.scoreboards || {};
+  const activeUsers = scoreboards.activeUsers100 || {};
+  const firstRevenue = scoreboards.firstRevenue || {};
+  const revenueExcluded = firstRevenue.excludedCounts || firstRevenue.excluded_counts || {};
+  return Number.isInteger(activeUsers.acceptedCount)
+    && activeUsers.excludedCounts && typeof activeUsers.excludedCounts === "object" && !Array.isArray(activeUsers.excludedCounts)
+    && Number.isInteger(firstRevenue.acceptedCount)
+    && revenueExcluded && typeof revenueExcluded === "object" && !Array.isArray(revenueExcluded)
+    && Number(revenueExcluded.rejectedPaymentRecord ?? revenueExcluded.rejected_payment_record ?? 0) > 0
+    && firstRevenue.acceptedCount > 0;
 }
 
 function normalizeScenarioLatency(latency = {}) {

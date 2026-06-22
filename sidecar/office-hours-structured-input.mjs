@@ -96,6 +96,32 @@ const ACTIVE_USER_DEFINITION_OPTIONS = Object.freeze([
     failureMode: "관심 표현이나 미완료 상담은 제외합니다.",
   }),
 ]);
+const DAILY_CARD_SUBMISSION_CHOICES = new Set([
+  "attach_evidence",
+  "resolve_without_evidence",
+  "replace_candidate",
+  "keep_open_today",
+]);
+const DAILY_CARD_RESOLUTION_REASONS = new Set([
+  "not_sent",
+  "message_not_ready",
+  "channel_blocked",
+  "wrong_candidate",
+  "candidate_exhausted",
+  "replaced_by_next_candidate",
+]);
+const NON_PROOF_SOURCES = new Set([
+  "self_report",
+  "self-report",
+  "ai_output",
+  "ai-output",
+  "agent_workpack",
+  "workpack",
+  "workpack_completion",
+  "draft",
+  "code_snippet",
+  "demo",
+]);
 const KNOWN_OFFICE_HOURS_INTENTS = new Set([
   "demand",
   "stage",
@@ -107,6 +133,14 @@ const KNOWN_OFFICE_HOURS_INTENTS = new Set([
   "future_fit",
   "get_users_active_user_definition",
 ]);
+
+export class OfficeHoursDailyCardSubmissionError extends Error {
+  constructor(code, message) {
+    super(`${code}: ${message}`);
+    this.name = "OfficeHoursDailyCardSubmissionError";
+    this.code = code;
+  }
+}
 
 // Single source of truth for HOW each provider asks an Office Hours forcing
 // question. The asking mechanism differs by provider capability, but all three
@@ -208,6 +242,30 @@ export function prepareOfficeHoursStructuredInputRequest(request = {}) {
   return withPresentation;
 }
 
+export function prepareOfficeHoursDailyCardSubmission(submission = {}) {
+  if (!isPlainObject(submission)) {
+    failDailyCardSubmission("ERR_MALFORMED_DAILY_CARD_SUBMISSION", "submission must be an object");
+  }
+  requireDailyCardString(submission.commitmentId, "commitmentId");
+  const choice = String(submission.choice || "").trim();
+  if (!DAILY_CARD_SUBMISSION_CHOICES.has(choice)) {
+    failDailyCardSubmission("ERR_MALFORMED_DAILY_CARD_SUBMISSION", `unknown daily-card submission choice: ${choice}`);
+  }
+
+  switch (choice) {
+    case "attach_evidence":
+      return prepareAttachEvidenceSubmission(submission);
+    case "resolve_without_evidence":
+      return prepareResolveWithoutEvidenceSubmission(submission);
+    case "replace_candidate":
+      return prepareReplaceCandidateSubmission(submission);
+    case "keep_open_today":
+      return prepareKeepOpenTodaySubmission(submission);
+    default:
+      failDailyCardSubmission("ERR_MALFORMED_DAILY_CARD_SUBMISSION", `unknown daily-card submission choice: ${choice}`);
+  }
+}
+
 function isLikelyOfficeHoursStructuredInputRequest(request = {}) {
   if (!request || typeof request !== "object") return false;
   if (isOfficeHoursStructuredInputMode(request.generation?.mode)) return true;
@@ -281,6 +339,175 @@ function officeHoursStructuredInputContractError(detail) {
   const error = new Error(`Office Hours structured input contract violation: ${detail}.`);
   error.code = "ERR_OFFICE_HOURS_STRUCTURED_INPUT_CONTRACT";
   return error;
+}
+
+function prepareAttachEvidenceSubmission(submission) {
+  const evidence = submission.evidence;
+  if (!isPlainObject(evidence)) {
+    failDailyCardSubmission("ERR_ATTACH_EVIDENCE_MISSING_REFERENCE", "attach_evidence requires evidence object");
+  }
+  const source = requireDailyCardString(evidence.source || evidence.kind || evidence.evidenceKind, "evidence.source");
+  assertAcceptedEvidenceSource(source, evidence.countsAsCustomerEvidence);
+  const reference = requireDailyCardString(
+    evidence.reference || evidence.url || evidence.filePath || evidence.providerRecordId,
+    "evidence.reference",
+    "ERR_ATTACH_EVIDENCE_MISSING_REFERENCE",
+  );
+  return cloneJson({
+    commitmentId: String(submission.commitmentId).trim(),
+    choice: "attach_evidence",
+    evidence: {
+      ...evidence,
+      source,
+      reference,
+      countsAsCustomerEvidence: evidence.countsAsCustomerEvidence !== false,
+    },
+  });
+}
+
+function prepareResolveWithoutEvidenceSubmission(submission) {
+  const resolution = normalizeDailyCardResolution(submission.resolution, {
+    requiredReason: "",
+    requireNote: true,
+  });
+  return cloneJson({
+    commitmentId: String(submission.commitmentId).trim(),
+    choice: "resolve_without_evidence",
+    resolution,
+  });
+}
+
+function prepareReplaceCandidateSubmission(submission) {
+  const resolution = normalizeDailyCardResolution(submission.resolution, {
+    requiredReason: "replaced_by_next_candidate",
+    requireNote: true,
+  });
+  const nextCommitment = submission.nextCommitment;
+  if (!isPlainObject(nextCommitment)) {
+    failDailyCardSubmission(
+      "ERR_REPLACE_CANDIDATE_MISSING_NEXT_COMMITMENT",
+      "replace_candidate requires nextCommitment object",
+    );
+  }
+  const normalizedNextCommitment = {
+    candidateName: requireDailyCardString(
+      nextCommitment.candidateName,
+      "nextCommitment.candidateName",
+      "ERR_REPLACE_CANDIDATE_MISSING_NEXT_COMMITMENT",
+    ),
+    actionKind: requireDailyCardString(
+      nextCommitment.actionKind,
+      "nextCommitment.actionKind",
+      "ERR_REPLACE_CANDIDATE_MISSING_NEXT_COMMITMENT",
+    ),
+    actionText: requireDailyCardString(
+      nextCommitment.actionText,
+      "nextCommitment.actionText",
+      "ERR_REPLACE_CANDIDATE_MISSING_NEXT_COMMITMENT",
+    ),
+    expectedEvidenceKind: requireDailyCardString(
+      nextCommitment.expectedEvidenceKind,
+      "nextCommitment.expectedEvidenceKind",
+      "ERR_REPLACE_CANDIDATE_MISSING_NEXT_COMMITMENT",
+    ),
+  };
+  return cloneJson({
+    commitmentId: String(submission.commitmentId).trim(),
+    choice: "replace_candidate",
+    resolution,
+    nextCommitment: normalizedNextCommitment,
+  });
+}
+
+function prepareKeepOpenTodaySubmission(submission) {
+  const resolution = normalizeDailyCardResolution(submission.resolution, {
+    requiredReason: "",
+    requireNote: true,
+  });
+  return cloneJson({
+    commitmentId: String(submission.commitmentId).trim(),
+    choice: "keep_open_today",
+    resolution,
+  });
+}
+
+function normalizeDailyCardResolution(resolution, { requiredReason = "", requireNote = false } = {}) {
+  if (!isPlainObject(resolution)) {
+    failDailyCardSubmission("ERR_MALFORMED_DAILY_CARD_SUBMISSION", "resolution object is required");
+  }
+  const reason = String(resolution.reason || "").trim();
+  if (!DAILY_CARD_RESOLUTION_REASONS.has(reason) || (requiredReason && reason !== requiredReason)) {
+    failDailyCardSubmission("ERR_INVALID_RESOLUTION_REASON", `invalid resolution.reason: ${reason}`);
+  }
+  const source = String(resolution.source || "").trim();
+  if (!source) {
+    failDailyCardSubmission("ERR_MALFORMED_DAILY_CARD_SUBMISSION", "resolution.source is required");
+  }
+  const countsAsCustomerEvidence = resolution.countsAsCustomerEvidence === true;
+  assertResolutionSource(source, countsAsCustomerEvidence);
+  const note = String(resolution.note || "").trim();
+  if (requireNote && !note) {
+    failDailyCardSubmission("ERR_MALFORMED_DAILY_CARD_SUBMISSION", "resolution.note is required");
+  }
+  return {
+    reason,
+    source,
+    note,
+    countsAsCustomerEvidence: false,
+  };
+}
+
+function assertResolutionSource(source, countsAsCustomerEvidence) {
+  const normalized = source.toLowerCase();
+  if (normalized === "self_report" || normalized === "self-report") {
+    if (countsAsCustomerEvidence) {
+      failDailyCardSubmission(
+        "ERR_SELF_REPORT_COUNTED_AS_PROOF",
+        "self-report cannot count as customer evidence",
+      );
+    }
+    return;
+  }
+  if (NON_PROOF_SOURCES.has(normalized) && countsAsCustomerEvidence) {
+    failDailyCardSubmission("ERR_AI_OUTPUT_COUNTED_AS_PROOF", `${source} cannot count as proof`);
+  }
+  if (countsAsCustomerEvidence) {
+    failDailyCardSubmission("ERR_NON_EVIDENCE_RESOLUTION_COUNTED_AS_PROOF", "non-evidence resolution cannot count as proof");
+  }
+}
+
+function assertAcceptedEvidenceSource(source, countsAsCustomerEvidence) {
+  const normalized = String(source || "").trim().toLowerCase();
+  if (normalized === "self_report" || normalized === "self-report") {
+    failDailyCardSubmission(
+      "ERR_SELF_REPORT_COUNTED_AS_PROOF",
+      "self-report cannot count as customer evidence",
+    );
+  }
+  if (NON_PROOF_SOURCES.has(normalized)) {
+    failDailyCardSubmission("ERR_AI_OUTPUT_COUNTED_AS_PROOF", `${source} cannot count as proof`);
+  }
+  if (countsAsCustomerEvidence === false) {
+    failDailyCardSubmission("ERR_ATTACH_EVIDENCE_MISSING_REFERENCE", "attach_evidence must submit accepted evidence");
+  }
+}
+
+function requireDailyCardString(value, path, code = "ERR_MALFORMED_DAILY_CARD_SUBMISSION") {
+  const text = String(value || "").trim();
+  if (!text) failDailyCardSubmission(code, `${path} is required`);
+  return text;
+}
+
+function failDailyCardSubmission(code, message) {
+  throw new OfficeHoursDailyCardSubmissionError(code, message);
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function isOtherTextOptionLabel(label) {

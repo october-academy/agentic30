@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-14 | Commit: 230c007 | Branch: main -->
+<!-- Generated: 2026-06-20 | Commit: 6f0fc7e | Branch: main -->
 
 # specialists
 
@@ -14,10 +14,11 @@ Project-owned specialist prompt catalog used by `../specialist-router.mjs`. Each
 | CEO plan review | `plan-ceo-review.mjs` | Founder-mode plan critique |
 | Design work | `design-shotgun.mjs`, `design-html.mjs`, `design-review.mjs`, `plan-design-review.mjs`, `design-consultation.mjs` | Planning/build design specialists |
 | DevEx work | `devex-review.mjs`, `plan-devex-review.mjs` | Live and pre-implementation DevEx review |
+| Shared schema | `schema.mjs` | Rubric axis constants and labels |
 | Vendor attachment | `../vendor-skill-loader.mjs`, `../specialist-router.mjs` | Resolves synced gstack assets outside this directory |
 
 ## CONVENTIONS
-- Every specialist exports `ID`, `NAME`, `PHASES`, `DECISIONS`, `SUMMARY`, and `buildPrompt(context)`.
+- Every specialist exports `ID`, `NAME`, `PHASES`, `SUMMARY`, `RUBRIC`, and `buildPrompt(context)`.
 - `buildPrompt(context)` must be pure: no filesystem, network, process env, time, or mutation.
 - Add new modules to `index.mjs` so `listSpecialists*` and `buildSpecialistPrompt` can reach them.
 - Keep `PHASES` accurate; they gate availability by session phase.

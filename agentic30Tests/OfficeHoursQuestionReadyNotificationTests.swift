@@ -98,6 +98,70 @@ struct McpOauthConnectedNotifierTests {
     }
 }
 
+struct ProgramNotificationScheduleTests {
+
+    @Test func acceptsOnlyAllowedNineAmProgramNotificationRequests() throws {
+        let payload = """
+        {
+          "schema": "agentic30.program.notification_schedule.v1",
+          "schema_version": 1,
+          "notifications": [
+            {
+              "identifier": "agentic30.program.commitment-due",
+              "title": "오늘이 기한인 약속이 있어",
+              "body": "조은성에게 결제 요청 보내기",
+              "sound": "default",
+              "trigger": {
+                "type": "local_calendar_time",
+                "calendar": "local",
+                "hour": 9,
+                "minute": 0,
+                "repeats": false
+              },
+              "user_info": {
+                "kind": "program_commitment_due",
+                "day": 15
+              }
+            },
+            {
+              "identifier": "agentic30.curriculum.incomplete-day-reminder",
+              "title": "오늘 Day 마무리",
+              "trigger": {
+                "type": "local_calendar_time",
+                "calendar": "local",
+                "hour": 21,
+                "minute": 0,
+                "repeats": true
+              }
+            },
+            {
+              "identifier": "agentic30.program.gate-blocked-morning",
+              "title": "G4 게이트가 잠겨 있어",
+              "trigger": {
+                "type": "local_calendar_time",
+                "calendar": "local",
+                "hour": 21,
+                "minute": 0,
+                "repeats": false
+              }
+            }
+          ]
+        }
+        """
+
+        let schedule = try JSONDecoder().decode(
+            ProgramNotificationSchedule.self,
+            from: Data(payload.utf8)
+        )
+        let valid = schedule.validLocalNotificationRequests
+
+        #expect(valid.map(\.identifier) == ["agentic30.program.commitment-due"])
+        #expect(valid.first?.localDateComponents?.hour == 9)
+        #expect(valid.first?.localDateComponents?.minute == 0)
+        #expect(valid.first?.notificationUserInfo["agentic30.route.url"] as? String != nil)
+    }
+}
+
 // MARK: - Long-running completion notification gate tests
 
 struct LongRunningCompletionNotifierTests {

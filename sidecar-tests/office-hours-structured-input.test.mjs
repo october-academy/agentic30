@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as officeHoursStructuredInput from "../sidecar/office-hours-structured-input.mjs";
 import {
   OFFICE_HOURS_INLINE_MODE,
   OFFICE_HOURS_TOOL_MODE,
@@ -25,6 +26,154 @@ import {
   inspectOfficeHoursUiCopyRequest,
   normalizeOfficeHoursUiCopyRequest,
 } from "../sidecar/office-hours-copy-rules.mjs";
+
+test("ERR_SELF_REPORT_COUNTED_AS_PROOF", () => {
+  assert.throws(() => {
+    officeHoursStructuredInput.prepareOfficeHoursDailyCardSubmission({
+      commitmentId: "commitment_14",
+      choice: "resolve_without_evidence",
+      resolution: {
+        reason: "not_sent",
+        source: "self_report",
+        note: "못 보냈다. 오늘은 반복 부채를 닫고 다음 후보를 찾는다.",
+        countsAsCustomerEvidence: true,
+      },
+    });
+  }, (error) => error?.code === "ERR_SELF_REPORT_COUNTED_AS_PROOF");
+});
+
+test("Office Hours daily card submission accepts attach_evidence with hard proof", () => {
+  const prepared = officeHoursStructuredInput.prepareOfficeHoursDailyCardSubmission({
+    commitmentId: "commitment_14",
+    choice: "attach_evidence",
+    evidence: {
+      source: "customer_screenshot",
+      reference: "file:///tmp/proof.png",
+      countsAsCustomerEvidence: true,
+    },
+  });
+
+  assert.equal(prepared.choice, "attach_evidence");
+  assert.equal(prepared.evidence.source, "customer_screenshot");
+  assert.equal(prepared.evidence.reference, "file:///tmp/proof.png");
+  assert.equal(prepared.evidence.countsAsCustomerEvidence, true);
+});
+
+test("Office Hours daily card submission accepts resolve without evidence", () => {
+  const prepared = officeHoursStructuredInput.prepareOfficeHoursDailyCardSubmission({
+    commitmentId: "commitment_14",
+    choice: "resolve_without_evidence",
+    resolution: {
+      reason: "not_sent",
+      source: "self_report",
+      note: "못 보냈다. 오늘은 반복 부채를 정리한다.",
+      countsAsCustomerEvidence: false,
+    },
+  });
+
+  assert.equal(prepared.choice, "resolve_without_evidence");
+  assert.equal(prepared.resolution.countsAsCustomerEvidence, false);
+});
+
+test("Office Hours daily card submission accepts replace candidate with next commitment", () => {
+  const prepared = officeHoursStructuredInput.prepareOfficeHoursDailyCardSubmission({
+    commitmentId: "commitment_14",
+    choice: "replace_candidate",
+    resolution: {
+      reason: "replaced_by_next_candidate",
+      source: "self_report",
+      note: "후보 A 대신 김OO에게 같은 요청을 보낸다.",
+      countsAsCustomerEvidence: false,
+    },
+    nextCommitment: {
+      candidateName: "김OO",
+      actionKind: "request_validation_material",
+      actionText: "오늘 21:00까지 검증 자료 요청 DM 발송",
+      expectedEvidenceKind: "screenshot",
+    },
+  });
+
+  assert.equal(prepared.choice, "replace_candidate");
+  assert.equal(prepared.nextCommitment.candidateName, "김OO");
+});
+
+test("Office Hours daily card submission accepts keep open today", () => {
+  const prepared = officeHoursStructuredInput.prepareOfficeHoursDailyCardSubmission({
+    commitmentId: "commitment_14",
+    choice: "keep_open_today",
+    resolution: {
+      reason: "message_not_ready",
+      source: "self_report",
+      note: "오늘 다시 문구를 정리해서 보낸다.",
+      countsAsCustomerEvidence: false,
+    },
+  });
+
+  assert.equal(prepared.choice, "keep_open_today");
+  assert.equal(prepared.resolution.reason, "message_not_ready");
+});
+
+test("ERR_INVALID_RESOLUTION_REASON", () => {
+  assert.throws(() => {
+    officeHoursStructuredInput.prepareOfficeHoursDailyCardSubmission({
+      commitmentId: "commitment_14",
+      choice: "resolve_without_evidence",
+      resolution: {
+        reason: "felt_done",
+        source: "self_report",
+        note: "그냥 끝낸 것으로 치고 싶다.",
+        countsAsCustomerEvidence: false,
+      },
+    });
+  }, (error) => error?.code === "ERR_INVALID_RESOLUTION_REASON");
+});
+
+test("ERR_REPLACE_CANDIDATE_MISSING_NEXT_COMMITMENT", () => {
+  assert.throws(() => {
+    officeHoursStructuredInput.prepareOfficeHoursDailyCardSubmission({
+      commitmentId: "commitment_14",
+      choice: "replace_candidate",
+      resolution: {
+        reason: "replaced_by_next_candidate",
+        source: "self_report",
+        note: "다른 후보로 바꾼다.",
+        countsAsCustomerEvidence: false,
+      },
+      nextCommitment: {
+        actionKind: "request_validation_material",
+        actionText: "오늘 21:00까지 검증 자료 요청 DM 발송",
+        expectedEvidenceKind: "screenshot",
+      },
+    });
+  }, (error) => error?.code === "ERR_REPLACE_CANDIDATE_MISSING_NEXT_COMMITMENT");
+});
+
+test("Office Hours daily card submission rejects attach evidence without reference", () => {
+  assert.throws(() => {
+    officeHoursStructuredInput.prepareOfficeHoursDailyCardSubmission({
+      commitmentId: "commitment_14",
+      choice: "attach_evidence",
+      evidence: {
+        source: "customer_screenshot",
+        countsAsCustomerEvidence: true,
+      },
+    });
+  }, (error) => error?.code === "ERR_ATTACH_EVIDENCE_MISSING_REFERENCE");
+});
+
+test("Office Hours daily card submission rejects workpack completion as proof", () => {
+  assert.throws(() => {
+    officeHoursStructuredInput.prepareOfficeHoursDailyCardSubmission({
+      commitmentId: "commitment_14",
+      choice: "attach_evidence",
+      evidence: {
+        source: "workpack_completion",
+        reference: "workpack_day_14_g4",
+        countsAsCustomerEvidence: true,
+      },
+    });
+  }, (error) => error?.code === "ERR_AI_OUTPUT_COUNTED_AS_PROOF");
+});
 
 test("Office Hours does not synthesize a card from a plain provider question", () => {
   const payload = buildOfficeHoursInlineStructuredPromptPayload({
@@ -346,6 +495,263 @@ test("Office Hours Korean UI-copy humanizer rewrites S1 visible copy and preserv
   assert.equal(normalized.questions[0].requiresFreeText, false);
   assert.equal(
     inspectOfficeHoursUiCopyRequest(normalized).some((issue) => issue.severity === "S1"),
+    false,
+  );
+});
+
+test("Office Hours Korean UI-copy humanizer normalizes visible 캡쳐 spelling", () => {
+  const request = {
+    title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_reply_screenshot",
+      signalLabel: "Office Hours 답장 캡처 확인",
+    },
+    questions: [
+      {
+        questionId: "office_hours_reply_screenshot",
+        header: "답장캡쳐 확인",
+        question: "고객 후보의 답장캡쳐에서 무엇을 확인했나요?",
+        helperText: "캡쳐 파일에서 날짜와 이름만 확인하세요.",
+        freeTextPlaceholder: "예: 6/21 김OO 답장캡쳐",
+        options: [
+          {
+            label: "답장캡쳐 있음",
+            description: "캡쳐에 고객 후보 이름이 보입니다.",
+            evidenceTarget: "답장 캡처 원본 파일, 날짜, 이름",
+            mapsTo: "customer reply evidence",
+          },
+          {
+            label: "캡쳐 없음",
+            description: "답장 캡쳐가 아직 없습니다.",
+          },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    ],
+  };
+
+  const normalized = normalizeOfficeHoursUiCopyRequest(request);
+  const question = normalized.questions[0];
+  const visibleCopy = {
+    header: question.header,
+    question: question.question,
+    helperText: question.helperText,
+    freeTextPlaceholder: question.freeTextPlaceholder,
+    options: question.options.map((option) => ({
+      label: option.label,
+      description: option.description,
+    })),
+  };
+
+  assert.deepEqual(visibleCopy, {
+    header: "답장 캡처 확인",
+    question: "고객 후보의 답장 캡처에서 무엇을 확인했나요?",
+    helperText: "캡처 파일에서 날짜와 이름만 확인하세요.",
+    freeTextPlaceholder: "예: 6/21 김OO 답장 캡처",
+    options: [
+      {
+        label: "답장 캡처 있음",
+        description: "캡처에 고객 후보 이름이 보입니다.",
+      },
+      {
+        label: "캡처 없음",
+        description: "답장 캡처가 아직 없습니다.",
+      },
+    ],
+  });
+  assert.equal(question.options[0].evidenceTarget, "답장 캡처 원본 파일, 날짜, 이름");
+  assert.equal(
+    [
+      visibleCopy.header,
+      visibleCopy.question,
+      visibleCopy.helperText,
+      visibleCopy.freeTextPlaceholder,
+      ...visibleCopy.options.flatMap((option) => [option.label, option.description]),
+    ].some((value) => String(value).includes("캡쳐")),
+    false,
+  );
+});
+
+test("Office Hours Korean UI-copy humanizer preserves 캡쳐 inside bare API-like tokens", () => {
+  const request = {
+    title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_reply_screenshot",
+      signalLabel: "Office Hours 답장 캡처 확인",
+    },
+    questions: [
+      {
+        questionId: "office_hours_reply_screenshot",
+        header: "답장캡쳐 확인 capture_api_캡쳐_v1",
+        question: "id=reply_캡쳐_meta 값과 고객 답장캡쳐를 같이 확인했나요?",
+        helperText: "https://example.com/capture_api_캡쳐_v1 와 evidence:reply_캡쳐_meta 는 그대로 두고 캡쳐 파일만 확인하세요.",
+        freeTextPlaceholder: "예: reply_캡쳐_meta 답장캡쳐 날짜",
+        options: [
+          {
+            label: "capture_api_캡쳐_v1 확인",
+            description: "`capture_api_캡쳐_v1`와 'quoted_캡쳐_id'는 그대로, 답장캡쳐만 설명합니다.",
+            evidenceTarget: "evidence_capture_캡쳐_v1",
+            mapsTo: "capture_api_캡쳐_v1",
+          },
+          {
+            label: "답장캡쳐 있음",
+            description: "id=reply_캡쳐_meta 증거와 캡쳐 파일을 같이 남깁니다.",
+          },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    ],
+  };
+
+  const normalized = normalizeOfficeHoursUiCopyRequest(request);
+  const question = normalized.questions[0];
+
+  assert.equal(question.header, "답장 캡처 확인 capture_api_캡쳐_v1");
+  assert.equal(question.question, "id=reply_캡쳐_meta 값과 고객 답장 캡처를 같이 확인했나요?");
+  assert.equal(
+    question.helperText,
+    "https://example.com/capture_api_캡쳐_v1 와 evidence:reply_캡쳐_meta 는 그대로 두고 캡처 파일만 확인하세요.",
+  );
+  assert.equal(question.freeTextPlaceholder, "예: reply_캡쳐_meta 답장 캡처 날짜");
+  assert.equal(question.options[0].label, "capture_api_캡쳐_v1 확인");
+  assert.equal(
+    question.options[0].description,
+    "`capture_api_캡쳐_v1`와 'quoted_캡쳐_id'는 그대로, 답장 캡처만 설명합니다.",
+  );
+  assert.equal(question.options[0].evidenceTarget, "evidence_capture_캡쳐_v1");
+  assert.equal(question.options[0].mapsTo, "capture_api_캡쳐_v1");
+  assert.equal(question.options[1].label, "답장 캡처 있음");
+  assert.equal(question.options[1].description, "id=reply_캡쳐_meta 증거와 캡처 파일을 같이 남깁니다.");
+});
+
+test("Office Hours Korean UI-copy humanizer normalizes mixed visible English 캡쳐 copy", () => {
+  const request = {
+    title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_reply_screenshot",
+      signalLabel: "Office Hours 답장 캡처 확인",
+    },
+    questions: [
+      {
+        questionId: "office_hours_reply_screenshot",
+        header: "DM캡쳐 확인 capture_api_캡쳐_v1",
+        question: "Slack캡쳐에서 고객 답장을 확인했나요?",
+        helperText: "capture_api_캡쳐_v1 값은 그대로 두고 DM-캡쳐만 설명하세요.",
+        freeTextPlaceholder: "예: Slack캡쳐 날짜와 reply_캡쳐_meta",
+        options: [
+          {
+            label: "DM캡쳐 있음",
+            description: "고객 DM캡쳐를 첨부합니다.",
+            evidenceTarget: "evidence_capture_캡쳐_v1",
+            mapsTo: "capture_api_캡쳐_v1",
+          },
+          {
+            label: "Slack캡쳐 없음",
+            description: "id=reply_캡쳐_meta 증거는 그대로 두고 캡쳐 파일만 기다립니다.",
+          },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    ],
+  };
+
+  const normalized = normalizeOfficeHoursUiCopyRequest(request);
+  const question = normalized.questions[0];
+
+  assert.equal(question.header, "DM 캡처 확인 capture_api_캡쳐_v1");
+  assert.equal(question.question, "Slack 캡처에서 고객 답장을 확인했나요?");
+  assert.equal(question.helperText, "capture_api_캡쳐_v1 값은 그대로 두고 DM 캡처만 설명하세요.");
+  assert.equal(question.freeTextPlaceholder, "예: Slack 캡처 날짜와 reply_캡쳐_meta");
+  assert.equal(question.options[0].label, "DM 캡처 있음");
+  assert.equal(question.options[0].description, "고객 DM 캡처를 첨부합니다.");
+  assert.equal(question.options[0].evidenceTarget, "evidence_capture_캡쳐_v1");
+  assert.equal(question.options[0].mapsTo, "capture_api_캡쳐_v1");
+  assert.equal(question.options[1].label, "Slack 캡처 없음");
+  assert.equal(question.options[1].description, "id=reply_캡쳐_meta 증거는 그대로 두고 캡처 파일만 기다립니다.");
+});
+
+test("prepareOfficeHoursStructuredInputRequest serializes visible 캡쳐 spelling for Mac", () => {
+  const prepared = prepareOfficeHoursStructuredInputRequest({
+    toolName: "agentic30_request_user_input",
+    title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_reply_screenshot",
+      signalLabel: "Office Hours 답장 캡처 확인",
+    },
+    questions: [
+      {
+        questionId: "office_hours_reply_screenshot",
+        header: "답장캡쳐 확인",
+        question: "고객 후보의 답장캡쳐를 오늘 어떤 증거로 기록할까요?",
+        helperText: "캡쳐 파일은 이름과 날짜가 보여야 합니다.",
+        freeTextPlaceholder: "예: 고객 후보 답장캡쳐를 붙여넣기",
+        options: [
+          {
+            label: "답장캡쳐 첨부",
+            description: "캡쳐 파일을 오늘 증거로 남깁니다.",
+            evidenceTarget: "답장 캡처 원본 파일, 날짜, 이름",
+            mapsTo: "customer reply evidence",
+            risk: "이름이나 날짜가 없으면 고객 증거로 쓰기 어렵습니다.",
+            failureMode: "답장이 없으면 다음 고객 후보에게 같은 요청을 보냅니다.",
+          },
+          {
+            label: "아직 캡쳐 없음",
+            description: "답장 캡쳐가 오면 다시 기록합니다.",
+          },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    ],
+  });
+
+  const serializedForMac = JSON.parse(JSON.stringify(prepared));
+  const question = serializedForMac.questions[0];
+  const visibleCopy = {
+    header: question.header,
+    question: question.question,
+    helperText: question.helperText,
+    freeTextPlaceholder: question.freeTextPlaceholder,
+    options: question.options.map((option) => ({
+      label: option.label,
+      description: option.description,
+    })),
+  };
+
+  assert.deepEqual(visibleCopy, {
+    header: "답장 캡처 확인",
+    question: "고객 후보의 답장 캡처를 오늘 어떤 증거로 기록할까요?",
+    helperText: "캡처 파일은 이름과 날짜가 보여야 합니다.",
+    freeTextPlaceholder: "예: 고객 후보 답장 캡처를 붙여넣기",
+    options: [
+      {
+        label: "답장 캡처 첨부",
+        description: "캡처 파일을 오늘 증거로 남깁니다.",
+      },
+      {
+        label: "아직 캡처 없음",
+        description: "답장 캡처가 오면 다시 기록합니다.",
+      },
+    ],
+  });
+  assert.equal(question.options[0].evidenceTarget, "답장 캡처 원본 파일, 날짜, 이름");
+  assert.equal(question.options[0].mapsTo, "customer reply evidence");
+  assert.equal(question.options[0].risk, "이름이나 날짜가 없으면 고객 증거로 쓰기 어렵습니다.");
+  assert.equal(
+    [
+      visibleCopy.header,
+      visibleCopy.question,
+      visibleCopy.helperText,
+      visibleCopy.freeTextPlaceholder,
+      ...visibleCopy.options.flatMap((option) => [option.label, option.description]),
+    ].some((value) => String(value).includes("캡쳐")),
     false,
   );
 });

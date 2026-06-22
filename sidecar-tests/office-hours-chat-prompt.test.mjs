@@ -5,6 +5,7 @@ import {
   buildOfficeHoursChatSystemPrompt,
   isOfficeHoursDay2GoalDrivenContext,
   isOfficeHoursLockedDay1GoalContext,
+  isOfficeHoursProgramV2DailyCardsContext,
 } from "../sidecar/office-hours-chat-prompt.mjs";
 
 test("office-hours chat prompt is scoped to the Day 1 STEP flow", () => {
@@ -231,6 +232,61 @@ test("office-hours Day 2+ goal-driven prompt requires live briefing and goal-spe
   assert.doesNotMatch(prompt, /fixed Startup design-doc flow/i);
   assert.doesNotMatch(prompt, /generated_by: office-hours/);
   assert.doesNotMatch(prompt, /handoff_for: day1-docs/);
+});
+
+test("stale resolution before workpack", () => {
+  const context = [
+    "DAY1_FOUNDATION_GOAL",
+    "DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS",
+    "AGENTIC30_PROGRAM_V2_DAILY_CARDS",
+    "Program day: 14",
+    "Goal lane: make_money / 첫 매출 달성",
+    "DAY2_PLUS_LIVE_DIGEST",
+    "BUILD_WITHOUT_CUSTOMER_EVIDENCE: true",
+    "Stale customer evidence debt: commitment_14 repeated 2 times",
+    "Missing or rejected proof: true",
+  ].join("\n");
+  const prompt = buildOfficeHoursChatSystemPrompt("/workspace", {
+    provider: "codex",
+    context,
+  });
+
+  const stateTransitionIndex = prompt.indexOf("office_hours_state_transition");
+  const workpackIndex = prompt.indexOf("office_hours_agent_workpack");
+
+  assert.notEqual(stateTransitionIndex, -1);
+  assert.notEqual(workpackIndex, -1);
+  assert.ok(stateTransitionIndex < workpackIndex);
+  assert.match(prompt, /first card must resolve the stale customer-evidence commitment/i);
+  assert.match(prompt, /Do not ask broad discovery, strategy, implementation, or UI questions/i);
+  assert.match(prompt, /Card 2.*one.*workpack/i);
+});
+
+test("v1 prompt ignores v2 card names without explicit marker", () => {
+  const context = [
+    "DAY1_FOUNDATION_GOAL",
+    "DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS",
+    "Flow contract: Day 2 goal-driven Office Hours scoped to the locked Day 1 30-day goal.",
+    "Program day: 14",
+    "Goal lane: make_money / 첫 매출 달성",
+    "DAY2_PLUS_LIVE_DIGEST",
+    "Prior note: ask the model to explain office_hours_agent_workpack in prose.",
+    "BUILD_WITHOUT_CUSTOMER_EVIDENCE: true",
+    "Stale customer evidence debt: commitment_14 repeated 2 times",
+  ].join("\n");
+  const prompt = buildOfficeHoursChatSystemPrompt("/workspace", {
+    provider: "codex",
+    context,
+  });
+
+  assert.equal(isOfficeHoursDay2GoalDrivenContext(context), true);
+  assert.equal(isOfficeHoursProgramV2DailyCardsContext(context), false);
+  assert.match(prompt, /Day1GoalSelection\.goalType is the source of truth/);
+  assert.match(prompt, /evidence-closing operator|증거 마감/);
+  assert.doesNotMatch(prompt, /AGENTIC30_PROGRAM_V2_DAILY_CARDS/);
+  assert.doesNotMatch(prompt, /office_hours_state_transition/);
+  assert.doesNotMatch(prompt, /generate only recognized daily card contracts/);
+  assert.doesNotMatch(prompt, /Card 1 must use generation\.signalId/);
 });
 
 test("office-hours redesign v1 prompt closes days with evidence or explicit debt", () => {

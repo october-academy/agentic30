@@ -19,6 +19,10 @@ export function isOfficeHoursDay2GoalDrivenContext(context = "") {
   return /DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS|DAY2_PLUS_LIVE_DIGEST|Flow contract:\s*Day \d+ goal-driven Office Hours/i.test(String(context || ""));
 }
 
+export function isOfficeHoursProgramV2DailyCardsContext(context = "") {
+  return /\bAGENTIC30_PROGRAM_V2_DAILY_CARDS\b/i.test(String(context || ""));
+}
+
 export function buildOfficeHoursChatPrompt({ context = "", userPrompt = "" } = {}) {
   const isDay2GoalDrivenFlow = isOfficeHoursDay2GoalDrivenContext(context);
   const sections = [
@@ -63,6 +67,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
   const isWriteDesignDocFlow = isOfficeHoursWriteDesignDocContext(context);
   const isLockedDay1GoalFlow = isOfficeHoursLockedDay1GoalContext(context);
   const isDay2GoalDrivenFlow = isOfficeHoursDay2GoalDrivenContext(context);
+  const isProgramV2DailyCardsFlow = isDay2GoalDrivenFlow && isOfficeHoursProgramV2DailyCardsContext(context);
   const isGetUsersGoalFlow = /Goal lane:\s*get_users\b/i.test(String(context || ""));
   const baseRules = [
     "## Agentic30 Day 1 STEP Office Hours",
@@ -170,11 +175,24 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
         "If live source data is thin, say so briefly and ask for the smallest action that creates hard evidence today; do not invent analytics, traffic, revenue, user, or deployment facts.",
       ]
     : [];
+  const programV2DailyCardRules = isProgramV2DailyCardsFlow
+    ? [
+        "For AGENTIC30_PROGRAM_V2_DAILY_CARDS, generate only recognized daily card contracts: `office_hours_state_transition` for Card 1 and `office_hours_agent_workpack` for Card 2.",
+        "Evidence-first invariant: when `BUILD_WITHOUT_CUSTOMER_EVIDENCE: true` and stale debt, missing proof, or rejected proof exists, the first card must resolve the stale customer-evidence commitment with `office_hours_state_transition` before any broad prompt.",
+        "Do not ask broad discovery, strategy, implementation, or UI questions until Card 1 has an explicit state transition: attach evidence, resolve without evidence, replace candidate/action, or keep open today.",
+        "Card 1 must use generation.signalId `office_hours_stale_commitment_resolution`, type `office_hours_state_transition`, schemaVersion 2, sourceState, requiresUserAction, commitmentId, candidateName, actionText, repeatCountWithoutEvidence, choices, resolutionReasons, and proofLedgerMapping.",
+        "After Card 1 is resolved or the context explicitly says today's evidence state is resolved, generate Card 2 as exactly one `office_hours_agent_workpack` risk lens. Do not generate multiple workpacks.",
+        "Card 2 `office_hours_agent_workpack` must separate AI preparation from founder-owned external action. Its workpack must include id, workType, targetExternalAction, expectedProof, notProof, owner `founder`, and deadline.",
+        "AI output, drafts, workpack completion, code snippets, demos, and self-report are not proof. They must appear in workpack.notProof or proofLedgerMapping as excluded/negative evidence, never as accepted proof.",
+        "Provider prose cannot bypass these structured card contracts. If a daily card is needed, emit the structured card contract; do not describe a Card 1 or Card 2 decision only in prose.",
+      ]
+    : [];
   return [
     ...baseRules,
     ...writeDesignDocRules,
     ...lockedDay1GoalRules,
     ...day2GoalDrivenRules,
+    ...programV2DailyCardRules,
     `Workspace root: ${workspaceRootValue || ""}`,
     specialistInjection ? `\n${specialistInjection}` : "",
     context ? `\n## Day 1 STEP Office Hours Context\n${clampOfficeHoursContext(context)}` : "",

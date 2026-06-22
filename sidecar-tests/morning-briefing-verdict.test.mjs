@@ -252,6 +252,7 @@ function buildContext(overrides = {}) {
     proofLedger: emptyProofLedgerFixture(),
     evidenceOS: evidenceOsFixture({ provenEvidence: 0 }),
     currentDay: 3,
+    now: new Date("2026-06-16T01:00:00.000Z"),
     ...overrides,
   });
 }
