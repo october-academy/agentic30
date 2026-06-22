@@ -19,6 +19,8 @@
     "eval:dogfood:live": "AGENTIC30_RUN_LIVE_PROVIDER_EVAL=1 node sidecar-evals/dogfood-simulation.mjs",
     "eval:dogfood:summary": "node sidecar-evals/dogfood-summary.mjs",
     "eval:dogfood:compare": "node sidecar-evals/dogfood-compare.mjs",
+    "sim:office-hours": "node sidecar-evals/office-hours-arc-simulation.mjs",
+    "sim:office-hours:live": "AGENTIC30_RUN_LIVE_PROVIDER_EVAL=1 node sidecar-evals/office-hours-arc-simulation.mjs --live",
     "report:timings": "node scripts/report-response-timings.mjs",
     "track:release-funnel": "node scripts/posthog-release-funnel.mjs",
     "sync:gstack": "node scripts/sync-gstack.mjs",
