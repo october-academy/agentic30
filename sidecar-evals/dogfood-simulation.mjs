@@ -730,10 +730,18 @@ async function programV2StaleResolutionScenario({ ws, events, scenario, transcri
     `SYSTEM: after submit cards: ${programV2.afterSubmitCardOrder.join(" -> ")}`,
     `SYSTEM: replacement workpack source=${programV2.replacementWorkpackSourceCommitmentId || "(missing)"} action=${programV2.replacementWorkpackTargetExternalAction || "(missing)"} proofAccepted=${programV2.replacementWorkpackProofAccepted}`,
   );
+  // v2 daily cards render their next-action/proof-target as `userVisibleSummary`
+  // prose (Swift renders the card stack). Surface that prose as the visible
+  // output so the judge scores what the user actually sees, instead of treating
+  // the structured-only card flow as "no visible output".
+  const cardProse = [...initialCards, ...afterSubmitCards]
+    .map((card) => String(card?.userVisibleSummary || "").trim())
+    .filter(Boolean);
+  const uniqueCardProse = [...new Set(cardProse)];
   return {
     latency_ms: elapsedLatency(startedAt),
     observed: {
-      assistantMessages: [],
+      assistantMessages: uniqueCardProse,
       systemOutcomes: [
         "Program v2 daily cards emitted",
         "Office Hours stale commitment submitted with replacement candidate",

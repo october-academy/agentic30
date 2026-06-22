@@ -178,6 +178,58 @@ test("grade with HARD evidence -> met; non-hard kind -> missed (never met)", asy
   await fs.rm(ws, { recursive: true, force: true });
 });
 
+test("note-only hard-evidence kind never grades to met (self-report=0)", async () => {
+  const ws = await tempWorkspace();
+  const saved = await appendCommitment({
+    workspaceRoot: ws,
+    text: "결제 요청 보내기",
+    cycle: 9,
+    originText: "결제 요청할게",
+    now: NOW,
+  });
+  const id = saved.commitments[0].id;
+
+  // payment kind with a free-text note but NO locator (url/artifactPath) is self-report.
+  const noteOnly = await gradeCommitment({
+    workspaceRoot: ws,
+    commitmentId: id,
+    evidence: { kind: "payment", note: "고객이 결제했다고 함" },
+    gradedCycle: 10,
+    now: NOW,
+  });
+  assert.equal(noteOnly.graded, false);
+  assert.equal(noteOnly.memory.commitments[0].status, "missed");
+  assert.equal(noteOnly.memory.commitments[0].evidence, null);
+
+  // every hard kind is held to the same locator requirement.
+  for (const kind of ["url", "screenshot", "commit"]) {
+    const result = await gradeCommitment({
+      workspaceRoot: ws,
+      commitmentId: id,
+      evidence: { kind, note: "그냥 했다고 적음" },
+      gradedCycle: 11,
+      now: NOW,
+    });
+    assert.equal(result.graded, false, `${kind} note-only must not grade`);
+    assert.equal(result.memory.commitments[0].status, "missed");
+    assert.equal(result.memory.commitments[0].evidence, null);
+  }
+
+  // a concrete locator on the same kind still grades to met (normal path unchanged).
+  const withLocator = await gradeCommitment({
+    workspaceRoot: ws,
+    commitmentId: id,
+    evidence: { kind: "payment", url: "https://example.com/receipt/123", note: "고객이 결제했다고 함" },
+    gradedCycle: 12,
+    now: NOW,
+  });
+  assert.equal(withLocator.graded, true);
+  assert.equal(withLocator.memory.commitments[0].status, "met");
+  assert.equal(withLocator.memory.commitments[0].evidence.url, "https://example.com/receipt/123");
+  assert.equal(withLocator.memory.commitments[0].evidence.note, "고객이 결제했다고 함");
+  await fs.rm(ws, { recursive: true, force: true });
+});
+
 test("duplicate same-text/same-cycle commitments get distinct ids and grade independently", async () => {
   const ws = await tempWorkspace();
   await appendCommitment({ workspaceRoot: ws, text: "DM 5개 보내기", cycle: 9, originText: "보낼게", now: NOW });

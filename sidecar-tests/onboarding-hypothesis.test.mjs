@@ -278,9 +278,92 @@ test("normalizeWorkspaceOnboardingHypothesis keeps malformed provider output saf
       stage: "prototype",
       evidence: ["README"],
       confidence: "low",
+      founderIcpSignals: {
+        full_time_solo: { status: "unconfirmed", note: "" },
+        pre_revenue: { status: "unconfirmed", note: "" },
+        macos: { status: "unconfirmed", note: "" },
+        agent_tool: { status: "unconfirmed", note: "" },
+        records_intent: { status: "unconfirmed", note: "" },
+      },
       suggestedFirstQuestion: "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?",
     },
   );
+});
+
+test("normalizeWorkspaceOnboardingHypothesis loads legacy (pre-founder-ICP) data with default signals", () => {
+  // Migration: persisted hypothesis from before the founderIcpSignals field existed has no
+  // such key. Loading it must fill every signal with the safe `unconfirmed` default while
+  // leaving all existing fields untouched.
+  const legacy = {
+    productName: "Agentic30",
+    projectKind: "mac_app",
+    targetUser: "전업 1인 개발자",
+    problem: "무엇을 만들어야 팔리는지 모른다",
+    purpose: "30일 안에 PMF 검증 방향을 좁힌다",
+    goal: "첫 유료 고객 증거",
+    values: "작게 검증하고 근거 없는 확장을 거절한다",
+    likelyUsers: ["AI 코딩 도구를 쓰는 개발자"],
+    stage: "prototype",
+    evidence: ["README"],
+    confidence: "medium",
+    suggestedFirstQuestion: "이번 주 먼저 만날 전업 1인 개발자 유형은 누구인가요?",
+  };
+  const normalized = normalizeWorkspaceOnboardingHypothesis(legacy);
+
+  // existing fields are preserved verbatim
+  assert.equal(normalized.productName, "Agentic30");
+  assert.equal(normalized.targetUser, "전업 1인 개발자");
+  assert.equal(normalized.goal, "첫 유료 고객 증거");
+  assert.deepEqual(normalized.evidence, ["README"]);
+  // new field defaults to the full unconfirmed shape
+  assert.deepEqual(normalized.founderIcpSignals, {
+    full_time_solo: { status: "unconfirmed", note: "" },
+    pre_revenue: { status: "unconfirmed", note: "" },
+    macos: { status: "unconfirmed", note: "" },
+    agent_tool: { status: "unconfirmed", note: "" },
+    records_intent: { status: "unconfirmed", note: "" },
+  });
+});
+
+test("normalizeWorkspaceOnboardingHypothesis preserves founder-ICP signals (confirmed + note + snake_case)", () => {
+  const normalized = normalizeWorkspaceOnboardingHypothesis({
+    targetUser: "한국 B2B SaaS 창업자",
+    founder_icp_signals: {
+      full_time_solo: "confirmed",
+      pre_revenue: { status: "confirmed", note: "아직 매출 0" },
+      macos: "unconfirmed",
+      agent_tool: "Claude/Codex 매일 사용",
+      records_intent: { status: "unconfirmed" },
+    },
+  });
+
+  // targetUser (product ICP) and founderIcpSignals (founder-fit ICP) are independent.
+  assert.equal(normalized.targetUser, "한국 B2B SaaS 창업자");
+  assert.deepEqual(normalized.founderIcpSignals.full_time_solo, { status: "confirmed", note: "" });
+  assert.deepEqual(normalized.founderIcpSignals.pre_revenue, { status: "confirmed", note: "아직 매출 0" });
+  assert.deepEqual(normalized.founderIcpSignals.macos, { status: "unconfirmed", note: "" });
+  // free-text on an unknown status falls back to unconfirmed but keeps the note.
+  assert.deepEqual(normalized.founderIcpSignals.agent_tool, { status: "unconfirmed", note: "Claude/Codex 매일 사용" });
+  assert.deepEqual(normalized.founderIcpSignals.records_intent, { status: "unconfirmed", note: "" });
+});
+
+test("mergeWorkspaceOnboardingHypotheses unions founder-ICP confirmations across sources", () => {
+  const merged = mergeWorkspaceOnboardingHypotheses(
+    {
+      projectKind: "mac_app",
+      confidence: "medium",
+      founderIcpSignals: { full_time_solo: "confirmed", agent_tool: { status: "unconfirmed", note: "확인 중" } },
+    },
+    {
+      projectKind: "mac_app",
+      confidence: "high",
+      founderIcpSignals: { pre_revenue: "confirmed", agent_tool: "confirmed" },
+    },
+  );
+  assert.equal(merged.founderIcpSignals.full_time_solo.status, "confirmed");
+  assert.equal(merged.founderIcpSignals.pre_revenue.status, "confirmed");
+  assert.equal(merged.founderIcpSignals.agent_tool.status, "confirmed");
+  assert.equal(merged.founderIcpSignals.macos.status, "unconfirmed");
 });
 
 test("normalizeWorkspaceOnboardingHypothesis accepts provider snake_case fields", () => {

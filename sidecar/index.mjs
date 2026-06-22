@@ -159,6 +159,7 @@ import {
   refreshProjectContextCache,
 } from "./project-context-cache.mjs";
 import { projectDocCandidatePaths, projectDocPath } from "./project-doc-paths.mjs";
+import { assessIcpFitConditions, buildIcpFitDiagnosisLines, buildNamedCustomerNextAction } from "./icp-fit-assessment.mjs";
 import {
   buildDay1GoalProjectContext,
   loadDay1GoalSelection,
@@ -9823,6 +9824,18 @@ function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption =
   const isBuilder = intentMode === "builder";
   const isComplete = repoStage === "complete";
 
+  // Startup paths must diagnose ICP fit condition-by-condition against docs/ICP.md
+  // instead of emitting a generic "조건부 ICP fit". Deterministic so the fast path
+  // stays fast (no extra provider call).
+  const icpFit = isBuilder
+    ? null
+    : assessIcpFitConditions({
+        prompt,
+        hypothesis,
+        contextText: String(context?.text || ""),
+        hasProjectPath: Boolean(config?.workspace?.root),
+      });
+
   let verdict;
   let nextAction;
   let proofTarget;
@@ -9859,16 +9872,20 @@ function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption =
       : (docs.icp
         ? `Evidence: ${projectDocPath("icp")}와 관련 문서는 "${goalLabel}" 판단 기준입니다.`
         : "Evidence: 아직 전략 문서가 비어 있어도 시작 조건은 고객 대화 1개와 공개 proof 1개입니다.");
-    nextAction = `오늘 ${customerLabel} 1명에게 "${problemLabel}"와 관련된 최근 상황을 묻고 답변 원문을 저장하세요.`;
+    nextAction = icpFit?.namedCustomerNeeded
+      ? buildNamedCustomerNextAction(problemLabel)
+      : `오늘 ${customerLabel} 1명에게 "${problemLabel}"와 관련된 최근 상황을 묻고 답변 원문을 저장하세요.`;
     proofTarget = "응답 1개를 확보한 뒤 그 응답 원문과 다음 판단 기준을 공개 proof URL 또는 오늘 기록에 남깁니다.";
   }
 
+  const icpFitLines = icpFit ? buildIcpFitDiagnosisLines(icpFit) : [];
   const message = [
     "짧게 보면, 이건 Agent 실행보다 Day 1 코칭 fast path로 처리할 수 있습니다.",
     `Repo stage: ${repoStage}. Intent mode: ${intentMode}.`,
     `Verdict: ${verdict}.`,
     domainLine,
     stageLine,
+    ...icpFitLines,
     `Customer/status quo: ${customerLabel}가 현재 "${problemLabel}"를 어떻게 처리하는지 확인합니다.`,
     `Narrow wedge: ${customerLabel} 중 이번 주 바로 대화 가능한 사람 1명.`,
     "Numeric threshold: 오늘 고객 답변 원문 1개와 공개 proof/기록 1개. 반응이 없으면 질문을 바꿉니다.",

@@ -104,6 +104,7 @@ function buildStateTransitionCard(context) {
     candidateName: candidate.candidateName,
     actionText: candidate.actionText,
     repeatCountWithoutEvidence: candidate.repeatCountWithoutEvidence,
+    userVisibleSummary: stateTransitionSummary(candidate),
     choices: [
       { id: "attach_evidence", label: "Attach evidence" },
       { id: "resolve_without_evidence", label: "Resolve without evidence" },
@@ -117,6 +118,9 @@ function buildStateTransitionCard(context) {
 function buildWorkpackCard(context) {
   const commitment = selectWorkpackCommitment(context);
   if (!commitment) return null;
+  const lens = selectWorkpackLens(context);
+  const targetExternalAction = commitment.actionText;
+  const expectedProof = commitment.expectedEvidenceKind;
   return withProgramV2CardIdentity({
     type: "office_hours_agent_workpack",
     schemaVersion: 1,
@@ -126,17 +130,81 @@ function buildWorkpackCard(context) {
     requiresUserAction: true,
     proofLedgerMapping: { customer_screenshot: "customerEvidence.acceptedProof" },
     sourceCommitmentId: commitment.id,
-    selectedLens: "paid ask evidence",
+    selectedLens: lens.lens,
+    lensReason: lens.reason,
+    userVisibleSummary: workpackSummary({ targetExternalAction, expectedProof }),
     workpack: {
       id: `workpack-${hashProgramV2CardText(`${context.programDay}:${commitment.actionText}`)}`,
-      workType: "offer/paid ask",
-      targetExternalAction: commitment.actionText,
-      expectedProof: commitment.expectedEvidenceKind,
+      workType: lens.workType,
+      targetExternalAction,
+      expectedProof,
       owner: "founder",
       deadline: workpackDeadline(commitment),
       notProof: ["self-report", "interest without customer action"],
     },
   }, context);
+}
+
+// Risk-Based Lens selection (spec §5.5). Reads the current program risk signals
+// from `context` and picks exactly one lens + a workType drawn from the
+// program-daily-card WORK_TYPES allowlist. Falls back to the safe paid-ask
+// default when no risk signal dominates, so an absent signal never produces an
+// unknown lens or workType.
+function selectWorkpackLens(context) {
+  const signals = readRiskSignals(context);
+
+  // 고객 증거 부채가 active면 Service planning 또는 Risk/tradeoff를 우선한다.
+  // 반복 자기보고가 많으면 Risk/tradeoff를 고른다.
+  if (signals.repeatedSelfReport) {
+    return { lens: "risk_tradeoff", workType: "follow-up plan", reason: "반복 자기보고가 누적되어 빌드 도피/허위 진행 리스크를 점검" };
+  }
+  if (signals.customerEvidenceDebt) {
+    return { lens: "service_planning", workType: "offer/paid ask", reason: "고객 증거 부채가 active — offer/wedge가 맞는지 먼저 정리" };
+  }
+  // 증거를 받을 대상은 있는데 제품 사용 자체가 막히면 Technical implementation.
+  if (signals.productBlocksValidation) {
+    return { lens: "technical_implementation", workType: "first_value instrumentation snippet", reason: "증거 대상은 있으나 계측/배포가 막혀 검증 action 불가" };
+  }
+  // 사용자가 제품을 보거나 activation을 완료했지만 friction이 높으면 UI/UX.
+  if (signals.activationFriction) {
+    return { lens: "ui_ux", workType: "activation friction fix", reason: "첫 가치를 보지만 activation friction이 높음" };
+  }
+  // firstRevenue scoreboard가 정체되면 offer/paid ask 또는 follow-up plan workpack.
+  if (signals.revenueStalled) {
+    return { lens: "service_planning", workType: "offer/paid ask", reason: "firstRevenue 정체 — 유료 ask로 전환 증거 확보" };
+  }
+  // activeUsers100 scoreboard가 정체되면 Acquisition/channel 또는 activation friction fix.
+  if (signals.activeUsersStalled) {
+    return { lens: "acquisition_channel", workType: "channel experiment", reason: "activeUsers100 정체 — named contact/active user를 만들 채널 실험" };
+  }
+  // 선택 근거가 없으면 안전한 기본값 유지.
+  return { lens: "service_planning", workType: "offer/paid ask", reason: "지배적 risk 신호 없음 — 기본 유료 ask 증거 lens 유지" };
+}
+
+function readRiskSignals(context) {
+  const active = context.scoreboardSnapshot?.scoreboards?.activeUsers100 ?? {};
+  const revenue = context.scoreboardSnapshot?.scoreboards?.firstRevenue ?? {};
+  const commitments = Array.isArray(context.memory?.commitments) ? context.memory.commitments : [];
+  const repeatedSelfReportCount = commitments.filter(
+    (commitment) => commitment?.status === "resolved_without_evidence"
+      || Number(commitment?.repeatCountWithoutEvidence) >= 2,
+  ).length;
+  const customerEvidenceDebt = Boolean(context.staleCandidate)
+    || commitments.some((commitment) => commitment?.status === "open" && !commitment.evidence);
+  const hasFirstValue = Boolean(context.firstValue);
+  const activeAccepted = Number(active.acceptedCount ?? active.accepted_count ?? 0);
+  const activeReady = (active.sourceState ?? active.source_state) === "ready";
+  const revenueAccepted = Number(revenue.acceptedCount ?? revenue.accepted_count ?? 0);
+  return {
+    repeatedSelfReport: repeatedSelfReportCount >= 2,
+    customerEvidenceDebt,
+    // first_value 신호는 있는데 active scoreboard source가 아직 없음 = 계측/제품이 검증을 막음.
+    productBlocksValidation: hasFirstValue && !activeReady,
+    // activation은 됐는데(source ready) 활성 사용자가 아직 거의 없음 = friction.
+    activationFriction: hasFirstValue && activeReady && activeAccepted > 0,
+    revenueStalled: revenueAccepted <= 0,
+    activeUsersStalled: activeAccepted <= 0,
+  };
 }
 
 function buildScoreboardCard(context) {
@@ -147,6 +215,7 @@ function buildScoreboardCard(context) {
     generation: buildProgramV2Generation("program-scoreboard", "Program scoreboard", context),
     sourceState: mergeSourceStates([activeState, revenueState]),
     requiresUserAction: false,
+    userVisibleSummary: scoreboardSummary(context.scoreboardSnapshot),
     proofLedgerMapping: {
       first_value: "activeUsers100.acceptedProof",
       paymentRecord: "firstRevenue.acceptedProof",
@@ -162,7 +231,7 @@ function buildGateCard(context) {
       : context.programDay >= 21
         ? "G5"
         : "G4";
-  return withProgramV2CardIdentity(buildRuntimeGateCard({
+  const gateCard = buildRuntimeGateCard({
     gateId,
     evaluation: context.evaluation,
     scoreboardSnapshot: context.scoreboardSnapshot,
@@ -171,7 +240,11 @@ function buildGateCard(context) {
       activeUsers100: context.activeUsersStore.snapshots.length ? "ready" : "missing",
       firstRevenue: context.proofLedger.events.length ? "ready" : "missing",
     },
-  }), context);
+  });
+  return withProgramV2CardIdentity({
+    ...gateCard,
+    userVisibleSummary: gateSummary(gateCard),
+  }, context);
 }
 
 function selectWorkpackCommitment(context) {
@@ -213,6 +286,39 @@ function mergeSourceStates(states) {
     if (states.includes(state)) return state;
   }
   return "ready";
+}
+
+// 사람이 읽는 한국어 한 줄 요약(spec §11 payload는 구조화 필드 위주라 사용자가
+// "무엇이 해결됐고 다음에 뭘 할지"를 못 읽는 문제를 보완). 모두 additive optional 필드.
+
+function stateTransitionSummary(candidate) {
+  const repeat = Number(candidate?.repeatCountWithoutEvidence) || 0;
+  const name = cleanString(candidate?.candidateName, 80) || "현재 후보";
+  return `반복 부채 ${repeat}건 (${name}) — 증거를 붙이거나 다음 후보로 교체하세요.`;
+}
+
+function workpackSummary({ targetExternalAction, expectedProof }) {
+  const action = cleanString(targetExternalAction, 300) || "오늘의 외부 행동";
+  const proof = cleanString(expectedProof, 200) || "고객 행동 증거";
+  return `오늘 외부 행동: ${action} / 증거: ${proof}`;
+}
+
+function scoreboardSummary(snapshot) {
+  const active = snapshot?.scoreboards?.activeUsers100 ?? {};
+  const revenue = snapshot?.scoreboards?.firstRevenue ?? {};
+  const activeAccepted = Number(active.acceptedCount ?? active.accepted_count ?? 0);
+  const target = Number(active.target ?? 100) || 100;
+  const revenueAccepted = Number(revenue.acceptedCount ?? revenue.accepted_count ?? 0);
+  return `활성 ${activeAccepted}/${target}, 매출 ${revenueAccepted}건 — accepted와 excluded(가입/방문/자기보고)를 분리해서 보세요.`;
+}
+
+function gateSummary(gateCard) {
+  const gate = cleanString(gateCard?.gate, 8) || "G?";
+  if (gateCard?.satisfied) return `${gate} 통과 — 다음 단계로 진행 가능.`;
+  const reasons = Array.isArray(gateCard?.blockingReasons) ? gateCard.blockingReasons.filter(Boolean) : [];
+  const reasonText = reasons.length ? reasons.join(", ") : "조건 미충족";
+  const recovery = cleanString(gateCard?.recoveryBranch, 120) || "recovery branch 확인";
+  return `${gate} 차단: ${reasonText} — 해제: ${recovery}`;
 }
 
 function normalizeDay(value) {
