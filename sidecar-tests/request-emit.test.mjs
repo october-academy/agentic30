@@ -2165,6 +2165,8 @@ export async function load(url, context, nextLoad) {
       errorEvent.message,
     ].filter(Boolean).join("\n");
     assert.match(visibleFailureText, /질문을 만들지 못했습니다/);
+    assert.equal(errorEvent.errorKind, "office_hours_no_next_question");
+    assert.equal(errorEvent.recoverable, true);
   } finally {
     ws?.close();
     await harness?.close({ cleanup: false });

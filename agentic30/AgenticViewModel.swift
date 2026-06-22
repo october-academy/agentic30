@@ -8577,6 +8577,23 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    static func nonExceptionSidecarErrorTelemetryEvent(forErrorKind errorKind: String?) -> String? {
+        switch errorKind {
+        case "provider_usage_limit":
+            return "mac_provider_usage_limit"
+        case "provider_auth_required":
+            return "mac_provider_auth_required"
+        case "provider_aborted":
+            return "mac_provider_aborted"
+        case "sidecar_connection_state":
+            return "mac_sidecar_connection_state"
+        case "office_hours_no_next_question":
+            return "mac_office_hours_no_next_question"
+        default:
+            return nil
+        }
+    }
+
     private func handle(_ event: SidecarEvent) {
         switch event.type {
         case "sidecar_status":
@@ -9715,23 +9732,7 @@ final class AgenticViewModel: ObservableObject {
                 }
                 markStartupQueuedActionFailed(event.message ?? "실행 보조 앱 연결이 끊겼습니다.")
             }
-            if [
-                "provider_usage_limit",
-                "provider_auth_required",
-                "provider_aborted",
-                "sidecar_connection_state",
-            ].contains(event.errorKind ?? "") {
-                let telemetryEvent: String
-                switch event.errorKind {
-                case "provider_usage_limit":
-                    telemetryEvent = "mac_provider_usage_limit"
-                case "provider_auth_required":
-                    telemetryEvent = "mac_provider_auth_required"
-                case "provider_aborted":
-                    telemetryEvent = "mac_provider_aborted"
-                default:
-                    telemetryEvent = "mac_sidecar_connection_state"
-                }
+            if let telemetryEvent = Self.nonExceptionSidecarErrorTelemetryEvent(forErrorKind: event.errorKind) {
                 PostHogTelemetry.capture(
                     telemetryEvent,
                     properties: [
