@@ -284,7 +284,7 @@ struct IntakeV2FolderPickView: View {
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("intakeV2.folderSkipButton")
 
-                            Text("프로젝트를 연결하면 첫 과제가 내 코드에 맞춰집니다.")
+                            Text("폴더 없이 시작하면 첫 과제가 일반적인 예시로 채워집니다.")
                                 .font(.system(size: 11, weight: .medium, design: .rounded))
                                 .foregroundStyle(IntakeV2Color.textTertiary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -501,7 +501,7 @@ struct IntakeV2FolderPickView: View {
         store.folderURL = nil
         store.persist()
         PostHogTelemetry.capture("mac_onboarding_folder_skipped", properties: [
-            "path": "explicit_no_folder",
+            "source": "explicit_no_folder",
         ])
         onNext()
     }
