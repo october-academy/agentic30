@@ -2163,16 +2163,16 @@ final class AgenticViewModelAuthTests {
         PostHogTelemetry.captureSink = { captures.append($0) }
         defer { PostHogTelemetry.resetTestingHooks() }
 
-        try sidecar.emit("""
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent("""
         {
           "type": "error",
           "message": "Sidecar is not connected.",
           "errorKind": "sidecar_connection_state"
         }
-        """)
-        try await Task.sleep(nanoseconds: 10_000_000)
+        """))
 
         #expect(viewModel.lastError == "Sidecar is not connected.")
+        #expect(viewModel.isConnected == false)
         #expect(captures.contains { capture in
             capture.event == "mac_sidecar_connection_state"
                 && capture.properties["operation"] as? String == "sidecar_event_error"
