@@ -13,6 +13,7 @@ import {
   evaluateAndRecordProgramGates,
   evaluateProgramGates,
   issueGateInterventionToken,
+  latestTrafficSignalFromProofs,
   loadGateLedger,
   recordGateAdaptiveEvent,
   recordMissionSubstitution,
@@ -441,6 +442,50 @@ test("G5 requires automated traffic plus an active user; outage grants provision
   assert.equal(uncollected.gates.G5.state, GATE_STATES.blocked);
   assert.equal(uncollected.gates.G5.blockedReason, "source_unavailable");
   assert.equal(uncollected.gates.G5.provisional.active, true);
+});
+
+test("latestTrafficSignalFromProofs derives the G5① traffic input from completed traffic_snapshot proofs", () => {
+  // No traffic proof → null (source gap, not a real zero).
+  assert.equal(latestTrafficSignalFromProofs({ events: [] }), null);
+  // A submitted-but-not-completed traffic proof does not signal traffic.
+  assert.equal(
+    latestTrafficSignalFromProofs({
+      events: [{ id: "t0", type: "traffic_snapshot", status: "submitted", createdAt: "2026-06-20T00:00:00.000Z" }],
+    }),
+    null,
+  );
+  // A completed traffic_snapshot reads as observed traffic by default.
+  assert.deepEqual(
+    latestTrafficSignalFromProofs({
+      events: [{ id: "t1", type: "traffic_snapshot", status: "verified", createdAt: "2026-06-20T00:00:00.000Z" }],
+    }),
+    { observed: true },
+  );
+  // The latest proof wins; an explicit observed:false reads as zero traffic.
+  assert.deepEqual(
+    latestTrafficSignalFromProofs({
+      events: [
+        { id: "t1", type: "traffic_snapshot", status: "verified", createdAt: "2026-06-20T00:00:00.000Z", metadata: { observed: true } },
+        { id: "t2", type: "traffic_snapshot", status: "accepted", createdAt: "2026-06-21T00:00:00.000Z", metadata: { observed: false } },
+      ],
+    }),
+    { observed: false },
+  );
+
+  // The derived signal feeds the gate exactly like a live traffic input would,
+  // without altering the gate's threshold logic: traffic observed + active
+  // user ≥1 → G5 passes.
+  const evaluation = evaluateProgramGates({
+    proofLedger: { events: [] },
+    currentDay: 22,
+    firstValue: { observed: true, rowCount: 3 },
+    traffic: latestTrafficSignalFromProofs({
+      events: [{ id: "t1", type: "traffic_snapshot", status: "verified", createdAt: "2026-06-20T00:00:00.000Z" }],
+    }),
+    sources: { posthogAvailable: true },
+    now: T0,
+  });
+  assert.equal(evaluation.gates.G5.state, GATE_STATES.passed);
 });
 
 test("G6 passes on a strong payment record or three strong asks plus a refusal — never hard-blocks", () => {

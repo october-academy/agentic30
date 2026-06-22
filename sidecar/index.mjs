@@ -180,6 +180,7 @@ import {
   buildGateBlockedMessage,
   evaluateProgramGates,
   evaluateDayProgressPatchGate,
+  latestTrafficSignalFromProofs,
   loadGateLedger,
   recordMissionSubstitution,
   resolveActiveGate,
@@ -4281,11 +4282,18 @@ async function handleDayProgressPatch(socket, payload = {}) {
     if (gateTargetDay && gate.mode !== "confess" && !localDevFastDays) {
       // G4② input (spec §15.4/§21): latest persisted first_value snapshot plus
       // PostHog source availability — both local reads, no network on this path.
+      // G5① input: traffic signal derived from the latest completed
+      // traffic_snapshot proof event (manual/proof-based traffic path). Null
+      // when no traffic proof exists — a source gap, never a real zero (§21),
+      // so the gate stays on its provisional path. The gate's threshold logic
+      // is untouched; this only wires the input through.
+      const gateProofLedger = await loadProofLedger({ workspaceRoot: root });
       gateCheck = await evaluateDayProgressPatchGate({
         workspaceRoot: root,
         day: gateTargetDay,
         stepId,
         firstValue: await latestFirstValueSignal({ workspaceRoot: root }),
+        traffic: latestTrafficSignalFromProofs(gateProofLedger),
         sources: {
           posthogAvailable: resolvePostHogMcpSettings({
             env: process.env,
