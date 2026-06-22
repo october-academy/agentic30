@@ -51,10 +51,12 @@
 
 **Run verdict JUDGE_FAIL → JUDGE_PASS, 18/18 PASS.** 전체 sidecar 스위트 2043+ pass · 0 fail(회귀 0).
 
-## 6. 의도적 보류 (제품 가치/안정성 위반 거부)
+## 6. P0-3 / P0-4 (창업자 결정: 풀 구현)
 
-- **P0-3 (활성유저 카운트 우회)**: 가짜 카운트는 VALUES #2(증거 규율) 위반. 현 fail-closed는 멀티모델 검증된 설계(spec §21). traffic은 collector(별도 기능) 부재 → **제품 결정 사안**. 올바른 방향 = 차단을 투명화하고 수동 검증증거 경로 제공.
-- **P0-4 (온보딩 scan fail-open)**: Swift(`markWorkspaceSetupScanSucceeded`) 결합 + 이전 활성퍼널 수정이 닿은 영역 → 회귀 위험. Swift+scan 공동 설계 필요.
+처음엔 보류 권장(가짜 카운트=VALUES #2 위반, Swift 회귀위험)했으나, 창업자가 tradeoff를 수용하고 풀 구현을 지시. 둘 다 **values·spec 불변식을 지키며** 구현:
+
+- **P0-3 활성유저 equivalent adapter + traffic 배선**: spec(§6.1, line 249-251)이 **이미 약속한** "approved equivalent source adapter"를 구현. 가짜 카운트가 아니라 **검증된 unique-identity 소스**(completed + activation-marked proof events)에서만 count(`source: "equivalent_verified_evidence"`). `manual_proof_required` 단독은 여전히 게이트 미통과. 게이트 임계 로직 불변. G5 traffic 신호를 day-progress 게이트 호출에 배선(이전엔 항상 null). 회귀 0.
+- **P0-4 온보딩 scan fail-open**: provider 실패 시 로컬 docs가 있으면 degraded `workspace_scan_result`로 온보딩이 Day1까지 진행(additive `degraded`/`degradedReason` 필드 + Swift `scanDegradedNotice`). **로컬 0이면 여전히 fail-closed(blocked)**. Swift 디코더 회귀테스트 추가, `npm run test:swift:unit` 142 pass. (시각 degraded 배너는 UI테스트 픽셀안정성 위해 follow-up.)
 
 ## 7. 정직한 한계
 
