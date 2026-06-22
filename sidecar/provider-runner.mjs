@@ -727,7 +727,7 @@ async function runClaudeProvider({
   // model was cleared on provider switch still honors the user's chosen model
   // instead of silently falling back to the SDK default.
   const resolvedClaudeModel = resolveClaudeModel(model);
-  const claudeEffort = resolveClaudeReasoningEffort();
+  const claudeEffort = resolveClaudeReasoningEffort(executionMode, resolvedClaudeModel);
   const options = {
     model: resolvedClaudeModel,
     ...(claudeEffort ? { effort: claudeEffort } : {}),
@@ -2185,10 +2185,21 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
   return hasDeepWorkSignal ? "high" : "medium";
 }
 
-// Claude Agent SDK `options.effort`. Returns "" when neither env nor Settings
-// pins a level, leaving the SDK default (high) in charge. The SDK silently
-// downgrades unsupported levels per model, so no per-model table is needed here.
-export function resolveClaudeReasoningEffort() {
+// Claude Agent SDK `options.effort`. Precedence: env pin > Settings pin >
+// per-executionMode default. With no pin it returns "" for most modes (leaving
+// the SDK default high), but lowers the bounded office-hours digest helper to
+// "low" to trim that once-per-session blocking call — mirroring Codex's
+// office_hours_digest_read_only -> "low". The quality-critical interview
+// (office_hours_question) and the evidence judge (judge_read_only) keep "".
+// Guarded by claudeModelSupportsEffort: Haiku 4.5 / Sonnet 4.5 reject an effort
+// param, so an unrecognized model omits effort (safe SDK default) rather than
+// risk a rejection on the digest call.
+function claudeModelSupportsEffort(model = "") {
+  const id = String(model || "");
+  return !id || /opus|sonnet-4-6|fable|mythos/i.test(id);
+}
+
+export function resolveClaudeReasoningEffort(executionMode = "", model = "") {
   const configured = String(process.env.AGENTIC30_CLAUDE_REASONING_EFFORT || "")
     .trim()
     .toLowerCase();
@@ -2198,6 +2209,9 @@ export function resolveClaudeReasoningEffort() {
   const fromSettings = providerSettings.claude?.reasoningEffort || "";
   if (CLAUDE_REASONING_EFFORTS.has(fromSettings)) {
     return fromSettings;
+  }
+  if (executionMode === "office_hours_digest_read_only" && claudeModelSupportsEffort(model)) {
+    return "low";
   }
   return "";
 }

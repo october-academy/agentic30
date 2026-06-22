@@ -6180,14 +6180,22 @@ async function prepareDailyOfficeHoursDigest(session, {
   day = null,
   selectedSources = [],
   abortController = null,
+  gate: precomputedGate = null,
 } = {}) {
-  const gate = await evaluateOfficeHoursSourceGate({
-    workspaceRoot,
-    day,
-    selectedSources,
-    provider: session.provider,
-    appSupportPath,
-  });
+  // Reuse the pre-flight source gate already computed in runOfficeHours when one
+  // is supplied. evaluateOfficeHoursSourceGate spawns git/gh CLI probes (and
+  // checks external MCP readiness), so re-evaluating it here doubled that work on
+  // every Day 2+ turn. A valid precomputed gate is identical (same
+  // workspace/day/sources) and keeps a single window snapshot for the turn.
+  const gate = precomputedGate && precomputedGate.ok
+    ? precomputedGate
+    : await evaluateOfficeHoursSourceGate({
+        workspaceRoot,
+        day,
+        selectedSources,
+        provider: session.provider,
+        appSupportPath,
+      });
   sendOfficeHoursSourceGate(null, {
     sessionId: session.id,
     gate,
@@ -6206,15 +6214,22 @@ async function prepareDailyOfficeHoursDigest(session, {
     detail: "Day 2+ Office Hours digest collecting.",
   });
 
-  const localSignals = await collectLocalDailyOfficeHoursSignals({
-    workspaceRoot,
-    gate,
-  });
-  const externalSignals = await buildExternalOfficeHoursDigestSignals(session, {
-    context,
-    gate,
-    abortController,
-  });
+  // Local (git/gh subprocess) and external (MCP digest provider call) collection
+  // are independent — both only read the shared `gate` — so run them
+  // concurrently. Wall time drops from local+external to max(local, external);
+  // the external provider call is the long pole, so the git/gh probe now overlaps
+  // it instead of stacking before it.
+  const [localSignals, externalSignals] = await Promise.all([
+    collectLocalDailyOfficeHoursSignals({
+      workspaceRoot,
+      gate,
+    }),
+    buildExternalOfficeHoursDigestSignals(session, {
+      context,
+      gate,
+      abortController,
+    }),
+  ]);
   const digest = finalizeDailyOfficeHoursDigest({
     gate,
     localSignals,
@@ -8589,6 +8604,9 @@ async function runOfficeHours(session, {
       return;
     }
   }
+  // Hoisted so the validated pre-flight gate can be reused by the digest step
+  // below instead of being probed a second time (git/gh CLI + MCP readiness).
+  let preflightSourceGate = null;
   try {
     if (isDay2PlusOfficeHoursDay(runtimeDay)) {
       const gate = await evaluateOfficeHoursSourceGate({
@@ -8598,6 +8616,7 @@ async function runOfficeHours(session, {
         provider: session.provider,
         appSupportPath,
       });
+      preflightSourceGate = gate;
       sendOfficeHoursSourceGate(null, {
         sessionId: session.id,
         gate,
@@ -8839,6 +8858,7 @@ async function runOfficeHours(session, {
         day: runtimeDay,
         selectedSources: normalizedSelectedSources,
         abortController,
+        gate: preflightSourceGate,
       });
       officeHoursRuntime.context = clampOfficeHoursContext(
         `${officeHoursRuntime.context}\n\n${formatDailyOfficeHoursDigestForPrompt(digest)}`,
