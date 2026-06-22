@@ -674,17 +674,17 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(rail.exists)
         XCTAssertTrue(sessions.exists)
         XCTAssertTrue(main.exists)
-        XCTAssertTrue(meta.exists)
+        XCTAssertFalse(meta.exists)
         assertNativeWindowShellVisible(in: app)
         assertOpenDesignResponsiveColumns(
             surface: workspaceSurface.frame,
             rail: rail.frame,
             tasks: sessions.frame,
             main: main.frame,
-            meta: meta.frame,
+            meta: nil,
             expectedRailWidth: 52,
             expectedTaskSidebarWidth: 240,
-            expectedMetaPanelWidth: 280
+            expectedMetaPanelWidth: nil
         )
 
         XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.day.tasks").exists)
@@ -702,6 +702,10 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.export").exists)
         let officeHoursPanelToggle = app.buttons["opendesign.officeHours.panel"]
         XCTAssertTrue(officeHoursPanelToggle.exists)
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "열기", timeout: 2))
+
+        clickCenter(of: officeHoursPanelToggle)
+        XCTAssertTrue(waitForElementFrameWidth(meta, width: 280, timeout: 5))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "닫기", timeout: 2))
         assertOpenDesignResponsiveColumns(
             surface: workspaceSurface.frame,
@@ -718,6 +722,7 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: officeHoursPanelToggle)
         XCTAssertTrue(waitForElementToDisappear(meta, timeout: 3))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "열기", timeout: 2))
+        XCTAssertTrue(waitForMainToFillSurface(main, surface: workspaceSurface, timeout: 3))
         XCTAssertGreaterThanOrEqual(main.frame.maxX, expandedOfficeHoursMainMaxX + 280 - 24)
 
         clickCenter(of: officeHoursPanelToggle)
@@ -1984,6 +1989,8 @@ final class agentic30UITests: XCTestCase {
         }
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        let workspaceSurface = elementWithIdentifier(in: app, "workspace.surface")
+        XCTAssertTrue(workspaceSurface.exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.realProjectTest").exists)
         let day2Main = elementWithIdentifier(in: app, "opendesign.day2.main")
         XCTAssertFalse(day2Main.exists)
@@ -1995,11 +2002,11 @@ final class agentic30UITests: XCTestCase {
         let officeHoursSessions = elementWithIdentifier(in: app, "opendesign.officeHours.sessions")
         let officeHoursMeta = elementWithIdentifier(in: app, "opendesign.officeHours.meta")
         XCTAssertTrue(officeHoursSessions.waitForExistence(timeout: 5))
-        XCTAssertTrue(officeHoursMeta.waitForExistence(timeout: 5))
+        XCTAssertFalse(officeHoursMeta.exists)
         XCTAssertEqual(officeHoursSessions.frame.width, 240, accuracy: 2)
-        XCTAssertEqual(officeHoursMeta.frame.width, 280, accuracy: 2)
         XCTAssertEqual(officeHoursSessions.frame.maxX, officeHoursMain.frame.minX, accuracy: 2)
-        XCTAssertEqual(officeHoursMain.frame.maxX, officeHoursMeta.frame.minX, accuracy: 2)
+        XCTAssertTrue(waitForMainToFillSurface(officeHoursMain, surface: workspaceSurface, timeout: 3))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "열기", timeout: 2))
         confirmDay1GoalRequired(in: app)
         let structuredPrompt = elementWithIdentifier(in: app, "assistant.structuredPrompt")
         XCTAssertTrue(structuredPrompt.waitForExistence(timeout: 5))
@@ -2205,7 +2212,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(day2OfficeHoursTitle.exists)
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.timeline.day.1", containing: "✓", timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.timeline.day.2", containing: "오늘", timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.meta").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.meta").exists)
     }
 
     @MainActor
@@ -3611,10 +3618,19 @@ final class agentic30UITests: XCTestCase {
         // No goal is selected by default, so the start button stays disabled until
         // the user taps an option. Pick one before driving the start button.
         let makeMoneyOption = app.buttons["opendesign.officeHours.goal.option.make_money"]
+        let saveButton = app.buttons["opendesign.officeHours.goal.save"]
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertFalse(saveButton.isEnabled, file: file, line: line)
+        XCTAssertEqual(makeMoneyOption.value as? String, "선택 안 됨", file: file, line: line)
         XCTAssertTrue(waitForOpenDesignMainHittable(makeMoneyOption, in: app, timeout: 5), file: file, line: line)
         tapRequired(makeMoneyOption, in: app, named: "Office Hours Day 1 goal option", file: file, line: line)
 
-        let saveButton = app.buttons["opendesign.officeHours.goal.save"]
+        let selectionDeadline = Date().addingTimeInterval(2)
+        while makeMoneyOption.value as? String != "선택됨", Date() < selectionDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertEqual(makeMoneyOption.value as? String, "선택됨", file: file, line: line)
+        XCTAssertTrue(saveButton.isEnabled, file: file, line: line)
         XCTAssertTrue(waitForOpenDesignMainHittable(saveButton, in: app, timeout: 5), file: file, line: line)
         tapRequired(saveButton, in: app, named: "Office Hours Day 1 goal save", file: file, line: line)
 
@@ -4151,38 +4167,43 @@ final class agentic30UITests: XCTestCase {
                 file: file,
                 line: line
             )
-            if let expectedMetaPanelWidth {
-                XCTAssertTrue(
-                    waitForElementFrameWidth(meta, width: expectedMetaPanelWidth, timeout: 5),
-                    "Expected Office Hours meta width \(expectedMetaPanelWidth), got meta=\(meta.frame), surface=\(workspaceSurface.frame), window=\(app.windows.firstMatch.frame)",
-                    file: file,
-                    line: line
-                )
-            }
             assertOpenDesignResponsiveColumns(
                 surface: workspaceSurface.frame,
                 rail: rail.frame,
                 tasks: sessions.frame,
                 main: mainColumn.frame,
-                meta: expectedMetaPanelWidth == nil ? nil : meta.frame,
+                meta: nil,
                 expectedRailWidth: expectedRailWidth,
                 expectedTaskSidebarWidth: expectedSessionsWidth,
-                expectedMetaPanelWidth: expectedMetaPanelWidth,
+                expectedMetaPanelWidth: nil,
                 file: file,
                 line: line
             )
             if let expectedMetaPanelWidth {
-                let expandedMainMaxX = mainColumn.frame.maxX
                 let panelToggle = app.buttons["opendesign.officeHours.panel"]
                 XCTAssertTrue(panelToggle.waitForExistence(timeout: 2), file: file, line: line)
-                XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "닫기", timeout: 2), file: file, line: line)
-                clickCenter(of: panelToggle)
-                XCTAssertTrue(waitForElementToDisappear(meta, timeout: 3), file: file, line: line)
                 XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "열기", timeout: 2), file: file, line: line)
-                XCTAssertGreaterThanOrEqual(mainColumn.frame.maxX, expandedMainMaxX + expectedMetaPanelWidth - 24, file: file, line: line)
                 clickCenter(of: panelToggle)
                 XCTAssertTrue(waitForElementFrameWidth(meta, width: expectedMetaPanelWidth, timeout: 5), file: file, line: line)
                 XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "닫기", timeout: 2), file: file, line: line)
+                assertOpenDesignResponsiveColumns(
+                    surface: workspaceSurface.frame,
+                    rail: rail.frame,
+                    tasks: sessions.frame,
+                    main: mainColumn.frame,
+                    meta: meta.frame,
+                    expectedRailWidth: expectedRailWidth,
+                    expectedTaskSidebarWidth: expectedSessionsWidth,
+                    expectedMetaPanelWidth: expectedMetaPanelWidth,
+                    file: file,
+                    line: line
+                )
+                let expandedMainMaxX = mainColumn.frame.maxX
+                clickCenter(of: panelToggle)
+                XCTAssertTrue(waitForElementToDisappear(meta, timeout: 3), file: file, line: line)
+                XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "열기", timeout: 2), file: file, line: line)
+                XCTAssertTrue(waitForMainToFillSurface(mainColumn, surface: workspaceSurface, timeout: 3), file: file, line: line)
+                XCTAssertGreaterThanOrEqual(mainColumn.frame.maxX, expandedMainMaxX + expectedMetaPanelWidth - 24, file: file, line: line)
             }
         } else {
             XCTAssertTrue(
@@ -4198,24 +4219,9 @@ final class agentic30UITests: XCTestCase {
                 line: line
             )
             let surfaceEdgeTolerance: CGFloat = 8.0
-            if let expectedMetaPanelWidth {
-                XCTAssertTrue(
-                    waitForElementFrameWidth(meta, width: expectedMetaPanelWidth, timeout: 5),
-                    "Expected Office Hours meta width \(expectedMetaPanelWidth), got meta=\(meta.frame), surface=\(workspaceSurface.frame), window=\(app.windows.firstMatch.frame)",
-                    file: file,
-                    line: line
-                )
-                XCTAssertEqual(mainColumn.frame.maxX, meta.frame.minX, accuracy: 2.0, file: file, line: line)
-                XCTAssertEqual(meta.frame.maxX, workspaceSurface.frame.maxX, accuracy: surfaceEdgeTolerance, file: file, line: line)
-            } else {
-                XCTAssertEqual(mainColumn.frame.maxX, workspaceSurface.frame.maxX, accuracy: surfaceEdgeTolerance, file: file, line: line)
-            }
+            XCTAssertEqual(mainColumn.frame.maxX, workspaceSurface.frame.maxX, accuracy: surfaceEdgeTolerance, file: file, line: line)
         }
-        if expectedMetaPanelWidth == nil {
-            XCTAssertFalse(meta.exists, "Meta panel should collapse at this native responsive width", file: file, line: line)
-        } else {
-            XCTAssertTrue(meta.exists, file: file, line: line)
-        }
+        XCTAssertFalse(meta.exists, "Meta panel should be collapsed by default at this native responsive width", file: file, line: line)
 
         XCTAssertFalse(app.buttons["opendesign.day.header.context"].exists, file: file, line: line)
         XCTAssertFalse(app.buttons["opendesign.day.header.primary"].exists, file: file, line: line)

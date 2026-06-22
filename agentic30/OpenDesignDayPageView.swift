@@ -4345,7 +4345,7 @@ struct OpenDesignDayPageView: View {
     @State private var requestedDayCompletionID: String?
     @State private var keyboardMonitor: Any?
     @State private var isRightSidebarExpanded = false
-    @State private var isOfficeHoursRightSidebarExpanded = true
+    @State private var isOfficeHoursRightSidebarExpanded = false
 
     init(
         content: OpenDesignDayContent = .day1,

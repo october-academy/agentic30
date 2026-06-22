@@ -434,6 +434,53 @@ private extension View {
     }
 }
 
+private struct OfficeHoursGoalOptionSurface: ViewModifier {
+    let selected: Bool
+
+    @State private var isHovered = false
+
+    private var fill: Color {
+        if selected {
+            return OpenDesignOfficeHoursColor.accentDim
+        }
+        return isHovered ? OpenDesignOfficeHoursColor.hover : OpenDesignOfficeHoursColor.surface2
+    }
+
+    private var stroke: Color {
+        if selected {
+            return OpenDesignOfficeHoursColor.accent
+        }
+        return isHovered ? OpenDesignOfficeHoursColor.borderSoft : OpenDesignOfficeHoursColor.border
+    }
+
+    private var lineWidth: CGFloat {
+        selected ? 1.5 : 1
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(fill)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(stroke, lineWidth: lineWidth)
+                    )
+                    .animation(.easeOut(duration: 0.14), value: isHovered)
+                    .animation(.easeOut(duration: 0.14), value: selected)
+            )
+            .onHover { hover in
+                isHovered = hover
+            }
+    }
+}
+
+private extension View {
+    func officeHoursGoalOptionSurface(selected: Bool) -> some View {
+        modifier(OfficeHoursGoalOptionSurface(selected: selected))
+    }
+}
+
 private struct OfficeHoursIntroStageReveal<Content: View>: View {
     let id: String
     let delayNanoseconds: UInt64
@@ -5404,50 +5451,49 @@ struct ContentView: View {
     ) -> some View {
         let drafts = viewModel.day1GoalDrafts
         let activeDraft = officeHoursActiveGoalDraft(drafts: drafts)
-        let productSubject = openDesignDay1GoalSubject(
-            openDesignDay1GoalProductName(
-                situationSummaryName: viewModel.scanResult?.day1SituationSummary?.project.name,
-                alignmentProductName: viewModel.scanResult?.day1AlignmentPlan?.signals.productName,
-                icpProductName: viewModel.scanResult?.day1IcpPlan?.signals.productName
-            )
-        )
 
         VStack(alignment: .leading, spacing: 14) {
             officeHoursSectionHeader("목표 확립")
 
-            VStack(alignment: .leading, spacing: 14) {
-                Text(openDesignAttributedText(
-                    [.strong(productSubject), .body(" "), .mark("30일"), .body(" 동안 "), .strong("증명할 목표 하나"), .body("를 먼저 정합니다.")],
-                    bodySize: 18,
-                    bodyWeight: .semibold,
-                    strongWeight: .bold,
-                    bodyColor: OpenDesignOfficeHoursColor.fg,
-                    markColor: OpenDesignOfficeHoursColor.amber,
-                    markBackground: OpenDesignOfficeHoursColor.amberDim
-                ))
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(openDesignAttributedText(
+                        [.mark("30일"), .body(" 동안 증명할 목표를 먼저 "), .strong("선택하세요")],
+                        bodySize: 20,
+                        bodyWeight: .semibold,
+                        strongWeight: .bold,
+                        bodyColor: OpenDesignOfficeHoursColor.fg,
+                        markColor: OpenDesignOfficeHoursColor.amber,
+                        markBackground: OpenDesignOfficeHoursColor.amberDim
+                    ))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text(openDesignAttributedText(
-                    [.body("선택한 목표를 기준으로 Day 1 질문을 만들고 확정하면 "), .code(".agentic30/docs/GOAL.md"), .body("에 기록합니다.")],
-                    bodySize: 12.5,
-                    bodyWeight: .medium,
-                    bodyColor: OpenDesignOfficeHoursColor.fgSecondary,
-                    codeColor: OpenDesignOfficeHoursColor.accent,
-                    codeBackground: OpenDesignOfficeHoursColor.bgDarker
-                ))
+                    Text(openDesignAttributedText(
+                        [.body("선택한 목표를 기준으로 Day 1 질문을 만들고 확정하면 "), .code(".agentic30/docs/GOAL.md"), .body("에 기록합니다.")],
+                        bodySize: 12.5,
+                        bodyWeight: .medium,
+                        bodyColor: OpenDesignOfficeHoursColor.fgSecondary,
+                        codeColor: OpenDesignOfficeHoursColor.accent,
+                        codeBackground: OpenDesignOfficeHoursColor.bgDarker
+                    ))
                     .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if drafts.isEmpty {
                     officeHoursGoalEmptyState()
                 } else {
                     LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 168), spacing: 8, alignment: .top)],
+                        columns: [GridItem(.adaptive(minimum: 220), spacing: 10, alignment: .top)],
                         alignment: .leading,
-                        spacing: 8
+                        spacing: 10
                     ) {
-                        ForEach(drafts) { draft in
-                            officeHoursGoalOptionButton(draft, activeDraft: activeDraft)
+                        ForEach(Array(drafts.enumerated()), id: \.element.id) { optionIndex, draft in
+                            officeHoursGoalOptionButton(
+                                draft,
+                                optionNumber: optionIndex + 1,
+                                activeDraft: activeDraft
+                            )
                         }
                     }
 
@@ -5504,7 +5550,7 @@ struct ContentView: View {
             saveOfficeHoursGoalAndStart(activeDraft, session: session, day1Content: day1Content)
         } label: {
             HStack(spacing: 8) {
-                Text(canStart ? "이 목표로 시작하기" : "목표를 하나 고르세요")
+                Text(canStart ? "이 목표로 Office Hours 시작" : "목표 선택 후 시작")
                     .font(.system(size: 13, weight: .semibold))
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.right")
@@ -5524,6 +5570,7 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .disabled(!canStart)
+        .accessibilityValue(canStart ? "시작 가능" : "목표 선택 필요")
         .accessibilityIdentifier("opendesign.officeHours.goal.save")
     }
 
@@ -5551,40 +5598,91 @@ struct ContentView: View {
 
     private func officeHoursGoalOptionButton(
         _ draft: Day1GoalDraft,
+        optionNumber: Int,
         activeDraft: Day1GoalDraft?
     ) -> some View {
         let isSelected = activeDraft?.goalType == draft.goalType
         return Button {
             selectedOfficeHoursGoalType = draft.goalType
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(draft.goalType.title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text(openDesignAttributedText(
-                    [.body(draft.goalType.promptHint)],
-                    bodySize: 11.5,
-                    bodyWeight: .medium,
-                    bodyColor: OpenDesignOfficeHoursColor.muted
-                ))
+            HStack(alignment: .top, spacing: 12) {
+                officeHoursGoalOptionIndicator(optionNumber: optionNumber, isSelected: isSelected)
+                    .padding(.top, 1)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Text(draft.goalType.title)
+                            .font(.system(size: 14.5, weight: .bold))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if draft.isRecommended {
+                            Text("추천")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(OpenDesignOfficeHoursColor.bgDeep)
+                                .padding(.horizontal, 5)
+                                .frame(height: 16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .fill(OpenDesignOfficeHoursColor.accent)
+                                )
+                        }
+                        Spacer(minLength: 0)
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                        }
+                    }
+
+                    Text(openDesignAttributedText(
+                        [.body(draft.goalType.promptHint)],
+                        bodySize: 12,
+                        bodyWeight: .medium,
+                        bodyColor: isSelected ? OpenDesignOfficeHoursColor.fgSecondary : OpenDesignOfficeHoursColor.muted
+                    ))
                     .fixedSize(horizontal: false, vertical: true)
+
+                    if isSelected {
+                        Text("선택됨")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                            .padding(.horizontal, 7)
+                            .frame(height: 20)
+                            .background(Capsule().fill(OpenDesignOfficeHoursColor.accentDim))
+                            .overlay(Capsule().stroke(OpenDesignOfficeHoursColor.accentLine, lineWidth: 1))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? OpenDesignOfficeHoursColor.accentDim : OpenDesignOfficeHoursColor.surface2)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(isSelected ? OpenDesignOfficeHoursColor.accentLine : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
-                    )
-            )
+            .padding(13)
+            .frame(maxWidth: .infinity, minHeight: 116, alignment: .topLeading)
+            .officeHoursGoalOptionSurface(selected: isSelected)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("opendesign.officeHours.goal.option.\(draft.goalType.rawValue)")
-        .accessibilityValue(isSelected ? "active" : "inactive")
+        .accessibilityLabel("\(draft.goalType.title) 목표")
+        .accessibilityHint("선택하면 이 목표로 Office Hours를 시작할 수 있습니다.")
+        .accessibilityValue(isSelected ? "선택됨" : "선택 안 됨")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func officeHoursGoalOptionIndicator(optionNumber: Int, isSelected: Bool) -> some View {
+        ZStack {
+            Circle()
+                .fill(isSelected ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.bgDeep)
+                .frame(width: 28, height: 28)
+                .overlay(
+                    Circle()
+                        .stroke(isSelected ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+            Text("\(optionNumber)")
+                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(isSelected ? OpenDesignOfficeHoursColor.bgDeep : OpenDesignOfficeHoursColor.muted)
+        }
+        .frame(width: 30, height: 30)
+        .accessibilityHidden(true)
     }
 
     private func officeHoursGoalDetailRow(
