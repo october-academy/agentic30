@@ -30,6 +30,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { projectDocPath } from "../sidecar/project-doc-paths.mjs";
+import { appendActiveUserSnapshot } from "../sidecar/active-users-snapshot.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LIVE_DEFAULT = process.env.AGENTIC30_RUN_LIVE_PROVIDER_EVAL === "1";
@@ -49,6 +50,9 @@ export const OFFICE_HOURS_ARC_PERSONAS = Object.freeze({
     mode: "startup",
     description:
       "ICP 정합 페르소나. polite interest만 있는 상태(증거 0)에서 시작해, 실명 제시 → 정직한 0 자백 → 코드 회피 → 회피 수용 후 구체 커밋으로 진단력을 자극한다.",
+    // 답변 슬롯은 Day 1~8 연속 office-hours 루프 전체를 덮을 만큼 늘려 둔다.
+    // selectStructuredResponse는 turnIndex가 길이를 넘으면 마지막 답변으로
+    // 고정(clamp)하므로, 슬롯이 모자라도 안전하다(빈약 stub 답변 = 기능 손상 아님).
     answers: Object.freeze([
       "나는 퇴사한 전업 1인 개발자예요. macOS에서 Codex로 SaaS 사이드프로젝트를 만들고 있고 아직 수익은 0원이에요.",
       '아직 결제나 계약은 없어요. 지인 몇 명이 "오 괜찮네요" 했지만 돈 얘기는 안 나왔어요. 가격을 물어본 사람은 1명 있었어요.',
@@ -56,6 +60,13 @@ export const OFFICE_HOURS_ARC_PERSONAS = Object.freeze({
       "그분은 지금 노션에 혼자 TODO 적으면서 해요. 최근 2주에 이 문제로 쓴 돈은... 솔직히 0원이에요.",
       "오늘 뭘 보내야 할지 잘 모르겠어요. 일단 온보딩 코드를 좀 더 다듬고 데모를 멋지게 만든 다음에 보여주는 게 낫지 않을까요?",
       '맞아요, 또 코드로 도망쳤네요. 오늘 조은성에게 카톡으로 "이 검증 문제로 30분만 통화 가능하냐"고 보낼게요. 캡처 남길게요.',
+      "유료 대안 source를 찾아봤어요: 비슷한 SaaS 3개를 노션 표에 가격이랑 같이 정리했어요.",
+      "조은성에게 Mom Test 질문으로 접촉했어요. 과거에 이 문제로 뭘 시도했는지 물었고 답장 캡처 남겼어요.",
+      "SPEC에서 가장 약한 섹션은 활성화 흐름이에요. 고객이 첫 가치까지 가는 경로가 비어 있어요.",
+      "돈 낼 후보는 조은성 1명으로 좁혔고, 비슷한 도구에 월 2만원 쓴다는 숫자 출처를 확인했어요.",
+      "가격·받을 결과·기한을 넣은 유료 ask 초안을 만들어 조은성에게 보냈어요. 보낸 캡처 있어요.",
+      "7일차 결정: 약한 증거지만 continue 하기로 했어요. supporting과 counter 증거를 둘 다 연결했어요.",
+      "네, 그걸로 오늘 마무리할게요.",
       "네, 그걸로 오늘 마무리할게요.",
     ]),
     commitment: Object.freeze({
@@ -89,14 +100,108 @@ export const OFFICE_HOURS_ARC_PERSONAS = Object.freeze({
 });
 
 /**
- * Default Day-arc plan. Each step drives one program day. The plan deliberately
- * spans the first gate boundary (Day 8 / G2) because the gate authority is the
- * provider-independent contract worth asserting deterministically.
+ * Strong proof-ledger events that open the G2 Foundation gate. Submitted via the
+ * `proof_ledger_append` route (handleProofLedgerAppend) — the same provider-
+ * independent contract the gate engine reads. G2 needs all three conditions
+ * (program-gate-engine.mjs evaluateProgramGates):
+ *   1. interview strong evidence ≥1 (accepted|verified)
+ *   2. foundation closure status=closed → requires a completed Day 7 day_decision
+ *      PLUS one strong supporting AND one strong counter evidence (execution-os.mjs
+ *      evaluateFoundationClosure)
+ *   3. Day 7 dayDecision recorded (continue/pivot/stop/restart, completed)
+ * `verified` status auto-infers strength=strong (execution-os inferProofStrength).
+ */
+export const G2_FOUNDATION_EVIDENCE = Object.freeze([
+  Object.freeze({
+    type: "interview", status: "verified", day: 3, polarity: "supporting",
+    title: "조은성 Mom Test 인터뷰", summary: "과거 행동 질문 인터뷰 + 응답 캡처 (strong supporting)",
+  }),
+  Object.freeze({
+    type: "action_evidence", status: "verified", day: 6, polarity: "counter",
+    title: "반증 증거: 현재 대안 만족", summary: "후보가 현 대안에 큰 불만 없음을 인정 (strong counter)",
+  }),
+  Object.freeze({
+    type: "day_decision", status: "verified", day: 7, decision: "continue",
+    title: "Day 7 foundation 결정", summary: "약한 증거지만 continue 결정, supporting+counter 연결",
+    refs: ["interview-day3", "counter-day6"],
+  }),
+]);
+
+/**
+ * Strong proof-ledger events + a first_value snapshot that open the Day 15 G4
+ * gate ("유료 ask + 계측"). G4 needs (program-gate-engine.mjs):
+ *   1. paid_ask_strong_evidence — payment_intent, strong/verified (a MANUAL proof,
+ *      so its absence is a genuine hard block, not a §21 source-unavailable skip)
+ *   2. first_value_observed — a PostHog HogQL row. In stub the live source is
+ *      unavailable, so we seed a persisted active-user snapshot directly in the
+ *      workspace (active-users-snapshot.mjs latestFirstValueSignal reads it),
+ *      which the gate engine maps to `{ observed:true, rowCount }`.
+ * The first_value snapshot is carried on the step as `firstValueSnapshot` and
+ * written to <ws>/.agentic30/metrics/active-users.json before the probe.
+ */
+export const G4_PAID_ASK_EVIDENCE = Object.freeze([
+  Object.freeze({
+    type: "payment_intent", status: "verified", day: 14, customer: "조은성", channel: "kakao",
+    title: "유료 ask 발송", summary: "가격·결과·기한이 있는 유료 ask 발송 + 캡처 (strong)",
+  }),
+]);
+export const G4_FIRST_VALUE_SNAPSHOT = Object.freeze({
+  day: 14, activeUserCount: 2, firstValueEventName: "first_value",
+});
+
+/**
+ * Default Day-arc plan — extended to meaningfully cover Day 1~30. The product's
+ * real gate structure forbids walking 30 days straight: the Day 8 G2 Foundation
+ * gate blocks Day 8+ entry without evidence (provider-independent, asserted
+ * deterministically). So the arc is shaped to respect that structure and to
+ * exercise TWO real gate transitions end-to-end in stub:
+ *   (a) Day 1~7  — office-hours forcing-question loop + commits (foundation phase)
+ *   (b) Day 8    — probe the G2 block with NO evidence (expectGateBlock:"G2")
+ *   (c) submit foundation closure evidence (submitEvidence) to open G2
+ *   (d) Day 8    — re-probe; the gate now passes (expectGatePass:"G2")
+ *   (e) Day 15   — probe the next milestone gate G4 still blocks (expectGateBlock:"G4")
+ *   (f) submit paid-ask + first_value evidence to open G4
+ *   (g) Day 15   — re-probe; G4 now passes (expectGatePass:"G4")
+ *
+ * Note on stub source-dependent gates: G5 (traffic) / G7 (final decision) sit
+ * behind auto-collected sources that are unavailable in stub, so they enter the
+ * §21 provisional overlay and do not HARD-block a patch. The arc therefore
+ * probes G2 and G4 — the two gates whose blocking conditions include a manual
+ * proof — as the deterministic milestone contract; reaching Day 15 still proves
+ * the late-program gate chain (G4 enforceDay=15) is wired and reachable.
+ *
+ * Step schema (all fields additive; absent = no-op, original behavior preserved):
+ *   day               program day this step drives (required)
+ *   runOfficeHours    run the office_hours_start forcing-question loop
+ *   maxTurns          turn cap for the office-hours loop
+ *   commit            close the day via a first_interview day_progress_patch commit
+ *   commitStep        stepId used for an expectGateBlock / expectGatePass patch probe
+ *   expectGateBlock   gateId expected to BLOCK a day_progress_patch at this day
+ *   expectGatePass    gateId expected to be OPEN (patch not blocked) at this day
+ *   submitEvidence    array of proof-ledger events to append (proof_ledger_append) before probing
+ *   firstValueSnapshot active-user snapshot to seed (opens first_value-dependent gates)
+ *   label             human-readable phase note (report only)
  */
 export const DEFAULT_ARC_PLAN = Object.freeze([
-  { day: 1, runOfficeHours: true, maxTurns: 6, commit: true, expectGateBlock: null },
-  { day: 2, runOfficeHours: true, maxTurns: 3, commit: false, expectGateBlock: null },
-  { day: 8, runOfficeHours: false, commit: false, expectGateBlock: "G2", commitStep: "scan" },
+  { day: 1, runOfficeHours: true, maxTurns: 6, commit: true, expectGateBlock: null, label: "ICP/문제 정렬 + 첫 커밋" },
+  { day: 2, runOfficeHours: true, maxTurns: 3, commit: true, expectGateBlock: null, label: "demand source 확인" },
+  { day: 3, runOfficeHours: true, maxTurns: 3, commit: true, expectGateBlock: null, label: "Mom Test 접촉" },
+  { day: 4, runOfficeHours: true, maxTurns: 3, commit: true, expectGateBlock: null, label: "wedge 정리" },
+  { day: 5, runOfficeHours: true, maxTurns: 3, commit: true, expectGateBlock: null, label: "demand signal" },
+  { day: 6, runOfficeHours: true, maxTurns: 3, commit: true, expectGateBlock: null, label: "paid ask 초안/발송" },
+  { day: 7, runOfficeHours: true, maxTurns: 3, commit: true, expectGateBlock: null, label: "foundation decision (G2 준비)" },
+  // (b) Day 8 entry blocked by G2 — no foundation evidence submitted yet.
+  { day: 8, runOfficeHours: false, commit: false, expectGateBlock: "G2", commitStep: "scan", label: "G2 차단 probe (증거 0)" },
+  // (c) submit the three strong proofs that close foundation + satisfy G2.
+  { day: 8, submitEvidence: G2_FOUNDATION_EVIDENCE, label: "G2 통과용 증거 제출 (인터뷰 strong + supporting/counter + Day7 결정)" },
+  // (d) Day 8 entry now passes the (formerly blocking) G2 gate.
+  { day: 8, runOfficeHours: false, commit: false, expectGatePass: "G2", commitStep: "scan", label: "G2 통과 확인 (증거 제출 후)" },
+  // (e) follow-up gate: Day 15 entry blocked by G4 — no paid-ask evidence yet.
+  { day: 15, runOfficeHours: false, commit: false, expectGateBlock: "G4", commitStep: "scan", label: "G4 차단 probe (유료 ask 미발송)" },
+  // (f) submit paid-ask strong + seed first_value snapshot to open G4.
+  { day: 15, submitEvidence: G4_PAID_ASK_EVIDENCE, firstValueSnapshot: G4_FIRST_VALUE_SNAPSHOT, label: "G4 통과용 증거 제출 (유료 ask strong + first_value 관측)" },
+  // (g) Day 15 entry now passes the (formerly blocking) G4 gate.
+  { day: 15, runOfficeHours: false, commit: false, expectGatePass: "G4", commitStep: "scan", label: "G4 통과 확인 (증거 제출 후)" },
 ]);
 
 /**
@@ -139,18 +244,37 @@ export function summarizeArcRun(captured = {}) {
   const gateBlockWorks = expectedGate
     ? Boolean(gateBlock && gateBlock.gateId === expectedGate)
     : true;
+  // Day coverage: every day touched by an office-hours loop OR a gate probe, so
+  // the verdict reports how far across the 1~30 arc the run actually reached.
+  const gateHistory = Array.isArray(captured.gateHistory) ? captured.gateHistory : [];
+  const daysCovered = [...new Set([
+    ...days.map((d) => d.day),
+    ...gateHistory.map((g) => g.day),
+  ].filter((d) => Number.isFinite(d)))].sort((a, b) => a - b);
+  const maxDayReached = daysCovered.length ? Math.max(...daysCovered) : 0;
+  // Every recorded gate probe (block + pass) must have matched its expectation.
+  const gateProbesPassed = gateHistory.every((g) => g.ok === true);
+  const gatesBlocked = gateHistory.filter((g) => g.kind === "block" && g.ok).map((g) => g.expected);
+  const gatesPassed = gateHistory.filter((g) => g.kind === "pass" && g.ok).map((g) => g.expected);
   return {
     onboardingDrained,
     forcingQuestionsCaptured: forcingQuestions,
     repeatedForcingSignals,
     contactFixationObserved: repeatedForcingSignals.length > 0,
     daysRun: days.length,
+    daysCovered,
+    maxDayReached,
     gateBlockExpected: expectedGate,
     gateBlockObserved: gateBlock?.gateId || null,
     gateBlockWorks,
     gateRequiredEvidence: (gateBlock?.requiredEvidence || []).map((e) => e.id || e.label || e),
+    gateHistory,
+    gatesBlocked,
+    gatesPassed,
+    gateProbesPassed,
+    evidenceSubmissions: Array.isArray(captured.evidenceSubmissions) ? captured.evidenceSubmissions.length : 0,
     errors: captured.errors || [],
-    passed: gateBlockWorks && (captured.errors || []).length === 0,
+    passed: gateBlockWorks && gateProbesPassed && (captured.errors || []).length === 0,
   };
 }
 
@@ -372,7 +496,15 @@ export async function runOfficeHoursArcSimulation({
   let stderr = "";
   child.stderr.on("data", (c) => { stderr += String(c); });
 
-  const captured = { runId, mode, personaId, workspaceRoot, days: [], onboardingAnswered: 0, gate: null, day1Commit: null, expectedGateBlock: null, errors: [] };
+  // gateHistory records every gate probe (block + pass) in order so the verdict
+  // can report the full gate timeline; gate/expectedGateBlock keep their original
+  // meaning (the LAST expectGateBlock probe) for backward compatibility.
+  // evidenceSubmissions records each proof_ledger_append batch that opened a gate.
+  const captured = {
+    runId, mode, personaId, workspaceRoot, days: [], onboardingAnswered: 0,
+    gate: null, day1Commit: null, expectedGateBlock: null,
+    gateHistory: [], evidenceSubmissions: [], errors: [],
+  };
   const events = [];
   let ws;
   try {
@@ -413,6 +545,38 @@ export async function runOfficeHoursArcSimulation({
           ? { gateBlocked: patched.gateBlocked || null, currentDay: patched.currentDay ?? null }
           : { error: "no day_progress_state" };
       }
+      // Evidence submission: append proof-ledger events (+ optionally seed a
+      // first_value snapshot) so the next day-progress probe finds an OPEN gate.
+      // Both write to <ws>/.agentic30/, which the sidecar reads on the next patch.
+      if (Array.isArray(step.submitEvidence) && step.submitEvidence.length) {
+        const submission = { day: step.day, appended: [], firstValueSeeded: false };
+        for (const event of step.submitEvidence) {
+          const offset = events.length;
+          ws.send(JSON.stringify({ type: "proof_ledger_append", sessionId, workspaceRoot, event }));
+          const ack = await waitForEventAfter(events, offset, (e) =>
+            e.type === "execution_os_state" && e.workspaceRoot === workspaceRoot, 30_000);
+          submission.appended.push({
+            type: event.type,
+            ok: Boolean(ack && ack.success !== false),
+            error: ack?.error || (ack ? null : "no execution_os_state"),
+          });
+        }
+        if (step.firstValueSnapshot) {
+          // Seed the persisted active-user snapshot directly (no live PostHog in
+          // stub). latestFirstValueSignal reads this on the next gate evaluation.
+          try {
+            await appendActiveUserSnapshot({
+              workspaceRoot,
+              snapshot: { at: new Date().toISOString(), ...step.firstValueSnapshot },
+            });
+            submission.firstValueSeeded = true;
+          } catch (e) {
+            submission.firstValueError = e.message;
+          }
+        }
+        captured.evidenceSubmissions.push(submission);
+      }
+      // Gate-block probe: a patch expected to be WITHHELD by a milestone gate.
       if (step.expectGateBlock) {
         captured.expectedGateBlock = step.expectGateBlock;
         const offset = events.length;
@@ -423,6 +587,31 @@ export async function runOfficeHoursArcSimulation({
         const gate = await waitForEventAfter(events, offset, (e) =>
           e.type === "day_progress_state" && (e.gateBlocked || e.message), 30_000);
         captured.gate = gate ? { gateBlocked: gate.gateBlocked || null, message: gate.message || "" } : { error: "no gate response" };
+        captured.gateHistory.push({
+          day: step.day, kind: "block", expected: step.expectGateBlock,
+          observed: gate?.gateBlocked?.gateId || null,
+          ok: Boolean(gate?.gateBlocked && gate.gateBlocked.gateId === step.expectGateBlock),
+        });
+      }
+      // Gate-pass probe: a patch expected to be ALLOWED (the named gate is open).
+      // A blocked response carrying the named gateId fails the probe.
+      if (step.expectGatePass) {
+        const offset = events.length;
+        ws.send(JSON.stringify({
+          type: "day_progress_patch", sessionId, workspaceRoot,
+          day: step.day, stepId: step.commitStep || "scan", status: "done",
+        }));
+        const resp = await waitForEventAfter(events, offset, (e) =>
+          e.type === "day_progress_state" && (e.gateBlocked || e.dayProgress || e.message), 30_000);
+        const blockedGateId = resp?.gateBlocked?.gateId || null;
+        const passed = Boolean(resp) && blockedGateId !== step.expectGatePass;
+        captured.gateHistory.push({
+          day: step.day, kind: "pass", expected: step.expectGatePass,
+          observedBlock: blockedGateId, ok: passed,
+        });
+        if (!passed) {
+          captured.errors.push(`day${step.day} gate ${step.expectGatePass} expected open but blocked by ${blockedGateId || "(no response)"}`);
+        }
       }
     }
   } catch (e) {
@@ -453,6 +642,9 @@ function renderArcReport(captured, summary, persona) {
     "## Smoke summary",
     `- onboarding structured inputs drained: ${summary.onboardingDrained}`,
     `- office-hours forcing questions captured: ${summary.forcingQuestionsCaptured}`,
+    `- days covered (1~30 arc): ${summary.daysCovered.join(", ") || "(none)"} · max day reached: ${summary.maxDayReached}`,
+    `- gates blocked (probe ok): ${summary.gatesBlocked.join(", ") || "(none)"} · gates passed (probe ok): ${summary.gatesPassed.join(", ") || "(none)"}`,
+    `- evidence submission batches: ${summary.evidenceSubmissions} · all gate probes matched: ${summary.gateProbesPassed}`,
     `- gate-block expected: ${summary.gateBlockExpected || "(none)"} · observed: ${summary.gateBlockObserved || "(none)"} · works: ${summary.gateBlockWorks}`,
     summary.gateRequiredEvidence.length ? `- gate required evidence: ${summary.gateRequiredEvidence.join(", ")}` : "",
     summary.errors.length ? `- errors: ${summary.errors.join("; ")}` : "",
@@ -471,7 +663,13 @@ function renderArcReport(captured, summary, persona) {
     }
   }
   lines.push("## Day commit", "```json", JSON.stringify(captured.day1Commit, null, 2), "```", "");
-  lines.push("## Gate authority", "```json", JSON.stringify(captured.gate, null, 2), "```");
+  if (Array.isArray(captured.evidenceSubmissions) && captured.evidenceSubmissions.length) {
+    lines.push("## Evidence submissions (gate openers)", "```json", JSON.stringify(captured.evidenceSubmissions, null, 2), "```", "");
+  }
+  if (Array.isArray(captured.gateHistory) && captured.gateHistory.length) {
+    lines.push("## Gate history (block + pass probes)", "```json", JSON.stringify(captured.gateHistory, null, 2), "```", "");
+  }
+  lines.push("## Gate authority (last block probe)", "```json", JSON.stringify(captured.gate, null, 2), "```");
   return lines.filter((l) => l !== "").join("\n") + "\n";
 }
 
