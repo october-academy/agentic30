@@ -104,7 +104,6 @@ function buildStateTransitionCard(context) {
     candidateName: candidate.candidateName,
     actionText: candidate.actionText,
     repeatCountWithoutEvidence: candidate.repeatCountWithoutEvidence,
-    userVisibleSummary: stateTransitionSummary(candidate),
     choices: [
       { id: "attach_evidence", label: "Attach evidence" },
       { id: "resolve_without_evidence", label: "Resolve without evidence" },
@@ -132,7 +131,6 @@ function buildWorkpackCard(context) {
     sourceCommitmentId: commitment.id,
     selectedLens: lens.lens,
     lensReason: lens.reason,
-    userVisibleSummary: workpackSummary({ targetExternalAction, expectedProof }),
     workpack: {
       id: `workpack-${hashProgramV2CardText(`${context.programDay}:${commitment.actionText}`)}`,
       workType: lens.workType,
@@ -215,7 +213,6 @@ function buildScoreboardCard(context) {
     generation: buildProgramV2Generation("program-scoreboard", "Program scoreboard", context),
     sourceState: mergeSourceStates([activeState, revenueState]),
     requiresUserAction: false,
-    userVisibleSummary: scoreboardSummary(context.scoreboardSnapshot),
     proofLedgerMapping: {
       first_value: "activeUsers100.acceptedProof",
       paymentRecord: "firstRevenue.acceptedProof",
@@ -243,7 +240,6 @@ function buildGateCard(context) {
   });
   return withProgramV2CardIdentity({
     ...gateCard,
-    userVisibleSummary: gateSummary(gateCard),
   }, context);
 }
 
@@ -286,39 +282,6 @@ function mergeSourceStates(states) {
     if (states.includes(state)) return state;
   }
   return "ready";
-}
-
-// 사람이 읽는 한국어 한 줄 요약(spec §11 payload는 구조화 필드 위주라 사용자가
-// "무엇이 해결됐고 다음에 뭘 할지"를 못 읽는 문제를 보완). 모두 additive optional 필드.
-
-function stateTransitionSummary(candidate) {
-  const repeat = Number(candidate?.repeatCountWithoutEvidence) || 0;
-  const name = cleanString(candidate?.candidateName, 80) || "현재 후보";
-  return `반복 부채 ${repeat}건 (${name}) — 증거를 붙이거나 다음 후보로 교체하세요.`;
-}
-
-function workpackSummary({ targetExternalAction, expectedProof }) {
-  const action = cleanString(targetExternalAction, 300) || "오늘의 외부 행동";
-  const proof = cleanString(expectedProof, 200) || "고객 행동 증거";
-  return `오늘 외부 행동: ${action} / 증거: ${proof}`;
-}
-
-function scoreboardSummary(snapshot) {
-  const active = snapshot?.scoreboards?.activeUsers100 ?? {};
-  const revenue = snapshot?.scoreboards?.firstRevenue ?? {};
-  const activeAccepted = Number(active.acceptedCount ?? active.accepted_count ?? 0);
-  const target = Number(active.target ?? 100) || 100;
-  const revenueAccepted = Number(revenue.acceptedCount ?? revenue.accepted_count ?? 0);
-  return `활성 ${activeAccepted}/${target}, 매출 ${revenueAccepted}건 — accepted와 excluded(가입/방문/자기보고)를 분리해서 보세요.`;
-}
-
-function gateSummary(gateCard) {
-  const gate = cleanString(gateCard?.gate, 8) || "G?";
-  if (gateCard?.satisfied) return `${gate} 통과 — 다음 단계로 진행 가능.`;
-  const reasons = Array.isArray(gateCard?.blockingReasons) ? gateCard.blockingReasons.filter(Boolean) : [];
-  const reasonText = reasons.length ? reasons.join(", ") : "조건 미충족";
-  const recovery = cleanString(gateCard?.recoveryBranch, 120) || "recovery branch 확인";
-  return `${gate} 차단: ${reasonText} — 해제: ${recovery}`;
 }
 
 function normalizeDay(value) {

@@ -730,12 +730,19 @@ async function programV2StaleResolutionScenario({ ws, events, scenario, transcri
     `SYSTEM: after submit cards: ${programV2.afterSubmitCardOrder.join(" -> ")}`,
     `SYSTEM: replacement workpack source=${programV2.replacementWorkpackSourceCommitmentId || "(missing)"} action=${programV2.replacementWorkpackTargetExternalAction || "(missing)"} proofAccepted=${programV2.replacementWorkpackProofAccepted}`,
   );
-  // v2 daily cards render their next-action/proof-target as `userVisibleSummary`
-  // prose (Swift renders the card stack). Surface that prose as the visible
-  // output so the judge scores what the user actually sees, instead of treating
-  // the structured-only card flow as "no visible output".
+  // The Swift card stack renders the workpack's next external action + expected
+  // proof directly (ContentView renders workpack.targetExternalAction and
+  // workpack.expectedProof). Surface exactly those rendered fields as the visible
+  // output so the judge scores what the user actually sees — not a derived field
+  // the Mac UI never displays. Without this the structured-only flow reads as
+  // "no visible output" even though Swift shows the action.
   const cardProse = [...initialCards, ...afterSubmitCards]
-    .map((card) => String(card?.userVisibleSummary || "").trim())
+    .map((card) => {
+      const action = String(card?.workpack?.targetExternalAction || "").trim();
+      const proof = String(card?.workpack?.expectedProof || "").trim();
+      if (!action) return "";
+      return proof ? `다음 행동: ${action} / 증거: ${proof}` : `다음 행동: ${action}`;
+    })
     .filter(Boolean);
   const uniqueCardProse = [...new Set(cardProse)];
   return {

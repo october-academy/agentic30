@@ -1,7 +1,9 @@
-// Regression tests for the v2 daily-card human-readable prose fields and the
-// Risk-Based Lens selection (spec §5.5, §11.2-11.5). Both behaviors are
-// additive: the structured payload contract is unchanged, and these new
-// optional fields survive the program-daily-card validator end-to-end.
+// Regression tests for the v2 daily-card Risk-Based Lens selection (spec §5.5,
+// §11.2-11.5). The lens fields are additive: the structured payload contract is
+// unchanged, and selectedLens/lensReason/workType survive the program-daily-card
+// validator end-to-end. (The workpack's user-visible next action stays in the
+// rendered `workpack.targetExternalAction`/`expectedProof` fields — no separate
+// derived summary field, which the Mac UI never rendered.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -60,31 +62,7 @@ const VALID_LENSES = new Set([
   "acquisition_channel",
 ]);
 
-test("every v2 daily card carries a human-readable userVisibleSummary", async () => {
-  const workspaceRoot = await tempWorkspace();
-  try {
-    await seedOpenCommitment(workspaceRoot);
-    const context = await buildProgramV2DailyCardContext({
-      workspaceRoot,
-      programDay: 3,
-      env: ENV,
-      now: RUNTIME_NOW,
-    });
-    for (const card of context.cards) {
-      assert.equal(typeof card.userVisibleSummary, "string", `${card.type} missing userVisibleSummary`);
-      assert.ok(card.userVisibleSummary.trim().length > 0, `${card.type} has empty userVisibleSummary`);
-    }
-    // At least the workpack, scoreboard, and gate cards are always produced.
-    const types = context.cards.map((card) => card.type);
-    assert.ok(types.includes("office_hours_agent_workpack"));
-    assert.ok(types.includes("program_scoreboard_snapshot"));
-    assert.ok(types.includes("revenue_or_activation_gate"));
-  } finally {
-    await fs.rm(workspaceRoot, { recursive: true, force: true });
-  }
-});
-
-test("prose fields survive the daily-card validator end-to-end", async () => {
+test("the workpack's rendered next-action fields survive the daily-card validator", async () => {
   const workspaceRoot = await tempWorkspace();
   try {
     await seedOpenCommitment(workspaceRoot);
@@ -96,16 +74,18 @@ test("prose fields survive the daily-card validator end-to-end", async () => {
     });
     const workpack = events.find((event) => event.missionCard?.type === "office_hours_agent_workpack");
     assert.ok(workpack, "workpack event emitted");
-    // validateProgramDailyCard clones the card; the additive optional fields must persist.
-    assert.equal(typeof workpack.missionCard.userVisibleSummary, "string");
+    // validateProgramDailyCard clones the card; the lens fields + the rendered
+    // next-action fields (what Swift's ContentView actually displays) must persist.
     assert.equal(typeof workpack.missionCard.lensReason, "string");
     assert.ok(VALID_LENSES.has(workpack.missionCard.selectedLens));
-    assert.match(workpack.missionCard.userVisibleSummary, /오늘 외부 행동/);
+    assert.ok(String(workpack.missionCard.workpack.targetExternalAction || "").length > 0);
+    assert.ok(String(workpack.missionCard.workpack.expectedProof || "").length > 0);
+    // No derived summary field the Mac UI never renders.
+    assert.equal(workpack.missionCard.userVisibleSummary, undefined);
 
-    const scoreboard = events.find((event) => event.missionCard?.type === "program_scoreboard_snapshot");
-    assert.match(scoreboard.missionCard.userVisibleSummary, /활성/);
-    const gate = events.find((event) => event.missionCard?.type === "revenue_or_activation_gate");
-    assert.ok(gate.missionCard.userVisibleSummary.length > 0);
+    const types = events.map((event) => event.missionCard?.type);
+    assert.ok(types.includes("program_scoreboard_snapshot"));
+    assert.ok(types.includes("revenue_or_activation_gate"));
   } finally {
     await fs.rm(workspaceRoot, { recursive: true, force: true });
   }
