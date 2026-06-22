@@ -166,7 +166,12 @@ final class agentic30UITests: XCTestCase {
             baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
-        XCTAssertFalse(button(in: app, matching: ["Continue →", "Continue"]).exists)
+        // Continue is now always present but disabled until a folder is connected
+        // (the PR dropped `nextVisible: store.folderURL != nil`, so the footer renders it
+        //  via `.disabled(!nextEnabled)`, which keeps it in the accessibility tree).
+        let folderContinueBeforeConnect = button(in: app, matching: ["Continue →", "Continue"])
+        XCTAssertTrue(folderContinueBeforeConnect.waitForExistence(timeout: 3))
+        XCTAssertFalse(folderContinueBeforeConnect.isEnabled)
         tapRequired(elementWithIdentifier(in: app, "intakeV2.folderPromptCopyButton"), in: app, named: "Intake V2 folder prompt copy")
         XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.folderPromptPasteGuide").waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["열어 둔 Cursor, Claude Code, Codex에 붙여넣으세요."].exists)
@@ -278,7 +283,11 @@ final class agentic30UITests: XCTestCase {
         tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.community")
         tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
-        XCTAssertFalse(button(in: app, matching: ["Continue →", "Continue"]).exists)
+        // Continue is present-but-disabled before a folder is connected; advancing without a
+        // folder goes through the explicit "폴더 없이 시작" skip button below, not Continue.
+        let folderContinueSkipPath = button(in: app, matching: ["Continue →", "Continue"])
+        XCTAssertTrue(folderContinueSkipPath.waitForExistence(timeout: 3))
+        XCTAssertFalse(folderContinueSkipPath.isEnabled)
         tapRequired(elementWithIdentifier(in: app, "intakeV2.folderSkipButton"), in: app, named: "Intake V2 folder skip")
 
         if !app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10) {
@@ -4507,9 +4516,9 @@ final class agentic30UITests: XCTestCase {
             baseline.progressFrame = progressFrame
         }
 
-        if current == 6 && !button(in: app, matching: ["Continue →", "Continue"]).exists {
-            return
-        }
+        // (Removed the step-6 early return: the folder-step Continue is now present-but-disabled
+        //  and occupies the same trailing footer slot as every other step's primary button, so
+        //  its maxX/midY are baseline-stable and worth asserting like the rest.)
 
         let primaryButton = intakePrimaryButton(in: app, current: current)
         XCTAssertTrue(

@@ -193,7 +193,7 @@ struct IntakeV2FolderPickView: View {
                 IntakeV2Header(
                     title: "프로젝트 폴더를 연결할까요?",
                     subtitle: store.folderURL == nil
-                        ? "AI 도구로 현재 폴더 위치만 보내거나, 직접 선택할 수 있어요."
+                        ? "폴더를 선택하면 첫 과제가 내 코드에 맞춰집니다. AI 도구로 위치만 보낼 수도 있어요."
                         : "선택한 프로젝트를 바탕으로 첫 결정을 준비합니다."
                 )
                 VStack(alignment: .leading, spacing: 18) {
@@ -214,14 +214,29 @@ struct IntakeV2FolderPickView: View {
 
                     if let url = store.folderURL {
                         selectedFolderSummary(url)
-                    }
 
-                    if store.folderURL == nil {
-                        Button(action: copyAgentPrompt) {
+                        // Folder connected → keep a quiet "change folder" affordance.
+                        Button(action: { chooseFolder() }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "folder")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text(folderPickButtonTitle)
+                                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                            }
+                            .foregroundStyle(IntakeV2Color.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isPresentingFolderPicker)
+                        .accessibilityIdentifier("intakeV2.folderPickButton")
+                    } else {
+                        // PRIMARY: one-click native folder picker. Connecting a project is the
+                        // ICP-defining action and the only input to the adaptive engine, so it is
+                        // the prominent path — not the out-of-band CLI prompt copy.
+                        Button(action: { chooseFolder() }) {
                             HStack(spacing: 10) {
-                                Image(systemName: didCopyAgentPrompt ? "checkmark" : "doc.on.doc")
+                                Image(systemName: "folder.badge.plus")
                                     .font(.system(size: 16, weight: .semibold))
-                            Text(didCopyAgentPrompt ? "프롬프트 복사됨" : "AI 도구로 연결")
+                                Text(folderPickButtonTitle)
                                     .font(.system(size: 17, weight: .bold, design: .rounded))
                             }
                             .foregroundStyle(IntakeV2Color.primaryButtonText)
@@ -234,34 +249,45 @@ struct IntakeV2FolderPickView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .disabled(isPresentingFolderPicker)
+                        .accessibilityIdentifier("intakeV2.folderPickButton")
+
+                        // SECONDARY: AI-tool (CLI prompt) path, for users editing in Cursor/Codex.
+                        Button(action: copyAgentPrompt) {
+                            HStack(spacing: 8) {
+                                Image(systemName: didCopyAgentPrompt ? "checkmark" : "doc.on.doc")
+                                    .font(.system(size: 14, weight: .semibold))
+                                Text(didCopyAgentPrompt ? "프롬프트 복사됨" : "AI 도구로 연결 (Cursor·Codex)")
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundStyle(IntakeV2Color.secondaryButtonText)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 11)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(IntakeV2Color.secondaryButtonFill)
+                            )
+                        }
+                        .buttonStyle(.plain)
                         .accessibilityLabel(didCopyAgentPrompt ? "프롬프트 복사됨. Cursor, Claude Code, Codex에 붙여넣으세요." : "AI 도구로 연결")
                         .accessibilityIdentifier("intakeV2.folderPromptCopyButton")
 
                         folderPromptPasteGuideSlot
-                    }
 
-                    Button(action: { chooseFolder() }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text(folderPickButtonTitle)
-                                .font(.system(size: 13, weight: .medium, design: .rounded))
-                        }
-                        .foregroundStyle(IntakeV2Color.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isPresentingFolderPicker)
-                    .accessibilityIdentifier("intakeV2.folderPickButton")
-
-                    if store.folderURL == nil {
+                        // TERTIARY: explicit, deliberate "start without a folder" escape hatch.
                         VStack(alignment: .leading, spacing: 4) {
                             Button(action: skipFolderSelection) {
-                                Text("나중에")
+                                Text("폴더 없이 시작")
                                     .font(.system(size: 12, weight: .medium, design: .rounded))
                                     .foregroundStyle(IntakeV2Color.textTertiary)
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("intakeV2.folderSkipButton")
+
+                            Text("폴더 없이 시작하면 첫 과제가 일반적인 예시로 채워집니다.")
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundStyle(IntakeV2Color.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(.top, 2)
                     }
@@ -283,7 +309,6 @@ struct IntakeV2FolderPickView: View {
                 backDisabled: false,
                 nextTitle: "Continue →",
                 nextEnabled: store.isStep4Complete,
-                nextVisible: store.folderURL != nil,
                 onBack: onBack,
                 onNext: {
                     if let url = store.folderURL {
@@ -458,7 +483,7 @@ struct IntakeV2FolderPickView: View {
 
     private var folderPickButtonTitle: String {
         if isPresentingFolderPicker { return "폴더 선택 중" }
-        return store.folderURL == nil ? "직접 선택" : "다른 폴더 선택"
+        return store.folderURL == nil ? "프로젝트 폴더 선택" : "다른 폴더 선택"
     }
 
     private func applySelectedFolder(_ url: URL) {
@@ -475,7 +500,9 @@ struct IntakeV2FolderPickView: View {
     private func skipFolderSelection() {
         store.folderURL = nil
         store.persist()
-        PostHogTelemetry.capture("mac_onboarding_folder_skipped")
+        PostHogTelemetry.capture("mac_onboarding_folder_skipped", properties: [
+            "source": "explicit_no_folder",
+        ])
         onNext()
     }
 

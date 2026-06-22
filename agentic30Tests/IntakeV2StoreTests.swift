@@ -114,6 +114,32 @@ final class IntakeV2StoreTests: XCTestCase {
         XCTAssertTrue(store.isFullyComplete)
     }
 
+    // Pins the activation gate the folder-pick step depends on. The reworked picker UX makes the
+    // footer "Continue" visible-but-disabled and only enabled by `isStep4Complete`. That gate must
+    // track folder connection ALONE, independent of the survey answers — otherwise a future view
+    // change could silently let users proceed (or block them) regardless of a connected project.
+    func test_isStep4Complete_tracksFolderConnectionOnly() {
+        let store = IntakeV2Store(defaults: suiteDefaults)
+        XCTAssertFalse(store.isFolderComplete)
+        XCTAssertFalse(store.isStep4Complete)
+
+        // Every other onboarding answer filled in must NOT complete the folder step.
+        store.focusArea = .development
+        store.bottleneck = .firstActiveUsers
+        store.selectCommitmentLevel(.dailyTwoToFour)
+        store.toggleEvidenceLevel(.community)
+        XCTAssertTrue(store.isFullyComplete)
+        XCTAssertFalse(store.isStep4Complete, "Step 4 must require a connected folder, not just survey answers")
+
+        // Connecting a folder completes the step; clearing it must re-gate Continue.
+        store.folderURL = URL(fileURLWithPath: "/tmp/project")
+        XCTAssertTrue(store.isFolderComplete)
+        XCTAssertTrue(store.isStep4Complete)
+
+        store.folderURL = nil
+        XCTAssertFalse(store.isStep4Complete, "Clearing the folder must re-gate Continue")
+    }
+
     func test_evidenceCommunity_isExclusive() {
         let store = IntakeV2Store(defaults: suiteDefaults)
         store.toggleEvidenceLevel(.workLog)
