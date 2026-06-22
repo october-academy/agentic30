@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   buildExternalOfficeHoursDigestPrompt,
+  collectDailyOfficeHoursDigestSignals,
   collectGitDailySignals,
   collectGhDailySignals,
   evaluateOfficeHoursSourceGate,
@@ -15,6 +16,7 @@ import {
   normalizeOfficeHoursSelectedSources,
   officeHoursDigestWindow,
   persistDailyOfficeHoursDigest,
+  resolveDailyOfficeHoursDigestGate,
 } from "../sidecar/daily-office-hours-digest.mjs";
 
 const KST = -540;
@@ -887,4 +889,88 @@ test("a gate-deselected source stays non-required even when its signal claims ot
   const posthog = digest.sources.find((source) => source.id === "posthog");
   assert.equal(posthog.selected, false);
   assert.equal(posthog.required, false);
+});
+
+// OPT-1 — gate dedup: prepareDailyOfficeHoursDigest reuses the pre-flight gate
+// instead of re-running evaluateOfficeHoursSourceGate (a duplicate git/gh + MCP probe).
+test("resolveDailyOfficeHoursDigestGate: reuses an ok precomputed gate without re-evaluating", async () => {
+  const precomputedGate = { ok: true, day: 2, sources: [], window: officeHoursDigestWindow() };
+  let evaluateCalls = 0;
+  const gate = await resolveDailyOfficeHoursDigestGate({
+    precomputedGate,
+    evaluate: async () => {
+      evaluateCalls += 1;
+      return { ok: true, day: 99 };
+    },
+  });
+  // Same reference → a single window snapshot for the turn, and no duplicate probe.
+  assert.equal(gate, precomputedGate);
+  assert.equal(evaluateCalls, 0);
+});
+
+test("resolveDailyOfficeHoursDigestGate: re-evaluates when the gate is missing or not ok", async () => {
+  const fresh = { ok: true, day: 2 };
+  let evaluateCalls = 0;
+  const evaluate = async () => {
+    evaluateCalls += 1;
+    return fresh;
+  };
+  assert.equal(await resolveDailyOfficeHoursDigestGate({ precomputedGate: null, evaluate }), fresh);
+  assert.equal(await resolveDailyOfficeHoursDigestGate({ precomputedGate: { ok: false }, evaluate }), fresh);
+  assert.equal(evaluateCalls, 2);
+});
+
+test("resolveDailyOfficeHoursDigestGate: throws when a fallback is needed but no evaluator is supplied", async () => {
+  await assert.rejects(
+    () => resolveDailyOfficeHoursDigestGate({ precomputedGate: { ok: false } }),
+    /requires an evaluate/,
+  );
+});
+
+// OPT-2 — parallel collection: local (git/gh) and external (MCP) signals run
+// concurrently, not local-then-external.
+test("collectDailyOfficeHoursDigestSignals: runs both collectors concurrently, returns them positionally", async () => {
+  const started = [];
+  let releaseLocal;
+  const localHeld = new Promise((resolve) => {
+    releaseLocal = resolve;
+  });
+  const collectLocal = async () => {
+    started.push("local");
+    await localHeld; // stay pending until external has also started
+    return ["local-signal"];
+  };
+  const collectExternal = async () => {
+    started.push("external");
+    // external begins even though local has NOT resolved → proves concurrency
+    // (a sequential local-then-external would never reach here while local is held).
+    assert.deepEqual(started, ["local", "external"]);
+    releaseLocal();
+    return { ok: true, sources: [] };
+  };
+
+  // Bounded race so a sequential (regressed) implementation fails with a crisp
+  // named error instead of hanging until the runner's default timeout: a
+  // local-then-external order can never reach collectExternal while local is held,
+  // so collectLocal's gate is never released → deadlock.
+  const { localSignals, externalSignals } = await Promise.race([
+    collectDailyOfficeHoursDigestSignals({ collectLocal, collectExternal }),
+    new Promise((_, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("collectors did not run concurrently — sequential local-then-external would deadlock on the held local gate")),
+        1000,
+      );
+      timer.unref?.();
+    }),
+  ]);
+
+  assert.deepEqual(localSignals, ["local-signal"]);
+  assert.deepEqual(externalSignals, { ok: true, sources: [] });
+});
+
+test("collectDailyOfficeHoursDigestSignals: throws when a collector is missing", async () => {
+  await assert.rejects(
+    () => collectDailyOfficeHoursDigestSignals({ collectLocal: async () => [] }),
+    /requires collectLocal\(\) and collectExternal\(\)/,
+  );
 });

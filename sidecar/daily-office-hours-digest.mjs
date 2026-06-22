@@ -813,6 +813,43 @@ export async function collectLocalDailyOfficeHoursSignals({
   }));
 }
 
+// Daily-digest orchestration seams. Extracted here so the OPT-1/OPT-2 invariants
+// are directly unit-testable: the only caller, prepareDailyOfficeHoursDigest,
+// lives in index.mjs, whose top-level boot side effects keep it out of the test
+// suite.
+
+// OPT-1 — reuse a pre-flight source gate when it is present and ok so the
+// per-turn digest does not re-run evaluateOfficeHoursSourceGate's git/gh CLI +
+// MCP readiness probes. A missing or not-ok gate falls back to the injected
+// evaluator. Equivalent to a fresh evaluation in the run path — but only while
+// the runOfficeHours pre-flight gate (its sole supplier of precomputedGate) is
+// computed from the identical workspace/day/sources; it is reused as a single
+// window snapshot for the turn.
+export async function resolveDailyOfficeHoursDigestGate({ precomputedGate = null, evaluate } = {}) {
+  if (precomputedGate && precomputedGate.ok) {
+    return precomputedGate;
+  }
+  if (typeof evaluate !== "function") {
+    throw new TypeError("resolveDailyOfficeHoursDigestGate requires an evaluate() fallback");
+  }
+  return evaluate();
+}
+
+// OPT-2 — local (git/gh subprocess) and external (MCP digest provider) signal
+// collection share only the immutable gate, so run them concurrently. Wall time
+// drops from local+external to max(local, external). Results are returned
+// positionally for finalizeDailyOfficeHoursDigest.
+export async function collectDailyOfficeHoursDigestSignals({ collectLocal, collectExternal } = {}) {
+  if (typeof collectLocal !== "function" || typeof collectExternal !== "function") {
+    throw new TypeError("collectDailyOfficeHoursDigestSignals requires collectLocal() and collectExternal()");
+  }
+  const [localSignals, externalSignals] = await Promise.all([
+    collectLocal(),
+    collectExternal(),
+  ]);
+  return { localSignals, externalSignals };
+}
+
 export function selectedExternalOfficeHoursSources(gate = {}) {
   const selected = new Set(gate.selectedSources || []);
   return (gate.sources || [])

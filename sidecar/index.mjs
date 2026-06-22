@@ -39,6 +39,7 @@ import {
 import {
   OfficeHoursSourceGateError,
   buildExternalOfficeHoursDigestPrompt,
+  collectDailyOfficeHoursDigestSignals,
   collectLocalDailyOfficeHoursSignals,
   evaluateOfficeHoursSourceGate,
   finalizeDailyOfficeHoursDigest,
@@ -46,6 +47,7 @@ import {
   normalizeExternalOfficeHoursDigest,
   normalizeOfficeHoursSelectedSources,
   persistDailyOfficeHoursDigest,
+  resolveDailyOfficeHoursDigestGate,
   resolveDailyOfficeHoursDigestPath,
   selectedExternalOfficeHoursSources,
 } from "./daily-office-hours-digest.mjs";
@@ -6188,15 +6190,16 @@ async function prepareDailyOfficeHoursDigest(session, {
   // checks external MCP readiness), so re-evaluating it here doubled that work on
   // every Day 2+ turn. A valid precomputed gate is identical (same
   // workspace/day/sources) and keeps a single window snapshot for the turn.
-  const gate = precomputedGate && precomputedGate.ok
-    ? precomputedGate
-    : await evaluateOfficeHoursSourceGate({
-        workspaceRoot,
-        day,
-        selectedSources,
-        provider: session.provider,
-        appSupportPath,
-      });
+  const gate = await resolveDailyOfficeHoursDigestGate({
+    precomputedGate,
+    evaluate: () => evaluateOfficeHoursSourceGate({
+      workspaceRoot,
+      day,
+      selectedSources,
+      provider: session.provider,
+      appSupportPath,
+    }),
+  });
   sendOfficeHoursSourceGate(null, {
     sessionId: session.id,
     gate,
@@ -6220,17 +6223,17 @@ async function prepareDailyOfficeHoursDigest(session, {
   // concurrently. Wall time drops from local+external to max(local, external);
   // the external provider call is the long pole, so the git/gh probe now overlaps
   // it instead of stacking before it.
-  const [localSignals, externalSignals] = await Promise.all([
-    collectLocalDailyOfficeHoursSignals({
+  const { localSignals, externalSignals } = await collectDailyOfficeHoursDigestSignals({
+    collectLocal: () => collectLocalDailyOfficeHoursSignals({
       workspaceRoot,
       gate,
     }),
-    buildExternalOfficeHoursDigestSignals(session, {
+    collectExternal: () => buildExternalOfficeHoursDigestSignals(session, {
       context,
       gate,
       abortController,
     }),
-  ]);
+  });
   const digest = finalizeDailyOfficeHoursDigest({
     gate,
     localSignals,
