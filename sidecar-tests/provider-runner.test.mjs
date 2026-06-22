@@ -1475,6 +1475,35 @@ test("resolveClaudeReasoningEffort: env > Settings > empty (SDK default)", () =>
   }
 });
 
+test("resolveClaudeReasoningEffort: digest helper -> low (effort-capable models only)", () => {
+  const previousEnv = process.env.AGENTIC30_CLAUDE_REASONING_EFFORT;
+  resetProviderSettingsForTest();
+  try {
+    delete process.env.AGENTIC30_CLAUDE_REASONING_EFFORT;
+
+    // Bounded digest helper lowers effort on effort-capable models.
+    assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", "claude-opus-4-8"), "low");
+    assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", "claude-sonnet-4-6"), "low");
+    // Empty model resolves to the Opus default, which supports effort.
+    assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", ""), "low");
+
+    // Effort-incapable / unrecognized models omit effort (SDK default) — no rejection risk.
+    assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", "claude-haiku-4-5"), "");
+    assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", "claude-sonnet-4-5"), "");
+
+    // Quality-critical interview + the evidence judge keep the SDK default.
+    assert.equal(resolveClaudeReasoningEffort("office_hours_question", "claude-opus-4-8"), "");
+    assert.equal(resolveClaudeReasoningEffort("judge_read_only", "claude-opus-4-8"), "");
+
+    // A pin still wins over the per-executionMode default.
+    process.env.AGENTIC30_CLAUDE_REASONING_EFFORT = "high";
+    assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", "claude-opus-4-8"), "high");
+  } finally {
+    restoreEnv("AGENTIC30_CLAUDE_REASONING_EFFORT", previousEnv);
+    resetProviderSettingsForTest();
+  }
+});
+
 test("resolveCodexReasoningEffort: Settings beat the heuristic, env beats Settings", () => {
   const previousAgenticEnv = process.env.AGENTIC30_CODEX_REASONING_EFFORT;
   const previousCodexEnv = process.env.CODEX_REASONING_EFFORT;
