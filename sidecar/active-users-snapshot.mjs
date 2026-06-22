@@ -238,14 +238,13 @@ export async function collectEquivalentActiveUserSnapshot({
 export function countVerifiedActiveUserIdentities(proofLedger = {}) {
   const events = Array.isArray(proofLedger?.events) ? proofLedger.events : [];
   const identities = new Set();
-  let qualifying = 0;
-  for (let index = 0; index < events.length; index += 1) {
-    const event = events[index];
+  for (const event of events) {
     if (!isVerifiedActiveUserEvidence(event)) continue;
-    qualifying += 1;
-    identities.add(resolveActiveUserIdentity(event, index));
+    const identity = resolveActiveUserIdentity(event);
+    if (!identity) continue;
+    identities.add(identity);
   }
-  if (qualifying === 0) return null;
+  if (identities.size === 0) return null;
   return identities.size;
 }
 
@@ -266,7 +265,7 @@ function isVerifiedActiveUserEvidence(event = {}) {
   );
 }
 
-function resolveActiveUserIdentity(event = {}, index = 0) {
+function resolveActiveUserIdentity(event = {}) {
   const candidate = event.metadata?.identity
     ?? event.metadata?.personId
     ?? event.metadata?.person_id
@@ -277,11 +276,7 @@ function resolveActiveUserIdentity(event = {}, index = 0) {
     ?? event.source_url
     ?? event.artifactPath
     ?? event.artifact_path;
-  const cleaned = cleanString(candidate, 200);
-  // Verified evidence with no identity field still counts once (it is a
-  // distinct verified activation), keyed by its own event id (or list index as
-  // a deterministic fallback) so two such rows are two users — never collapsed.
-  return cleaned || `event:${cleanString(event.id, 200) || `index:${index}`}`;
+  return cleanString(candidate, 200);
 }
 
 /** Appends a snapshot, replacing any prior snapshot from the same UTC day. */

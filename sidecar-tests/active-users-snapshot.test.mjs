@@ -190,6 +190,28 @@ test("manual_proof_required / submitted / self-report never produce a count (ver
   );
 });
 
+test("verified activation evidence without a concrete identity does not produce a count", async () => {
+  const ledger = {
+    events: [
+      { id: "missing-identity-1", type: "action_evidence", status: "verified", metadata: { kind: "first_value" } },
+      { id: "missing-identity-2", type: "action_evidence", status: "accepted", metadata: { kind: "active_user" } },
+    ],
+  };
+  assert.equal(countVerifiedActiveUserIdentities(ledger), null);
+
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-active-users-no-identity-"));
+  const result = await collectEquivalentActiveUserSnapshot({
+    workspaceRoot: root,
+    day: 14,
+    proofLedger: ledger,
+    now: T0,
+  });
+  assert.equal(result.status, "source_unavailable");
+  assert.equal(result.snapshot, null);
+  const store = await loadActiveUsersStore({ workspaceRoot: root });
+  assert.equal(store.snapshots.length, 0);
+});
+
 test("equivalent adapter activates when PostHog is unavailable and tags source explicitly", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-active-users-equiv-"));
   const proofLedger = {

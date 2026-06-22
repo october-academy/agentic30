@@ -446,17 +446,14 @@ export function evaluateProgramGates({
   });
 
   // G5 첫 외부 유입 (§10.2): ① traffic 자동 증거 ② active user ≥1 — 모두
-  // 자동 집계 전용. traffic은 trafficSnapshot proof 이벤트 또는 라이브 입력.
-  const trafficSnapshotObserved = events.some((event) =>
-    event.type === PROOF_EVENT_TYPES.trafficSnapshot
-      && COMPLETED_STATUSES.has(String(event.status || "")),
-  );
+  // 자동 집계 전용. traffic은 최신 trafficSnapshot proof 이벤트 또는 라이브 입력.
+  const trafficSignal = traffic ?? latestTrafficSignalFromProofs(ledger);
   // 미수집(null) ≠ 유입 0: a missing measurement is a source gap (§21
   // provisional path), never a genuine zero. Only an actual zero reading
   // (`observed: false`) blocks for real.
-  const trafficCondition = trafficSnapshotObserved || traffic?.observed === true
+  const trafficCondition = trafficSignal?.observed === true
     ? { satisfied: true, sourceUnavailable: false }
-    : traffic == null
+    : trafficSignal == null
       ? { satisfied: false, sourceUnavailable: true }
       : { satisfied: false, sourceUnavailable: false };
   const activeUserCondition = firstValue && Number(firstValue.rowCount) >= 1

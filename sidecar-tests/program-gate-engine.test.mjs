@@ -488,6 +488,27 @@ test("latestTrafficSignalFromProofs derives the G5① traffic input from complet
   assert.equal(evaluation.gates.G5.state, GATE_STATES.passed);
 });
 
+test("G5 honors an explicit zero-traffic proof instead of treating any completed traffic snapshot as positive", () => {
+  const proofLedger = {
+    events: [
+      { id: "t1", type: "traffic_snapshot", status: "verified", createdAt: "2026-06-20T00:00:00.000Z", metadata: { observed: true } },
+      { id: "t2", type: "traffic_snapshot", status: "accepted", createdAt: "2026-06-21T00:00:00.000Z", metadata: { observed: false } },
+    ],
+  };
+  const evaluation = evaluateProgramGates({
+    proofLedger,
+    currentDay: 22,
+    firstValue: { observed: true, rowCount: 1 },
+    sources: { posthogAvailable: true, cloudflareAvailable: true },
+    now: T0,
+  });
+  const trafficCondition = evaluation.gates.G5.conditions.find((condition) => condition.id === "traffic_observed");
+  assert.equal(trafficCondition.satisfied, false);
+  assert.equal(trafficCondition.sourceUnavailable, false);
+  assert.equal(evaluation.gates.G5.state, GATE_STATES.blocked);
+  assert.equal(evaluation.gates.G5.provisional, null);
+});
+
 test("G6 passes on a strong payment record or three strong asks plus a refusal — never hard-blocks", () => {
   const viaRecord = evaluateProgramGates({
     proofLedger: {
