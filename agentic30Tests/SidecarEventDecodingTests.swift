@@ -1665,6 +1665,68 @@ struct SidecarEventDecodingTests {
         #expect(event.onboardingHypothesis?.targetUser?.contains("전업 1인 개발자") == true)
         #expect(event.onboardingHypothesis?.likelyUsers?.first == "AI 코딩 도구를 쓰는 개발자")
         #expect(event.error == nil)
+        // Normal (non-degraded) scan: the additive degraded markers stay absent.
+        #expect(event.degraded == nil)
+        #expect(event.degradedReason == nil)
+        #expect(event.degradedProvider == nil)
+        #expect(event.scanBlockedNotice == nil)
+    }
+
+    @MainActor @Test func decodesDegradedWorkspaceScanResult() throws {
+        // Fail-open degraded scan: provider verification could not run (no auth)
+        // but a local canonical ICP exists, so the sidecar completes the scan on
+        // local signals and attaches additive degraded markers + an advisory
+        // (non-blocking) recovery notice. The result is otherwise a normal scan
+        // result and must keep decoding the canonical doc fields.
+        let payload = """
+        {
+          "type": "workspace_scan_result",
+          "scanRoot": "/Users/october/prj/myapp",
+          "icp": ".agentic30/docs/ICP.md",
+          "degraded": true,
+          "degradedReason": "unavailable",
+          "degradedProvider": "codex",
+          "scanBlockedNotice": {
+            "scanRoot": "/Users/october/prj/myapp",
+            "provider": "codex",
+            "model": "",
+            "reason": "unavailable",
+            "message": "AI 정밀 스캔을 적용하지 못했습니다.",
+            "nextProvider": "claude",
+            "availableProviders": ["claude"],
+            "providerReadiness": [
+              {
+                "provider": "codex",
+                "sdkInstalled": true,
+                "authenticated": false,
+                "scanReady": false,
+                "source": "none",
+                "message": "",
+                "sdkMessage": "",
+                "authAction": "codex_login"
+              }
+            ],
+            "errorKind": "provider_auth_required"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "workspace_scan_result")
+        #expect(event.icp == ".agentic30/docs/ICP.md")
+        #expect(event.degraded == true)
+        #expect(event.degradedReason == "unavailable")
+        #expect(event.degradedProvider == "codex")
+        #expect(event.error == nil)
+        let notice = try #require(event.scanBlockedNotice)
+        #expect(notice.provider == "codex")
+        #expect(notice.reason == "unavailable")
+        #expect(notice.nextProvider == "claude")
+        #expect(notice.availableProviders == ["claude"])
+        #expect(notice.errorKind == "provider_auth_required")
+        #expect(notice.providerReadiness?.first?.provider == .codex)
+        #expect(notice.providerReadiness?.first?.authAction == "codex_login")
     }
 
     @MainActor @Test func decodesWorkspaceGitignoreResult() throws {

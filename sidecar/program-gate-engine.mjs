@@ -317,11 +317,46 @@ export function normalizeGateLedger(value = {}) {
 }
 
 /**
+ * G5① traffic signal derived from the proof ledger (§10.2): the latest
+ * completed `traffic_snapshot` proof event maps to `{ observed }`. This is the
+ * manual/proof-based traffic input path — when no live traffic collector is
+ * wired into a call site (e.g. the day_progress_patch gate), this lets a
+ * verified traffic proof flow into `evaluateProgramGates`/`traffic` without
+ * touching the gate's threshold logic. Returns null when no traffic_snapshot
+ * proof exists — a missing measurement is a source gap (§21), never a real
+ * zero, so the gate stays on the provisional path rather than hard-blocking.
+ */
+export function latestTrafficSignalFromProofs(proofLedger = {}) {
+  const events = Array.isArray(proofLedger?.events) ? proofLedger.events : [];
+  let latest = null;
+  for (const event of events) {
+    const type = String(event?.type ?? event?.eventType ?? event?.event_type ?? "");
+    if (type !== PROOF_EVENT_TYPES.trafficSnapshot) continue;
+    if (!COMPLETED_STATUSES.has(String(event?.status ?? ""))) continue;
+    const createdAt = Date.parse(String(event?.createdAt ?? event?.created_at ?? ""));
+    const at = Number.isFinite(createdAt) ? createdAt : Number.NEGATIVE_INFINITY;
+    if (!latest || at >= latest.at) {
+      const observedValue = event?.metadata?.observed
+        ?? event?.metadata?.traffic_observed
+        ?? event?.metadata?.trafficObserved;
+      // A completed traffic_snapshot is positive evidence of traffic by
+      // default; only an explicit `observed:false` marker reads as zero.
+      const observed = observedValue === undefined || observedValue === null
+        ? true
+        : observedValue === true || String(observedValue).toLowerCase() === "true";
+      latest = { at, observed };
+    }
+  }
+  return latest ? { observed: latest.observed } : null;
+}
+
+/**
  * Pure milestone gate evaluation (§10.2). Inputs:
  * - proofLedger: proof ledger document (normalized internally).
  * - currentDay: day number whose entry is being considered.
  * - firstValue: `{ observed, rowCount?, checkedAt? }` from the active-user
  *   snapshot pipeline (§15.4) or null when the source has not reported.
+ * - traffic: `{ observed }` live/manual traffic input or null (source gap).
  * - sources: `{ posthogAvailable: boolean|null }` source-gate availability.
  * - previousGates: prior ledger `gates` map (token + provisional continuity).
  */

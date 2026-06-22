@@ -10,6 +10,7 @@ Dogfood evaluator for sidecar chat behavior. Replays scripted scenarios through 
 | Task | Location | Notes |
 |------|----------|-------|
 | Main runner | `dogfood-simulation.mjs` | `runDogfoodSimulation`, gate evaluation, markdown report |
+| Day-arc runner | `office-hours-arc-simulation.mjs` | `runOfficeHoursArcSimulation`: onboarding handshake → office_hours_start forcing-question loop → day_progress commit → gate authority. Configurable persona/plan. Pure exports (`OFFICE_HOURS_ARC_PERSONAS`, `DEFAULT_ARC_PLAN`, `selectStructuredResponse`, `summarizeArcRun`) are unit-tested |
 | Judge / rubric | `dogfood-judge.mjs` | Score keys, verdicts, failure classes, prompt parser |
 | Summaries | `dogfood-summary.mjs` | Reads latest result JSONL and aggregates |
 | Comparisons | `dogfood-compare.mjs` | Baseline vs current regression view |
@@ -33,6 +34,12 @@ npm run eval:dogfood
 npm run eval:dogfood:gate
 AGENTIC30_RUN_LIVE_PROVIDER_EVAL=1 npm run eval:dogfood:live
 node --test sidecar-tests/dogfood-eval.test.mjs
+
+# Day-arc office-hours simulation (stub default; live drives the real provider)
+npm run sim:office-hours
+npm run sim:office-hours:live
+node --test sidecar-tests/office-hours-arc-simulation.test.mjs
+AGENTIC30_RUN_ARC_STUB_SMOKE=1 node --test sidecar-tests/office-hours-arc-simulation.test.mjs  # opt-in stub gate smoke
 ```
 
 ## DEPENDENCIES

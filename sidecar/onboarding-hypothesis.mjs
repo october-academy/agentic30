@@ -45,6 +45,25 @@ const confidenceRank = {
   high: 2,
 };
 
+// founder-ICP signals capture whether the FOUNDER themselves fits the Agentic30 ICP
+// (전업 1인 · 0매출 · macOS · 에이전트 도구 · 기록 의향). This is distinct from `targetUser`,
+// which is the ICP of the product the founder is building. Additive/optional: absent input
+// loads with every signal defaulting to `unconfirmed` + empty note.
+const FOUNDER_ICP_SIGNAL_KEYS = [
+  "full_time_solo",
+  "pre_revenue",
+  "macos",
+  "agent_tool",
+  "records_intent",
+];
+const FOUNDER_ICP_SIGNAL_STATES = new Set(["confirmed", "unconfirmed"]);
+const FOUNDER_ICP_SIGNAL_KEY_ALIASES = {
+  fulltimesolo: "full_time_solo",
+  prerevenue: "pre_revenue",
+  agenttool: "agent_tool",
+  recordsintent: "records_intent",
+};
+
 export async function deriveWorkspaceOnboardingHypothesisLocally(
   scanRoot,
   { docPaths = {}, agentHistory = null } = {},
@@ -211,6 +230,7 @@ export function normalizeWorkspaceOnboardingHypothesis(value) {
     stage,
     evidence: uniqueCompact(evidence).slice(0, MAX_EVIDENCE),
     confidence,
+    founderIcpSignals: normalizeFounderIcpSignals(value.founderIcpSignals || value.founder_icp_signals),
     suggestedFirstQuestion: cleanSuggestedFirstQuestion(value.suggestedFirstQuestion || value.suggested_first_question),
   };
   if (!normalized.suggestedFirstQuestion) {
@@ -243,6 +263,7 @@ export function mergeWorkspaceOnboardingHypotheses(...hypotheses) {
   const stage = best.stage !== "unknown"
     ? best.stage
     : normalized.find((item) => item.stage !== "unknown")?.stage || "unknown";
+  const founderIcpSignals = mergeFounderIcpSignals(normalized.map((item) => item.founderIcpSignals));
 
   return normalizeWorkspaceOnboardingHypothesis({
     productName,
@@ -255,6 +276,7 @@ export function mergeWorkspaceOnboardingHypotheses(...hypotheses) {
     likelyUsers,
     stage,
     evidence,
+    founderIcpSignals,
     confidence: adjustMergedConfidence({ confidence, likelyUsers, evidence }),
     suggestedFirstQuestion: "",
   });
@@ -273,6 +295,7 @@ function fallbackHypothesis() {
     stage: "unknown",
     evidence: [],
     confidence: "low",
+    founderIcpSignals: normalizeFounderIcpSignals(null),
     suggestedFirstQuestion: "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?",
   };
 }
@@ -787,6 +810,59 @@ function normalizeConfidence(value) {
   return normalized === "high" || normalized === "medium" || normalized === "low"
     ? normalized
     : "low";
+}
+
+function normalizeFounderIcpSignals(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  // Accept aliased keys (camelCase / snake_case / no-separator) so provider + persisted
+  // payloads round-trip onto the canonical snake_case shape.
+  const byCanonicalKey = {};
+  for (const [rawKey, rawSignal] of Object.entries(source)) {
+    const canonicalKey = canonicalFounderIcpSignalKey(rawKey);
+    if (!canonicalKey) continue;
+    byCanonicalKey[canonicalKey] = rawSignal;
+  }
+  const signals = {};
+  for (const key of FOUNDER_ICP_SIGNAL_KEYS) {
+    signals[key] = normalizeFounderIcpSignal(byCanonicalKey[key]);
+  }
+  return signals;
+}
+
+function canonicalFounderIcpSignalKey(rawKey) {
+  const token = cleanToken(rawKey);
+  if (FOUNDER_ICP_SIGNAL_KEYS.includes(token)) return token;
+  const collapsed = token.replace(/[_-]/g, "");
+  return FOUNDER_ICP_SIGNAL_KEY_ALIASES[collapsed] || "";
+}
+
+function mergeFounderIcpSignals(signalsList = []) {
+  const normalizedList = signalsList.map(normalizeFounderIcpSignals);
+  const merged = {};
+  for (const key of FOUNDER_ICP_SIGNAL_KEYS) {
+    const perKey = normalizedList.map((signals) => signals[key]);
+    // A confirmed signal from any source wins; otherwise carry the first explanatory note.
+    const confirmed = perKey.find((signal) => signal.status === "confirmed");
+    const withNote = perKey.find((signal) => signal.note);
+    merged[key] = confirmed || withNote || { status: "unconfirmed", note: "" };
+  }
+  return merged;
+}
+
+function normalizeFounderIcpSignal(value) {
+  if (typeof value === "string") {
+    const status = cleanToken(value);
+    if (FOUNDER_ICP_SIGNAL_STATES.has(status)) return { status, note: "" };
+    return { status: "unconfirmed", note: cleanText(value) };
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const status = cleanToken(value.status ?? value.state);
+    return {
+      status: FOUNDER_ICP_SIGNAL_STATES.has(status) ? status : "unconfirmed",
+      note: cleanText(value.note ?? value.detail),
+    };
+  }
+  return { status: "unconfirmed", note: "" };
 }
 
 function cleanText(value) {

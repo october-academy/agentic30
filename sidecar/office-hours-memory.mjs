@@ -1220,7 +1220,10 @@ function normalizeEvidence(value, { now = new Date(), gradedCycle } = {}) {
   if (!EVIDENCE_KINDS.has(value.kind)) return null;
   const url = cleanString(value.url, MAX_FIELD_CHARS);
   const note = cleanString(value.note, MAX_FIELD_CHARS);
-  if (!url && !note) return null; // an evidence kind with no locator/proof is not evidence.
+  // VALUES #2 (증거는 끌어온다 — self-report=0): every EVIDENCE_KINDS member is a
+  // hard-evidence kind (url/screenshot/commit/payment), so it MUST carry a concrete
+  // locator. A free-text note alone is self-report and never grades a commitment to met.
+  if (!url) return null;
   return {
     kind: value.kind,
     url,

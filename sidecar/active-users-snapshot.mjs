@@ -10,9 +10,19 @@
  *
  * Collection piggybacks on the morning-briefing cycle (once per day); this
  * module dedupes same-day snapshots by replacing the last entry for the day.
- * Fail-closed: when the PostHog source is not configured/valid the collector
- * reports `source_unavailable` and writes nothing — the Gate Engine then
- * treats G4② per §21 (blocked + provisional overlay), never as a pass.
+ *
+ * When PostHog is not configured/valid the collector falls through to the
+ * §6.1 "explicitly implemented equivalent source adapter": cumulative unique
+ * identities drawn ONLY from proof-ledger evidence that is BOTH (a) completed
+ * (accepted/verified) AND (b) tagged as a `first_value`/active_user/core
+ * activation completion with a unique identity. Inference, signup counts,
+ * visits, and self-report never produce a count (VALUES #2); a
+ * `manual_proof_required`/submitted/provisional event is NOT verified and is
+ * excluded (spec §6.1 line 251, §21 line 1148). The snapshot is tagged
+ * `equivalent_verified_evidence`. When neither source yields a count the
+ * collector still reports `source_unavailable` and writes nothing — the Gate
+ * Engine then treats G4② per §21 (blocked + provisional overlay), never as a
+ * pass.
  */
 
 import fs from "node:fs/promises";
@@ -22,12 +32,34 @@ import { createHash } from "node:crypto";
 import { atomicWriteJson, withFileLock } from "./atomic-store.mjs";
 import { resolveAgentic30Dir } from "./news-market-radar.mjs";
 import { resolvePostHogMcpSettings } from "./posthog-mcp-config.mjs";
+import { loadProofLedger } from "./execution-os.mjs";
 
 export const ACTIVE_USERS_SCHEMA_VERSION = 1;
 export const ACTIVE_USERS_SCHEMA = "agentic30.active_users.v1";
 // Day 14 Measurement mission instruments an event literally named
 // `first_value` (IDD Day 14, spec §3.1) — adopted as the default name.
 export const DEFAULT_FIRST_VALUE_EVENT = "first_value";
+
+// §6.1 equivalent source adapter tag. The snapshot `source` distinguishes the
+// approved equivalent adapter from `posthog_hogql` so downstream readers never
+// confuse a proof-derived count for the live HogQL count (invariant: explicit
+// source tagging, not inferred counts).
+export const EQUIVALENT_VERIFIED_SOURCE = "equivalent_verified_evidence";
+// Only a COMPLETED proof event (accepted/verified) qualifies. A
+// `manual_proof_required`/submitted/provisional event is excluded — it is not
+// yet verified (spec §6.1 line 251; §21 line 1148).
+const VERIFIED_PROOF_STATUSES = new Set(["accepted", "verified", "complete", "completed"]);
+// Evidence kinds that certify a `first_value`/core-activation completion. The
+// proof event must self-identify as one of these via metadata.kind /
+// metadata.activation / evidenceType — a generic action_evidence row without
+// this marker never counts as an active user.
+const ACTIVE_USER_EVIDENCE_KINDS = new Set([
+  "first_value",
+  "active_user",
+  "active_user_evidence",
+  "core_activation",
+  "activation_completion",
+]);
 
 const SNAPSHOT_LIMIT = 200;
 const QUERY_TIMEOUT_MS = 15_000;
@@ -103,14 +135,18 @@ export async function collectActiveUserSnapshot({
   appSupportPath = "",
   settings = null,
   fetchImpl = fetch,
+  proofLedger = null,
   now = new Date(),
 } = {}) {
   if (!workspaceRoot || typeof workspaceRoot !== "string") {
     throw new Error("collectActiveUserSnapshot requires workspaceRoot.");
   }
   const resolved = settings ?? resolvePostHogMcpSettings({ env, appSupportPath });
+  // PostHog stays the high-trust path (§6.1, unchanged). When its token is not
+  // valid, fall through to the equivalent verified-evidence adapter BEFORE
+  // declaring the source unavailable.
   if (!resolved?.tokenValid) {
-    return { status: "source_unavailable", snapshot: null, store: null };
+    return collectEquivalentActiveUserSnapshot({ workspaceRoot, day, proofLedger, now });
   }
   const host = resolved.region === "eu" ? "https://eu.posthog.com" : "https://us.posthog.com";
   const query = buildFirstValueCountQuery({ eventName });
@@ -138,6 +174,114 @@ export async function collectActiveUserSnapshot({
   };
   const store = await appendActiveUserSnapshot({ workspaceRoot, snapshot, now });
   return { status: "ok", snapshot, store };
+}
+
+/**
+ * §6.1 approved equivalent source adapter. Reads the proof ledger and counts
+ * cumulative UNIQUE identities among proof events that are BOTH completed
+ * (accepted/verified — `manual_proof_required`/submitted/provisional are
+ * excluded, spec §6.1 line 251) AND tagged as a `first_value`/active_user/core
+ * activation completion carrying a unique identity. Returns the same shape as
+ * `collectActiveUserSnapshot` with `source: "equivalent_verified_evidence"`.
+ *
+ * When no verified evidence yields a count, fails closed with
+ * `source_unavailable` and writes nothing — the Gate Engine then treats G4②/G5
+ * as blocked + provisional, never as a pass. A provisional/self-report row can
+ * never bump the count: only verified evidence does (invariant: verified
+ * sources only; manual_proof_required ≠ pass).
+ */
+export async function collectEquivalentActiveUserSnapshot({
+  workspaceRoot,
+  day = null,
+  proofLedger = null,
+  now = new Date(),
+} = {}) {
+  if (!workspaceRoot || typeof workspaceRoot !== "string") {
+    throw new Error("collectEquivalentActiveUserSnapshot requires workspaceRoot.");
+  }
+  let ledger = proofLedger;
+  if (!ledger) {
+    try {
+      ledger = await loadProofLedger({ workspaceRoot });
+    } catch {
+      return { status: "source_unavailable", snapshot: null, store: null };
+    }
+  }
+  const count = countVerifiedActiveUserIdentities(ledger);
+  // No verified evidence → honest source-unavailable (never an inferred zero
+  // count that would masquerade as a real reading).
+  if (count === null) {
+    return { status: "source_unavailable", snapshot: null, store: null };
+  }
+  const snapshot = {
+    at: toIso(now),
+    day: normalizeDay(day),
+    activeUserCount: count,
+    active_user_count: count,
+    firstValueEventName: DEFAULT_FIRST_VALUE_EVENT,
+    first_value_event_name: DEFAULT_FIRST_VALUE_EVENT,
+    source: EQUIVALENT_VERIFIED_SOURCE,
+    queryFingerprint: "",
+    query_fingerprint: "",
+  };
+  const store = await appendActiveUserSnapshot({ workspaceRoot, snapshot, now });
+  return { status: "ok", snapshot, store };
+}
+
+/**
+ * Cumulative count of UNIQUE verified active-user identities in the proof
+ * ledger, or null when no proof event qualifies (so the caller can report
+ * source-unavailable instead of a misleading zero). Distinct-identity keying
+ * keeps the count idempotent — re-verifying the same person's activation never
+ * double-counts (invariant #4).
+ */
+export function countVerifiedActiveUserIdentities(proofLedger = {}) {
+  const events = Array.isArray(proofLedger?.events) ? proofLedger.events : [];
+  const identities = new Set();
+  let qualifying = 0;
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    if (!isVerifiedActiveUserEvidence(event)) continue;
+    qualifying += 1;
+    identities.add(resolveActiveUserIdentity(event, index));
+  }
+  if (qualifying === 0) return null;
+  return identities.size;
+}
+
+function isVerifiedActiveUserEvidence(event = {}) {
+  if (!event || typeof event !== "object") return false;
+  const status = String(event.status ?? event.validationStatus ?? "").toLowerCase();
+  if (!VERIFIED_PROOF_STATUSES.has(status)) return false;
+  const kinds = [
+    event.metadata?.kind,
+    event.metadata?.activation,
+    event.metadata?.activationKind,
+    event.metadata?.activation_kind,
+    event.evidenceType,
+    event.evidence_type,
+  ];
+  return kinds.some((value) =>
+    ACTIVE_USER_EVIDENCE_KINDS.has(String(value ?? "").toLowerCase()),
+  );
+}
+
+function resolveActiveUserIdentity(event = {}, index = 0) {
+  const candidate = event.metadata?.identity
+    ?? event.metadata?.personId
+    ?? event.metadata?.person_id
+    ?? event.metadata?.userId
+    ?? event.metadata?.user_id
+    ?? event.customer
+    ?? event.sourceUrl
+    ?? event.source_url
+    ?? event.artifactPath
+    ?? event.artifact_path;
+  const cleaned = cleanString(candidate, 200);
+  // Verified evidence with no identity field still counts once (it is a
+  // distinct verified activation), keyed by its own event id (or list index as
+  // a deterministic fallback) so two such rows are two users — never collapsed.
+  return cleaned || `event:${cleanString(event.id, 200) || `index:${index}`}`;
 }
 
 /** Appends a snapshot, replacing any prior snapshot from the same UTC day. */
