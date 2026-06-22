@@ -5,6 +5,7 @@ import {
   assessIcpFitConditions,
   buildIcpFitDiagnosisLines,
   buildNamedCustomerNextAction,
+  detectCustomerAvoidance,
 } from "../sidecar/icp-fit-assessment.mjs";
 
 test("ICP_FIT_CONDITIONS pins the five docs/ICP.md required conditions", () => {
@@ -80,4 +81,13 @@ test("buildNamedCustomerNextAction forces naming a real person, not the placehol
   assert.ok(action.includes("실명"));
   assert.ok(action.includes("결제 공포"));
   assert.ok(!action.includes("아직 좁히는 중인 고객 후보"));
+});
+
+test("detectCustomerAvoidance names the costume when the prompt deflects to building", () => {
+  // Deflection to code/demo with no customer focus -> costume note.
+  assert.ok(detectCustomerAvoidance("일단 온보딩 코드를 좀 더 다듬고 데모를 멋지게 만든 다음에 보여줄게요").includes("코스튬"));
+  // Customer-focused prompt -> no costume note even if it mentions a demo.
+  assert.equal(detectCustomerAvoidance("오늘 고객 1명에게 데모 보내고 결제 의향 물어볼게요"), "");
+  // Neutral prompt -> no note.
+  assert.equal(detectCustomerAvoidance("오늘 뭐부터 할까요?"), "");
 });

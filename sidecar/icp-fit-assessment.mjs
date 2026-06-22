@@ -142,3 +142,22 @@ export function buildNamedCustomerNextAction(problemLabel) {
     `"아직 좁히는 중"이면 후보 이름을 정하는 것 자체가 오늘의 첫 행동입니다.`,
   ].join(" ");
 }
+
+// "Costume" deflection: the founder pivots from the customer/money question to
+// code/feature/demo/research. The office-hours interview prompt names this, but
+// the Day-1 fast path preempts that interview — so it must name it too (VALUES #3
+// 투명하게 말한다). Deterministic single-prompt heuristic, not session history.
+const AVOIDANCE_DEFLECTION = /코드|기능|리팩|다듬|데모|디자인|폴리시|polish|refactor|feature|리서치|research|딜\s?리뷰|오픈\s?소스|인프라|셋업|환경\s?설정|빌드/i;
+const CUSTOMER_FOCUS = /고객|인터뷰|결제|청구|돈|매출|발송|보내|연락|판매|문의|payment|charge|sell|ask\b|outreach|dm\b/i;
+
+/**
+ * Return a one-line costume-naming note when the Day-1 prompt deflects to
+ * building instead of customer validation, else "". Diagnosis, not blame.
+ */
+export function detectCustomerAvoidance(prompt) {
+  const text = String(prompt || "");
+  if (AVOIDANCE_DEFLECTION.test(text) && !CUSTOMER_FOCUS.test(text)) {
+    return "회피 점검: 지금 코드·기능·데모 쪽으로 가고 있어요. 그건 고객 검증을 미루는 가장 편한 코스튬일 수 있습니다 — 오늘은 고객 행동 1개로 돌아오세요.";
+  }
+  return "";
+}

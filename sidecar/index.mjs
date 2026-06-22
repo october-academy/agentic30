@@ -159,7 +159,7 @@ import {
   refreshProjectContextCache,
 } from "./project-context-cache.mjs";
 import { projectDocCandidatePaths, projectDocPath } from "./project-doc-paths.mjs";
-import { assessIcpFitConditions, buildIcpFitDiagnosisLines, buildNamedCustomerNextAction } from "./icp-fit-assessment.mjs";
+import { assessIcpFitConditions, buildIcpFitDiagnosisLines, buildNamedCustomerNextAction, detectCustomerAvoidance } from "./icp-fit-assessment.mjs";
 import {
   buildDay1GoalProjectContext,
   loadDay1GoalSelection,
@@ -9879,6 +9879,8 @@ function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption =
   }
 
   const icpFitLines = icpFit ? buildIcpFitDiagnosisLines(icpFit) : [];
+  const avoidanceLine = icpFit ? detectCustomerAvoidance(prompt) : "";
+  if (avoidanceLine) icpFitLines.push(avoidanceLine);
   const message = [
     "짧게 보면, 이건 Agent 실행보다 Day 1 코칭 fast path로 처리할 수 있습니다.",
     `Repo stage: ${repoStage}. Intent mode: ${intentMode}.`,
