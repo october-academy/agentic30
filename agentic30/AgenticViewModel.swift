@@ -1133,6 +1133,25 @@ struct WorkspaceScanBlockedNotice: Equatable {
     let errorKind: String?
 }
 
+/// Decodable payload for the `scanBlockedNotice` object carried INSIDE a
+/// fail-open `workspace_scan_result` (degraded scan). It mirrors the
+/// `workspace_scan_blocked` envelope so the host can reuse the same recovery
+/// copy, but here it is advisory: the scan already succeeded on local signals
+/// and Day 1 proceeds — this only powers a non-blocking "reconnect for a precise
+/// scan" warning. Provider strings are raw so an unknown provider degrades
+/// gracefully rather than failing the decode.
+struct WorkspaceScanDegradedNoticePayload: Decodable, Equatable {
+    let scanRoot: String?
+    let provider: String?
+    let model: String?
+    let reason: String?
+    let message: String?
+    let nextProvider: String?
+    let availableProviders: [String]?
+    let providerReadiness: [WorkspaceScanProviderReadiness]?
+    let errorKind: String?
+}
+
 /// Reason-aware recovery plan for a blocked workspace scan. Pure (no SwiftUI) so
 /// the copy + primary action are unit-tested without a view harness.
 ///
@@ -3046,6 +3065,12 @@ final class AgenticViewModel: ObservableObject {
     /// "switch provider and re-scan" button. Cleared on the next scan start.
     @Published private(set) var scanProviderLimitNotice: ScanProviderLimitNotice?
     @Published private(set) var scanBlockedNotice: WorkspaceScanBlockedNotice?
+    /// Set when a workspace scan completed on LOCAL-only signals because provider
+    /// verification could not run (fail-open degraded scan). Unlike
+    /// `scanBlockedNotice` this is NON-blocking: Day 1 proceeds and the UI shows
+    /// an advisory "local-only scan — reconnect for a precise scan" warning.
+    /// Cleared on the next scan start and on any non-degraded scan result.
+    @Published private(set) var scanDegradedNotice: WorkspaceScanBlockedNotice?
     @Published private(set) var pendingAgentic30GitignoreConsent: Agentic30GitignoreState?
     @Published private(set) var isCreatingDoc: String?
     @Published private(set) var docCreationLogs: [String] = []
@@ -5508,6 +5533,31 @@ final class AgenticViewModel: ObservableObject {
         requestCodexWarmupIfNeeded()
     }
 
+    /// Maps a degraded `workspace_scan_result`'s advisory `scanBlockedNotice`
+    /// payload onto the existing `WorkspaceScanBlockedNotice` so the recovery UI
+    /// can be reused. The scan already succeeded on local signals — this notice
+    /// is non-blocking. Falls back to a generic local-only message when the
+    /// sidecar did not attach a payload.
+    private func makeScanDegradedNotice(event: SidecarEvent, fallbackRoot: String) -> WorkspaceScanBlockedNotice {
+        let payload = event.scanBlockedNotice
+        let provider = payload?.provider.flatMap(AgentProvider.init(rawValue:))
+            ?? event.degradedProvider.flatMap(AgentProvider.init(rawValue:))
+            ?? selectedProvider
+        let message = payload?.message?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+            ?? "AI 정밀 스캔을 적용하지 못해 로컬 문서만으로 Day 1을 구성했습니다. AI를 연결하면 정밀 스캔을 받을 수 있어요."
+        return WorkspaceScanBlockedNotice(
+            scanRoot: payload?.scanRoot ?? fallbackRoot,
+            provider: provider,
+            model: payload?.model ?? event.model ?? "",
+            reason: payload?.reason ?? event.degradedReason ?? "",
+            message: message,
+            nextProvider: payload?.nextProvider.flatMap(AgentProvider.init(rawValue:)),
+            availableProviders: (payload?.availableProviders ?? []).compactMap(AgentProvider.init(rawValue:)),
+            providerReadiness: payload?.providerReadiness ?? [],
+            errorKind: payload?.errorKind
+        )
+    }
+
     func scanWorkspace(root: String, providerOverride: AgentProvider? = nil) {
         guard !root.isEmpty else { return }
         beginWorkspaceScanTiming(reset: true)
@@ -5531,6 +5581,7 @@ final class AgenticViewModel: ObservableObject {
         scanResult = nil
         scanProviderLimitNotice = nil
         scanBlockedNotice = nil
+        scanDegradedNotice = nil
         pendingAgentic30GitignoreConsent = nil
         PostHogTelemetry.capture("mac_workspace_scan_requested", properties: [
             "workspace_basename": (root as NSString).lastPathComponent,
@@ -8791,6 +8842,7 @@ final class AgenticViewModel: ObservableObject {
             scanResult = nil
             scanProviderLimitNotice = nil
             scanBlockedNotice = nil
+            scanDegradedNotice = nil
             pendingAgentic30GitignoreConsent = nil
         case "workspace_scan_provider_limited":
             if let raw = event.provider,
@@ -8807,6 +8859,7 @@ final class AgenticViewModel: ObservableObject {
             scanResult = nil
             clearWorkspaceScanResultCache(root: event.scanRoot)
             scanProviderLimitNotice = nil
+            scanDegradedNotice = nil
             pendingAgentic30GitignoreConsent = nil
             let provider = event.provider.flatMap(AgentProvider.init(rawValue:)) ?? selectedProvider
             let nextProvider = event.nextProvider.flatMap(AgentProvider.init(rawValue:))
@@ -8918,6 +8971,16 @@ final class AgenticViewModel: ObservableObject {
             )
             scanResult = result
             scanBlockedNotice = nil
+            // Fail-open degraded scan: completed on local-only signals because
+            // provider verification could not run. Day 1 still proceeds (result
+            // is non-error above); surface a NON-blocking advisory notice so the
+            // user can reconnect a provider for a precise scan. Any normal
+            // (non-degraded) or failed result clears it.
+            if event.error == nil, event.degraded == true {
+                scanDegradedNotice = makeScanDegradedNotice(event: event, fallbackRoot: event.scanRoot ?? workspaceRoot)
+            } else {
+                scanDegradedNotice = nil
+            }
             pendingAgentic30GitignoreConsent = event.agentic30Gitignore?.needsConsent == true
                 ? event.agentic30Gitignore
                 : nil
@@ -14725,6 +14788,19 @@ struct SidecarEvent: Decodable {
     let day1SituationSummary: Day1SituationSummary?
     let day1GoalSelection: Day1GoalSelection?
     let agentic30Gitignore: Agentic30GitignoreState?
+    // Fail-open degraded-scan markers (additive). Set on a workspace_scan_result
+    // the sidecar completed on LOCAL-only signals because provider verification
+    // could not run (no auth / usage limit / run error) but local canonical docs
+    // existed. The result is otherwise a normal scan result and advances Day 1;
+    // `degraded == true` lets the host surface a non-blocking "local-only scan,
+    // reconnect for a precise scan" warning. Absent on normal or blocked scans.
+    let degraded: Bool?
+    let degradedReason: String?
+    let degradedProvider: String?
+    /// Advisory recovery payload attached to a degraded workspace_scan_result.
+    /// Same shape as the blocked notice but non-blocking (see
+    /// `WorkspaceScanDegradedNoticePayload`).
+    let scanBlockedNotice: WorkspaceScanDegradedNoticePayload?
     let dayProgress: DayProgress?
     let dayReviews: [String: DayReview]?
     let officeHoursMemory: OfficeHoursMemorySummary?
@@ -15438,6 +15514,10 @@ struct SidecarEvent: Decodable {
         day1SituationSummary: Day1SituationSummary? = nil,
         day1GoalSelection: Day1GoalSelection? = nil,
         agentic30Gitignore: Agentic30GitignoreState? = nil,
+        degraded: Bool? = nil,
+        degradedReason: String? = nil,
+        degradedProvider: String? = nil,
+        scanBlockedNotice: WorkspaceScanDegradedNoticePayload? = nil,
         dayProgress: DayProgress? = nil,
         dayReviews: [String: DayReview]? = nil,
         officeHoursMemory: OfficeHoursMemorySummary? = nil,
@@ -15555,6 +15635,10 @@ struct SidecarEvent: Decodable {
         self.day1SituationSummary = day1SituationSummary
         self.day1GoalSelection = day1GoalSelection
         self.agentic30Gitignore = agentic30Gitignore
+        self.degraded = degraded
+        self.degradedReason = degradedReason
+        self.degradedProvider = degradedProvider
+        self.scanBlockedNotice = scanBlockedNotice
         self.dayProgress = dayProgress
         self.dayReviews = dayReviews
         self.officeHoursMemory = officeHoursMemory
@@ -15960,6 +16044,10 @@ extension SidecarEvent {
         case day1SituationSummary
         case day1GoalSelection
         case agentic30Gitignore
+        case degraded
+        case degradedReason
+        case degradedProvider
+        case scanBlockedNotice
         case dayProgress
         case dayReviews
         case officeHoursMemory
@@ -16086,6 +16174,14 @@ extension SidecarEvent {
         day1IcpPlan = Self.decodeIfPresent(Day1IcpPlan.self, from: container, forKey: .day1IcpPlan)
         day1SituationSummary = Self.decodeIfPresent(Day1SituationSummary.self, from: container, forKey: .day1SituationSummary)
         day1GoalSelection = Self.decodeIfPresent(Day1GoalSelection.self, from: container, forKey: .day1GoalSelection)
+        degraded = Self.decodeIfPresent(Bool.self, from: container, forKey: .degraded)
+        degradedReason = Self.decodeIfPresent(String.self, from: container, forKey: .degradedReason)
+        degradedProvider = Self.decodeIfPresent(String.self, from: container, forKey: .degradedProvider)
+        scanBlockedNotice = Self.decodeIfPresent(
+            WorkspaceScanDegradedNoticePayload.self,
+            from: container,
+            forKey: .scanBlockedNotice
+        )
         let decodedAgentic30Gitignore = Self.decodeIfPresent(
             Agentic30GitignoreState.self,
             from: container,

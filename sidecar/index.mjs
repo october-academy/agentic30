@@ -13141,6 +13141,208 @@ async function inspectAgentic30GitignoreForBridge(scanRoot) {
   return normalizeAgentic30GitignoreResult(scanRoot, result);
 }
 
+/**
+ * Builds the non-blocking degraded-scan notice attached to a fail-open
+ * workspace_scan_result. It carries the same provider-readiness / next-provider
+ * / local-findings shape the blocked notice does, so the Mac side can reuse its
+ * existing recovery UI to render "provider not connected — local-only scan,
+ * reconnect for a precise scan". Unlike broadcastWorkspaceScanBlocked this does
+ * NOT mark the workspace setup failed and does NOT broadcast a blocked event —
+ * the scan succeeded on local signals; the notice is advisory only.
+ */
+function buildWorkspaceScanDegradedNotice(scanRoot, { provider, model, reason, message }, { evidenceBundle = null } = {}) {
+  const { nextProvider, availableProviders } = selectNextScanProvider(
+    provider,
+    (candidate) => getProviderScanReadiness(candidate).scanReady,
+  );
+  const providerReadiness = PROVIDER_FALLBACK_CYCLE.map((candidate) => getProviderScanReadiness(candidate));
+  const localFindings = summarizeWorkspaceScanLocalFindings(evidenceBundle);
+  return {
+    scanRoot,
+    provider,
+    model: model || "",
+    reason,
+    message: String(message || ""),
+    nextProvider,
+    availableProviders,
+    providerReadiness,
+    localFoundCount: localFindings.localFoundCount,
+    localFindings,
+    ...(reason === "usage_limit" ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND } : {}),
+    ...(reason === "unavailable" ? { errorKind: PROVIDER_AUTH_REQUIRED_ERROR_KIND } : {}),
+    ...(reason === "aborted" ? { errorKind: PROVIDER_ABORTED_ERROR_KIND } : {}),
+  };
+}
+
+/**
+ * Completes a workspace scan on local-only deterministic signals and broadcasts
+ * a workspace_scan_result so onboarding advances to Day 1. Shared by two
+ * callers:
+ *   1. the path-lookup fast path (local docs already answer the user's "where
+ *      is X" prompt — provider verification is intentionally skipped), and
+ *   2. the fail-OPEN degraded path (provider verification was attempted but
+ *      could not run; we proceed on local signals rather than stall onboarding).
+ *
+ * When `degraded` is supplied the broadcast additionally carries additive
+ * `degraded`/`degradedReason`/`degradedProvider`/`scanBlockedNotice` fields so
+ * the Mac side surfaces a non-blocking "local-only scan" warning. All other
+ * behavior (telemetry, day-loop advance, project-context refresh) is identical
+ * to a normal local completion, so existing decoders stay unaffected.
+ */
+async function completeWorkspaceScanFromLocalSignals({
+  scanRoot,
+  localResult,
+  localOnboardingHypothesis,
+  localDiscovery,
+  agentHistory,
+  localFoundCount,
+  preferredProvider = "",
+  degraded = null,
+}) {
+  state.workspaceOnboardingHypothesis = localOnboardingHypothesis;
+  telemetry.captureEvent("mac_sidecar_workspace_scan_completed", {
+    scan_root: scanRoot,
+    found_count: localFoundCount,
+    onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
+    scan_provider: normalizeProviderName(preferredProvider) || "frontier",
+    agent_result_count: 0,
+    provider_verification_skipped: true,
+    ...(degraded
+      ? { scan_degraded: true, scan_degraded_reason: degraded.reason, scan_degraded_provider: degraded.provider }
+      : {}),
+  });
+  markWorkspaceSetupScanSucceeded(scanRoot, {
+    found_count: localFoundCount,
+    onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
+    agent_result_count: 0,
+    provider_verification_skipped: true,
+    ...(degraded ? { scan_degraded: true, scan_degraded_reason: degraded.reason } : {}),
+  });
+  broadcastWorkspaceScanProgress(
+    scanRoot,
+    degraded
+      ? `scan.degraded · 로컬 후보 ${localFoundCount}개로 Day 1을 구성 중 (AI 정밀 스캔 미적용)`
+      : `scan.verify · 로컬 후보 ${localFoundCount}개를 Day 1 ICP 근거로 확인 중`,
+    {
+      stage: "verifying",
+      stepIndex: 2,
+      totalSteps: 3,
+      etaSeconds: 20,
+      foundCount: localFoundCount,
+    },
+  );
+  broadcastWorkspaceScanProgress(scanRoot, "scan.compose · Day 1 질문 세트를 구성 중", {
+    stage: "composing",
+    stepIndex: 3,
+    totalSteps: 3,
+    etaSeconds: 10,
+    foundCount: localFoundCount,
+  });
+  const day1AlignmentPlan = await generateDay1AlignmentPlan({
+    workspaceRoot: scanRoot,
+    scanResult: localResult,
+    onboardingHypothesis: localOnboardingHypothesis,
+    localDiscovery,
+  });
+  const day1IcpPlan = await generateDay1IcpPlan({
+    workspaceRoot: scanRoot,
+    scanResult: localResult,
+    onboardingHypothesis: localOnboardingHypothesis,
+    localDiscovery,
+  });
+  const day1SituationSummary = await buildDay1SituationSummary({
+    workspaceRoot: scanRoot,
+    scanResult: localResult,
+    onboardingHypothesis: localOnboardingHypothesis,
+    agentHistory,
+    localDiscovery,
+  }).catch(() => null);
+  const day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot: scanRoot });
+  if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
+    state.day1GoalSelection = day1GoalSelection;
+  }
+  // Scan complete: anchor challenge start, then advance the day loop to `goal`.
+  let dayProgress = null;
+  try {
+    if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
+      const seeded = await ensureChallengeStart({ workspaceRoot: scanRoot });
+      const currentDay = computeDayNumber({ challengeStartedAt: seeded.challengeStartedAt });
+      dayProgress = currentDay
+        ? await setDayActiveStep({
+            workspaceRoot: scanRoot,
+            day: currentDay,
+            stepId: "goal",
+            goalText: currentDay === 1 ? day1GoalSelection?.goalText : undefined,
+          })
+        : seeded;
+    } else {
+      dayProgress = await loadDayProgress({ workspaceRoot: scanRoot });
+    }
+  } catch {
+    dayProgress = await loadDayProgress({ workspaceRoot: scanRoot }).catch(() => null);
+  }
+  if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
+    state.dayProgress = dayProgress;
+  }
+  const projectContext = await refreshProjectContextCache({
+    workspaceRoot: scanRoot,
+    reason: "workspace_scan",
+    scanResult: localResult,
+    onboardingHypothesis: localOnboardingHypothesis,
+  });
+  broadcastWorkspaceScanProgress(scanRoot, "scan.merged · 폴더 신호를 Day 1 질문 세트에 붙였습니다", {
+    stage: "merged",
+    stepIndex: 3,
+    totalSteps: 3,
+    foundCount: localFoundCount,
+  });
+  broadcast({
+    type: "project_context_updated",
+    workspaceRoot: scanRoot,
+    reason: "workspace_scan",
+    completedDay: projectContext.lastCompletedDay,
+    projectContext,
+  });
+  const scanCurrentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
+  const agentic30Gitignore = await inspectAgentic30GitignoreForBridge(scanRoot);
+  broadcast({
+    type: "workspace_scan_result",
+    scanRoot,
+    icp: localResult.icp || null,
+    spec: localResult.spec || null,
+    values: localResult.values || null,
+    designSystem: localResult.designSystem || null,
+    adr: localResult.adr || null,
+    goal: localResult.goal || null,
+    docs: localResult.docs || null,
+    sheet: localResult.sheet || null,
+    onboardingHypothesis: localOnboardingHypothesis,
+    day1AlignmentPlan,
+    day1IcpPlan,
+    day1SituationSummary,
+    day1GoalSelection,
+    dayProgress,
+    dayReviews: await loadOfficeHoursDayReviews(scanRoot, dayProgress, scanCurrentDay),
+    evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
+    agentic30Gitignore,
+    ...(degraded
+      ? {
+          degraded: true,
+          degradedReason: degraded.reason,
+          degradedProvider: degraded.provider,
+          scanBlockedNotice: degraded.notice || null,
+        }
+      : {}),
+  });
+  await emitProgramNotificationSchedule(null, scanRoot, { broadcastToAll: true });
+  triggerDay1AlignmentPlanBroadcast({
+    scanRoot,
+    deterministicPlan: day1AlignmentPlan,
+    compatibilityIcpPlan: day1IcpPlan,
+    preferredProvider,
+  });
+}
+
 async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferredProvider = "" } = {}) {
   try {
     broadcastWorkspaceScanProgress(scanRoot, "scan.local · 로컬 문서 후보를 읽는 중", {
@@ -13178,132 +13380,13 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
     });
     const localFoundCount = countWorkspaceScanResults(localResult);
     if (isWorkspacePathLookupPrompt(prompt) && localFoundCount > 0) {
-      state.workspaceOnboardingHypothesis = localOnboardingHypothesis;
-      telemetry.captureEvent("mac_sidecar_workspace_scan_completed", {
-        scan_root: scanRoot,
-        found_count: localFoundCount,
-        onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
-        scan_provider: normalizeProviderName(preferredProvider) || "frontier",
-        agent_result_count: 0,
-        provider_verification_skipped: true,
-      });
-      markWorkspaceSetupScanSucceeded(scanRoot, {
-        found_count: localFoundCount,
-        onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
-        agent_result_count: 0,
-        provider_verification_skipped: true,
-      });
-      broadcastWorkspaceScanProgress(
+      await completeWorkspaceScanFromLocalSignals({
         scanRoot,
-        `scan.verify · 로컬 후보 ${localFoundCount}개를 Day 1 ICP 근거로 확인 중`,
-        {
-          stage: "verifying",
-          stepIndex: 2,
-          totalSteps: 3,
-          etaSeconds: 20,
-          foundCount: localFoundCount,
-        },
-      );
-      broadcastWorkspaceScanProgress(scanRoot, "scan.compose · Day 1 질문 세트를 구성 중", {
-        stage: "composing",
-        stepIndex: 3,
-        totalSteps: 3,
-        etaSeconds: 10,
-        foundCount: localFoundCount,
-      });
-      const day1AlignmentPlan = await generateDay1AlignmentPlan({
-        workspaceRoot: scanRoot,
-        scanResult: localResult,
-        onboardingHypothesis: localOnboardingHypothesis,
+        localResult,
+        localOnboardingHypothesis,
         localDiscovery,
-      });
-      const day1IcpPlan = await generateDay1IcpPlan({
-        workspaceRoot: scanRoot,
-        scanResult: localResult,
-        onboardingHypothesis: localOnboardingHypothesis,
-        localDiscovery,
-      });
-      const day1SituationSummary = await buildDay1SituationSummary({
-        workspaceRoot: scanRoot,
-        scanResult: localResult,
-        onboardingHypothesis: localOnboardingHypothesis,
         agentHistory,
-        localDiscovery,
-      }).catch(() => null);
-      const day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot: scanRoot });
-      if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
-        state.day1GoalSelection = day1GoalSelection;
-      }
-      // Scan complete: anchor challenge start, then advance the day loop to `goal`.
-      let dayProgress = null;
-      try {
-        if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
-          const seeded = await ensureChallengeStart({ workspaceRoot: scanRoot });
-          const currentDay = computeDayNumber({ challengeStartedAt: seeded.challengeStartedAt });
-          dayProgress = currentDay
-            ? await setDayActiveStep({
-                workspaceRoot: scanRoot,
-                day: currentDay,
-                stepId: "goal",
-                goalText: currentDay === 1 ? day1GoalSelection?.goalText : undefined,
-              })
-            : seeded;
-        } else {
-          dayProgress = await loadDayProgress({ workspaceRoot: scanRoot });
-        }
-      } catch {
-        dayProgress = await loadDayProgress({ workspaceRoot: scanRoot }).catch(() => null);
-      }
-      if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
-        state.dayProgress = dayProgress;
-      }
-      const projectContext = await refreshProjectContextCache({
-        workspaceRoot: scanRoot,
-        reason: "workspace_scan",
-        scanResult: localResult,
-        onboardingHypothesis: localOnboardingHypothesis,
-      });
-      broadcastWorkspaceScanProgress(scanRoot, "scan.merged · 폴더 신호를 Day 1 질문 세트에 붙였습니다", {
-        stage: "merged",
-        stepIndex: 3,
-        totalSteps: 3,
-        foundCount: localFoundCount,
-      });
-      broadcast({
-        type: "project_context_updated",
-        workspaceRoot: scanRoot,
-        reason: "workspace_scan",
-        completedDay: projectContext.lastCompletedDay,
-        projectContext,
-      });
-      const scanCurrentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
-      const agentic30Gitignore = await inspectAgentic30GitignoreForBridge(scanRoot);
-      broadcast({
-        type: "workspace_scan_result",
-        scanRoot,
-        icp: localResult.icp || null,
-        spec: localResult.spec || null,
-        values: localResult.values || null,
-        designSystem: localResult.designSystem || null,
-        adr: localResult.adr || null,
-        goal: localResult.goal || null,
-        docs: localResult.docs || null,
-        sheet: localResult.sheet || null,
-        onboardingHypothesis: localOnboardingHypothesis,
-        day1AlignmentPlan,
-        day1IcpPlan,
-        day1SituationSummary,
-        day1GoalSelection,
-        dayProgress,
-        dayReviews: await loadOfficeHoursDayReviews(scanRoot, dayProgress, scanCurrentDay),
-        evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
-        agentic30Gitignore,
-      });
-      await emitProgramNotificationSchedule(null, scanRoot, { broadcastToAll: true });
-      triggerDay1AlignmentPlanBroadcast({
-        scanRoot,
-        deterministicPlan: day1AlignmentPlan,
-        compatibilityIcpPlan: day1IcpPlan,
+        localFoundCount,
         preferredProvider,
       });
       return;
@@ -13340,16 +13423,42 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       .map((outcome) => outcome.result);
     if (!parsedAgentResults.length) {
       // Agent verification failed (usage limit / no auth / run error). The
-      // scan must NOT pass on local-only signals — broadcast a blocked state
-      // with the next scan-ready provider in the consent chain instead of a
-      // workspace_scan_result. With no available
-      // provider at all, Agentic30 cannot proceed: fail closed.
+      // founder explicitly approved flipping the prior fail-closed gate to
+      // fail-OPEN *when local signals exist*: instead of stalling onboarding
+      // at Day 1 because no provider could verify, complete the scan on
+      // local-only signals and label it as degraded so the user sees a
+      // non-blocking "provider not connected — local-only scan" warning and
+      // can reconnect for a precise scan later. The scan only stays blocked
+      // (fail-closed) when there is BOTH no usable provider AND no local
+      // canonical doc to seed Day 1 — that is the genuinely cannot-proceed
+      // case the pinned workspace-scan-blocked tests assert.
       const failure = agentOutcomes.find((outcome) => !outcome.ok) || {
         provider: scanTargets[0]?.provider || "codex",
         model: scanTargets[0]?.model || "",
         reason: "error",
         message: "",
       };
+      if (localFoundCount > 0) {
+        const degradedNotice = buildWorkspaceScanDegradedNotice(scanRoot, failure, {
+          evidenceBundle: workspaceScanEvidenceBundle,
+        });
+        await completeWorkspaceScanFromLocalSignals({
+          scanRoot,
+          localResult,
+          localOnboardingHypothesis,
+          localDiscovery,
+          agentHistory,
+          localFoundCount,
+          preferredProvider,
+          degraded: {
+            reason: failure.reason || "error",
+            provider: failure.provider || "",
+            model: failure.model || "",
+            notice: degradedNotice,
+          },
+        });
+        return;
+      }
       broadcastWorkspaceScanBlocked(scanRoot, failure, {
         evidenceBundle: workspaceScanEvidenceBundle,
       });
