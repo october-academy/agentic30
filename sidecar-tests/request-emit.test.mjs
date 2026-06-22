@@ -604,6 +604,8 @@ test("office_hours_start reports provider usage limits as recoverable error enve
         && event.session?.status === "error",
     );
     assert.match(erroredSession.session.error, /weekly limit/);
+    await waitForEventSettle();
+    assertNoGenericErrorEnvelope(ws.events, created.session.id);
   } finally {
     ws?.close();
     await harness.close();
@@ -681,6 +683,8 @@ test("office_hours_start reports provider aborts as recoverable error envelopes"
       false,
       "provider aborts must not be surfaced as local Office Hours cancellations",
     );
+    await waitForEventSettle();
+    assertNoGenericErrorEnvelope(ws.events, created.session.id);
   } finally {
     ws?.close();
     await harness.close();
@@ -885,6 +889,8 @@ test("office_hours_start reports provider auth preflight failures as recoverable
     assert.equal(recoverableError.provider, "codex");
     assert.equal(recoverableError.recoverable, true);
     assert.match(recoverableError.message, /CODEX_API_KEY|OPENAI_API_KEY|Codex/);
+    await waitForEventSettle();
+    assertNoGenericErrorEnvelope(ws.events, created.session.id);
   } finally {
     ws?.close();
     await harness.close();
@@ -2181,6 +2187,8 @@ export async function load(url, context, nextLoad) {
     assert.match(visibleFailureText, /질문을 만들지 못했습니다/);
     assert.equal(errorEvent.errorKind, "office_hours_no_next_question");
     assert.equal(errorEvent.recoverable, true);
+    await waitForEventSettle();
+    assertNoGenericErrorEnvelope(ws.events.slice(marker), sessionId);
   } finally {
     ws?.close();
     await harness?.close({ cleanup: false });
@@ -5084,4 +5092,22 @@ async function waitForEvents(events, predicate, expectedCount, timeoutMs = 10_00
 
 async function waitForEventSettle(ms = 250) {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function assertNoGenericErrorEnvelope(events, sessionId) {
+  const genericErrors = events.filter((event) =>
+    event.type === "error"
+      && event.sessionId === sessionId
+      && (event.recoverable !== true || !event.errorKind)
+  );
+
+  assert.deepEqual(
+    genericErrors.map((event) => ({
+      message: event.message,
+      errorKind: event.errorKind,
+      recoverable: event.recoverable,
+    })),
+    [],
+    "recoverable sidecar failures must not also emit generic error envelopes",
+  );
 }
