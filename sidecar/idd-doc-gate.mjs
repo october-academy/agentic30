@@ -2149,6 +2149,87 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
   };
 }
 
+export async function evaluateDay1OfficeHoursDocumentReadiness(workspaceRoot, {
+  day1Handoff = {},
+  fsImpl = fs,
+  now = () => new Date(),
+  writeDebtReport = false,
+  judgeOfficeHoursDocs = judgeOfficeHoursEvidenceDocuments,
+} = {}) {
+  const evidenceState = await buildOfficeHoursEvidenceState({
+    workspaceRoot,
+    day1Handoff,
+    fsImpl,
+    now,
+  });
+  const mergedHandoff = mergeDay1HandoffWithEvidence(day1Handoff, evidenceState);
+  const documents = Object.fromEntries(DAY1_HANDOFF_DOC_TYPES.map((type) => {
+    const doc = day1HandoffDocByType(type);
+    return [type, doc ? buildDay1HandoffResponseText(doc, { day1Handoff: mergedHandoff }) : ""];
+  }));
+  const iddPreview = normalizeIddSetupState({
+    status: "interviewing",
+    drafts: documents,
+  });
+  const judgeResult = await judgeOfficeHoursDocs({
+    provider: "deterministic",
+    workspaceRoot,
+    evidenceState,
+    documents,
+  });
+  evidenceState.judge = judgeResult;
+
+  const ambiguityScore = Number.isFinite(Number(iddPreview.ambiguityScore))
+    ? Number(iddPreview.ambiguityScore)
+    : 100;
+  const judgeScore = Number.isFinite(Number(judgeResult?.score))
+    ? Number(judgeResult.score)
+    : 0;
+  const evidenceDebt = uniqueStrings([
+    ...(Array.isArray(evidenceState.evidenceDebt) ? evidenceState.evidenceDebt : []),
+    ...(Array.isArray(judgeResult?.evidenceDebt) ? judgeResult.evidenceDebt : []),
+    ...(Array.isArray(iddPreview.unresolvedAssumptions) ? iddPreview.unresolvedAssumptions : []),
+  ]).slice(0, 12);
+  const ready = ambiguityScore <= IDD_AMBIGUITY_THRESHOLD
+    && judgeResult?.passed === true
+    && judgeScore >= OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE;
+  const updatedAt = toIso(now());
+  const nextQuestion = String(
+    evidenceState.nextQuestion
+      || judgeResult?.followUpQuestions?.[0]
+      || judgeResult?.follow_up_questions?.[0]
+      || iddPreview.unresolvedAssumptions?.[0]
+      || "",
+  ).trim() || "정식 문서 저장 전 실명 고객 행동, 가격/계약 조건, 현재 대안 비용 중 가장 강한 증거는 무엇인가요?";
+  const documentReadiness = {
+    status: ready ? "ready" : "needs_followup",
+    ambiguityScore,
+    ambiguityThreshold: IDD_AMBIGUITY_THRESHOLD,
+    judgeScore,
+    judgeThreshold: OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE,
+    evidenceDebt,
+    nextQuestion,
+    updatedAt,
+  };
+
+  if (!ready && writeDebtReport) {
+    await writeOfficeHoursEvidenceDebtReport(workspaceRoot, evidenceState, {
+      judgeResult,
+      fsImpl,
+    }).catch(() => null);
+  }
+
+  return {
+    ready,
+    documentReadiness,
+    evidenceState,
+    judgeResult,
+    documents,
+    day1Handoff: mergedHandoff,
+    ambiguityRubric: iddPreview.ambiguityRubric,
+  };
+}
+
 function hasOfficeHoursReducerEvidence(evidenceState = {}) {
   // daily_digest is a derived aggregate, not a direct user signal. Requiring a
   // real turn or commitment keeps "merge evidence into the handoff" honest;
@@ -2495,6 +2576,11 @@ function uniqueStrings(values) {
   return [...new Set((Array.isArray(values) ? values : [])
     .map((value) => String(value || "").trim())
     .filter(Boolean))];
+}
+
+function toIso(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
 }
 
 function escapeRegExp(value) {

@@ -18,7 +18,10 @@ import {
   judgeOfficeHoursEvidenceDocuments,
   parseOfficeHoursEvidenceJudgeJson,
 } from "../sidecar/office-hours-evidence-judge.mjs";
-import { writeAllDay1HandoffDocuments } from "../sidecar/idd-doc-gate.mjs";
+import {
+  evaluateDay1OfficeHoursDocumentReadiness,
+  writeAllDay1HandoffDocuments,
+} from "../sidecar/idd-doc-gate.mjs";
 import { projectDocPath } from "../sidecar/project-doc-paths.mjs";
 
 async function withTempWorkspace(fn) {
@@ -263,6 +266,48 @@ test("Day1 handoff uses reducer output, judge pass, and writes evidence sidecars
     assert.ok(sidecar.localReferences.some((ref) => ref.id === "cm-2"));
     assert.equal(sidecar.lastJudgeResult.passed, true);
     assert.ok(sidecar.lastJudgeResult.score >= 8);
+  });
+});
+
+test("Day1 document readiness stays blocked without hard Office Hours evidence", async () => {
+  await withTempWorkspace(async (root) => {
+    const result = await evaluateDay1OfficeHoursDocumentReadiness(root, {
+      day1Handoff: shallowHandoff(),
+      now: () => new Date("2026-06-13T00:00:00.000Z"),
+      writeDebtReport: true,
+    });
+
+    assert.equal(result.ready, false);
+    assert.equal(result.documentReadiness.status, "needs_followup");
+    assert.ok(
+      result.documentReadiness.ambiguityScore > result.documentReadiness.ambiguityThreshold
+        || result.documentReadiness.judgeScore < result.documentReadiness.judgeThreshold,
+    );
+    assert.ok(result.documentReadiness.judgeScore < result.documentReadiness.judgeThreshold);
+    assert.match(result.documentReadiness.nextQuestion, /고객|증거|유료|행동/);
+    assert.ok(result.documentReadiness.evidenceDebt.length > 0);
+
+    const debt = JSON.parse(
+      await fs.readFile(path.join(root, ".agentic30", "docs", "OFFICE_HOURS_EVIDENCE_DEBT.json"), "utf8"),
+    );
+    assert.equal(debt.schemaVersion, 1);
+  });
+});
+
+test("Day1 document readiness passes only when ambiguity and deterministic judge pass", async () => {
+  await withTempWorkspace(async (root) => {
+    await writeFailureFixture(root);
+
+    const result = await evaluateDay1OfficeHoursDocumentReadiness(root, {
+      day1Handoff: shallowHandoff(),
+      now: () => new Date("2026-06-13T00:00:00.000Z"),
+    });
+
+    assert.equal(result.ready, true);
+    assert.equal(result.documentReadiness.status, "ready");
+    assert.ok(result.documentReadiness.ambiguityScore <= result.documentReadiness.ambiguityThreshold);
+    assert.ok(result.documentReadiness.judgeScore >= result.documentReadiness.judgeThreshold);
+    assert.equal(result.judgeResult.passed, true);
   });
 });
 

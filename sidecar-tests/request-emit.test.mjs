@@ -7,7 +7,6 @@ import { execFile, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
 import {
-  createUserInputRequest,
   listUserInputRequests,
 } from "../sidecar/user-input.mjs";
 import { saveDay1GoalSelection } from "../sidecar/day1-goal-state.mjs";
@@ -1870,7 +1869,7 @@ test("office_hours pending Codex tool result without request transport fails exp
   }
 });
 
-test("Office Hours revision Day 1 stops at expected six questions and suppresses stray seventh request", async () => {
+test("Office Hours Day 1 keeps interviewing at six weak answers and exposes readiness follow-up", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
@@ -1925,16 +1924,32 @@ test("Office Hours revision Day 1 stops at expected six questions and suppresses
     const marker = ws.events.length;
     submitStructuredAnswer(ws, created.session.id, pending);
 
-    const completed = await waitForEvent(ws.events, (event) =>
+    const followup = await waitForEvent(ws.events, (event) =>
       ws.events.indexOf(event) >= marker
         && event.type === "session_updated"
         && event.session?.id === created.session.id
-        && event.session?.pendingUserInput == null
-        && event.session?.status === "idle"
-        && event.session?.runtime?.officeHours?.completedByExpectedCount === true
+        && event.session?.pendingUserInput?.generation?.docType === "day1_document_readiness"
+        && event.session?.status === "awaiting_input"
     );
-    assert.equal(completed.session.runtime.officeHours.expectedQuestionCount, 6);
-    assert.equal(completed.session.runtime.officeHours.completedQuestionCount, 6);
+    assert.notEqual(followup.session.pendingUserInput.requestId, pending.requestId);
+    assert.equal(followup.session.runtime.officeHours.completedByExpectedCount, undefined);
+    assert.equal(followup.session.runtime.officeHours.documentReadiness.status, "needs_followup");
+    assert.ok(
+      followup.session.runtime.officeHours.documentReadiness.ambiguityScore > 20
+        || followup.session.runtime.officeHours.documentReadiness.judgeScore < 8,
+    );
+    assert.ok(followup.session.runtime.officeHours.documentReadiness.judgeScore < 8);
+    assert.match(followup.session.pendingUserInput.intro?.title || "", /문서 저장 전 근거 보완/);
+    assert.match(followup.session.pendingUserInput.intro?.body || "", /저장 카드 전에 필요한 증거/);
+    assert.equal(followup.session.pendingUserInput.questions[0].questionId, "day1_document_readiness_followup");
+    const firstFollowupQuestion = followup.session.pendingUserInput.questions[0];
+    const firstFollowupLabels = firstFollowupQuestion.options.map((option) => option.label);
+    assert.deepEqual(firstFollowupLabels, [
+      "실제 결제/계약 증거",
+      "구매 조건 확정",
+      "현재 대안 비용",
+      "아직 증거 부족",
+    ]);
     assert.equal(
       ws.events.slice(marker).some((event) =>
         event.type === "office_hours_status"
@@ -1942,95 +1957,67 @@ test("Office Hours revision Day 1 stops at expected six questions and suppresses
           && event.stage === "provider_starting"
       ),
       false,
-      "sixth answer must not schedule another provider continuation",
+      "sixth weak answer must not schedule another provider continuation",
     );
 
-    assert.deepEqual(await listUserInputRequests(harness.appSupportPath), []);
+    const requests = await listUserInputRequests(harness.appSupportPath);
+    assert.equal(requests.some((request) => request.requestId === followup.session.pendingUserInput.requestId), true);
 
-    const strayRequest = await createUserInputRequest(harness.appSupportPath, {
-      sessionId: created.session.id,
-      toolName: "agentic30_request_user_input",
-      title: "Office Hours",
-      generation: {
-        mode: "office_hours",
-        signalId: "office_hours_alternatives",
-        signalLabel: "Office Hours 대안 비교",
-      },
-      questions: [
-        {
-          questionId: "office_hours_alternatives",
-          header: "대안 비교",
-          question: "이 질문은 7번째 카드로 승격되면 안 됩니다.",
-          options: [
-            { label: "최소안", description: "최소 범위" },
-            { label: "이상안", description: "넓은 범위" },
-          ],
-          multiSelect: false,
-          allowFreeText: true,
-          requiresFreeText: false,
-          textMode: "short",
-        },
-      ],
+    const currentAlternativeOption = firstFollowupQuestion.options.find((option) =>
+      option.label === "현재 대안 비용"
+    );
+    assert.ok(currentAlternativeOption);
+    const secondMarker = ws.events.length;
+    submitStructuredAnswer(ws, created.session.id, followup.session.pendingUserInput, {
+      selectedOptions: [currentAlternativeOption.label],
+      freeText: "최근 2주 기능 개발 12시간, 고객 대화 0명이라 현재 대안 비용만 확인됐다.",
     });
-    const syncMarker = ws.events.length;
-    await waitForEvent(ws.events, (event) =>
-      ws.events.indexOf(event) >= syncMarker
+    const narrowedFollowup = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= secondMarker
         && event.type === "session_updated"
         && event.session?.id === created.session.id
-        && event.session?.pendingUserInput == null
-        && event.session?.status === "idle"
+        && event.session?.pendingUserInput?.generation?.docType === "day1_document_readiness"
+        && event.session?.pendingUserInput?.requestId !== followup.session.pendingUserInput.requestId
+        && event.session?.status === "awaiting_input"
     );
-    assert.equal(
-      ws.events.slice(syncMarker).some((event) =>
-        event.type === "session_updated"
-          && event.session?.id === created.session.id
-          && event.session?.pendingUserInput?.requestId === strayRequest.requestId
-      ),
-      false,
-      "sync must not expose a seventh Office Hours card after the cap",
-    );
-    assert.equal(
-      (await listUserInputRequests(harness.appSupportPath))
-        .some((request) => request.requestId === strayRequest.requestId),
-      false,
-      "sync must remove the stray seventh request artifact",
-    );
+    const narrowedQuestion = narrowedFollowup.session.pendingUserInput.questions[0];
+    const narrowedLabels = narrowedQuestion.options.map((option) => option.label);
+    assert.notDeepEqual(narrowedLabels, firstFollowupLabels);
+    assert.deepEqual(narrowedLabels, [
+      "최근 2주 시간",
+      "직접 지출",
+      "반복 횟수",
+      "막힌 작업명",
+    ]);
+    assert.match(narrowedQuestion.header, /현재 대안 비용 세부값/);
+    assert.match(narrowedQuestion.question, /어떤 숫자/);
+    assert.match(narrowedQuestion.helperText, /숫자 한 칸/);
+    assert.match(narrowedQuestion.freeTextPlaceholder, /최근 2주/);
 
-    const revisedLabel = pending.questions[0].options[1].label;
-    const revisionMarker = ws.events.length;
-    ws.send(JSON.stringify({
-      type: "office_hours_revise_answer",
-      sessionId: created.session.id,
-      requestId: pending.requestId,
-      prompt: pending,
-      responses: [
-        {
-          question: pending.questions[0].question,
-          selectedOptions: [revisedLabel],
-          freeText: "",
-        },
-      ],
-    }));
-    const revised = await waitForEvent(ws.events, (event) =>
-      ws.events.indexOf(event) >= revisionMarker
+    const thirdMarker = ws.events.length;
+    submitStructuredAnswer(ws, created.session.id, narrowedFollowup.session.pendingUserInput, {
+      selectedOptions: ["최근 2주 시간"],
+      freeText: "최근 2주 기능 개발 12시간, 고객 대화 0명이다.",
+    });
+    const hardEvidenceFollowup = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= thirdMarker
         && event.type === "session_updated"
         && event.session?.id === created.session.id
-        && event.session?.pendingUserInput == null
-        && event.session?.status === "idle"
-        && event.session?.runtime?.officeHours?.completedByExpectedCount === true
+        && event.session?.pendingUserInput?.generation?.docType === "day1_document_readiness"
+        && event.session?.pendingUserInput?.requestId !== narrowedFollowup.session.pendingUserInput.requestId
+        && event.session?.status === "awaiting_input"
     );
-    const revisedSnapshot = revised.session.runtime.officeHours.promptSnapshots
-      ?.find((snapshot) => snapshot.requestId === pending.requestId);
-    assert.equal(revisedSnapshot?.submissions?.[0]?.selectedOptions?.[0], revisedLabel);
-    assert.equal(
-      ws.events.slice(revisionMarker).some((event) =>
-        event.type === "error"
-          && event.sessionId === created.session.id
-          && /cannot be revised/i.test(event.message || "")
-      ),
-      false,
-      "completed Office Hours interviews must remain editable",
-    );
+    const hardEvidenceQuestion = hardEvidenceFollowup.session.pendingUserInput.questions[0];
+    const hardEvidenceLabels = hardEvidenceQuestion.options.map((option) => option.label);
+    assert.notDeepEqual(hardEvidenceLabels, narrowedLabels);
+    assert.deepEqual(hardEvidenceLabels, [
+      "가격 확정",
+      "범위 확정",
+      "일정 확정",
+      "결제권자 확인",
+    ]);
+    assert.match(hardEvidenceQuestion.header, /구매 조건 세부값/);
+    assert.match(hardEvidenceQuestion.question, /가격, 범위, 일정, 결제권자/);
   } finally {
     ws?.close();
     await harness.close();
@@ -2262,7 +2249,8 @@ test("office_hours_start hydrates completed Day 1 interview without provider run
     assert.equal(hydrated.session.runtime.officeHours.resumedTurns, 6);
     assert.equal(hydrated.session.runtime.officeHours.promptSnapshots.length, 6);
     assert.equal(hydrated.session.runtime.officeHours.promptSnapshots[0].requestId, "completed-day1-1");
-    assert.equal(hydrated.session.runtime.officeHours.promptSnapshots[0].submissions[0].selectedOptions[0], "완료 답변 1");
+    assert.equal(hydrated.session.runtime.officeHours.documentReadiness.status, "ready");
+    assert.equal(hydrated.session.runtime.officeHours.promptSnapshots[0].submissions[0].selectedOptions[0], "첫 가치 완료");
     assert.equal(hydrated.session.runtime.officeHours.promptSnapshots[0].turnSessionId, "prior-completed-session");
     assert.equal(
       hydrated.session.messages.some((message) =>
@@ -4880,15 +4868,89 @@ async function seedStandardInterviewDoneProgress(workspacePath, day = 3) {
 
 function makeCompletedOfficeHoursTurn(index) {
   const requestId = `completed-day1-${index}`;
-  const question = `완료 질문 ${index}`;
-  const answer = `완료 답변 ${index}`;
+  const items = [
+    {
+      questionId: "get_users_active_user_definition",
+      header: "활성 사용자 기준",
+      question: "이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?",
+      answer: "첫 가치 완료",
+      option: {
+        mapsTo: "GOAL.activation_action",
+        evidenceTarget: "첫 가치 완료 이벤트, 실행 기록, 검증 행동, 다음 과제",
+        failureMode: "가입이나 관심 표현만 있으면 활성 사용자로 세지 않는다.",
+        nextIntent: "first_value_completed",
+      },
+    },
+    {
+      questionId: "known_dev_first_segment",
+      header: "고객 후보",
+      question: "첫 10명 중 가장 절실한 고객 후보는 누구인가요?",
+      answer: "AI로 많이 만들었지만 팔지 못한 사람",
+      option: {
+        mapsTo: "ICP.desperate_segment",
+        evidenceTarget: "최근 30일 안에 만든 제품과 판매 실패 기록",
+      },
+    },
+    {
+      questionId: "first_channel",
+      header: "첫 접점",
+      question: "이번 주 직접 만날 수 있는 첫 고객 접점은 어디인가요?",
+      answer: "이미 아는 1인 개발자",
+      option: {
+        mapsTo: "ICP.first_reach_channel",
+        evidenceTarget: "실명 후보 3명과 DM 발송 기록",
+      },
+    },
+    {
+      questionId: "current_alternative",
+      header: "현재 대안",
+      question: "지금 이 문제를 어떤 현재 대안으로 버티고 있나요?",
+      answer: "혼자 더 만들기",
+      freeText: "최근 2주 동안 기능 개발은 12시간, 고객 대화는 0명이다.",
+      option: {
+        mapsTo: "PROBLEM.status_quo",
+        evidenceTarget: "최근 2주 기능 개발 12시간, 고객 대화 0명",
+        failureMode: "고객 접촉 없이 기능만 늘리면 수요 공백이 남는다.",
+      },
+    },
+    {
+      questionId: "activation_action",
+      header: "검증 행동",
+      question: "이번 주 반드시 끝내야 하는 검증 행동은 무엇인가요?",
+      answer: "실명 고객 3명에게 연락",
+      option: {
+        mapsTo: "GOAL.activation_action",
+        evidenceTarget: "실명 고객 3명 연락 완료와 답변 기록",
+        failureMode: "오늘 3명에게 보내지 못하면 이번 cycle은 실패다.",
+      },
+    },
+    {
+      questionId: "smallest_paid_entry",
+      header: "작은 유료 진입점",
+      question: "가장 작은 유료 진입점은 무엇인가요?",
+      answer: "1회 검증 세션",
+      freeText: "박지원 리드가 2026-06-14에 3만원 1회 검증 세션 결제를 진행하기로 했다.",
+      option: {
+        mapsTo: "SPEC.smallest_paid_entry",
+        evidenceTarget: "3만원 유료 세션 제안, 일정 확정 또는 결제 의향",
+        failureMode: "가격이나 일정이 없으면 관심 신호로 낮춘다.",
+        nextIntent: "actual_payment_or_contract",
+      },
+    },
+  ];
+  const item = items[Math.max(0, Math.min(index - 1, items.length - 1))];
+  const question = item.question;
+  const answer = item.answer;
   return {
     day: 1,
     sessionId: "prior-completed-session",
     requestId,
     mode: "office_hours_tool",
+    signalId: item.questionId,
+    signalLabel: item.header,
     questionText: question,
     responseText: answer,
+    responseDescription: `${answer} 선택`,
     promptSnapshot: {
       requestId,
       sessionId: "prior-completed-session",
@@ -4897,13 +4959,14 @@ function makeCompletedOfficeHoursTurn(index) {
       createdAt: `2026-06-13T03:0${Math.min(index, 9)}:00.000Z`,
       questions: [
         {
-          questionId: `completed_q_${index}`,
-          header: "완료 질문",
+          questionId: item.questionId,
+          header: item.header,
           question,
           options: [
             {
               label: answer,
-              description: "이미 제출한 답변",
+              description: `${answer} 선택`,
+              ...item.option,
             },
           ],
           multiSelect: false,
@@ -4914,15 +4977,15 @@ function makeCompletedOfficeHoursTurn(index) {
       ],
       generation: {
         mode: "office_hours_tool",
-        signalId: `completed_q_${index}`,
-        signalLabel: "완료 질문",
+        signalId: item.questionId,
+        signalLabel: item.header,
       },
     },
     submissions: [
       {
         question,
         selectedOptions: [answer],
-        freeText: "",
+        freeText: item.freeText || "",
       },
     ],
     occurredAt: `2026-06-13T03:1${Math.min(index, 9)}:00.000Z`,

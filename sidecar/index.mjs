@@ -169,6 +169,12 @@ import {
   saveDay1GoalSelection,
 } from "./day1-goal-state.mjs";
 import {
+  applyDay1SurfaceReviewDecision,
+  generateDay1SurfaceReview,
+  loadDay1SurfaceReview,
+  saveDay1SurfaceReview,
+} from "./day1-surface-review.mjs";
+import {
   computeDayNumber,
   ensureChallengeStart,
   loadDayProgress,
@@ -333,6 +339,7 @@ import {
   docTypeFromLocalRowId,
   canStartDay1HandoffDoc,
   day1HandoffDocByType,
+  evaluateDay1OfficeHoursDocumentReadiness,
   genericIddUserFacingTitle,
   initialIddStructuredInputForDoc,
   isMissingIcpContextIntro,
@@ -618,6 +625,7 @@ const state = {
   iddSetup: null,
   bipCoachRunning: false,
   day1GoalSelection: null,
+  day1SurfaceReview: null,
   dayProgress: null,
   providerAuthRuns: new Map(),
   workspaceOnboardingHypothesis: null,
@@ -701,6 +709,7 @@ try {
   state.bipCoach = syncBipCoachSessionState();
   state.iddSetup = await loadIddSetupState(workspaceRoot);
   state.day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot });
+  state.day1SurfaceReview = await loadDay1SurfaceReview({ workspaceRoot });
   state.dayProgress = await loadDayProgress({ workspaceRoot });
   const detachedOfficeHoursFailed = await failDetachedOfficeHoursPendingSessions({
     emitEvents: false,
@@ -1061,6 +1070,7 @@ function registerAuthenticatedClient(socket) {
     diagnostics: buildSidecarDiagnostics(environment, preflight),
     bipCoach: state.bipCoach,
     day1GoalSelection: state.day1GoalSelection,
+    day1SurfaceReview: state.day1SurfaceReview,
     dayProgress: state.dayProgress,
   });
   void emitProgramNotificationSchedule(socket, workspaceRoot);
@@ -1880,6 +1890,8 @@ async function handleClientMessage(socket, payload) {
       // these turns when that run concludes — the final answer must be durable
       // before the run can race ahead to its conclusion.
       let officeHoursProgressAfterAnswer = null;
+      let officeHoursDocumentReadinessAfterAnswer = null;
+      let officeHoursNeedsDocumentReadinessFollowup = false;
       if (isOfficeHoursStructuredInputResponse && userResponseText) {
         // Answering the 대안 비교 closing card IS interview completion: the
         // prompt smart-skips routed questions, so a finished interview can
@@ -1947,7 +1959,17 @@ async function handleClientMessage(socket, payload) {
           officeHoursProgressAfterAnswer = await getOfficeHoursQuestionProgress(session, {
             currentRequestId: requestId,
           });
-          stampOfficeHoursExpectedCountCompletion(session, officeHoursProgressAfterAnswer);
+          if (shouldGateDay1OfficeHoursDocumentReadiness(session, officeHoursProgressAfterAnswer)) {
+            officeHoursDocumentReadinessAfterAnswer = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
+              writeDebtReport: true,
+            });
+            officeHoursNeedsDocumentReadinessFollowup = officeHoursDocumentReadinessAfterAnswer?.ready !== true;
+            if (!officeHoursNeedsDocumentReadinessFollowup) {
+              stampOfficeHoursExpectedCountCompletion(session, officeHoursProgressAfterAnswer);
+            }
+          } else {
+            stampOfficeHoursExpectedCountCompletion(session, officeHoursProgressAfterAnswer);
+          }
         }
       }
       await writeUserInputResponse(appSupportPath, {
@@ -1961,6 +1983,18 @@ async function handleClientMessage(socket, payload) {
 
       state.resolvedUserInputIds.add(requestId);
       session.pendingUserInput = null;
+      if (officeHoursNeedsDocumentReadinessFollowup) {
+        await abortActiveOfficeHoursRunAtQuestionCap(session);
+        await attachDay1DocumentReadinessFollowupPrompt(
+          session,
+          officeHoursDocumentReadinessAfterAnswer,
+          { previousRequestId: requestId },
+        );
+        await persistSessions();
+        broadcast({ type: "session_updated", session });
+        return;
+      }
+
       const officeHoursQuestionCapReached = Boolean(officeHoursProgressAfterAnswer?.capReached);
       session.status = officeHoursQuestionCapReached
         ? "idle"
@@ -2328,6 +2362,18 @@ async function handleClientMessage(socket, payload) {
     }
     case "day1_goal_save": {
       await handleDay1GoalSave(socket, payload);
+      return;
+    }
+    case "day1_surface_review_get": {
+      await handleDay1SurfaceReviewGet(socket, payload);
+      return;
+    }
+    case "day1_surface_review_generate": {
+      await handleDay1SurfaceReviewGenerate(socket, payload);
+      return;
+    }
+    case "day1_surface_review_decide": {
+      await handleDay1SurfaceReviewDecide(socket, payload);
       return;
     }
     case "day_progress_get": {
@@ -3682,6 +3728,167 @@ async function handleDayProgressGet(socket, payload = {}) {
     dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, currentDay),
   });
   await emitProgramNotificationSchedule(socket, root);
+}
+
+async function handleDay1SurfaceReviewGet(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  const surfaceReview = await loadDay1SurfaceReview({ workspaceRoot: root });
+  if (path.resolve(root) === path.resolve(workspaceRoot)) {
+    state.day1SurfaceReview = surfaceReview;
+  }
+  send(socket, {
+    type: "day1_surface_review_state",
+    workspaceRoot: root,
+    day1SurfaceReview: surfaceReview,
+    status: surfaceReview?.status || "missing",
+  });
+}
+
+async function handleDay1SurfaceReviewGenerate(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  try {
+    const mode = payload.mode ?? payload.surfaceMode ?? payload.surface_mode ?? "no_landing";
+    const landingUrl = payload.landingUrl ?? payload.landing_url ?? "";
+    const localResult = await findWorkspaceDocsLocally(root);
+    const [localDiscovery, agentHistory] = await Promise.all([
+      collectLocalDiscovery(root).catch(() => null),
+      collectAgentWorkHistory({
+        workspaceRoot: root,
+        enabled: process.env.AGENTIC30_DISABLE_AGENT_HISTORY !== "1",
+      }).catch(() => null),
+    ]);
+    const onboardingHypothesis = path.resolve(root) === path.resolve(workspaceRoot) && state.workspaceOnboardingHypothesis
+      ? state.workspaceOnboardingHypothesis
+      : await deriveWorkspaceOnboardingHypothesisLocally(root, {
+          docPaths: localResult,
+          agentHistory,
+        });
+    const [day1AlignmentPlan, day1IcpPlan] = await Promise.all([
+      generateDay1AlignmentPlan({
+        workspaceRoot: root,
+        scanResult: localResult,
+        onboardingHypothesis,
+        localDiscovery,
+      }),
+      generateDay1IcpPlan({
+        workspaceRoot: root,
+        scanResult: localResult,
+        onboardingHypothesis,
+        localDiscovery,
+      }),
+    ]);
+    const day1SituationSummary = await buildDay1SituationSummary({
+      workspaceRoot: root,
+      scanResult: localResult,
+      onboardingHypothesis,
+      agentHistory,
+      localDiscovery,
+    }).catch(() => null);
+    const generated = await generateDay1SurfaceReview({
+      workspaceRoot: root,
+      mode,
+      landingUrl,
+      scanResult: localResult,
+      onboardingHypothesis,
+      day1AlignmentPlan,
+      day1IcpPlan,
+      day1SituationSummary,
+    });
+    const surfaceReview = await saveGeneratedDay1SurfaceReview(root, generated);
+    broadcast({
+      type: "day1_surface_review_state",
+      workspaceRoot: root,
+      day1SurfaceReview: surfaceReview,
+      status: "preview_ready",
+    });
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "day1_surface_review_generate",
+      workspace_root: root,
+    });
+    send(socket, {
+      type: "day1_surface_review_state",
+      workspaceRoot: root,
+      success: false,
+      status: "error",
+      error: formatError(error),
+    });
+  }
+}
+
+async function saveGeneratedDay1SurfaceReview(root, review) {
+  const surfaceReview = await saveDay1SurfaceReview({ workspaceRoot: root, review });
+  if (path.resolve(root) === path.resolve(workspaceRoot)) {
+    state.day1SurfaceReview = surfaceReview;
+  }
+  return surfaceReview;
+}
+
+async function handleDay1SurfaceReviewDecide(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  try {
+    const decision = payload.decision ?? payload.status ?? payload.action ?? "";
+    const surfaceReview = await applyDay1SurfaceReviewDecision({
+      workspaceRoot: root,
+      decision,
+    });
+    if (path.resolve(root) === path.resolve(workspaceRoot)) {
+      state.day1SurfaceReview = surfaceReview;
+    }
+
+    const seeded = await ensureChallengeStart({ workspaceRoot: root });
+    await setDayActiveStep({
+      workspaceRoot: root,
+      day: 1,
+      stepId: "first_interview",
+      goalText: surfaceReview.customerSurface?.cta || surfaceReview.customerSurface?.headline || "",
+    });
+    const dayProgress = await patchDayStep({
+      workspaceRoot: root,
+      day: 1,
+      stepId: "first_interview",
+      status: "done",
+      kind: "day1",
+      goalText: surfaceReview.customerSurface?.cta || surfaceReview.customerSurface?.headline || "",
+    });
+    if (path.resolve(root) === path.resolve(workspaceRoot)) {
+      state.dayProgress = dayProgress;
+    }
+    await refreshDayMemory({ workspaceRoot: root, day: 1 }).catch((error) => {
+      telemetry.captureException(error, { operation: "day_memory_refresh_after_surface_review" });
+    });
+    const currentDay = computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt || seeded.challengeStartedAt });
+    broadcast({
+      type: "day1_surface_review_state",
+      workspaceRoot: root,
+      day1SurfaceReview: surfaceReview,
+      status: surfaceReview.decision?.status || surfaceReview.status,
+    });
+    broadcast({
+      type: "day_progress_state",
+      workspaceRoot: root,
+      dayProgress,
+      currentDay,
+      officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
+      officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
+      dayReviews: await loadOfficeHoursDayReviews(root, dayProgress, currentDay),
+      evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
+      dayClosePolicy: await loadOfficeHoursDayClosePolicy(root, currentDay),
+    });
+    await emitProgramNotificationSchedule(socket, root, { broadcastToAll: true });
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "day1_surface_review_decide",
+      workspace_root: root,
+    });
+    send(socket, {
+      type: "day1_surface_review_state",
+      workspaceRoot: root,
+      success: false,
+      status: "error",
+      error: formatError(error),
+    });
+  }
 }
 
 // Compact office-hours memory summary for the additive `officeHoursMemory` field on the
@@ -7459,6 +7666,7 @@ function attachOfficeHoursRuntime(runtime = {}, officeHours = null) {
       // stamp must be carried forward or the completion signal dies between
       // the closing answer and the run's incomplete-interview check.
       ...(prior?.terminalAnswered === true ? { terminalAnswered: true } : {}),
+      ...(prior?.documentReadiness ? { documentReadiness: prior.documentReadiness } : {}),
       ...officeHours,
       active: true,
     },
@@ -7531,6 +7739,448 @@ async function refreshOfficeHoursRuntimePromptSnapshots(session) {
 function isLockedDay1GoalOfficeHoursRuntime(officeHours = {}) {
   return String(officeHours?.source || "") === "day1_interview_goal_locked"
     || isOfficeHoursLockedDay1GoalContext(officeHours?.context || "");
+}
+
+function normalizeOfficeHoursDocumentReadinessForRuntime(readiness = {}) {
+  const numberOrNull = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const status = String(readiness?.status || "").trim() || "needs_followup";
+  const evidenceDebt = Array.isArray(readiness?.evidenceDebt)
+    ? readiness.evidenceDebt.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 12)
+    : [];
+  return {
+    status,
+    ambiguityScore: numberOrNull(readiness?.ambiguityScore),
+    ambiguityThreshold: numberOrNull(readiness?.ambiguityThreshold),
+    judgeScore: numberOrNull(readiness?.judgeScore),
+    judgeThreshold: numberOrNull(readiness?.judgeThreshold),
+    evidenceDebt,
+    nextQuestion: String(readiness?.nextQuestion || "").trim(),
+    updatedAt: String(readiness?.updatedAt || new Date().toISOString()).trim(),
+  };
+}
+
+function isDay1DocumentReadinessFollowupRequest(request = null) {
+  return String(request?.generation?.mode || "").trim().toLowerCase() === "office_hours"
+    && String(request?.generation?.docType || "").trim().toLowerCase() === "day1_document_readiness";
+}
+
+function shouldGateDay1OfficeHoursDocumentReadiness(session = null, progress = {}) {
+  const officeHours = session?.runtime?.officeHours;
+  return progress?.capReached === true
+    && normalizeOfficeHoursDay(officeHours?.day) === 1
+    && isLockedDay1GoalOfficeHoursRuntime(officeHours);
+}
+
+async function evaluateAndStampDay1OfficeHoursDocumentReadiness(session = null, {
+  writeDebtReport = false,
+} = {}) {
+  if (!session?.runtime?.officeHours) return null;
+  const result = await evaluateDay1OfficeHoursDocumentReadiness(workspaceRoot, {
+    day1Handoff: normalizeDay1HandoffPayload(session.runtime?.day1Handoff || {}),
+    writeDebtReport,
+  });
+  const documentReadiness = normalizeOfficeHoursDocumentReadinessForRuntime(result.documentReadiness);
+  session.runtime.officeHours.documentReadiness = documentReadiness;
+  telemetry.captureEvent("mac_sidecar_office_hours_document_readiness_checked", {
+    session_id: session.id,
+    provider: session.provider,
+    status: documentReadiness.status,
+    ambiguity_score: documentReadiness.ambiguityScore ?? 0,
+    ambiguity_threshold: documentReadiness.ambiguityThreshold ?? 0,
+    judge_score: documentReadiness.judgeScore ?? 0,
+    judge_threshold: documentReadiness.judgeThreshold ?? 0,
+    evidence_debt_count: documentReadiness.evidenceDebt.length,
+  });
+  return {
+    ...result,
+    documentReadiness,
+  };
+}
+
+const DAY1_DOCUMENT_READINESS_BASE_OPTIONS = Object.freeze([
+  {
+    label: "실제 결제/계약 증거",
+    description: "실명 고객, 날짜, 가격 또는 계약 조건이 있어 문서 judge의 하드 증거로 쓸 수 있습니다.",
+    nextIntent: "actual_payment_or_contract",
+    evidenceTarget: "실명 고객, 날짜, 가격/계약 조건, 캡처나 기록",
+    mapsTo: "Q1 Demand Reality",
+    failureMode: "돈이나 계약 조건이 없으면 수요 증거가 아니라 관심 신호입니다.",
+  },
+  {
+    label: "구매 조건 확정",
+    description: "가격, 범위, 일정, 결제권자 중 하나 이상이 구체적입니다.",
+    nextIntent: "concrete_purchase_conditions",
+    evidenceTarget: "가격, 범위, 구매 시점, 결제권자",
+    mapsTo: "Q1 Demand Reality",
+    failureMode: "조건이 모호하면 문서 저장 전 다시 좁혀야 합니다.",
+  },
+  {
+    label: "현재 대안 비용",
+    description: "최근 2주 시간, 돈, 반복 횟수, 막힌 작업명이 숫자로 확인됩니다.",
+    nextIntent: "paid_or_time_current_alternative",
+    evidenceTarget: "현재 대안, 비용 숫자, 반복 횟수, 막힌 작업명",
+    mapsTo: "PROBLEM.current_alternative_cost",
+    failureMode: "비용 맥락이 없으면 문제 압박이 약합니다.",
+  },
+  {
+    label: "아직 증거 부족",
+    description: "정식 문서 저장보다 실제 고객 행동 증거 확보가 먼저입니다.",
+    nextIntent: "verbal_interest_or_no_evidence",
+    evidenceTarget: "다음에 확인할 실명 고객 행동 증거",
+    mapsTo: "EVIDENCE.debt",
+    failureMode: "증거 없이 저장하면 문서가 실행 기준이 아니라 가정 목록이 됩니다.",
+  },
+]);
+
+const DAY1_DOCUMENT_READINESS_FOCUSES = Object.freeze({
+  actual_payment_or_contract: {
+    header: "결제/계약 세부값",
+    question: "실제 결제/계약 증거로 저장하려면 지금 빠진 세부값은 무엇인가요?",
+    helperText: "이번에는 증거 카테고리가 아니라 결제/계약 증거의 빈칸 하나만 채웁니다.",
+    freeTextPlaceholder: "예: 김OO, 6/21, 3만원 1회 세션, 토스 결제 링크 발송",
+    options: [
+      {
+        label: "고객+날짜",
+        description: "누가 언제 결제, 계약, 구매 의사를 냈는지 확인됩니다.",
+        nextIntent: "actual_payment_or_contract",
+        evidenceTarget: "실명 고객과 날짜",
+        mapsTo: "Q1 Demand Reality",
+        failureMode: "고객명과 날짜가 없으면 재현 가능한 증거가 아닙니다.",
+      },
+      {
+        label: "금액/가격",
+        description: "제안 가격, 결제 금액, 계약 금액 중 하나가 숫자로 있습니다.",
+        nextIntent: "actual_payment_or_contract",
+        evidenceTarget: "가격 또는 결제 금액",
+        mapsTo: "Q1 Demand Reality",
+        failureMode: "금액이 없으면 구매 증거가 아니라 관심 표현에 가깝습니다.",
+      },
+      {
+        label: "결제/계약 위치",
+        description: "결제 링크, 송금 요청, 계약서, 캡처 위치를 특정할 수 있습니다.",
+        nextIntent: "actual_payment_or_contract",
+        evidenceTarget: "결제 링크, 송금 요청, 계약서, 캡처 위치",
+        mapsTo: "Q1 Demand Reality",
+        failureMode: "확인 위치가 없으면 judge가 하드 증거로 쓰기 어렵습니다.",
+      },
+      {
+        label: "아직 결제 증거 없음",
+        description: "말뿐인 관심이라면 다음 행동 증거를 먼저 잡아야 합니다.",
+        nextIntent: "verbal_interest_or_no_evidence",
+        evidenceTarget: "다음에 확보할 결제/계약 행동 증거",
+        mapsTo: "EVIDENCE.debt",
+        failureMode: "결제/계약 행동 없이 문서 저장하면 수요 증거가 약합니다.",
+      },
+    ],
+  },
+  concrete_purchase_conditions: {
+    header: "구매 조건 세부값",
+    question: "구매 조건 확정으로 저장하려면 가격, 범위, 일정, 결제권자 중 무엇이 확인됐나요?",
+    helperText: "이번에는 구매 조건의 네 칸 중 확인된 한 칸을 고르고 근거를 적습니다.",
+    freeTextPlaceholder: "예: 3만원, 1회 45분, 금요일까지 결제 여부 답변, 김OO가 직접 결정",
+    options: [
+      {
+        label: "가격 확정",
+        description: "얼마를 내는지 숫자로 정해졌습니다.",
+        nextIntent: "concrete_purchase_conditions",
+        evidenceTarget: "가격 또는 결제 금액",
+        mapsTo: "Q1 Demand Reality",
+        failureMode: "가격이 없으면 구매 조건이 아직 열린 상태입니다.",
+      },
+      {
+        label: "범위 확정",
+        description: "무엇을 제공하고 어디까지가 제외되는지 정해졌습니다.",
+        nextIntent: "concrete_purchase_conditions",
+        evidenceTarget: "제공 범위와 제외 범위",
+        mapsTo: "Q1 Demand Reality",
+        failureMode: "범위가 없으면 약속이 실행 가능한 계약으로 좁혀지지 않습니다.",
+      },
+      {
+        label: "일정 확정",
+        description: "결제, 통화, 파일럿 시작, 답변 기한 중 하나가 정해졌습니다.",
+        nextIntent: "concrete_purchase_conditions",
+        evidenceTarget: "구매/결제/시작 일정",
+        mapsTo: "Q1 Demand Reality",
+        failureMode: "일정이 없으면 후속 추적 가능한 약속이 아닙니다.",
+      },
+      {
+        label: "결제권자 확인",
+        description: "돈을 내거나 승인할 사람이 누구인지 확인됐습니다.",
+        nextIntent: "concrete_purchase_conditions",
+        evidenceTarget: "결제권자 또는 승인자",
+        mapsTo: "Q1 Demand Reality",
+        failureMode: "결정권자가 없으면 구매 조건이 아직 추정입니다.",
+      },
+    ],
+  },
+  paid_or_time_current_alternative: {
+    header: "현재 대안 비용 세부값",
+    question: "현재 대안 비용을 근거로 쓰려면 어떤 숫자를 지금 채울 수 있나요?",
+    helperText: "이번에는 대안 비용의 숫자 한 칸만 채웁니다. 시간, 돈, 반복, 막힌 작업 중 하나면 됩니다.",
+    freeTextPlaceholder: "예: 최근 2주 12시간, 월 4만원 도구비, 주 5회 수작업, 배포 전 리드 정리에서 막힘",
+    options: [
+      {
+        label: "최근 2주 시간",
+        description: "지난 2주 동안 현재 대안에 쓴 시간이 숫자로 있습니다.",
+        nextIntent: "paid_or_time_current_alternative",
+        evidenceTarget: "최근 2주 시간 비용",
+        mapsTo: "PROBLEM.current_alternative_cost",
+        failureMode: "시간 숫자가 없으면 문제 압박이 약합니다.",
+      },
+      {
+        label: "직접 지출",
+        description: "도구비, 외주비, 유료 대안, 놓친 매출 중 하나가 숫자로 있습니다.",
+        nextIntent: "paid_or_time_current_alternative",
+        evidenceTarget: "돈 비용 또는 놓친 매출",
+        mapsTo: "PROBLEM.current_alternative_cost",
+        failureMode: "돈 숫자가 없으면 구매 압박 증거로 쓰기 어렵습니다.",
+      },
+      {
+        label: "반복 횟수",
+        description: "같은 수작업, 실패, 재시도 횟수가 주/월 단위로 확인됩니다.",
+        nextIntent: "paid_or_time_current_alternative",
+        evidenceTarget: "반복 횟수 또는 실패 횟수",
+        mapsTo: "PROBLEM.current_alternative_cost",
+        failureMode: "반복 횟수가 없으면 빈도 높은 문제인지 모호합니다.",
+      },
+      {
+        label: "막힌 작업명",
+        description: "어떤 작업이 현재 대안 때문에 막히는지 구체적인 이름이 있습니다.",
+        nextIntent: "paid_or_time_current_alternative",
+        evidenceTarget: "막힌 작업명과 상황",
+        mapsTo: "PROBLEM.current_alternative_cost",
+        failureMode: "작업명이 없으면 비용이 실제 workflow와 연결되지 않습니다.",
+      },
+    ],
+  },
+  verbal_interest_or_no_evidence: {
+    header: "다음 증거 확보 행동",
+    question: "아직 증거가 부족하다면 다음 office-hours 전에 어떤 행동 증거를 만들 건가요?",
+    helperText: "이번에는 부족하다는 결론을 반복하지 말고, 추적 가능한 다음 행동 하나를 정합니다.",
+    freeTextPlaceholder: "예: 김OO에게 오늘 18시까지 3만원 세션 결제 여부를 묻고 답변 캡처를 남김",
+    options: [
+      {
+        label: "실명 고객 1명",
+        description: "다음에 확인할 사람의 이름, 계정, 관계가 있습니다.",
+        nextIntent: "verbal_interest_or_no_evidence",
+        evidenceTarget: "실명 고객 또는 계정",
+        mapsTo: "EVIDENCE.next_action",
+        failureMode: "사람이 없으면 다음 증거가 또 추상적입니다.",
+      },
+      {
+        label: "보낼 요청 문장",
+        description: "결제, 통화, 파일럿, 답변을 요청하는 문장이 정해졌습니다.",
+        nextIntent: "verbal_interest_or_no_evidence",
+        evidenceTarget: "보낼 요청 문장과 채널",
+        mapsTo: "EVIDENCE.next_action",
+        failureMode: "요청 문장이 없으면 행동이 실행되지 않습니다.",
+      },
+      {
+        label: "답변 기한",
+        description: "언제까지 어떤 답변을 받을지 정해졌습니다.",
+        nextIntent: "verbal_interest_or_no_evidence",
+        evidenceTarget: "답변 기한과 확인 기준",
+        mapsTo: "EVIDENCE.next_action",
+        failureMode: "기한이 없으면 다음 office-hours에서 확인할 수 없습니다.",
+      },
+      {
+        label: "오늘 확보 못함",
+        description: "지금은 저장하지 않고 다음 행동 증거를 먼저 만들기로 합니다.",
+        nextIntent: "verbal_interest_or_no_evidence",
+        evidenceTarget: "오늘 만들 수 없는 이유와 다음 확인 시점",
+        mapsTo: "EVIDENCE.debt",
+        failureMode: "증거 없이 문서 저장은 계속 막힙니다.",
+      },
+    ],
+  },
+});
+
+function normalizeDay1DocumentReadinessIntent(value = "") {
+  const token = String(value || "").trim().toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(DAY1_DOCUMENT_READINESS_FOCUSES, token)) return token;
+  return "";
+}
+
+function day1DocumentReadinessCandidateLabels(response = "", freeText = "") {
+  let text = String(response || "").trim();
+  const notes = String(freeText || "").trim();
+  if (notes && text.endsWith(notes)) {
+    text = text.slice(0, text.length - notes.length).replace(/\s+—\s*$/, "").trim();
+  }
+  const selectedText = text.split(/\s+—\s+/)[0] || "";
+  return selectedText
+    .split(/\s*,\s*/)
+    .map((label) => label.trim())
+    .filter(Boolean);
+}
+
+function day1DocumentReadinessBaseIntentForLabel(label = "", freeText = "") {
+  for (const normalized of day1DocumentReadinessCandidateLabels(label, freeText)) {
+    const option = DAY1_DOCUMENT_READINESS_BASE_OPTIONS.find((candidate) => candidate.label === normalized);
+    const intent = normalizeDay1DocumentReadinessIntent(option?.nextIntent);
+    if (intent) return intent;
+  }
+  return "";
+}
+
+function day1DocumentReadinessFocusedIntentForLabel(label = "", freeText = "") {
+  for (const normalized of day1DocumentReadinessCandidateLabels(label, freeText)) {
+    for (const [intent, focus] of Object.entries(DAY1_DOCUMENT_READINESS_FOCUSES)) {
+      if (focus.options.some((option) => option.label === normalized)) {
+        return normalizeDay1DocumentReadinessIntent(intent);
+      }
+    }
+  }
+  return "";
+}
+
+function latestDay1DocumentReadinessReference(evidenceState = {}) {
+  const refs = Array.isArray(evidenceState?.references) ? evidenceState.references : [];
+  return [...refs].reverse().find((ref) =>
+    String(ref?.questionId || "").trim() === "day1_document_readiness_followup"
+    || String(ref?.signalId || "").trim() === "day1_document_readiness_followup"
+  ) || null;
+}
+
+function inferDay1DocumentReadinessIntentFromText(readiness = {}) {
+  const text = [
+    readiness.nextQuestion,
+    ...(Array.isArray(readiness.evidenceDebt) ? readiness.evidenceDebt : []),
+  ].map((item) => String(item || "")).join(" ");
+  if (/가격|범위|일정|결제권자|구매\s*조건|유료\s*진입점|결제\s*시점|구매\s*시점/i.test(text)) {
+    return "concrete_purchase_conditions";
+  }
+  if (/실제\s*결제|계약|송금|입금|결제\s*링크|결제\s*캡처|payment/i.test(text)) {
+    return "actual_payment_or_contract";
+  }
+  if (/현재\s*대안|비용|시간|반복|막힌\s*작업|도구비/i.test(text)) {
+    return "paid_or_time_current_alternative";
+  }
+  if (/약속|후속|실명|고객\s*후보|연락|DM|증거\s*부족/i.test(text)) {
+    return "verbal_interest_or_no_evidence";
+  }
+  return "";
+}
+
+function inferDay1DocumentReadinessIntent(readiness = {}, evidenceState = {}) {
+  const latestRef = latestDay1DocumentReadinessReference(evidenceState);
+  const latestResponse = String(latestRef?.response || "").trim();
+  const latestFreeText = String(latestRef?.freeText || "").trim();
+  const baseIntent = day1DocumentReadinessBaseIntentForLabel(latestResponse, latestFreeText);
+  if (baseIntent) return { intent: baseIntent, hasPriorReadinessAnswer: true };
+
+  const focusedIntent = day1DocumentReadinessFocusedIntentForLabel(latestResponse, latestFreeText);
+  const inferredIntent = inferDay1DocumentReadinessIntentFromText(readiness);
+  if (focusedIntent && inferredIntent && inferredIntent !== focusedIntent) {
+    return { intent: inferredIntent, hasPriorReadinessAnswer: true };
+  }
+  if (focusedIntent && readiness.judgeScore != null && readiness.judgeThreshold != null && readiness.judgeScore < readiness.judgeThreshold) {
+    return { intent: "concrete_purchase_conditions", hasPriorReadinessAnswer: true };
+  }
+  if (focusedIntent) {
+    return { intent: inferredIntent || focusedIntent, hasPriorReadinessAnswer: true };
+  }
+
+  const explicit = normalizeDay1DocumentReadinessIntent(latestRef?.nextIntent);
+  if (explicit) return { intent: explicit, hasPriorReadinessAnswer: true };
+
+  return { intent: inferredIntent, hasPriorReadinessAnswer: Boolean(latestRef) };
+}
+
+function buildDay1DocumentReadinessFollowupStructuredInput(readinessResult = {}) {
+  const readiness = normalizeOfficeHoursDocumentReadinessForRuntime(
+    readinessResult?.documentReadiness || readinessResult,
+  );
+  const evidenceState = readinessResult?.evidenceState || {};
+  const focusState = inferDay1DocumentReadinessIntent(readiness, evidenceState);
+  const focus = focusState.hasPriorReadinessAnswer && focusState.intent
+    ? DAY1_DOCUMENT_READINESS_FOCUSES[focusState.intent]
+    : null;
+  const debts = readiness.evidenceDebt.length
+    ? readiness.evidenceDebt.slice(0, 4)
+    : ["문서 저장 전 고객 행동 증거와 유료/완료 신호를 더 좁혀야 합니다."];
+  const primaryQuestion = readiness.nextQuestion
+    || "문서 저장 전에 가장 부족한 고객 행동 증거는 무엇인가요?";
+  const ambiguity = readiness.ambiguityScore == null || readiness.ambiguityThreshold == null
+    ? "모호함 기준 확인 필요"
+    : `모호함 ${readiness.ambiguityScore}% / 기준 ${readiness.ambiguityThreshold}% 이하`;
+  const judge = readiness.judgeScore == null || readiness.judgeThreshold == null
+    ? "문서 judge 기준 확인 필요"
+    : `예상 judge ${readiness.judgeScore}/10 / 기준 ${readiness.judgeThreshold}/10`;
+  return {
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: "Office Hours",
+    intro: {
+      title: "문서 저장 전 근거 보완",
+      body: `${ambiguity}. ${judge}. 저장 카드 전에 필요한 증거를 하나 더 좁힙니다.`,
+      bullets: debts,
+    },
+    questions: [
+      {
+        questionId: "day1_document_readiness_followup",
+        header: focus?.header || "저장 전 증거",
+        question: focus?.question || primaryQuestion,
+        helperText: focus?.helperText || "선택 후 한 줄 근거를 적으면 문서 저장 준비도를 다시 계산합니다.",
+        options: focus?.options || DAY1_DOCUMENT_READINESS_BASE_OPTIONS,
+        multiSelect: false,
+        allowFreeText: true,
+        requiresFreeText: false,
+        freeTextPlaceholder: focus?.freeTextPlaceholder || "예: 김OO에게 3만원 1회 세션을 제안했고 금요일까지 결제 여부를 답받기로 했다",
+        textMode: "short",
+      },
+    ],
+    generation: {
+      mode: "office_hours",
+      docType: "day1_document_readiness",
+      signalId: "day1_document_readiness_followup",
+      signalLabel: "문서 저장 전 근거",
+    },
+  };
+}
+
+async function attachDay1DocumentReadinessFollowupPrompt(session = null, readinessResult = {}, {
+  previousRequestId = "",
+} = {}) {
+  if (!session?.id) return null;
+  const documentReadiness = normalizeOfficeHoursDocumentReadinessForRuntime(readinessResult?.documentReadiness);
+  session.runtime = {
+    ...(session.runtime || {}),
+    officeHours: {
+      ...(session.runtime?.officeHours || {}),
+      active: true,
+      documentReadiness,
+    },
+  };
+  const input = buildDay1DocumentReadinessFollowupStructuredInput({
+    ...readinessResult,
+    documentReadiness,
+  });
+  const request = await createUserInputRequest(appSupportPath, {
+    sessionId: session.id,
+    ...input,
+  });
+  session.pendingUserInput = request;
+  session.status = "awaiting_input";
+  session.error = null;
+  touch(session);
+  await persistOfficeHoursPendingQuestion(session, request, "day1_document_readiness_followup");
+  emitOfficeHoursStatus(session, {
+    stage: "question_ready",
+    requestId: request.requestId,
+    progressText: "문서 저장 전 보완 질문 준비 완료",
+  });
+  telemetry.captureEvent("mac_sidecar_office_hours_document_readiness_followup_created", {
+    session_id: session.id,
+    provider: session.provider,
+    request_id: request.requestId,
+    previous_request_id: previousRequestId || "",
+    ambiguity_score: documentReadiness.ambiguityScore ?? 0,
+    judge_score: documentReadiness.judgeScore ?? 0,
+  });
+  return request;
 }
 
 function resolveOfficeHoursExpectedQuestionCount(session, context = "") {
@@ -8581,15 +9231,38 @@ async function runOfficeHours(session, {
         completedSnapshotTurns,
         runtimeDay,
       );
-      if (hasOfficeHoursTerminalResumeTurn(completedSnapshotTurns)) {
+      const completedSnapshotTerminal = hasOfficeHoursTerminalResumeTurn(completedSnapshotTurns);
+      const completedSnapshotCapReached = completedExpectedCount > 0
+        && completedSnapshotTurns.length >= completedExpectedCount;
+      if (completedSnapshotTerminal) {
         completedRuntime.terminalAnswered = true;
-      } else if (completedExpectedCount > 0 && completedSnapshotTurns.length >= completedExpectedCount) {
-        completedRuntime.completedByExpectedCount = true;
-        completedRuntime.completedQuestionCount = completedSnapshotTurns.length;
       }
       session.runtime = attachOfficeHoursRuntime(session.runtime, completedRuntime);
       if (!session.title || session.title === "New Session") {
         session.title = "Office Hours";
+      }
+      if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: completedSnapshotCapReached })) {
+        const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
+          writeDebtReport: true,
+        });
+        if (readiness?.ready !== true) {
+          await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
+            previousRequestId: completedRuntime.promptSnapshots?.at(-1)?.requestId || "",
+          });
+          await persistSessions();
+          broadcast({ type: "session_updated", session });
+          const completedRun = state.activeRuns.get(session.id);
+          if (completedRun?.runKey === runKey) {
+            state.activeRuns.delete(session.id);
+          }
+          return;
+        }
+        completedRuntime.documentReadiness = session.runtime.officeHours.documentReadiness;
+      }
+      if (completedSnapshotCapReached) {
+        session.runtime.officeHours.completedByExpectedCount = true;
+        session.runtime.officeHours.completedQuestionCount = completedSnapshotTurns.length;
+        session.runtime.officeHours.expectedQuestionCount = completedExpectedCount;
       }
       session.status = "idle";
       session.error = null;
@@ -8796,25 +9469,44 @@ async function runOfficeHours(session, {
         // day-progress step + answered count) carries the close from here.
         // No visiblePrompt/assistant rows are pushed — the auto-start policy
         // marks this session started for the launch, so it will not refire.
-        if (officeHoursResumeTerminal) {
-          // The prior session's live terminalAnswered stamp died with the
-          // daemon; restore it from the durable turn flag so the Mac client's
-          // interview-complete gate (commitment bar + N/M counter) and
-          // detectIncompleteOfficeHoursInterview on later continuations treat
-          // a smart-skip conclusion (fewer answers than expected) as done.
-          officeHoursRuntime.terminalAnswered = true;
-        } else if (officeHoursExpectedQuestionCount > 0
-          && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount) {
-          officeHoursRuntime.completedByExpectedCount = true;
-          officeHoursRuntime.completedQuestionCount = officeHoursResumeTurns.length;
-          officeHoursRuntime.expectedQuestionCount = officeHoursExpectedQuestionCount;
-        }
-        session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
-        if (!session.title || session.title === "New Session") {
-          session.title = "Office Hours";
-        }
-        session.status = "idle";
-        session.error = null;
+	        const officeHoursResumeCapReached = officeHoursExpectedQuestionCount > 0
+	          && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount;
+	        if (officeHoursResumeTerminal) {
+	          // The prior session's live terminalAnswered stamp died with the
+	          // daemon; restore it from the durable turn flag so the Mac client's
+	          // interview-complete gate (commitment bar + N/M counter) and
+	          // detectIncompleteOfficeHoursInterview on later continuations treat
+	          // a smart-skip conclusion (fewer answers than expected) as done.
+	          officeHoursRuntime.terminalAnswered = true;
+	        }
+	        session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
+	        if (!session.title || session.title === "New Session") {
+	          session.title = "Office Hours";
+	        }
+	        if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: officeHoursResumeCapReached })) {
+	          const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
+	            writeDebtReport: true,
+	          });
+	          if (readiness?.ready !== true) {
+	            await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
+	              previousRequestId: officeHoursRuntime.promptSnapshots?.at(-1)?.requestId || "",
+	            });
+	            await persistSessions();
+	            broadcast({ type: "session_updated", session });
+	            const wrapUpRun = state.activeRuns.get(session.id);
+	            if (wrapUpRun?.runKey === runKey) {
+	              state.activeRuns.delete(session.id);
+	            }
+	            return;
+	          }
+	        }
+	        if (officeHoursResumeCapReached) {
+	          session.runtime.officeHours.completedByExpectedCount = true;
+	          session.runtime.officeHours.completedQuestionCount = officeHoursResumeTurns.length;
+	          session.runtime.officeHours.expectedQuestionCount = officeHoursExpectedQuestionCount;
+	        }
+	        session.status = "idle";
+	        session.error = null;
         session.pendingUserInput = null;
         touch(session);
         await persistSessions();
@@ -12654,16 +13346,16 @@ function buildDay1HandoffJudgeBlockedStructuredInput(result = {}) {
 
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: "Office Hours 문서 리뷰 보완",
+    title: "Office Hours 저장 전 근거 보완",
     intro: {
-      title: "문서 리뷰 보류",
-      body: `문서 judge 점수는 ${score}/10이고 기준은 8/10입니다. 자유 입력 대신 하나를 골라 다음 리뷰 인터뷰를 이어갑니다.`,
+      title: "문서 저장 전 근거 보완",
+      body: `문서 judge 점수는 ${score}/10이고 기준은 8/10입니다. 정식 문서 저장 전 필요한 증거를 하나 고르세요.`,
       bullets: debts.length ? debts : ["열린 약속, 비용 숫자, 유료 진입점 중 하나를 더 좁혀야 합니다."],
     },
     questions: [
       {
         questionId: "day1_doc_handoff_judge_blocked",
-        header: "보완 질문",
+        header: "저장 전 증거",
         question: primaryQuestion,
         helperText: "지금 답할 수 있는 가장 구체적인 보완 방향 하나를 선택하세요.",
         options: [
@@ -12706,7 +13398,7 @@ function buildDay1HandoffJudgeBlockedStructuredInput(result = {}) {
       mode: "office_hours",
       docType: "day1_doc_handoff_judge",
       signalId: "day1_doc_handoff_judge_blocked",
-      signalLabel: "문서 리뷰 보완",
+      signalLabel: "저장 전 근거 보완",
       dimensionTotal: 6,
     },
   };
@@ -12799,7 +13491,7 @@ async function writeAllDay1DocHandoff({
       promptCreationError = error;
       session.pendingUserInput = null;
       session.status = "idle";
-      session.error = `문서 리뷰 보완 질문을 준비하지 못했습니다: ${formatError(error)}`;
+      session.error = `저장 전 근거 보완 질문을 준비하지 못했습니다: ${formatError(error)}`;
       telemetry.captureException(error, {
         operation: "day1_doc_handoff_judge_prompt_create",
         session_id: session.id,
@@ -17087,8 +17779,19 @@ function shouldRestartIddQuestionRequest(session, request) {
   return getProviderAuthState(session?.provider).available;
 }
 
+function isDay1DocHandoffJudgeRequest(request = null) {
+  return String(request?.generation?.mode || "").trim().toLowerCase() === "office_hours"
+    && String(request?.generation?.docType || "").trim().toLowerCase() === "day1_doc_handoff_judge";
+}
+
 async function suppressOfficeHoursRequestAfterQuestionCap(session, request, activeRequestIds) {
   if (session?.runtime?.officeHours?.active !== true || !request?.requestId) {
+    return false;
+  }
+  if (isDay1DocHandoffJudgeRequest(request)) {
+    return false;
+  }
+  if (isDay1DocumentReadinessFollowupRequest(request)) {
     return false;
   }
   const progress = await getOfficeHoursQuestionProgress(session);

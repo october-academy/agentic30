@@ -8,6 +8,10 @@ import {
   loadCurriculumAnswerLog,
   resolveAgentic30MemoryDir,
 } from "./news-market-radar.mjs";
+import {
+  loadDay1SurfaceReview,
+  summarizeDay1SurfaceReviewForMemory,
+} from "./day1-surface-review.mjs";
 
 export const ONBOARDING_MEMORY_SCHEMA_VERSION = 3;
 export const ONBOARDING_MEMORY_SCHEMA = "agentic30.memory.onboarding.v3";
@@ -456,11 +460,12 @@ export async function refreshDayMemory({
   assertWorkspace(workspaceRoot, "day_memory_refresh");
   const dayNumber = clampInt(day, 1, 30, null);
   if (!dayNumber) throw new Error("day_memory_refresh: day must be 1-30.");
-  const [answerLog, turnLog, ledger, sourceReadLog] = await Promise.all([
+  const [answerLog, turnLog, ledger, sourceReadLog, surfaceReview] = await Promise.all([
     loadCurriculumAnswerLog({ workspaceRoot, now }).catch(() => ({ records: [] })),
     loadOfficeHoursTurnLog({ workspaceRoot, now }).catch(() => makeOfficeHoursTurnLog({ now })),
     loadOfficeHoursMemory({ workspaceRoot, now }).catch(() => null),
     loadSourceReadLog({ workspaceRoot, now }).catch(() => makeSourceReadLog({ now })),
+    loadDay1SurfaceReview({ workspaceRoot, now }).catch(() => null),
   ]);
   const commitments = Array.isArray(ledger?.commitments) ? ledger.commitments : [];
   const dayMemory = buildDayMemoryPayload({
@@ -470,6 +475,7 @@ export async function refreshDayMemory({
     officeHoursTurns: turnLog.turns || [],
     commitments,
     sourceReads: sourceReadLog.reads || [],
+    surfaceReview,
     now,
   });
   await atomicWriteJson(resolveDayMemoryPath(workspaceRoot, dayNumber), dayMemory);
@@ -479,6 +485,7 @@ export async function refreshDayMemory({
     curriculumRecords: answerLog.records || [],
     officeHoursTurns: turnLog.turns || [],
     commitments,
+    surfaceReview,
     now,
   });
   return { dayMemory, rollup };
@@ -490,6 +497,7 @@ export async function refreshDayRollup({
   curriculumRecords = null,
   officeHoursTurns = null,
   commitments = null,
+  surfaceReview = null,
   now = new Date(),
 } = {}) {
   assertWorkspace(workspaceRoot, "day_rollup_refresh");
@@ -503,6 +511,7 @@ export async function refreshDayRollup({
     curriculumRecords: answerLog.records || [],
     officeHoursTurns: turnLog.turns || [],
     commitments: Array.isArray(ledger?.commitments) ? ledger.commitments : [],
+    surfaceReview,
   }).map((entry) => ({
     ...entry,
     detailPath: `.agentic30/memory/days/day-${entry.day}.json`,
@@ -1059,6 +1068,7 @@ function buildDayMemoryPayload({
   officeHoursTurns = [],
   commitments = [],
   sourceReads = [],
+  surfaceReview = null,
   now = new Date(),
 } = {}) {
   const dayNumber = clampInt(day, 1, 30, 1);
@@ -1127,7 +1137,9 @@ function buildDayMemoryPayload({
     curriculumAnswers: dayAnswers,
     officeHoursTurns: dayTurns,
     commitments: dayCommitments,
+    surfaceReview,
   });
+  const surfaceReviewSummary = dayNumber === 1 ? summarizeDay1SurfaceReviewForMemory(surfaceReview) : null;
   return normalizeDayMemory({
     schemaVersion: DAY_MEMORY_SCHEMA_VERSION,
     schema: DAY_MEMORY_SCHEMA,
@@ -1139,7 +1151,8 @@ function buildDayMemoryPayload({
       officeHoursTurns: dayTurns,
       commitments: dayCommitments,
       sourceReads: recentSourceReads,
-      totalRecords: dayAnswers.length + dayTurns.length + dayCommitments.length + recentSourceReads.length,
+      ...(surfaceReviewSummary ? { surfaceReview: surfaceReviewSummary } : {}),
+      totalRecords: dayAnswers.length + dayTurns.length + dayCommitments.length + recentSourceReads.length + (surfaceReviewSummary ? 1 : 0),
     },
     updatedAt: now.toISOString(),
   }, { now });
@@ -1156,6 +1169,9 @@ function normalizeDayMemory(value = {}, { now = new Date() } = {}) {
   const officeHoursTurns = Array.isArray(details.officeHoursTurns) ? details.officeHoursTurns.map(redactSensitiveObject) : [];
   const commitments = Array.isArray(details.commitments) ? details.commitments.map(redactSensitiveObject) : [];
   const sourceReads = Array.isArray(details.sourceReads) ? details.sourceReads.map(redactSensitiveObject) : [];
+  const surfaceReview = details.surfaceReview && typeof details.surfaceReview === "object" && !Array.isArray(details.surfaceReview)
+    ? redactSensitiveObject(details.surfaceReview)
+    : null;
   return {
     schemaVersion: DAY_MEMORY_SCHEMA_VERSION,
     schema: DAY_MEMORY_SCHEMA,
@@ -1172,13 +1188,30 @@ function normalizeDayMemory(value = {}, { now = new Date() } = {}) {
       officeHoursTurns,
       commitments,
       sourceReads,
-      totalRecords: curriculumAnswers.length + officeHoursTurns.length + commitments.length + sourceReads.length,
+      ...(surfaceReview ? { surfaceReview } : {}),
+      totalRecords: curriculumAnswers.length + officeHoursTurns.length + commitments.length + sourceReads.length + (surfaceReview ? 1 : 0),
     },
     updatedAt: normalizeIsoDate(source.updatedAt ?? source.updated_at, now),
   };
 }
 
-function summarizeDayMemoryParts({ day, curriculumAnswers = [], officeHoursTurns = [], commitments = [] } = {}) {
+function summarizeDayMemoryParts({ day, curriculumAnswers = [], officeHoursTurns = [], commitments = [], surfaceReview = null } = {}) {
+  const surfaceReviewSummary = clampInt(day, 1, 30, null) === 1
+    ? summarizeDay1SurfaceReviewForMemory(surfaceReview)
+    : null;
+  if (surfaceReviewSummary) {
+    return {
+      day: 1,
+      text: cleanString(surfaceReviewSummary.summary, 500),
+      latestQuestion: "고객이 볼 페이지가 있나요?",
+      latestAnswer: surfaceReviewSummary.decisionStatus,
+      latestCommitment: surfaceReviewSummary.cta,
+      openCommitments: 0,
+      metCommitments: 0,
+      curriculumAnswerCount: curriculumAnswers.length,
+      officeHoursTurnCount: officeHoursTurns.length,
+    };
+  }
   const openCommitments = commitments.filter((commitment) =>
     !commitment?.evidence && ["open", "missed", "abandoned"].includes(commitment?.status || "open"),
   );
@@ -1238,6 +1271,7 @@ function buildDayRollup({
   curriculumRecords = [],
   officeHoursTurns = [],
   commitments = [],
+  surfaceReview = null,
 } = {}) {
   const maxDay = clampInt(targetDay, 1, 400, null)
     || Math.max(
@@ -1250,12 +1284,13 @@ function buildDayRollup({
   const output = [];
   const cappedMaxDay = Math.min(maxDay, 30);
   for (let day = 1; day <= cappedMaxDay; day += 1) {
+    const surfaceReviewSummary = day === 1 ? summarizeDay1SurfaceReviewForMemory(surfaceReview) : null;
     const dayAnswers = curriculumRecords.filter((record) => clampInt(record.day, 1, 400, null) === day);
     const dayTurns = officeHoursTurns.filter((turn) => clampInt(turn.day, 1, 400, null) === day);
     const dayCommitments = commitments.filter((commitment) =>
       clampInt(commitment.createdDay ?? commitment.day ?? commitment.cycle, 1, 400, null) === day,
     );
-    if (!dayAnswers.length && !dayTurns.length && !dayCommitments.length) continue;
+    if (!dayAnswers.length && !dayTurns.length && !dayCommitments.length && !surfaceReviewSummary) continue;
     const latestAnswer = dayAnswers[dayAnswers.length - 1] || null;
     const latestTurn = dayTurns[dayTurns.length - 1] || null;
     const openCommitments = dayCommitments.filter((commitment) =>
@@ -1279,7 +1314,7 @@ function buildDayRollup({
       160,
     );
     const commitment = cleanString(openCommitments[openCommitments.length - 1]?.text || dayCommitments[dayCommitments.length - 1]?.text || "", 160);
-    const summary = [
+    const summary = surfaceReviewSummary?.summary || [
       topic ? `Q ${topic}` : "",
       answer ? `A ${answer}` : "",
       commitment ? `약속 ${commitment}` : "",

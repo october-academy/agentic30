@@ -1038,16 +1038,43 @@ test("Day 1 bulk document handoff without session creates structured review and 
     const pending = blocked.session.pendingUserInput;
 
     assert.equal(blocked.session.status, "awaiting_input");
-    assert.equal(pending.title, "Office Hours 문서 리뷰 보완");
-    assert.equal(pending.intro?.title, "문서 리뷰 보류");
+    assert.equal(pending.title, "Office Hours 저장 전 근거 보완");
+    assert.equal(pending.intro?.title, "문서 저장 전 근거 보완");
+    assert.match(pending.intro?.body || "", /정식 문서 저장 전 필요한 증거를 하나 고르세요/);
+    assert.doesNotMatch(pending.intro?.body || "", /자유 입력 대신/);
     assert.equal(pending.generation?.mode, "office_hours");
-    assert.equal(pending.generation?.signalLabel, "문서 리뷰 보완");
+    assert.equal(pending.generation?.signalLabel, "저장 전 근거 보완");
     assert.equal(pending.toolName, "agentic30_request_user_input");
     assert.equal(pending.questions?.[0]?.allowFreeText, false);
     assert.equal(pending.questions?.[0]?.requiresFreeText, false);
     assert.ok((pending.questions?.[0]?.options || []).length >= 3);
     assert.ok(pending.questions[0].options.some((option) => option.nextIntent === "actual_payment_or_contract"));
     assert.equal(Object.hasOwn(pending.questions[0], "freeTextPlaceholder"), false);
+    await sleep(400);
+    const persistedSessions = JSON.parse(
+      await fs.readFile(path.join(appSupportPath, "sessions.json"), "utf8"),
+    );
+    const persistedReviewSession = persistedSessions.sessions.find((session) => session.id === blocked.session.id);
+    assert.equal(
+      persistedReviewSession?.pendingUserInput?.requestId,
+      pending.requestId,
+      "Day 1 judge prompt must survive Office Hours question-cap cleanup",
+    );
+    await fs.stat(path.join(
+      appSupportPath,
+      "user-input-requests",
+      `${blocked.session.id}--${pending.requestId}.json`,
+    ));
+    assert.equal(
+      events.some((event) =>
+        event.type === "session_updated"
+        && event.session?.id === blocked.session.id
+        && event.session?.runtime?.day1DocHandoffReviewAttempt === blocked.session.runtime?.day1DocHandoffReviewAttempt
+        && event.session?.pendingUserInput == null
+      ),
+      false,
+      "Day 1 judge prompt must not be cleared after it is created",
+    );
     assert.equal(
       blocked.session.messages.some((message) =>
         String(message.content || "").includes("GOAL/ICP/VALUES/SPEC 저장을 보류했습니다.")
