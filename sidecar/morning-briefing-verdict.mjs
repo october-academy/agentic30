@@ -334,6 +334,41 @@ function sourceWindowLabel(source = {}) {
   return checkedAt ? `checked ${checkedAt}` : "";
 }
 
+// A required aggregate source that is unconnected — or connected but reporting
+// no distribution data for this user — is a measurement gap, not an error. We
+// record it as a low-confidence claim with a missingReason so the verdict can
+// call out the gap (prompt rule: "Missing source is not zero") instead of
+// aborting the whole morning-briefing refresh. The hard requirement remains the
+// internal context (onboarding / Day 1 goal / Office Hours) and customer
+// evidence, none of which depend on an external source being connected.
+function addMissingRequiredSourceClaims(claims, sources = [], requiredRefs = REQUIRED_SOURCE_REFS) {
+  for (const required of toArray(requiredRefs)) {
+    const source = toArray(sources).find((candidate) => candidate?.id === required);
+    if (hasSourceEvidence(source)) continue;
+    const connected = Boolean(source?.ready);
+    const state = safeText(source?.collectionStatus?.state || source?.state || "missing", 40);
+    const label = safeText(source?.label || required, 80);
+    addClaim(claims, {
+      id: `source_${required}_missing`,
+      sourceId: required,
+      sourceClass: sourceClassFor(required),
+      tier: "external_aggregate_missing",
+      summary: `${label} aggregate evidence unavailable; collection state ${state}. Treat as measurement gap, not observed zero.`,
+      counts: {},
+      window: sourceWindowLabel(source || {}),
+      freshness: "missing",
+      confidence: "low",
+      customerEvidence: false,
+      supportsHealthy: false,
+      missingReason: connected ? `${required}_connected_no_evidence` : `${required}_not_connected`,
+      refs: [
+        connected ? "source connected but reported no aggregate evidence" : "source not connected",
+        source?.collectionStatus?.summary ? safeText(source.collectionStatus.summary, 180) : "",
+      ].filter(Boolean),
+    });
+  }
+}
+
 function addExternalSourceClaims(claims, sources = []) {
   for (const source of toArray(sources).filter(hasSourceEvidence)) {
     const countLine = entriesOf(source.counts || {})
@@ -862,16 +897,6 @@ export function buildMorningBriefingVerdictContext({
     .filter((id) => id && !sourceGroups.includes(id));
   const sources = [...sourceGroups, ...Array.from(new Set(additionalIds))]
     .map((groupId) => buildGroupedSourceEvidence({ groupId, digest, briefing }));
-  for (const required of REQUIRED_SOURCE_REFS) {
-    const source = sources.find((candidate) => candidate.id === required);
-    if (!hasSourceEvidence(source)) {
-      throw new MorningBriefingVerdictError(
-        "missing_source_evidence",
-        `Morning briefing verdict requires aggregate ${required} evidence.`,
-        { source: required },
-      );
-    }
-  }
 
   const actionIds = toArray(briefing.actions).map((action) => safeText(action?.id, 80)).filter(Boolean);
   if (!actionIds.length) {
@@ -890,10 +915,15 @@ export function buildMorningBriefingVerdictContext({
     currentDay: resolvedCurrentDay,
     now,
   });
+  // Degrade gracefully: required aggregate sources without evidence are recorded
+  // as missingReason claims instead of throwing, so an unconnected (or empty)
+  // Cloudflare/GitHub/PostHog never aborts the full briefing refresh.
+  addMissingRequiredSourceClaims(evidenceBundle.claims, sources);
   const contextRefs = [
     "onboarding",
     "day1_goal",
     "office_hours",
+    ...REQUIRED_SOURCE_REFS,
     ...sources.filter(hasSourceEvidence).map((source) => source.id),
     ...toArray(evidenceBundle.claims).map((claim) => claim.sourceId),
   ];

@@ -257,7 +257,7 @@ function buildContext(overrides = {}) {
   });
 }
 
-test("buildMorningBriefingVerdictContext fails without required context or source evidence", () => {
+test("buildMorningBriefingVerdictContext fails without required internal context", () => {
   assert.throws(
     () => buildContext({ onboardingMemory: null }),
     (error) => error instanceof MorningBriefingVerdictError && error.code === "missing_onboarding",
@@ -270,14 +270,24 @@ test("buildMorningBriefingVerdictContext fails without required context or sourc
     () => buildContext({ officeHoursHistory: {}, officeHoursMemorySummary: {} }),
     (error) => error instanceof MorningBriefingVerdictError && error.code === "missing_office_hours",
   );
+});
+
+test("buildMorningBriefingVerdictContext degrades missing source evidence to a non-fatal claim", () => {
   const digest = digestFixture();
-  digest.sources = digest.sources.filter((source) => source.id !== "posthog");
-  assert.throws(
-    () => buildContext({ digest }),
-    (error) => error instanceof MorningBriefingVerdictError
-      && error.code === "missing_source_evidence"
-      && error.source === "posthog",
+  digest.sources = digest.sources.filter((source) => source.id !== "cloudflare");
+  let context;
+  assert.doesNotThrow(() => {
+    context = buildContext({ digest });
+  });
+  const missingClaim = context.evidenceBundle.claims.find(
+    (claim) => claim.sourceId === "cloudflare" && claim.tier === "external_aggregate_missing",
   );
+  assert.ok(missingClaim, "unconnected cloudflare should produce a measurement-gap claim");
+  assert.equal(missingClaim.customerEvidence, false);
+  assert.equal(missingClaim.supportsHealthy, false);
+  assert.ok(missingClaim.missingReason, "missing source claim must record a missingReason");
+  // contextRefs must still include the required source so the verdict is complete.
+  assert.ok(context.contextRefs.includes("cloudflare"));
 });
 
 test("buildMorningBriefingVerdictPrompt includes aggregate context and redacts raw identifiers", () => {
