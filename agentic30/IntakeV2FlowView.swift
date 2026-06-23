@@ -499,6 +499,15 @@ enum IntakeV2Step: Int, CaseIterable {
 private enum IntakeV2NavigationDirection {
     case forward
     case backward
+
+    var telemetryValue: String {
+        switch self {
+        case .forward:
+            return "forward"
+        case .backward:
+            return "backward"
+        }
+    }
 }
 
 @MainActor
@@ -662,7 +671,16 @@ struct IntakeV2FlowView: View {
 
     private func navigate(to target: IntakeV2Step) {
         guard target != step else { return }
-        navigationDirection = target.rawValue > step.rawValue ? .forward : .backward
+        let resolvedDirection: IntakeV2NavigationDirection = target.rawValue > step.rawValue ? .forward : .backward
+        PostHogTelemetry.capture(
+            "mac_intake_step_navigated",
+            properties: [
+                "from_step": "\(step)",
+                "to_step": "\(target)",
+                "direction": resolvedDirection.telemetryValue,
+            ]
+        )
+        navigationDirection = resolvedDirection
         withAnimation(stepAnimation) {
             step = target
         }

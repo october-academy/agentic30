@@ -997,9 +997,13 @@ final class agentic30UITests: XCTestCase {
         }
         XCTAssertTrue(openDesignShell.exists)
 
-        for railID in ["today", "briefing", "strategy", "news", "settings"] {
+        for railID in ["today", "strategy", "news", "briefing", "settings"] {
             let railItemID = "opendesign.day.rail.item.\(railID)"
             XCTAssertTrue(elementWithIdentifier(in: app, railItemID).waitForExistence(timeout: 3))
+        }
+
+        for lockedRailID in ["briefing", "strategy", "news"] {
+            XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.\(lockedRailID)", containing: "locked", timeout: 3))
         }
 
         for hiddenRailID in ["office-hours", "search", "projects", "interviews", "bip", "history"] {
@@ -1007,6 +1011,21 @@ final class agentic30UITests: XCTestCase {
         }
 
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.today", containing: "active", timeout: 3))
+
+        let lockedRailPreviewExpectations: [(railID: String, liveScreenIDs: [String])] = [
+            ("briefing", ["morningBriefing.screen"]),
+            ("strategy", ["strategy.screen"]),
+            ("news", ["opendesign.reference.news.main"]),
+        ]
+        for expectation in lockedRailPreviewExpectations {
+            elementWithIdentifier(in: app, "opendesign.day.rail.item.\(expectation.railID)").click()
+            XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.\(expectation.railID)", containing: "active", timeout: 3))
+            XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.rail.lockedPreview.\(expectation.railID)").waitForExistence(timeout: 3))
+            XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.rail.lockedPreview.cta").waitForExistence(timeout: 3))
+            for liveScreenID in expectation.liveScreenIDs {
+                XCTAssertFalse(elementWithIdentifier(in: app, liveScreenID).exists)
+            }
+        }
     }
 
     @MainActor
@@ -1023,6 +1042,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
             "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -1225,6 +1245,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
             "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
             "--ui-testing-disable-sidecar",
             "--ui-testing-stub-strategy-report-events",
             "--ui-testing-open-workspace",
@@ -1293,6 +1314,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-workspace=\(workspacePath)",
             "--ui-testing-seed-workspace-scan-cache",
             "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
             "--ui-testing-workspace-window-size=1360x820",
@@ -1443,6 +1465,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
             "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day2",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -1489,6 +1512,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
             "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day2",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -2255,7 +2279,11 @@ final class agentic30UITests: XCTestCase {
         }
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 8))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.docReady").waitForExistence(timeout: 5))
+        let officeHoursDocReady = elementWithIdentifier(in: app, "opendesign.officeHours.docReady")
+        XCTAssertTrue(officeHoursDocReady.waitForExistence(timeout: 8))
+        let docHandoff = elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff")
+        XCTAssertTrue(docHandoff.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.bridgeStatus", containing: "doc ready", timeout: 3))
         let docConfirm = app.buttons["opendesign.officeHours.docHandoff.confirm"]
         XCTAssertTrue(scrollElementToVisible(
             docConfirm,
@@ -2264,43 +2292,16 @@ final class agentic30UITests: XCTestCase {
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 검토하기", timeout: 3))
-        tapRequired(docConfirm, in: app, named: "Office Hours blocked document review")
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 리뷰 중", timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff.followup").waitForExistence(timeout: 5))
-        for docType in ["goal", "icp", "values", "spec"] {
-            XCTAssertTrue(waitForElementLabel(
-                in: app,
-                identifier: "opendesign.officeHours.docHandoff.doc.\(docType)",
-                containing: "보완 질문 대기",
-                timeout: 3
-            ))
-        }
-        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "GOAL/ICP/VALUES/SPEC 저장을 보류했습니다.")).element.exists)
+        tapRequired(docConfirm, in: app, named: "Office Hours document review confirm")
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 리뷰 중", timeout: 3))
 
-        let weakChoice = elementWithIdentifier(in: app, "assistant.structuredChoice.day1_doc_handoff_judge_blocked.증거 없음으로 보류")
-        XCTAssertTrue(scrollElementToVisible(
-            weakChoice,
-            in: app,
-            timeout: 5,
-            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
-        ))
-        tapRequired(weakChoice, in: app, named: "Office Hours weak doc review answer")
-        let continueButton = app.buttons["assistant.structuredContinueButton"]
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
-        XCTAssertTrue(scrollElementToVisible(
-            continueButton,
-            in: app,
-            timeout: 5,
-            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
-        ))
-        tapRequired(
-            continueButton,
-            in: app,
-            named: "Office Hours weak doc review submit",
-            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
-        )
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff.followup").waitForExistence(timeout: 8))
-
+        XCTAssertTrue(elementWithIdentifier(in: app, "assistant.structuredPrompt").waitForExistence(timeout: 8))
+        XCTAssertTrue(waitForElementToDisappear(officeHoursDocReady, timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff.followup").exists)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.bridgeStatus", containing: "interviewing", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredPromptContext", containing: "문서 저장 전 근거 보완", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredPromptContext", containing: "부족한 증거", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredPromptContext", containing: "정식 문서 저장 전 필요한 증거", timeout: 3))
         let hardChoice = elementWithIdentifier(in: app, "assistant.structuredChoice.day1_doc_handoff_judge_blocked.실명 고객 3명에게 결제 요청 발송 완료")
         XCTAssertTrue(scrollElementToVisible(
             hardChoice,
@@ -2308,46 +2309,7 @@ final class agentic30UITests: XCTestCase {
             timeout: 5,
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
-        tapRequired(hardChoice, in: app, named: "Office Hours hard doc review answer")
-        let hardContinueButton = app.buttons["assistant.structuredContinueButton"]
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
-        XCTAssertTrue(scrollElementToVisible(
-            hardContinueButton,
-            in: app,
-            timeout: 5,
-            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
-        ))
-        tapRequired(
-            hardContinueButton,
-            in: app,
-            named: "Office Hours hard doc review submit",
-            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
-        )
-        for docType in ["goal", "icp", "values", "spec"] {
-            let docRow = elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff.doc.\(docType)")
-            XCTAssertTrue(scrollElementToVisible(
-                docRow,
-                in: app,
-                timeout: 8,
-                scrollViewIdentifier: "opendesign.officeHours.main.scroll"
-            ))
-            let saved = waitForElementLabel(
-                in: app,
-                identifier: "opendesign.officeHours.docHandoff.doc.\(docType)",
-                containing: "저장됨",
-                timeout: 8
-            )
-            if !saved {
-                attachText(
-                    app.debugDescription,
-                    named: "Office Hours doc handoff \(docType) not saved tree"
-                )
-            }
-            XCTAssertTrue(
-                saved,
-                "Expected \(docType) row to be saved; actual label=\(docRow.label), value=\(String(describing: docRow.value))"
-            )
-        }
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.commitmentBar").exists)
     }
 
     @MainActor
@@ -3656,6 +3618,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
             "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day2",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -3687,7 +3650,7 @@ final class agentic30UITests: XCTestCase {
     @MainActor
     func testMorningBriefingRailOpensBriefingScreenWithAllSections() throws {
         // The rail gains an "아침 브리핑" item between today and settings. Clicking it
-        // swaps the main column for the briefing screen (summary, source cards,
+            // swaps the main column for the briefing screen (summary, source cards,
         // timeline, anomaly picker, action drafts, meta panel) driven by the
         // deterministic --ui-testing-stub-morning-briefing-events fixture.
         let workspacePath = "/tmp/agentic30-ui-morning-briefing-\(UUID().uuidString)"
@@ -3697,6 +3660,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-auth",
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-rail-unlocked-through-day3",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -3795,6 +3759,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-auth",
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-rail-unlocked-through-day3",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -3829,6 +3794,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-auth",
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-rail-unlocked-through-day3",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -3872,6 +3838,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-auth",
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-rail-unlocked-through-day3",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",

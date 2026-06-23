@@ -514,6 +514,18 @@ struct OfficeHoursRuntime: Codable, Hashable {
     /// 모드 정원(questionCount)보다 적은 답변으로도 인터뷰가 정상 종결될 수
     /// 있다 — 카운트 게이트만 보면 종결된 인터뷰가 미완으로 읽힌다.
     var terminalAnswered: Bool?
+    var documentReadiness: OfficeHoursDocumentReadiness? = nil
+}
+
+struct OfficeHoursDocumentReadiness: Codable, Hashable {
+    var status: String?
+    var ambiguityScore: Double?
+    var ambiguityThreshold: Double?
+    var judgeScore: Double?
+    var judgeThreshold: Double?
+    var evidenceDebt: [String]?
+    var nextQuestion: String?
+    var updatedAt: String?
 }
 
 struct OfficeHoursStoredPromptSnapshot: Identifiable, Codable, Hashable {
@@ -2670,6 +2682,78 @@ struct IddDocPreview: Identifiable, Codable, Hashable {
     var isWritten: Bool {
         ["written", "written_with_assumptions", "approved"].contains(status)
     }
+}
+
+struct Day1SurfaceReview: Codable, Hashable {
+    struct CustomerSurface: Codable, Hashable {
+        let headline: String
+        let subheadline: String
+        let audience: String
+        let problem: String
+        let currentAlternative: String
+        let firstValue: String
+        let cta: String
+    }
+
+    struct Proposal: Identifiable, Codable, Hashable {
+        let path: String
+        let action: String
+        let title: String
+        let content: String
+        let rationale: [String]
+        let isWritten: Bool
+
+        var id: String { path }
+    }
+
+    struct Reason: Identifiable, Codable, Hashable {
+        let sentence: String
+        let reason: String
+
+        var id: String { "\(sentence)|\(reason)" }
+    }
+
+    struct Diagnosis: Codable, Hashable {
+        struct Issue: Identifiable, Codable, Hashable {
+            let id: String
+            let summary: String
+        }
+
+        let url: String
+        let statusCode: Int?
+        let firstViewText: String
+        let issues: [Issue]
+        let improvedSurface: CustomerSurface
+    }
+
+    struct Decision: Codable, Hashable {
+        let status: String
+        let decidedAt: String?
+        let appliedFiles: [String]
+
+        var isTerminal: Bool {
+            status == "approved" || status == "rejected"
+        }
+    }
+
+    let schemaVersion: Int
+    let schema: String?
+    let workspaceRoot: String
+    let mode: String
+    let landingUrl: String
+    let status: String
+    let generatedAt: String
+    let decidedAt: String?
+    let customerSurface: CustomerSurface
+    let diagnosis: Diagnosis?
+    let proposals: [Proposal]
+    let reasons: [Reason]
+    let decision: Decision
+    let appliedFiles: [String]
+
+    var isTerminal: Bool { decision.isTerminal }
+    var isApproved: Bool { decision.status == "approved" }
+    var isRejected: Bool { decision.status == "rejected" }
 }
 
 struct IddProviderRecovery: Codable, Hashable {

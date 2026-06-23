@@ -244,6 +244,16 @@ struct SidecarEventDecodingTests {
                 "startedAt": "2026-06-11T00:00:00.000Z",
                 "context": "Expected question count: 6",
                 "day": 1,
+                "documentReadiness": {
+                  "status": "needs_followup",
+                  "ambiguityScore": 47,
+                  "ambiguityThreshold": 20,
+                  "judgeScore": 5,
+                  "judgeThreshold": 8,
+                  "evidenceDebt": ["실명 고객 행동 증거가 아직 약합니다."],
+                  "nextQuestion": "정식 문서 저장 전 가장 강한 고객 행동 증거는 무엇인가요?",
+                  "updatedAt": "2026-06-11T00:02:00.000Z"
+                },
                 "promptSnapshots": [
                   {
                     "sessionId": "session-1",
@@ -302,6 +312,10 @@ struct SidecarEventDecodingTests {
         #expect(snapshot.submissions.first?.freeText == "macOS 앱 개발자")
         #expect(snapshot.editable == true)
         #expect(snapshot.turnSessionId == "old-session")
+        #expect(event.session?.runtime?.officeHours?.documentReadiness?.status == "needs_followup")
+        #expect(event.session?.runtime?.officeHours?.documentReadiness?.ambiguityScore == 47)
+        #expect(event.session?.runtime?.officeHours?.documentReadiness?.judgeThreshold == 8)
+        #expect(event.session?.runtime?.officeHours?.documentReadiness?.evidenceDebt?.first == "실명 고객 행동 증거가 아직 약합니다.")
     }
 
     @MainActor @Test func decodesConnectionErrorPayload() throws {
@@ -2744,6 +2758,67 @@ struct SidecarEventDecodingTests {
         #expect(day7GoalBlocked.displaySteps.map({ $0.id }) == ["goal", "interview", "execution"])
         #expect(day7GoalBlocked.displayTotalCount == 3)
         #expect(day7GoalBlocked.displayCompletedCount == 0)
+    }
+
+    @MainActor @Test func decodesDay1SurfaceReviewState() throws {
+        let payload = """
+        {
+          "type": "day1_surface_review_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "status": "preview_ready",
+          "day1SurfaceReview": {
+            "schemaVersion": 1,
+            "schema": "agentic30.memory.surface_review.v1",
+            "workspaceRoot": "/Users/october/prj/myapp",
+            "mode": "no_landing",
+            "landingUrl": "",
+            "status": "preview_ready",
+            "generatedAt": "2026-06-23T00:00:00.000Z",
+            "decidedAt": null,
+            "customerSurface": {
+              "headline": "Support leads see missed Slack escalations first",
+              "subheadline": "SupportLens turns missed escalations into a pilot request.",
+              "audience": "B2B SaaS support lead",
+              "problem": "Urgent Slack escalations are missed",
+              "currentAlternative": "Slack search and spreadsheets",
+              "firstValue": "Find the missed escalation today",
+              "cta": "파일럿 신청하기"
+            },
+            "diagnosis": null,
+            "proposals": [
+              {
+                "path": "landing.html",
+                "action": "create",
+                "title": "첫 고객 랜딩 초안",
+                "content": "<!doctype html><h1>SupportLens</h1>",
+                "rationale": ["루트에 바로 둘 수 있는 단일 HTML입니다."],
+                "isWritten": false
+              }
+            ],
+            "reasons": [
+              {
+                "sentence": "파일럿 신청하기",
+                "reason": "Day 1 완료 행동이 다음 고객 접촉으로 이어집니다."
+              }
+            ],
+            "decision": {
+              "status": "pending",
+              "decidedAt": null,
+              "appliedFiles": []
+            },
+            "appliedFiles": []
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "day1_surface_review_state")
+        #expect(event.day1SurfaceReview?.schemaVersion == 1)
+        #expect(event.day1SurfaceReview?.customerSurface.cta == "파일럿 신청하기")
+        #expect(event.day1SurfaceReview?.proposals.first?.path == "landing.html")
+        #expect(event.day1SurfaceReview?.decision.status == "pending")
+        #expect(event.day1SurfaceReview?.isTerminal == false)
     }
 
     @MainActor @Test func decodesWorkspaceScanResultWithDay1SituationSummary() throws {

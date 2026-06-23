@@ -2774,6 +2774,8 @@ struct ContentView: View {
                     interaction: openDesignDayInteractionBinding(for: day, content: resolvedContent),
                     railDestination: $openDesignRailDestination,
                     pendingScrollRequest: $pendingOpenDesignScrollRequest,
+                    authSession: viewModel.macAuthSession,
+                    dayProgress: viewModel.dayProgress,
                     openSettings: {
                         openOpenDesignSettingsRoute()
                     },
@@ -2832,6 +2834,10 @@ struct ContentView: View {
                     prepareWorkHistory: {
                         viewModel.prepareWorkHistoryForDisplay()
                     },
+                    day1SurfaceReview: viewModel.day1SurfaceReview,
+                    day1SurfaceReviewGenerating: viewModel.day1SurfaceReviewGenerating,
+                    day1SurfaceReviewDecisionPending: viewModel.day1SurfaceReviewDecisionPending,
+                    day1SurfaceReviewError: viewModel.day1SurfaceReviewError,
                     day1DocPreviews: viewModel.iddDocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
                     officeHoursScreen: officeHoursScreen,
@@ -2844,6 +2850,7 @@ struct ContentView: View {
                             status: viewModel.morningBriefingStatus,
                             sourceProgress: viewModel.morningBriefingSourceProgress,
                             fallbackDay: officeHoursActiveDay,
+                            authSession: viewModel.macAuthSession,
                             refresh: {
                                 viewModel.refreshMorningBriefing(reason: "manual")
                             },
@@ -2857,6 +2864,10 @@ struct ContentView: View {
                                 viewModel.applyMorningBriefingActionDraft(draft)
                             },
                             startToday: {
+                                PostHogTelemetry.capture(
+                                    "mac_morning_briefing_start_today",
+                                    authSession: viewModel.macAuthSession
+                                )
                                 withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                                     setOpenDesignRailDestination(.today)
                                 }
@@ -2874,6 +2885,19 @@ struct ContentView: View {
                     day1SituationSummary: situationSummary,
                     onChooseDay1SituationGoal: { goal in
                         viewModel.submitDay1SituationGoal(goal)
+                    },
+                    requestDay1SurfaceReview: { mode, landingUrl in
+                        viewModel.requestDay1SurfaceReview(
+                            mode: mode,
+                            landingUrl: landingUrl,
+                            workspaceRoot: openDesignInteractionWorkspaceRoot
+                        )
+                    },
+                    decideDay1SurfaceReview: { decision in
+                        viewModel.decideDay1SurfaceReview(
+                            decision: decision,
+                            workspaceRoot: openDesignInteractionWorkspaceRoot
+                        )
                     },
                     startDay1DocHandoff: { docType, handoff in
                         viewModel.startDay1DocHandoff(docType: docType, day1Handoff: handoff)
@@ -5114,13 +5138,19 @@ struct ContentView: View {
                     label = "doc ready"
                 } else if officeHoursIsCommitReady(session: session, activeDay: activeDay) {
                     label = "commit ready"
+                } else if activeDay == 1 && officeHoursInterviewComplete(session: session) {
+                    label = "interviewing"
                 } else {
                     label = session.pendingUserInput == nil ? "ready" : "running"
                 }
             case .running:
                 label = "running"
             case .awaitingInput:
-                label = "running"
+                if activeDay == 1 && officeHoursIsPostInterviewFollowupPrompt(session.pendingUserInput) {
+                    label = "interviewing"
+                } else {
+                    label = "running"
+                }
             case .error:
                 label = "blocked"
             }
@@ -6237,11 +6267,12 @@ struct ContentView: View {
                     }
                 }
 
+                let isPostInterviewFollowupPrompt = officeHoursIsPostInterviewFollowupPrompt(session.pendingUserInput)
                 let pendingPresentation = OfficeHoursPendingPromptPresentation.resolve(
                     answerCount: officeHoursAnswerCount(session: session),
                     fallbackTotal: selectedOfficeHoursMode.questionCount,
                     generationTotal: session.pendingUserInput?.generation?.dimensionTotal,
-                    interviewComplete: officeHoursInterviewComplete(session: session)
+                    interviewComplete: officeHoursInterviewComplete(session: session) && !isPostInterviewFollowupPrompt
                 )
 
                 if let prompt = session.pendingUserInput,
@@ -6765,14 +6796,24 @@ struct ContentView: View {
 
     private func officeHoursIsReadyToClose(session: ChatSession) -> Bool {
         let interviewComplete = officeHoursInterviewComplete(session: session)
-        let blockingPendingInput = session.pendingUserInput != nil && !interviewComplete
+        let blockingPendingInput = session.pendingUserInput != nil
+            && (!interviewComplete || officeHoursIsPostInterviewFollowupPrompt(session.pendingUserInput))
         return !blockingPendingInput
             && session.status != .running
             && interviewComplete
     }
 
+    private func officeHoursDocumentReadinessIsReady(session: ChatSession) -> Bool {
+        let status = session.runtime?.officeHours?.documentReadiness?.status?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return status == "ready"
+    }
+
     private func officeHoursIsDocReady(session: ChatSession, activeDay: Int) -> Bool {
-        activeDay == 1 && officeHoursIsReadyToClose(session: session)
+        activeDay == 1
+            && officeHoursDocumentReadinessIsReady(session: session)
+            && officeHoursIsReadyToClose(session: session)
     }
 
     private func officeHoursIsCommitReady(session: ChatSession, activeDay: Int) -> Bool {
@@ -6977,19 +7018,7 @@ struct ContentView: View {
     }
 
     private func officeHoursDocumentHandoffPrompt(session: ChatSession?) -> StructuredPromptRequest? {
-        viewModel.activeDay1DocumentReviewPrompt ?? officeHoursDocumentJudgePrompt(session: session)
-    }
-
-    private func officeHoursDocumentHandoffPromptActive(session: ChatSession?) -> Bool {
-        officeHoursDocumentHandoffPrompt(session: session) != nil
-    }
-
-    private func officeHoursDocumentJudgePrompt(session: ChatSession?) -> StructuredPromptRequest? {
-        guard let prompt = session?.pendingUserInput,
-              officeHoursIsDocumentJudgePrompt(prompt) else {
-            return nil
-        }
-        return prompt
+        viewModel.activeDay1DocumentReviewPrompt
     }
 
     private func officeHoursIsDocumentJudgePrompt(_ prompt: StructuredPromptRequest?) -> Bool {
@@ -6999,18 +7028,50 @@ struct ContentView: View {
         return mode == "office_hours" && docType == "day1_doc_handoff_judge"
     }
 
+    private func officeHoursIsDocumentReadinessPrompt(_ prompt: StructuredPromptRequest?) -> Bool {
+        guard let prompt else { return false }
+        let mode = prompt.generation?.mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let docType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return mode == "office_hours" && docType == "day1_document_readiness"
+    }
+
+    private func officeHoursIsPostInterviewFollowupPrompt(_ prompt: StructuredPromptRequest?) -> Bool {
+        officeHoursIsDocumentReadinessPrompt(prompt) || officeHoursIsDocumentJudgePrompt(prompt)
+    }
+
     private func officeHoursIsDocumentHandoffPanelPrompt(_ prompt: StructuredPromptRequest?) -> Bool {
         guard let prompt else { return false }
-        return officeHoursIsDocumentJudgePrompt(prompt)
-            || prompt.generation?.mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "day1_handoff"
+        return prompt.generation?.mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "day1_handoff"
     }
 
     private var officeHoursDay1DocumentsWritten: Bool {
         officeHoursDocumentSpecs.allSatisfy { officeHoursDocumentWritten(type: $0.type) }
     }
 
+    private enum OfficeHoursDocumentHandoffState: Equatable {
+        case idle
+        case reviewing
+        case awaitingFollowup
+        case followupActive
+        case blockedWithoutPrompt
+        case written
+    }
+
+    private func officeHoursDocumentHandoffState(session: ChatSession?) -> OfficeHoursDocumentHandoffState {
+        if officeHoursDay1DocumentsWritten { return .written }
+        if officeHoursDocumentHandoffPrompt(session: session) != nil { return .followupActive }
+        if officeHoursDocumentHandoffAwaitingFollowup { return .awaitingFollowup }
+        if officeHoursDocumentHandoffBusy { return .reviewing }
+        if viewModel.day1DocHandoffError?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return .blockedWithoutPrompt
+        }
+        return .idle
+    }
+
     private var officeHoursMetaDocSaveTitle: String {
-        if officeHoursDocumentHandoffBusy || officeHoursDocumentHandoffAwaitingFollowup { return "리뷰 중" }
+        if officeHoursDocumentHandoffBusy || officeHoursDocumentHandoffAwaitingFollowup || viewModel.activeDay1DocumentReviewPrompt != nil {
+            return "리뷰 중"
+        }
         if officeHoursDay1DocumentsWritten { return "저장됨" }
         return "검토"
     }
@@ -7024,30 +7085,30 @@ struct ContentView: View {
     }
 
     private func officeHoursDocumentDetail(type: String, path: String, session: ChatSession?) -> String {
+        let state = officeHoursDocumentHandoffState(session: session)
         if officeHoursDocumentWritten(type: type) {
             return "\(path) 저장됨"
         }
-        if officeHoursDocumentNeedsFollowup(type: type, session: session) {
+        if officeHoursDocumentNeedsFollowup(type: type, session: session) || state == .awaitingFollowup {
             return "\(path) 보완 질문 대기"
         }
-        if officeHoursDocumentHandoffAwaitingFollowup {
-            return "\(path) 보완 질문 대기"
+        if state == .blockedWithoutPrompt {
+            return "\(path) 보완 질문 준비 실패"
         }
-        if viewModel.day1DocHandoffPendingDocType == "all" || viewModel.day1DocHandoffPendingDocType == type {
+        if state == .reviewing || viewModel.day1DocHandoffPendingDocType == "all" || viewModel.day1DocHandoffPendingDocType == type {
             return "\(path) 리뷰 중"
         }
         return "\(path) 검토 대기"
     }
 
     private func officeHoursDocumentAccessibilityValue(type: String, session: ChatSession?) -> String {
+        let state = officeHoursDocumentHandoffState(session: session)
         if officeHoursDocumentWritten(type: type) { return "written" }
-        if officeHoursDocumentNeedsFollowup(type: type, session: session) {
+        if officeHoursDocumentNeedsFollowup(type: type, session: session) || state == .awaitingFollowup {
             return "needs_followup"
         }
-        if officeHoursDocumentHandoffAwaitingFollowup {
-            return "needs_followup"
-        }
-        if viewModel.day1DocHandoffPendingDocType != nil { return "reviewing" }
+        if state == .reviewing { return "reviewing" }
+        if state == .blockedWithoutPrompt { return "blocked_without_prompt" }
         return "waiting_review"
     }
 
@@ -7064,7 +7125,7 @@ struct ContentView: View {
 
     private func officeHoursDocumentHandoffBlock(session: ChatSession) -> some View {
         let handoffPrompt = officeHoursDocumentHandoffPrompt(session: session)
-        let promptActive = handoffPrompt != nil
+        let state = officeHoursDocumentHandoffState(session: session)
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -7084,19 +7145,24 @@ struct ContentView: View {
                 }
             }
 
-            Button {
-                guard !officeHoursDay1DocumentsWritten else { return }
-                startOfficeHoursDocumentHandoff(session: session)
-            } label: {
-                officeHoursDocumentHandoffButtonLabel(promptActive: promptActive)
+            if state == .followupActive {
+                officeHoursDocumentHandoffStatus("아래 보완 질문에 답하면 다시 리뷰합니다.", tone: .accent)
+            } else {
+                Button {
+                    guard !officeHoursDay1DocumentsWritten else { return }
+                    startOfficeHoursDocumentHandoff(session: session)
+                } label: {
+                    officeHoursDocumentHandoffButtonLabel(state: state)
+                }
+                .buttonStyle(.plain)
+                .disabled(officeHoursDocumentHandoffButtonDisabled(state: state))
+                .accessibilityLabel(officeHoursDocumentHandoffButtonTitle(state: state))
+                .accessibilityIdentifier("opendesign.officeHours.docHandoff.confirm")
             }
-            .buttonStyle(.plain)
-            .disabled(officeHoursDocumentHandoffButtonDisabled(promptActive: promptActive))
-            .accessibilityLabel(officeHoursDocumentHandoffButtonTitle(promptActive: promptActive))
-            .accessibilityIdentifier("opendesign.officeHours.docHandoff.confirm")
 
             if let prompt = handoffPrompt {
                 VStack(alignment: .leading, spacing: 8) {
+                    officeHoursDocumentHandoffIntro(prompt)
                     Text("보완 질문")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(OpenDesignOfficeHoursColor.accent)
@@ -7112,14 +7178,7 @@ struct ContentView: View {
 
             if let error = viewModel.day1DocHandoffError?.trimmingCharacters(in: .whitespacesAndNewlines),
                !error.isEmpty {
-                Text(error)
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(openDesignOfficeHoursBackground(cornerRadius: 8, fill: OpenDesignOfficeHoursColor.surface2))
+                officeHoursDocumentHandoffErrorNotice(error, state: state)
             }
         }
         .padding(12)
@@ -7130,14 +7189,17 @@ struct ContentView: View {
 
     private func officeHoursDocumentRow(type: String, title: String, path: String, session: ChatSession?) -> some View {
         let isWritten = officeHoursDocumentWritten(type: type)
+        let state = officeHoursDocumentHandoffState(session: session)
         let detail = officeHoursDocumentDetail(type: type, path: path, session: session)
+        let isBlocked = state == .blockedWithoutPrompt
+        let showsInProgressMarker = state == .reviewing || state == .awaitingFollowup || state == .followupActive
         return HStack(spacing: 10) {
-            Text(isWritten ? "✓" : (officeHoursDocumentHandoffBusy || officeHoursDocumentHandoffAwaitingFollowup) ? "…" : "•")
+            Text(isWritten ? "✓" : isBlocked ? "!" : showsInProgressMarker ? "…" : "•")
                 .font(.system(size: isWritten ? 11 : 10, weight: .bold, design: .monospaced))
-                .foregroundStyle(isWritten ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.mutedDeep)
+                .foregroundStyle(isWritten ? OpenDesignOfficeHoursColor.accent : isBlocked ? OpenDesignOfficeHoursColor.amber : OpenDesignOfficeHoursColor.mutedDeep)
                 .frame(width: 22, height: 22)
                 .background(Circle().fill(OpenDesignOfficeHoursColor.surface2))
-                .overlay(Circle().stroke(isWritten ? OpenDesignOfficeHoursColor.accentLine : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1))
+                .overlay(Circle().stroke(isWritten ? OpenDesignOfficeHoursColor.accentLine : isBlocked ? OpenDesignOfficeHoursColor.amber.opacity(0.38) : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1))
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -7159,17 +7221,27 @@ struct ContentView: View {
         .accessibilityIdentifier("opendesign.officeHours.docHandoff.doc.\(type)")
     }
 
-    private func officeHoursDocumentHandoffButtonTitle(promptActive: Bool) -> String {
-        if promptActive { return "보완 질문 답변 필요" }
-        if officeHoursDocumentHandoffAwaitingFollowup { return "보완 질문 준비 중..." }
-        if officeHoursDocumentHandoffBusy { return "문서 리뷰 중..." }
-        if officeHoursDay1DocumentsWritten { return "문서 저장 완료" }
+    private func officeHoursDocumentHandoffButtonTitle(state: OfficeHoursDocumentHandoffState) -> String {
+        switch state {
+        case .awaitingFollowup:
+            return "보완 질문 준비 중..."
+        case .reviewing:
+            return "문서 리뷰 중..."
+        case .blockedWithoutPrompt:
+            return "문서 리뷰 다시 시도"
+        case .written:
+            return "문서 저장 완료"
+        case .followupActive:
+            return "아래 보완 질문에 답하면 다시 리뷰합니다"
+        case .idle:
+            break
+        }
         return "문서 검토하기"
     }
 
-    private func officeHoursDocumentHandoffButtonLabel(promptActive: Bool) -> some View {
+    private func officeHoursDocumentHandoffButtonLabel(state: OfficeHoursDocumentHandoffState) -> some View {
         HStack(spacing: 8) {
-            if (officeHoursDocumentHandoffBusy || officeHoursDocumentHandoffAwaitingFollowup) && !promptActive {
+            if state == .reviewing || state == .awaitingFollowup {
                 ProgressView()
                     .progressViewStyle(.circular)
                     .controlSize(.mini)
@@ -7177,24 +7249,160 @@ struct ContentView: View {
                     .frame(width: 14, height: 14)
                     .accessibilityHidden(true)
             }
-            Text(officeHoursDocumentHandoffButtonTitle(promptActive: promptActive))
+            Text(officeHoursDocumentHandoffButtonTitle(state: state))
                 .font(.system(size: 13, weight: .semibold))
         }
-        .foregroundStyle(officeHoursDocumentHandoffButtonDisabled(promptActive: promptActive) ? OpenDesignOfficeHoursColor.mutedDeep : OpenDesignOfficeHoursColor.bgDeep)
+        .foregroundStyle(officeHoursDocumentHandoffButtonDisabled(state: state) ? OpenDesignOfficeHoursColor.mutedDeep : OpenDesignOfficeHoursColor.bgDeep)
         .frame(maxWidth: .infinity)
         .frame(height: 40)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(officeHoursDocumentHandoffButtonDisabled(promptActive: promptActive) ? OpenDesignOfficeHoursColor.surface2 : OpenDesignOfficeHoursColor.accent)
+                .fill(officeHoursDocumentHandoffButtonDisabled(state: state) ? OpenDesignOfficeHoursColor.surface2 : OpenDesignOfficeHoursColor.accent)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(officeHoursDocumentHandoffButtonDisabled(promptActive: promptActive) ? OpenDesignOfficeHoursColor.borderSoft : Color.clear, lineWidth: 1)
+                        .stroke(officeHoursDocumentHandoffButtonDisabled(state: state) ? OpenDesignOfficeHoursColor.borderSoft : Color.clear, lineWidth: 1)
                 )
         )
     }
 
-    private func officeHoursDocumentHandoffButtonDisabled(promptActive: Bool) -> Bool {
-        officeHoursDocumentHandoffBusy || officeHoursDocumentHandoffAwaitingFollowup || promptActive || officeHoursDay1DocumentsWritten
+    private func officeHoursDocumentHandoffButtonDisabled(state: OfficeHoursDocumentHandoffState) -> Bool {
+        state == .reviewing || state == .awaitingFollowup || state == .followupActive || state == .written
+    }
+
+    private enum OfficeHoursDocumentHandoffStatusTone: Equatable {
+        case accent
+        case amber
+    }
+
+    private func officeHoursDocumentHandoffStatus(
+        _ message: String,
+        tone: OfficeHoursDocumentHandoffStatusTone
+    ) -> some View {
+        let color = tone == .accent ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.amber
+        return Text(message)
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(color)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(tone == .accent ? OpenDesignOfficeHoursColor.accentDim : OpenDesignOfficeHoursColor.amberDim)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(color.opacity(0.34), lineWidth: 1)
+                    )
+            )
+            .accessibilityIdentifier("opendesign.officeHours.docHandoff.status")
+    }
+
+    @ViewBuilder
+    private func officeHoursDocumentHandoffIntro(_ prompt: StructuredPromptRequest) -> some View {
+        let title = prompt.intro?.title?.nonEmpty
+        let body = prompt.intro?.body?.nonEmpty
+        let bullets = (prompt.intro?.bullets ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if title != nil || body != nil || !bullets.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                if let title {
+                    HStack(spacing: 8) {
+                        Text(title)
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                        Spacer(minLength: 0)
+                        Text("저장 전 보완")
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                            .padding(.horizontal, 7)
+                            .frame(height: 20)
+                            .background(Capsule().fill(OpenDesignOfficeHoursColor.amberDim))
+                    }
+                }
+                if let body {
+                    Text(body)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !bullets.isEmpty {
+                    Text("부족한 증거")
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .tracking(0.8)
+                        .textCase(.uppercase)
+                        .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
+                            HStack(alignment: .top, spacing: 7) {
+                                Text("•")
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                                Text(bullet)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(OpenDesignOfficeHoursColor.surface2)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(OpenDesignOfficeHoursColor.amber.opacity(0.28), lineWidth: 1)
+                    )
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(officeHoursDocumentHandoffIntroAccessibilityLabel(
+                title: title,
+                body: body,
+                bullets: bullets
+            ))
+            .accessibilityIdentifier("opendesign.officeHours.docHandoff.intro")
+        }
+    }
+
+    private func officeHoursDocumentHandoffIntroAccessibilityLabel(
+        title: String?,
+        body: String?,
+        bullets: [String]
+    ) -> String {
+        var parts: [String] = []
+        if let title { parts.append(title) }
+        if let body { parts.append(body) }
+        if !bullets.isEmpty {
+            parts.append("부족한 증거")
+            parts.append(contentsOf: bullets)
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private func officeHoursDocumentHandoffErrorNotice(
+        _ error: String,
+        state: OfficeHoursDocumentHandoffState
+    ) -> some View {
+        let title = state == .blockedWithoutPrompt ? "보완 질문을 준비하지 못했습니다." : "보류 사유"
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                .tracking(0.6)
+            Text(error)
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(openDesignOfficeHoursBackground(cornerRadius: 8, fill: OpenDesignOfficeHoursColor.surface2))
+        .accessibilityIdentifier("opendesign.officeHours.docHandoff.error")
     }
 
     private func startOfficeHoursDocumentHandoff(session: ChatSession) {
@@ -8444,6 +8652,8 @@ struct ContentView: View {
         let hintParts = officeHoursStructuredPromptHintParts(prompt)
         let footerVerticalPadding: CGFloat = (prompt.generation?.dimensionStepIndex ?? 1) > 1 ? 11 : 16
         return VStack(alignment: .leading, spacing: 0) {
+            officeHoursStructuredPromptContext(prompt)
+
             ForEach(Array(prompt.questions.enumerated()), id: \.element.id) { index, question in
                 if index > 0 {
                     Rectangle()
@@ -8517,6 +8727,72 @@ struct ContentView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("assistant.structuredPrompt")
+    }
+
+    @ViewBuilder
+    private func officeHoursStructuredPromptContext(_ prompt: StructuredPromptRequest) -> some View {
+        let introTitle = prompt.intro?.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let introBody = prompt.intro?.body?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bullets = (prompt.intro?.bullets ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let showsEvidenceDebtHeading = officeHoursIsDocumentReadinessPrompt(prompt) || officeHoursIsDocumentJudgePrompt(prompt)
+        let evidenceDebtLabel = showsEvidenceDebtHeading && !bullets.isEmpty ? ["부족한 증거"] : []
+        let contextAccessibilityLabel = ([introTitle, introBody].compactMap { value -> String? in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        } + evidenceDebtLabel + bullets).joined(separator: " ")
+
+        if introTitle?.isEmpty == false || introBody?.isEmpty == false || !bullets.isEmpty {
+            VStack(alignment: .leading, spacing: 9) {
+                if let introTitle, !introTitle.isEmpty {
+                    Text(introTitle)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("assistant.structuredPromptContextTitle")
+                }
+
+                if let introBody, !introBody.isEmpty {
+                    Text(introBody)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(introBody)
+                        .accessibilityIdentifier("assistant.structuredPromptContextBody")
+                }
+
+                if !bullets.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        if showsEvidenceDebtHeading {
+                            Text("부족한 증거")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                                .accessibilityIdentifier("assistant.structuredPromptEvidenceDebtTitle")
+                        }
+                        ForEach(bullets, id: \.self) { bullet in
+                            HStack(alignment: .top, spacing: 7) {
+                                Text("•")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                                Text(bullet)
+                                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .padding(.top, 1)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(OpenDesignOfficeHoursColor.bgDeep)
+            .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
+            .accessibilityLabel(contextAccessibilityLabel)
+            .accessibilityIdentifier("assistant.structuredPromptContext")
+        }
     }
 
     private func officeHoursStructuredQuestion(
@@ -10977,6 +11253,42 @@ struct ContentView: View {
         openOpenDesignRoute(route)
     }
 
+    private func lockedRailFeature(for route: LongRunningCompletionRoute) -> OpenDesignRailFeature? {
+        switch route {
+        case .morningBriefing:
+            return .morningBriefing
+        case .newsMarketRadar:
+            return .news
+        case .strategy:
+            return .strategy
+        default:
+            return nil
+        }
+    }
+
+    private func blockLockedOpenDesignRailRouteIfNeeded(_ route: LongRunningCompletionRoute) -> Bool {
+        guard let feature = lockedRailFeature(for: route) else { return false }
+        let accessState = OpenDesignRailAccessPolicy.state(for: feature, dayProgress: viewModel.dayProgress)
+        guard case .locked(let requiredDay, let requiredStep) = accessState else {
+            return false
+        }
+        PostHogTelemetry.capture(
+            "mac_open_design_locked_rail_route_blocked",
+            properties: [
+                "route": route.rawValue,
+                "rail_item_id": feature.railItemID,
+                "required_day": requiredDay,
+                "required_step": requiredStep,
+                "day_progress_loaded": viewModel.dayProgress != nil,
+            ],
+            authSession: viewModel.macAuthSession
+        )
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            setOpenDesignRailDestination(.today)
+        }
+        return true
+    }
+
     private func openOpenDesignRoute(
         _ route: LongRunningCompletionRoute,
         day requestedDay: Int? = nil,
@@ -10985,6 +11297,7 @@ struct ContentView: View {
     ) {
         switch route {
         case .morningBriefing:
+            guard !blockLockedOpenDesignRailRouteIfNeeded(route) else { return }
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                 setOpenDesignRailDestination(.morningBriefing)
             }
@@ -11012,10 +11325,12 @@ struct ContentView: View {
                 setOpenDesignRailDestination(.reference(.bipLog))
             }
         case .newsMarketRadar:
+            guard !blockLockedOpenDesignRailRouteIfNeeded(route) else { return }
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                 setOpenDesignRailDestination(.reference(.news))
             }
         case .strategy:
+            guard !blockLockedOpenDesignRailRouteIfNeeded(route) else { return }
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                 setOpenDesignRailDestination(.strategy)
             }
@@ -12979,6 +13294,8 @@ struct ContentView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let resources = (prompt.resources ?? []).filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let docType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let showsEvidenceDebtHeading = docType == "day1_document_readiness" || docType == "day1_doc_handoff_judge"
 
         if introTitle?.isEmpty == false || introBody?.isEmpty == false || !bullets.isEmpty || !resources.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
@@ -12997,6 +13314,11 @@ struct ContentView: View {
 
                 if !bullets.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
+                        if showsEvidenceDebtHeading {
+                            Text("부족한 증거")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.68))
+                        }
                         ForEach(bullets, id: \.self) { bullet in
                             HStack(alignment: .top, spacing: 7) {
                                 Text("•")

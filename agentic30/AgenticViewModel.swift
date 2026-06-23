@@ -2623,7 +2623,16 @@ struct DayProgress: Codable, Equatable, Hashable {
         self.days = days
     }
 
-    func record(forDay day: Int) -> DayRecord? { days[String(day)] }
+    nonisolated func record(forDay day: Int) -> DayRecord? { days[String(day)] }
+
+    nonisolated func hasCompletedProgramDay(_ day: Int) -> Bool {
+        guard day >= 1,
+              let record = record(forDay: day) else {
+            return false
+        }
+        let requiredStep = day == 1 ? "first_interview" : "interview"
+        return record.steps[requiredStep] == .done
+    }
 
     /// Today's record, or a synthesized all-pending default so the macro stepper and
     /// Day breadcrumb stay consistent with the sidebar's tolerant rendering before any
@@ -3085,6 +3094,10 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var bipCoach: BipCoachState?
     @Published private(set) var day1GoalSelection: Day1GoalSelection?
     @Published private(set) var day1GoalError: String?
+    @Published private(set) var day1SurfaceReview: Day1SurfaceReview?
+    @Published private(set) var day1SurfaceReviewGenerating = false
+    @Published private(set) var day1SurfaceReviewDecisionPending: String?
+    @Published private(set) var day1SurfaceReviewError: String?
     @Published private(set) var dayProgress: DayProgress?
     @Published private(set) var dayReviews: [String: DayReview] = [:]
     /// Cycle#N office-hours memory summary (compiled truth + open/abandoned threads),
@@ -3453,6 +3466,11 @@ final class AgenticViewModel: ObservableObject {
         _ = foundationCurriculumLifecycleController.enterCompletedState(result.snapshot)
         recordNewsMarketRadarDayCompletionHelpIfNeeded(normalizedDay)
         if !wasAlreadyCompleted {
+            PostHogTelemetry.capture("mac_foundation_day_completed", properties: [
+                "completed_day": result.completedDay,
+                "unlocked_day": result.unlockedDay,
+                "completed_day_count": result.snapshot.completedDays.count,
+            ], authSession: macAuthSession)
             enqueueProjectContextRefreshForCompletedDay(result)
         }
         return result
@@ -3659,6 +3677,7 @@ final class AgenticViewModel: ObservableObject {
                 draft = seededDraft
             }
             _ = installUITestingOfficeHoursSeedSessionIfNeeded()
+            seedUITestingRailUnlockProgressIfNeeded(arguments: arguments)
         } else if Self.isXCTestHost(arguments: arguments) {
             macAuthSession = nil
             onboardingContext = nil
@@ -3776,7 +3795,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     var activeDay1DocumentReviewPrompt: StructuredPromptRequest? {
-        activeDay1DocHandoffJudgePrompt ?? activeDay1HandoffPrompt
+        activeDay1HandoffPrompt
     }
 
     var activeDay1DocHandoffJudgePrompt: StructuredPromptRequest? {
@@ -4408,6 +4427,9 @@ final class AgenticViewModel: ObservableObject {
             return true
         }
         if installUITestingOfficeHoursCommitmentGateSessionIfNeeded() {
+            return true
+        }
+        if installUITestingOfficeHoursReadinessFollowupSessionIfNeeded() {
             return true
         }
         if installUITestingOfficeHoursDay1DocReadySessionIfNeeded() {
@@ -7959,6 +7981,72 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
+    func requestDay1SurfaceReview(
+        mode: String,
+        landingUrl: String = "",
+        workspaceRoot explicitWorkspaceRoot: String? = nil
+    ) {
+        let normalizedMode = mode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "no_landing"
+            : mode.trimmingCharacters(in: .whitespacesAndNewlines)
+        let root = (explicitWorkspaceRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isConnected else {
+            day1SurfaceReviewError = "실행 보조 앱 연결 후 처음 보여줄 문장을 만들 수 있습니다."
+            return
+        }
+        guard !root.isEmpty else {
+            day1SurfaceReviewError = "Workspace 경로가 비어 있습니다."
+            return
+        }
+        day1SurfaceReviewGenerating = true
+        day1SurfaceReviewError = nil
+        PostHogTelemetry.capture("mac_day1_surface_review_requested", properties: [
+            "mode": normalizedMode,
+            "has_landing_url": !landingUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "workspace_basename": (root as NSString).lastPathComponent,
+        ], authSession: macAuthSession)
+        if !sidecar.send(payload: [
+            "type": "day1_surface_review_generate",
+            "workspaceRoot": root,
+            "mode": normalizedMode,
+            "landingUrl": landingUrl.trimmingCharacters(in: .whitespacesAndNewlines),
+        ]) {
+            day1SurfaceReviewGenerating = false
+            day1SurfaceReviewError = "처음 보여줄 문장 생성을 요청하지 못했습니다. 실행 보조 앱 연결을 확인해 주세요."
+        }
+    }
+
+    func decideDay1SurfaceReview(
+        decision: String,
+        workspaceRoot explicitWorkspaceRoot: String? = nil
+    ) {
+        let normalizedDecision = decision.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard ["approved", "approve", "rejected", "reject"].contains(normalizedDecision) else { return }
+        let root = (explicitWorkspaceRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isConnected else {
+            day1SurfaceReviewError = "실행 보조 앱 연결 후 처음 보여줄 문장 결정을 저장할 수 있습니다."
+            return
+        }
+        guard !root.isEmpty else {
+            day1SurfaceReviewError = "Workspace 경로가 비어 있습니다."
+            return
+        }
+        day1SurfaceReviewDecisionPending = normalizedDecision
+        day1SurfaceReviewError = nil
+        PostHogTelemetry.capture("mac_day1_surface_review_decision_requested", properties: [
+            "decision": normalizedDecision,
+            "workspace_basename": (root as NSString).lastPathComponent,
+        ], authSession: macAuthSession)
+        if !sidecar.send(payload: [
+            "type": "day1_surface_review_decide",
+            "workspaceRoot": root,
+            "decision": normalizedDecision,
+        ]) {
+            day1SurfaceReviewDecisionPending = nil
+            day1SurfaceReviewError = "처음 보여줄 문장 결정을 저장하지 못했습니다. 실행 보조 앱 연결을 확인해 주세요."
+        }
+    }
+
     func retryCurrentIddQuestion() {
         startBipIddQueue(docType: iddCurrentDocType ?? selectedSession?.pendingUserInput?.generation?.docType)
     }
@@ -8691,6 +8779,7 @@ final class AgenticViewModel: ObservableObject {
                 self.bipCoach = bipCoach
             }
             day1GoalSelection = event.day1GoalSelection
+            day1SurfaceReview = event.day1SurfaceReview
             if let dp = event.dayProgress { dayProgress = dp }
             if let reviews = event.dayReviews { dayReviews = reviews }
             if let evidence = event.evidenceOS { evidenceOS = evidence }
@@ -8859,6 +8948,10 @@ final class AgenticViewModel: ObservableObject {
                 foundCount: event.foundCount
             )
             scanResult = nil
+            day1SurfaceReview = nil
+            day1SurfaceReviewGenerating = false
+            day1SurfaceReviewDecisionPending = nil
+            day1SurfaceReviewError = nil
             scanProviderLimitNotice = nil
             scanBlockedNotice = nil
             scanDegradedNotice = nil
@@ -9068,6 +9161,17 @@ final class AgenticViewModel: ObservableObject {
                 let updated = current.withDay1GoalSelection(event.day1GoalSelection)
                 scanResult = updated
                 persistWorkspaceScanResultCache(updated, root: event.workspaceRoot ?? event.scanRoot)
+            }
+        case "day1_surface_review_state":
+            day1SurfaceReviewGenerating = false
+            day1SurfaceReviewDecisionPending = nil
+            if event.success == false {
+                day1SurfaceReviewError = event.error ?? event.message ?? "처음 보여줄 문장을 만들지 못했습니다."
+                return
+            }
+            day1SurfaceReviewError = nil
+            if let review = event.day1SurfaceReview {
+                day1SurfaceReview = review
             }
         case "workspace_gitignore_result":
             pendingAgentic30GitignoreConsent = nil
@@ -9885,7 +9989,9 @@ final class AgenticViewModel: ObservableObject {
             let matchesPendingHandoff = setupError.docType == day1DocHandoffPendingDocType
                 || day1DocHandoffPendingDocType == "all"
             if matchesPendingHandoff || day1DocHandoffAwaitingFollowupPrompt || activeDay1DocHandoffJudgePrompt != nil {
+                let hasActiveJudgePrompt = activeDay1DocHandoffJudgePrompt != nil
                 day1DocHandoffPendingDocType = nil
+                day1DocHandoffAwaitingFollowupPrompt = !hasActiveJudgePrompt
                 day1DocHandoffError = setupError.message
                 return
             }
@@ -9925,7 +10031,7 @@ final class AgenticViewModel: ObservableObject {
             }
         case "judge_blocked":
             day1DocHandoffPendingDocType = nil
-            day1DocHandoffAwaitingFollowupPrompt = activeDay1DocumentReviewPrompt == nil
+            day1DocHandoffAwaitingFollowupPrompt = activeDay1DocHandoffJudgePrompt == nil
         case "bulk_written":
             day1DocHandoffPendingDocType = nil
             day1DocHandoffAwaitingFollowupPrompt = false
@@ -10510,6 +10616,114 @@ final class AgenticViewModel: ObservableObject {
         )
     }
 
+    private func seedUITestingRailUnlockProgressIfNeeded(arguments: [String] = CommandLine.arguments) {
+        #if DEBUG
+        let maxCompletedDay = Self.uiTestingRailUnlockMaxCompletedDay(arguments: arguments)
+        guard let maxCompletedDay else { return }
+
+        let progress = Self.makeUITestingRailUnlockDayProgress(
+            maxCompletedDay: maxCompletedDay,
+            day1GoalText: day1GoalSelection?.goalText
+        )
+        dayProgress = progress
+        Self.persistUITestingRailUnlockProgress(progress, arguments: arguments)
+        #endif
+    }
+
+    private static func uiTestingRailUnlockMaxCompletedDay(arguments: [String] = CommandLine.arguments) -> Int? {
+        #if DEBUG
+        if arguments.contains("--ui-testing-seed-rail-unlocked-through-day3") {
+            return 3
+        }
+        if arguments.contains("--ui-testing-seed-rail-unlocked-through-day2") {
+            return 2
+        }
+        if arguments.contains("--ui-testing-seed-rail-unlocked-through-day1") {
+            return 1
+        }
+        return nil
+        #else
+        return nil
+        #endif
+    }
+
+    private static func makeUITestingRailUnlockDayProgress(
+        maxCompletedDay: Int,
+        day1GoalText: String? = nil,
+        now: Date = Date()
+    ) -> DayProgress {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let startDate = Calendar.current.date(byAdding: .day, value: 1 - maxCompletedDay, to: now) ?? now
+        let startedAt = formatter.string(from: startDate)
+        var days: [String: DayRecord] = [:]
+        for day in 1...maxCompletedDay {
+            let date = Calendar.current.date(byAdding: .day, value: day - 1, to: startDate) ?? now
+            let updatedAt = formatter.string(from: date)
+            if day == 1 {
+                days["1"] = DayRecord(
+                    day: 1,
+                    kind: .day1,
+                    steps: [
+                        "onboarding": .done,
+                        "scan": .done,
+                        "goal": .done,
+                        "first_interview": .done,
+                    ],
+                    goalText: day1GoalText ?? "Day 1 고객 증거 확인",
+                    updatedAt: updatedAt
+                )
+            } else {
+                days[String(day)] = DayRecord(
+                    day: day,
+                    kind: .standard,
+                    steps: [
+                        "scan": .done,
+                        "retro": .done,
+                        "goal": .done,
+                        "interview": .done,
+                        "execution": .pending,
+                    ],
+                    goalText: "Day \(day) 인터뷰 완료 fixture",
+                    updatedAt: updatedAt
+                )
+            }
+        }
+        return DayProgress(
+            challengeStartedAt: startedAt,
+            days: days
+        )
+    }
+
+    private static func persistUITestingRailUnlockProgress(_ progress: DayProgress, arguments: [String]) {
+        #if DEBUG
+        guard let workspacePath = uiTestingArgumentValue("--ui-testing-seed-workspace", arguments: arguments) else {
+            return
+        }
+        do {
+            let agenticDir = URL(fileURLWithPath: workspacePath, isDirectory: true)
+                .appendingPathComponent(".agentic30", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: agenticDir,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(progress)
+            try data.write(
+                to: agenticDir.appendingPathComponent("day-progress.json"),
+                options: [.atomic]
+            )
+        } catch {
+            fatalError("Failed to seed rail unlock day-progress.json for UI testing: \(error)")
+        }
+        #endif
+    }
+
     // Seeds a two-day DayProgress (Day 2 today, Day 1 incomplete past record) so the
     // Office Hours timeline sidebar renders the cumulative Day list for screenshots.
     // challengeStartedAt is yesterday-local so currentDayNumber() resolves to Day 2
@@ -10872,6 +11086,195 @@ final class AgenticViewModel: ObservableObject {
     ]
 
     @discardableResult
+    fileprivate func installUITestingOfficeHoursReadinessFollowupSessionIfNeeded() -> Bool {
+        #if DEBUG
+        guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-readiness-followup") else {
+            return false
+        }
+        if let selectedSession,
+           selectedSession.title.range(of: "Office Hours", options: [.caseInsensitive, .diacriticInsensitive]) != nil,
+           selectedSession.runtime?.officeHours?.day == 1,
+           selectedSession.pendingUserInput?.generation?.docType == "day1_document_readiness" {
+            return true
+        }
+
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let now = Date()
+        let today = formatter.string(from: now)
+        day1GoalSelection = Day1GoalSelection(
+            goalType: .getUsers,
+            goalText: "이번 주 유료 진입점을 보여줄 실명 고객 1명을 고정한다",
+            customer: "macOS에서 AI 코딩 도구를 매일 쓰는 전업 1인 개발자",
+            problem: "AI로 제품은 만들지만 고객 행동 증거가 남지 않는다",
+            validationAction: "가장 적합한 사용자 1명에게 이번 주 유료 진입점 보여주기",
+            evidenceRefs: [".agentic30/docs/GOAL.md", ".agentic30/docs/ICP.md"],
+            proofSink: .local,
+            sourcePlanFingerprint: "ui-test-day1-readiness-followup",
+            selectedAt: ISO8601DateFormatter().string(from: now)
+        )
+        dayProgress = DayProgress(
+            challengeStartedAt: today,
+            days: [
+                "1": DayRecord(
+                    day: 1,
+                    kind: .day1,
+                    steps: ["onboarding": .done, "scan": .done, "goal": .done, "first_interview": .active],
+                    goalText: "이번 주 유료 진입점을 보여줄 실명 고객 1명을 고정한다",
+                    updatedAt: today
+                )
+            ]
+        )
+
+        let sessionID = "ui-test-office-hours-readiness-followup-\(UUID().uuidString)"
+        let prompt = Self.makeUITestingDay1DocumentReadinessPrompt(sessionID: sessionID, createdAt: now)
+        func answer(_ index: Int, _ content: String) -> ChatMessage {
+            ChatMessage(
+                id: "ui-test-office-hours-readiness-answer-\(index)",
+                role: .user,
+                provider: selectedProvider,
+                content: content,
+                state: .final,
+                createdAt: now.addingTimeInterval(TimeInterval(index)),
+                error: nil,
+                bipMissionChoices: nil,
+                providerAuthActions: nil
+            )
+        }
+        let readiness = OfficeHoursDocumentReadiness(
+            status: "needs_followup",
+            ambiguityScore: 47,
+            ambiguityThreshold: 20,
+            judgeScore: 5,
+            judgeThreshold: 8,
+            evidenceDebt: [
+                "실명 고객 행동 증거가 아직 약합니다.",
+                "유료 진입점의 가격, 날짜, 결제 조건이 부족합니다."
+            ],
+            nextQuestion: "정식 문서 저장 전 가장 강한 고객 행동 증거는 무엇인가요?",
+            updatedAt: ISO8601DateFormatter().string(from: now)
+        )
+        let session = ChatSession(
+            id: sessionID,
+            title: "Office Hours",
+            provider: selectedProvider,
+            model: preferredModel(for: selectedProvider),
+            status: .awaitingInput,
+            createdAt: now,
+            updatedAt: now,
+            error: nil,
+            messages: [
+                answer(1, "관심 있는 사람은 있지만 아직 결제나 계약 조건은 없다"),
+                answer(2, "지금은 Notion과 DM으로 인터뷰 기록을 수동 정리한다"),
+                answer(3, "아는 1인 개발자 몇 명에게 물어볼 수 있다"),
+                answer(4, "가장 작은 유료 작업은 30분 설정 세션일 것 같다"),
+                answer(5, "직접 관찰한 행동은 아직 충분하지 않다"),
+                answer(6, "앞으로 AI 빌드 속도보다 고객 증거가 병목이 될 것 같다"),
+            ],
+            pendingUserInput: prompt,
+            runtime: ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: "day1_step",
+                iddMode: "office_hours",
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "ui_testing_day1_readiness_followup",
+                    startedAt: ISO8601DateFormatter().string(from: now),
+                    context: "UI test Day 1 Office Hours needs document readiness follow-up",
+                    day: 1,
+                    documentReadiness: readiness
+                )
+            )
+        )
+        sessions = [session]
+        selectedSessionID = sessionID
+        officeHoursSessionCreateInFlight = false
+        refreshPresentationState()
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    private static func makeUITestingDay1DocumentReadinessPrompt(
+        sessionID: String,
+        createdAt: Date
+    ) -> StructuredPromptRequest {
+        StructuredPromptRequest(
+            requestId: "ui-test-day1-document-readiness-followup",
+            sessionId: sessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: createdAt,
+            intro: StructuredPromptIntro(
+                title: "문서 저장 전 근거 보완",
+                body: "모호함 47% / 기준 20% 이하. 예상 judge 5/10 / 기준 8/10. 저장 카드 전에 필요한 증거를 하나 더 좁힙니다.",
+                bullets: [
+                    "실명 고객 행동 증거가 아직 약합니다.",
+                    "유료 진입점의 가격, 날짜, 결제 조건이 부족합니다."
+                ]
+            ),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "day1_document_readiness_followup",
+                    header: "저장 전 증거",
+                    question: "정식 문서 저장 전 가장 강한 고객 행동 증거는 무엇인가요?",
+                    helperText: "선택 후 한 줄 근거를 적으면 문서 저장 준비도를 다시 계산합니다.",
+                    options: [
+                        StructuredPromptOption(
+                            label: "실제 결제/계약 증거",
+                            description: "실명 고객, 날짜, 가격 또는 계약 조건이 있어 문서 judge의 하드 증거로 쓸 수 있습니다.",
+                            preview: nil,
+                            nextIntent: "actual_payment_or_contract",
+                            risk: nil,
+                            evidenceTarget: "실명 고객, 날짜, 가격/계약 조건, 캡처나 기록",
+                            mapsTo: "Q1 Demand Reality",
+                            failureMode: "돈이나 계약 조건이 없으면 수요 증거가 아니라 관심 신호입니다."
+                        ),
+                        StructuredPromptOption(
+                            label: "구매 조건 확정",
+                            description: "가격, 범위, 일정, 결제권자 중 하나 이상이 구체적입니다.",
+                            preview: nil,
+                            nextIntent: "concrete_purchase_conditions",
+                            risk: nil,
+                            evidenceTarget: "가격, 범위, 구매 시점, 결제권자",
+                            mapsTo: "Q1 Demand Reality",
+                            failureMode: "조건이 모호하면 문서 저장 전 다시 좁혀야 합니다."
+                        ),
+                        StructuredPromptOption(
+                            label: "아직 증거 부족",
+                            description: "정식 문서 저장보다 실제 고객 행동 증거 확보가 먼저입니다.",
+                            preview: nil,
+                            nextIntent: "verbal_interest_or_no_evidence",
+                            risk: nil,
+                            evidenceTarget: "다음에 확인할 실명 고객 행동 증거",
+                            mapsTo: "EVIDENCE.debt",
+                            failureMode: "증거 없이 저장하면 문서가 실행 기준이 아니라 가정 목록이 됩니다."
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: "예: 김OO에게 3만원 1회 세션을 제안했고 금요일까지 결제 여부를 답받기로 했다",
+                    textMode: .short
+                )
+            ],
+            generation: StructuredPromptGeneration(
+                mode: "office_hours",
+                docType: "day1_document_readiness",
+                signalId: "day1_document_readiness_followup",
+                signalLabel: "문서 저장 전 근거"
+            )
+        )
+    }
+
+    @discardableResult
     fileprivate func installUITestingOfficeHoursDay1DocReadySessionIfNeeded() -> Bool {
         #if DEBUG
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-doc-ready") else {
@@ -10960,7 +11363,17 @@ final class AgenticViewModel: ObservableObject {
                     source: "ui_testing_day1_doc_ready",
                     startedAt: ISO8601DateFormatter().string(from: now),
                     context: "UI test completed Day 1 Office Hours",
-                    day: 1
+                    day: 1,
+                    documentReadiness: OfficeHoursDocumentReadiness(
+                        status: "ready",
+                        ambiguityScore: 12,
+                        ambiguityThreshold: 20,
+                        judgeScore: 8,
+                        judgeThreshold: 8,
+                        evidenceDebt: [],
+                        nextQuestion: "",
+                        updatedAt: ISO8601DateFormatter().string(from: now)
+                    )
                 )
             )
         )
@@ -11440,17 +11853,17 @@ final class AgenticViewModel: ObservableObject {
             requestId: requestId,
             sessionId: sessionID,
             toolName: "agentic30_request_user_input",
-            title: "Office Hours 문서 리뷰 보완",
+            title: "Office Hours 저장 전 근거 보완",
             createdAt: createdAt,
             intro: StructuredPromptIntro(
-                title: "문서 리뷰 보류",
-                body: "문서 judge 점수는 \(attempt == 1 ? "5" : "6")/10이고 기준은 8/10입니다. 자유 입력 대신 하나를 골라 다음 리뷰 인터뷰를 이어갑니다.",
+                title: "문서 저장 전 근거 보완",
+                body: "문서 judge 점수는 \(attempt == 1 ? "5" : "6")/10이고 기준은 8/10입니다. 정식 문서 저장 전 필요한 증거를 하나 고르세요.",
                 bullets: ["다음 office-hours에서 추적할 열린 약속이 부족합니다.", "유료 진입점 증거가 더 구체적이어야 합니다."]
             ),
             questions: [
                 StructuredPromptQuestion(
                     questionId: "day1_doc_handoff_judge_blocked",
-                    header: "보완 질문",
+                    header: "저장 전 증거",
                     question: attempt == 1
                         ? "이번 주 유료 진입점을 보여줄 실명 고객 행동 증거는 무엇인가요?"
                         : "문서 기준을 넘기려면 지금 확보한 hard evidence는 무엇인가요?",
@@ -11490,7 +11903,7 @@ final class AgenticViewModel: ObservableObject {
                 mode: "office_hours",
                 docType: "day1_doc_handoff_judge",
                 signalId: "day1_doc_handoff_judge_blocked",
-                signalLabel: "문서 리뷰 보완",
+                signalLabel: "저장 전 근거 보완",
                 dimensionStepIndex: attempt,
                 dimensionTotal: 6
             )
@@ -13211,6 +13624,9 @@ final class AgenticViewModel: ObservableObject {
         ) else {
             return
         }
+        guard !shouldSuppressLockedRailCompletionNotification(kind, source: attempt.source) else {
+            return
+        }
 
         notifiedLongRunningCompletionAttemptIds.insert(attempt.id)
         let notification = LongRunningCompletionNotification(
@@ -13226,6 +13642,42 @@ final class AgenticViewModel: ObservableObject {
                 source: attempt.source
             )
         }
+    }
+
+    private func shouldSuppressLockedRailCompletionNotification(
+        _ kind: LongRunningCompletionNotificationKind,
+        source: String
+    ) -> Bool {
+        let feature: OpenDesignRailFeature?
+        switch kind {
+        case .morningBriefing:
+            feature = .morningBriefing
+        case .newsMarketRadar:
+            feature = .news
+        case .strategyReport:
+            feature = .strategy
+        default:
+            feature = nil
+        }
+        guard let feature else { return false }
+        let accessState = OpenDesignRailAccessPolicy.state(for: feature, dayProgress: dayProgress)
+        guard case .locked(let requiredDay, let requiredStep) = accessState else {
+            return false
+        }
+        PostHogTelemetry.capture(
+            "mac_long_running_completion_notification_suppressed_locked_route",
+            properties: [
+                "kind": kind.rawValue,
+                "route": kind.route.rawValue,
+                "rail_item_id": feature.railItemID,
+                "required_day": requiredDay,
+                "required_step": requiredStep,
+                "day_progress_loaded": dayProgress != nil,
+                "source": source,
+            ],
+            authSession: macAuthSession
+        )
+        return true
     }
 
     private func longRunningCompletionStateIsRunning(_ state: String?) -> Bool {
@@ -14909,6 +15361,7 @@ struct SidecarEvent: Decodable {
     let day1IcpPlan: Day1IcpPlan?
     let day1SituationSummary: Day1SituationSummary?
     let day1GoalSelection: Day1GoalSelection?
+    let day1SurfaceReview: Day1SurfaceReview?
     let agentic30Gitignore: Agentic30GitignoreState?
     // Fail-open degraded-scan markers (additive). Set on a workspace_scan_result
     // the sidecar completed on LOCAL-only signals because provider verification
@@ -15635,6 +16088,7 @@ struct SidecarEvent: Decodable {
         day1IcpPlan: Day1IcpPlan? = nil,
         day1SituationSummary: Day1SituationSummary? = nil,
         day1GoalSelection: Day1GoalSelection? = nil,
+        day1SurfaceReview: Day1SurfaceReview? = nil,
         agentic30Gitignore: Agentic30GitignoreState? = nil,
         degraded: Bool? = nil,
         degradedReason: String? = nil,
@@ -15756,6 +16210,7 @@ struct SidecarEvent: Decodable {
         self.day1IcpPlan = day1IcpPlan
         self.day1SituationSummary = day1SituationSummary
         self.day1GoalSelection = day1GoalSelection
+        self.day1SurfaceReview = day1SurfaceReview
         self.agentic30Gitignore = agentic30Gitignore
         self.degraded = degraded
         self.degradedReason = degradedReason
@@ -16165,6 +16620,7 @@ extension SidecarEvent {
         case day1IcpPlan
         case day1SituationSummary
         case day1GoalSelection
+        case day1SurfaceReview
         case agentic30Gitignore
         case degraded
         case degradedReason
@@ -16296,6 +16752,7 @@ extension SidecarEvent {
         day1IcpPlan = Self.decodeIfPresent(Day1IcpPlan.self, from: container, forKey: .day1IcpPlan)
         day1SituationSummary = Self.decodeIfPresent(Day1SituationSummary.self, from: container, forKey: .day1SituationSummary)
         day1GoalSelection = Self.decodeIfPresent(Day1GoalSelection.self, from: container, forKey: .day1GoalSelection)
+        day1SurfaceReview = Self.decodeIfPresent(Day1SurfaceReview.self, from: container, forKey: .day1SurfaceReview)
         degraded = Self.decodeIfPresent(Bool.self, from: container, forKey: .degraded)
         degradedReason = Self.decodeIfPresent(String.self, from: container, forKey: .degradedReason)
         degradedProvider = Self.decodeIfPresent(String.self, from: container, forKey: .degradedProvider)

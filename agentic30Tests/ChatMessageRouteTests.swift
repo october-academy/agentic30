@@ -684,7 +684,7 @@ struct StructuredPromptSubmissionStateTests {
         #expect(viewModel.activeDay1HandoffPrompt == nil)
     }
 
-    @MainActor @Test func activeDay1DocumentReviewPromptFindsJudgePrompt() {
+    @MainActor @Test func activeDay1DocumentReviewPromptExcludesJudgePrompt() {
         let viewModel = AgenticViewModel(activateAppForAuth: {})
         let prompt = Self.makeIddPrompt(docType: "day1_doc_handoff_judge", mode: "office_hours")
         viewModel.replaceSessionsForTesting(
@@ -693,10 +693,10 @@ struct StructuredPromptSubmissionStateTests {
         )
 
         #expect(viewModel.activeDay1DocHandoffJudgePrompt?.requestId == prompt.requestId)
-        #expect(viewModel.activeDay1DocumentReviewPrompt?.requestId == prompt.requestId)
+        #expect(viewModel.activeDay1DocumentReviewPrompt == nil)
     }
 
-    @MainActor @Test func activeDay1DocumentReviewPromptFindsNewReviewSessionWhenNotSelected() {
+    @MainActor @Test func activeDay1DocHandoffJudgePromptFindsNewReviewSessionWhenNotSelected() {
         let viewModel = AgenticViewModel(activateAppForAuth: {})
         let prompt = Self.makeIddPrompt(
             sessionId: "day1-review-session",
@@ -712,7 +712,7 @@ struct StructuredPromptSubmissionStateTests {
         )
 
         #expect(viewModel.activeDay1DocHandoffJudgePrompt?.requestId == prompt.requestId)
-        #expect(viewModel.activeDay1DocumentReviewPrompt?.requestId == prompt.requestId)
+        #expect(viewModel.activeDay1DocumentReviewPrompt == nil)
     }
 
     @MainActor @Test func day1BulkHandoffJudgeBlockWaitsForStructuredPrompt() throws {
@@ -758,7 +758,8 @@ struct StructuredPromptSubmissionStateTests {
 
         #expect(viewModel.day1DocHandoffAwaitingFollowupPrompt == false)
         #expect(viewModel.day1DocHandoffPendingDocType == nil)
-        #expect(viewModel.activeDay1DocumentReviewPrompt?.requestId == prompt.requestId)
+        #expect(viewModel.activeDay1DocHandoffJudgePrompt?.requestId == prompt.requestId)
+        #expect(viewModel.activeDay1DocumentReviewPrompt == nil)
     }
 
     @MainActor @Test func day1BulkHandoffJudgePromptClearsBusyAndKeepsErrorSecondary() throws {
@@ -770,7 +771,8 @@ struct StructuredPromptSubmissionStateTests {
 
         #expect(viewModel.day1DocHandoffPendingDocType == nil)
         #expect(viewModel.day1DocHandoffAwaitingFollowupPrompt == false)
-        #expect(viewModel.activeDay1DocumentReviewPrompt?.requestId == prompt.requestId)
+        #expect(viewModel.activeDay1DocHandoffJudgePrompt?.requestId == prompt.requestId)
+        #expect(viewModel.activeDay1DocumentReviewPrompt == nil)
 
         let event = try JSONDecoder().decode(SidecarEvent.self, from: """
         {
@@ -788,7 +790,8 @@ struct StructuredPromptSubmissionStateTests {
 
         #expect(viewModel.day1DocHandoffPendingDocType == nil)
         #expect(viewModel.day1DocHandoffError == "Office Hours 증거 judge가 문서 리뷰를 보류했습니다.")
-        #expect(viewModel.activeDay1DocumentReviewPrompt?.requestId == prompt.requestId)
+        #expect(viewModel.activeDay1DocHandoffJudgePrompt?.requestId == prompt.requestId)
+        #expect(viewModel.activeDay1DocumentReviewPrompt == nil)
     }
 
     @MainActor @Test func day1HandoffReviewRetryProgressRestoresBulkBusyState() {
@@ -816,7 +819,7 @@ struct StructuredPromptSubmissionStateTests {
         #expect(viewModel.day1DocHandoffError?.contains("실행 보조 앱 연결") == true)
     }
 
-    @MainActor @Test func day1BulkHandoffJudgeErrorClearsAllPending() throws {
+    @MainActor @Test func day1BulkHandoffJudgeErrorKeepsFollowupWaitWhenPromptIsMissing() throws {
         let viewModel = AgenticViewModel(activateAppForAuth: {})
         viewModel.setDay1DocHandoffPendingDocTypeForTesting("all")
 
@@ -835,6 +838,7 @@ struct StructuredPromptSubmissionStateTests {
         viewModel.applySidecarEventForTesting(event)
 
         #expect(viewModel.day1DocHandoffPendingDocType == nil)
+        #expect(viewModel.day1DocHandoffAwaitingFollowupPrompt == true)
         #expect(viewModel.day1DocHandoffError == "Office Hours 증거 judge가 문서 리뷰를 보류했습니다.")
     }
 

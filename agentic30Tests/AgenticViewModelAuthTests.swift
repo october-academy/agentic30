@@ -609,6 +609,30 @@ final class AgenticViewModelAuthTests {
         #expect(refreshPayloads[0]["workspaceRoot"] as? String == workspace.path)
     }
 
+    @Test @MainActor func markFoundationDayCompletedCapturesTelemetryOnce() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        var captures: [PostHogTelemetryCapture] = []
+        PostHogTelemetry.captureSink = { captures.append($0) }
+        defer { PostHogTelemetry.resetTestingHooks() }
+
+        let result = viewModel.markFoundationDayCompleted(1)
+        _ = viewModel.markFoundationDayCompleted(1)
+
+        let completedCaptures = captures.filter { $0.event == "mac_foundation_day_completed" }
+        try #require(completedCaptures.count == 1)
+        #expect(result.completedDay == 1)
+        #expect(completedCaptures[0].properties["completed_day"] as? Int == 1)
+        #expect(completedCaptures[0].properties["unlocked_day"] as? Int == 2)
+        #expect(completedCaptures[0].properties["completed_day_count"] as? Int == 1)
+    }
+
     @Test @MainActor func workspaceScanResultPersistsAndHydratesDay1PlanAcrossLaunches() async throws {
         let (workspace, cleanupWorkspace) = try Self.installTemporaryWorkspace()
         let appSupport = FileManager.default.temporaryDirectory

@@ -2591,7 +2591,7 @@ private struct OpenDesignBipDraftPanel: View {
     }
 }
 
-private struct OpenDesignNewsShell: View {
+struct OpenDesignNewsShell: View {
     let layout: OpenDesignDayLayoutMetrics
     let openSearch: () -> Void
     let snapshot: NewsMarketRadarSnapshot
@@ -2602,7 +2602,7 @@ private struct OpenDesignNewsShell: View {
     let openSettings: () -> Void
 
     var body: some View {
-        Group {
+        HStack(spacing: 0) {
             if layout.showsTaskSidebar {
                 ZStack {
                     NewsMarketRadarSidebarView(

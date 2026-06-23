@@ -416,9 +416,9 @@ struct OpenDesignDayContent {
     ) -> [RailItem] {
         visibleRailItems([
             RailItem(id: "today", title: todayTitle, systemImage: "calendar", isActive: true, hasNewDot: false, route: todayRoute),
-            RailItem(id: "briefing", title: "아침 브리핑", systemImage: "sunrise", isActive: false, hasNewDot: false, route: .morningBriefing),
             RailItem(id: "strategy", title: "전략", systemImage: "chart.line.uptrend.xyaxis", isActive: false, hasNewDot: false, route: .strategy),
             RailItem(id: "news", title: "뉴스", systemImage: "newspaper", isActive: false, hasNewDot: false, route: .inert),
+            RailItem(id: "briefing", title: "아침 브리핑", systemImage: "sunrise", isActive: false, hasNewDot: false, route: .morningBriefing),
             RailItem(id: "settings", title: "설정", systemImage: "gearshape", isActive: false, hasNewDot: false, route: .settings),
         ], showsDevelopmentOnlyReferencePages: showsDevelopmentOnlyReferencePages)
     }
@@ -1568,7 +1568,7 @@ struct OpenDesignDayContent {
             SearchItem(id: "page-bip", kind: .page, title: "공개 기록", subtitle: "공개 실행 기록", day: nil, systemImage: "doc.text", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "page-news", kind: .page, title: "뉴스", subtitle: "안 읽음 17건 · 큐레이션", day: nil, systemImage: "newspaper", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "page-history", kind: .page, title: "히스토리 · 타임라인", subtitle: "변경 · 결정 흐름", day: nil, systemImage: "clock.arrow.circlepath", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day1", kind: .task, title: "먼저 도울 사람을 정해요", subtitle: "Office Hours", day: "Day 1", systemImage: "circle.dotted", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .officeHours),
+            SearchItem(id: "task-day1", kind: .task, title: "처음 보여줄 문장", subtitle: "Day 1", day: "Day 1", systemImage: "circle.dotted", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .officeHours),
             SearchItem(id: "task-day2", kind: .task, title: "시장 신호 읽기", subtitle: "시장", day: "Day 2", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day3", kind: .task, title: "실제 행동 인터뷰 ×3", subtitle: "인터뷰", day: "Day 3", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day4", kind: .task, title: "10× 첫 진입점 찾기", subtitle: "진입점", day: "Day 4", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
@@ -1581,10 +1581,10 @@ struct OpenDesignDayContent {
             SearchItem(id: "task-day15", kind: .task, title: "공개 기록 첫 글", subtitle: "공개 기록", day: "Day 15", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D14 해제", targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day22", kind: .task, title: "첫 매출 요청 · 가격", subtitle: "매출", day: "Day 22", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D21 해제", targetSectionID: nil, route: .inert),
             SearchItem(id: "section-signals", kind: .section, title: "근거", subtitle: "workspace · interviews · 공개 기록", day: nil, systemImage: "waveform.path.ecg", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "signals", route: .officeHours),
-            SearchItem(id: "section-mission", kind: .section, title: "핵심 가설 확정", subtitle: "시작", day: nil, systemImage: "flag", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "mission", route: .officeHours),
+            SearchItem(id: "section-mission", kind: .section, title: "처음 보여줄 문장", subtitle: "시작", day: nil, systemImage: "flag", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "mission", route: .officeHours),
             SearchItem(id: "section-interview1", kind: .section, title: "인터뷰 1 — 거리", subtitle: "3분 · 직감 OK · 바꿀 수 있음", day: nil, systemImage: "bubble.left", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1", route: .officeHours),
             SearchItem(id: "section-picker", kind: .section, title: "고객 후보 4지선다", subtitle: "직접 만날 사람 후보", day: nil, systemImage: "scope", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1-options", route: .officeHours),
-            SearchItem(id: "section-final", kind: .section, title: "핵심 가설 확정", subtitle: "다음 검증 기준", day: nil, systemImage: "target", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "final-icp", route: .officeHours),
+            SearchItem(id: "section-final", kind: .section, title: "처음 보여줄 문장", subtitle: "bundle review", day: nil, systemImage: "target", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "final-icp", route: .officeHours),
             SearchItem(id: "section-guide", kind: .section, title: "진행 가이드", subtitle: "Day 1 흐름 보기", day: nil, systemImage: "sparkles", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "top", route: .officeHours),
         ], showsDevelopmentOnlyReferencePages: showsDevelopmentOnlyReferencePages)
     }
@@ -1672,8 +1672,8 @@ struct OpenDesignDayContent {
                 items.append(SearchItem(
                     id: item.id,
                     kind: item.kind,
-                    title: "핵심 가설 확정",
-                    subtitle: "다음 검증 기준",
+                    title: "처음 보여줄 문장",
+                    subtitle: "bundle review",
                     day: item.day,
                     systemImage: item.systemImage,
                     isActive: item.isActive,
@@ -2256,7 +2256,209 @@ nonisolated func openDesignRailDestinationAfterOpeningSearch(
     destination
 }
 
-nonisolated func openDesignRailNavigationEffect(for item: OpenDesignDayContent.RailItem) -> OpenDesignRailNavigationEffect {
+nonisolated func openDesignTelemetryRoute(_ route: OpenDesignDayContent.RailItem.Route) -> String {
+    switch route {
+    case .today:
+        return "today"
+    case .search:
+        return "search"
+    case .officeHours:
+        return "office_hours"
+    case .morningBriefing:
+        return "morning_briefing"
+    case .strategy:
+        return "strategy"
+    case .settings:
+        return "settings"
+    case .inert:
+        return "inert"
+    }
+}
+
+nonisolated func openDesignTelemetryRoute(_ destination: OpenDesignRailDestination) -> String {
+    switch destination {
+    case .today:
+        return "today"
+    case .officeHours:
+        return "office_hours"
+    case .morningBriefing:
+        return "morning_briefing"
+    case .strategy:
+        return "strategy"
+    case .reference(let page):
+        return page.rawValue
+    }
+}
+
+nonisolated func openDesignTelemetrySurface(
+    _ destination: OpenDesignRailDestination,
+    routesTodayToOfficeHours: Bool
+) -> String {
+    switch destination.surfaceKind(routesTodayToOfficeHours: routesTodayToOfficeHours) {
+    case .today:
+        return "today"
+    case .officeHours:
+        return "office_hours"
+    case .morningBriefing:
+        return "morning_briefing"
+    case .strategy:
+        return "strategy"
+    case .reference(let page):
+        return page.rawValue
+    }
+}
+
+nonisolated enum OpenDesignRailFeature: String, CaseIterable, Hashable {
+    case strategy
+    case news
+    case morningBriefing = "briefing"
+
+    var railItemID: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .morningBriefing:
+            return "아침 브리핑"
+        case .strategy:
+            return "전략"
+        case .news:
+            return "뉴스"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .morningBriefing:
+            return "sunrise"
+        case .strategy:
+            return "chart.line.uptrend.xyaxis"
+        case .news:
+            return "newspaper"
+        }
+    }
+
+    var requiredCompletedDay: Int {
+        switch self {
+        case .strategy:
+            return 1
+        case .news:
+            return 2
+        case .morningBriefing:
+            return 3
+        }
+    }
+
+    var requiredStep: String {
+        switch self {
+        case .strategy:
+            return "first_interview"
+        case .news, .morningBriefing:
+            return "interview"
+        }
+    }
+
+    var destination: OpenDesignRailDestination {
+        switch self {
+        case .morningBriefing:
+            return .morningBriefing
+        case .strategy:
+            return .strategy
+        case .news:
+            return .reference(.news)
+        }
+    }
+
+    init?(railItemID: String) {
+        self.init(rawValue: railItemID)
+    }
+
+    init?(destination: OpenDesignRailDestination) {
+        switch destination {
+        case .morningBriefing:
+            self = .morningBriefing
+        case .strategy:
+            self = .strategy
+        case .reference(.news):
+            self = .news
+        default:
+            return nil
+        }
+    }
+}
+
+nonisolated enum OpenDesignRailAccessState: Hashable {
+    case unlocked
+    case locked(requiredCompletedDay: Int, requiredStep: String)
+
+    var isLocked: Bool {
+        if case .locked = self { return true }
+        return false
+    }
+
+    var requiredCompletedDay: Int? {
+        guard case .locked(let day, _) = self else { return nil }
+        return day
+    }
+
+    var requiredStep: String? {
+        guard case .locked(_, let step) = self else { return nil }
+        return step
+    }
+}
+
+nonisolated enum OpenDesignRailAccessPolicy {
+    static func state(
+        for feature: OpenDesignRailFeature,
+        dayProgress: DayProgress?
+    ) -> OpenDesignRailAccessState {
+        guard dayProgress?.hasCompletedProgramDay(feature.requiredCompletedDay) == true else {
+            return .locked(
+                requiredCompletedDay: feature.requiredCompletedDay,
+                requiredStep: feature.requiredStep
+            )
+        }
+        return .unlocked
+    }
+
+    static func state(
+        for item: OpenDesignDayContent.RailItem,
+        dayProgress: DayProgress?
+    ) -> OpenDesignRailAccessState {
+        guard let feature = OpenDesignRailFeature(railItemID: item.id) else {
+            return .unlocked
+        }
+        return state(for: feature, dayProgress: dayProgress)
+    }
+
+    static func state(
+        for destination: OpenDesignRailDestination,
+        dayProgress: DayProgress?
+    ) -> OpenDesignRailAccessState {
+        guard let feature = OpenDesignRailFeature(destination: destination) else {
+            return .unlocked
+        }
+        return state(for: feature, dayProgress: dayProgress)
+    }
+
+    static func lockedMessage(for state: OpenDesignRailAccessState) -> String {
+        guard case .locked(let day, _) = state else { return "" }
+        return "Day \(day) 인터뷰를 완료하면 열립니다."
+    }
+}
+
+nonisolated func openDesignRailNavigationEffect(
+    for item: OpenDesignDayContent.RailItem
+) -> OpenDesignRailNavigationEffect {
+    openDesignRailNavigationEffect(for: item, accessState: .unlocked)
+}
+
+nonisolated func openDesignRailNavigationEffect(
+    for item: OpenDesignDayContent.RailItem,
+    accessState: OpenDesignRailAccessState
+) -> OpenDesignRailNavigationEffect {
+    guard !accessState.isLocked else {
+        return .none
+    }
     guard OpenDesignReferencePageKind(railItemID: item.id) == .news else {
         return .none
     }
@@ -3148,8 +3350,45 @@ nonisolated enum OpenDesignRailBadgeTone: Hashable {
 }
 
 nonisolated struct OpenDesignRailItemStatus: Hashable {
-    let badgeTone: OpenDesignRailBadgeTone
+    let badgeTone: OpenDesignRailBadgeTone?
     let accessibilityState: String
+    let isLocked: Bool
+    let tooltipDetail: String?
+
+    init(
+        badgeTone: OpenDesignRailBadgeTone? = nil,
+        accessibilityState: String,
+        isLocked: Bool = false,
+        tooltipDetail: String? = nil
+    ) {
+        self.badgeTone = badgeTone
+        self.accessibilityState = accessibilityState
+        self.isLocked = isLocked
+        self.tooltipDetail = tooltipDetail
+    }
+}
+
+extension OpenDesignRailAccessPolicy {
+    static func status(
+        for state: OpenDesignRailAccessState,
+        dayProgressLoaded: Bool
+    ) -> OpenDesignRailItemStatus? {
+        guard case .locked(let requiredDay, let requiredStep) = state else {
+            return nil
+        }
+        if !dayProgressLoaded {
+            return OpenDesignRailItemStatus(
+                accessibilityState: "locked, progress unavailable",
+                isLocked: true,
+                tooltipDetail: "진행 상태를 아직 불러오지 못했습니다."
+            )
+        }
+        return OpenDesignRailItemStatus(
+            accessibilityState: "locked, requires Day \(requiredDay) \(requiredStep) done",
+            isLocked: true,
+            tooltipDetail: lockedMessage(for: state)
+        )
+    }
 }
 
 nonisolated func openDesignRailAccessibilityValue(
@@ -4289,6 +4528,8 @@ private extension View {
 
 struct OpenDesignDayPageView: View {
     let content: OpenDesignDayContent
+    let authSession: MacAuthSession?
+    let dayProgress: DayProgress?
     let openSettings: () -> Void
     let submitStructuredPromptChoice: (OpenDesignDayAnswerSubmission) -> Void
     let newsMarketRadar: NewsMarketRadarSnapshot
@@ -4313,6 +4554,10 @@ struct OpenDesignDayPageView: View {
     let workHistory: WorkHistorySnapshot
     let refreshWorkHistory: () -> Void
     let prepareWorkHistory: () -> Void
+    let day1SurfaceReview: Day1SurfaceReview?
+    let day1SurfaceReviewGenerating: Bool
+    let day1SurfaceReviewDecisionPending: String?
+    let day1SurfaceReviewError: String?
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
     let officeHoursScreen: ((Bool) -> AnyView)?
@@ -4327,6 +4572,8 @@ struct OpenDesignDayPageView: View {
     let day1HandoffError: String?
     let day1SituationSummary: Day1SituationSummary?
     let onChooseDay1SituationGoal: (String) -> Void
+    let requestDay1SurfaceReview: (String, String) -> Void
+    let decideDay1SurfaceReview: (String) -> Void
     let startDay1DocHandoff: (String, [String: Any]) -> Void
     let completeDay: () -> Void
     let advanceToNextDay: () -> Void
@@ -4353,6 +4600,8 @@ struct OpenDesignDayPageView: View {
         interaction: Binding<OpenDesignDayInteractionState>,
         railDestination: Binding<OpenDesignRailDestination> = .constant(.today),
         pendingScrollRequest: Binding<OpenDesignScrollRequest?> = .constant(nil),
+        authSession: MacAuthSession? = nil,
+        dayProgress: DayProgress? = nil,
         openSettings: @escaping () -> Void,
         settingsScreen: AnyView? = nil,
         requiresDay1Goal: Bool = false,
@@ -4377,6 +4626,10 @@ struct OpenDesignDayPageView: View {
         workHistory: WorkHistorySnapshot = .empty,
         refreshWorkHistory: @escaping () -> Void = {},
         prepareWorkHistory: @escaping () -> Void = {},
+        day1SurfaceReview: Day1SurfaceReview? = nil,
+        day1SurfaceReviewGenerating: Bool = false,
+        day1SurfaceReviewDecisionPending: String? = nil,
+        day1SurfaceReviewError: String? = nil,
         day1DocPreviews: [IddDocPreview] = [],
         day1HandoffPromptCard: AnyView? = nil,
         officeHoursScreen: ((Bool) -> AnyView)? = nil,
@@ -4391,6 +4644,8 @@ struct OpenDesignDayPageView: View {
         day1HandoffError: String? = nil,
         day1SituationSummary: Day1SituationSummary? = nil,
         onChooseDay1SituationGoal: @escaping (String) -> Void = { _ in },
+        requestDay1SurfaceReview: @escaping (String, String) -> Void = { _, _ in },
+        decideDay1SurfaceReview: @escaping (String) -> Void = { _ in },
         startDay1DocHandoff: @escaping (String, [String: Any]) -> Void = { _, _ in },
         completeDay: @escaping () -> Void = {},
         advanceToNextDay: @escaping () -> Void = {},
@@ -4399,6 +4654,8 @@ struct OpenDesignDayPageView: View {
         officeHoursRoutedDayNumbers: Set<Int> = []
     ) {
         self.content = content
+        self.authSession = authSession
+        self.dayProgress = dayProgress
         _interaction = interaction
         _railDestination = railDestination
         _pendingScrollRequest = pendingScrollRequest
@@ -4426,6 +4683,10 @@ struct OpenDesignDayPageView: View {
         self.workHistory = workHistory
         self.refreshWorkHistory = refreshWorkHistory
         self.prepareWorkHistory = prepareWorkHistory
+        self.day1SurfaceReview = day1SurfaceReview
+        self.day1SurfaceReviewGenerating = day1SurfaceReviewGenerating
+        self.day1SurfaceReviewDecisionPending = day1SurfaceReviewDecisionPending
+        self.day1SurfaceReviewError = day1SurfaceReviewError
         self.day1DocPreviews = day1DocPreviews
         self.day1HandoffPromptCard = day1HandoffPromptCard
         self.officeHoursScreen = officeHoursScreen
@@ -4440,6 +4701,8 @@ struct OpenDesignDayPageView: View {
         self.day1HandoffError = day1HandoffError
         self.day1SituationSummary = day1SituationSummary
         self.onChooseDay1SituationGoal = onChooseDay1SituationGoal
+        self.requestDay1SurfaceReview = requestDay1SurfaceReview
+        self.decideDay1SurfaceReview = decideDay1SurfaceReview
         self.startDay1DocHandoff = startDay1DocHandoff
         self.completeDay = completeDay
         self.advanceToNextDay = advanceToNextDay
@@ -4475,6 +4738,8 @@ struct OpenDesignDayPageView: View {
                     railDestination: railDestination,
                     railSurfaceKind: railSurfaceKind,
                     pendingScrollRequest: $pendingScrollRequest,
+                    authSession: authSession,
+                    dayProgress: dayProgress,
                     searchPulseTarget: $searchPulseTarget,
                     layout: layout,
                     openSearch: openSearch,
@@ -4503,6 +4768,10 @@ struct OpenDesignDayPageView: View {
                     workHistory: workHistory,
                     refreshWorkHistory: refreshWorkHistory,
                     prepareWorkHistory: prepareWorkHistory,
+                    day1SurfaceReview: day1SurfaceReview,
+                    day1SurfaceReviewGenerating: day1SurfaceReviewGenerating,
+                    day1SurfaceReviewDecisionPending: day1SurfaceReviewDecisionPending,
+                    day1SurfaceReviewError: day1SurfaceReviewError,
                     day1DocPreviews: day1DocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
                     officeHoursScreen: officeHoursScreen,
@@ -4519,6 +4788,8 @@ struct OpenDesignDayPageView: View {
                     day1HandoffError: day1HandoffError,
                     day1SituationSummary: day1SituationSummary,
                     onChooseDay1SituationGoal: onChooseDay1SituationGoal,
+                    requestDay1SurfaceReview: requestDay1SurfaceReview,
+                    decideDay1SurfaceReview: decideDay1SurfaceReview,
                     startDay1DocHandoff: startDay1DocHandoff,
                     submitStep: submitStep,
                     acceptMission: acceptMission,
@@ -4636,7 +4907,32 @@ struct OpenDesignDayPageView: View {
         return false
     }
 
+    private var telemetryDay: Int {
+        content.market?.dayNumber ?? 1
+    }
+
+    private var telemetrySurface: String {
+        openDesignTelemetrySurface(railDestination, routesTodayToOfficeHours: routesTodayToOfficeHours)
+    }
+
+    private var telemetryRoute: String {
+        openDesignTelemetryRoute(railDestination)
+    }
+
+    private func railAccessState(for item: OpenDesignDayContent.RailItem) -> OpenDesignRailAccessState {
+        OpenDesignRailAccessPolicy.state(for: item, dayProgress: dayProgress)
+    }
+
     private func openSearch() {
+        PostHogTelemetry.capture(
+            "mac_day_page_search_opened",
+            properties: [
+                "surface": telemetrySurface,
+                "day": telemetryDay,
+                "route": telemetryRoute,
+            ],
+            authSession: authSession
+        )
         searchQuery = ""
         selectedSearchIndex = 0
         railDestination = openDesignRailDestinationAfterOpeningSearch(current: railDestination)
@@ -4686,6 +4982,17 @@ struct OpenDesignDayPageView: View {
 
     private func activateSearchItem(_ item: OpenDesignDayContent.SearchItem) {
         guard !item.isLocked else { return }
+        PostHogTelemetry.capture(
+            "mac_day_page_search_result_selected",
+            properties: [
+                "item_id": item.id,
+                "kind": item.kind.rawValue,
+                "route": openDesignTelemetryRoute(item.route),
+                "target_section": item.targetSectionID ?? "",
+                "day": openDesignFoundationDayNumber(taskID: item.id) ?? telemetryDay,
+            ],
+            authSession: authSession
+        )
         if item.kind == .task,
            let dayNumber = openDesignFoundationDayNumber(taskID: item.id) {
             closeSearch()
@@ -4754,9 +5061,14 @@ struct OpenDesignDayPageView: View {
     }
 
     private func activateRailItem(_ item: OpenDesignDayContent.RailItem) {
+        let accessState = railAccessState(for: item)
         if let destination = openDesignRailDestination(for: item, routesTodayToOfficeHours: routesTodayToOfficeHours) {
             openRailDestination(destination)
-            if openDesignRailNavigationEffect(for: item) == .prepareNewsMarketRadar {
+            guard !accessState.isLocked else {
+                recordLockedRailActivation(item: item, accessState: accessState)
+                return
+            }
+            if openDesignRailNavigationEffect(for: item, accessState: accessState) == .prepareNewsMarketRadar {
                 prepareNewsMarketRadar()
             }
             return
@@ -4779,6 +5091,24 @@ struct OpenDesignDayPageView: View {
         case .inert:
             break
         }
+    }
+
+    private func recordLockedRailActivation(
+        item: OpenDesignDayContent.RailItem,
+        accessState: OpenDesignRailAccessState
+    ) {
+        guard case .locked(let requiredDay, let requiredStep) = accessState else { return }
+        PostHogTelemetry.capture(
+            "mac_open_design_locked_rail_selected",
+            properties: [
+                "rail_item_id": item.id,
+                "route": openDesignTelemetryRoute(item.route),
+                "required_day": requiredDay,
+                "required_step": requiredStep,
+                "day_progress_loaded": dayProgress != nil,
+            ],
+            authSession: authSession
+        )
     }
 
     private func openTodayFromRail() {
@@ -5025,7 +5355,7 @@ struct OpenDesignDayPageView: View {
         if interaction.dayCompleted {
             progress = "STEP \(interaction.workflowStepCount) / \(interaction.workflowStepCount) · Day 1 완료"
         } else if interaction.allInterviewsSubmitted {
-            progress = "STEP \(interaction.finalStepID + 1) / \(interaction.workflowStepCount) · 핵심 가설 확정 대기"
+            progress = "STEP \(interaction.finalStepID + 1) / \(interaction.workflowStepCount) · 처음 보여줄 문장 대기"
         } else {
             progress = "STEP \(interaction.normalizedActiveStepID + 1) / \(interaction.workflowStepCount) · 질문 \(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count)"
         }
@@ -5092,6 +5422,8 @@ struct OpenDesignDayShell: View {
     let railDestination: OpenDesignRailDestination
     let railSurfaceKind: OpenDesignRailSurfaceKind
     @Binding var pendingScrollRequest: OpenDesignScrollRequest?
+    let authSession: MacAuthSession?
+    let dayProgress: DayProgress?
     @Binding var searchPulseTarget: String?
     let layout: OpenDesignDayLayoutMetrics
     let openSearch: () -> Void
@@ -5120,6 +5452,10 @@ struct OpenDesignDayShell: View {
     let workHistory: WorkHistorySnapshot
     let refreshWorkHistory: () -> Void
     let prepareWorkHistory: () -> Void
+    let day1SurfaceReview: Day1SurfaceReview?
+    let day1SurfaceReviewGenerating: Bool
+    let day1SurfaceReviewDecisionPending: String?
+    let day1SurfaceReviewError: String?
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
     let officeHoursScreen: ((Bool) -> AnyView)?
@@ -5136,6 +5472,8 @@ struct OpenDesignDayShell: View {
     let day1HandoffError: String?
     let day1SituationSummary: Day1SituationSummary?
     let onChooseDay1SituationGoal: (String) -> Void
+    let requestDay1SurfaceReview: (String, String) -> Void
+    let decideDay1SurfaceReview: (String) -> Void
     let startDay1DocHandoff: (String, [String: Any]) -> Void
     let submitStep: (OpenDesignDayContent.InterviewStep, Int) -> Void
     let acceptMission: () -> Void
@@ -5171,6 +5509,8 @@ struct OpenDesignDayShell: View {
         railDestination: OpenDesignRailDestination,
         railSurfaceKind: OpenDesignRailSurfaceKind,
         pendingScrollRequest: Binding<OpenDesignScrollRequest?>,
+        authSession: MacAuthSession?,
+        dayProgress: DayProgress?,
         searchPulseTarget: Binding<String?>,
         layout: OpenDesignDayLayoutMetrics,
         openSearch: @escaping () -> Void,
@@ -5199,6 +5539,10 @@ struct OpenDesignDayShell: View {
         workHistory: WorkHistorySnapshot,
         refreshWorkHistory: @escaping () -> Void,
         prepareWorkHistory: @escaping () -> Void,
+        day1SurfaceReview: Day1SurfaceReview?,
+        day1SurfaceReviewGenerating: Bool,
+        day1SurfaceReviewDecisionPending: String?,
+        day1SurfaceReviewError: String?,
         day1DocPreviews: [IddDocPreview],
         day1HandoffPromptCard: AnyView?,
         officeHoursScreen: ((Bool) -> AnyView)?,
@@ -5215,6 +5559,8 @@ struct OpenDesignDayShell: View {
         day1HandoffError: String?,
         day1SituationSummary: Day1SituationSummary?,
         onChooseDay1SituationGoal: @escaping (String) -> Void,
+        requestDay1SurfaceReview: @escaping (String, String) -> Void,
+        decideDay1SurfaceReview: @escaping (String) -> Void,
         startDay1DocHandoff: @escaping (String, [String: Any]) -> Void,
         submitStep: @escaping (OpenDesignDayContent.InterviewStep, Int) -> Void,
         acceptMission: @escaping () -> Void,
@@ -5230,6 +5576,8 @@ struct OpenDesignDayShell: View {
         self.railDestination = railDestination
         self.railSurfaceKind = railSurfaceKind
         _pendingScrollRequest = pendingScrollRequest
+        self.authSession = authSession
+        self.dayProgress = dayProgress
         _searchPulseTarget = searchPulseTarget
         self.layout = layout
         self.openSearch = openSearch
@@ -5258,6 +5606,10 @@ struct OpenDesignDayShell: View {
         self.workHistory = workHistory
         self.refreshWorkHistory = refreshWorkHistory
         self.prepareWorkHistory = prepareWorkHistory
+        self.day1SurfaceReview = day1SurfaceReview
+        self.day1SurfaceReviewGenerating = day1SurfaceReviewGenerating
+        self.day1SurfaceReviewDecisionPending = day1SurfaceReviewDecisionPending
+        self.day1SurfaceReviewError = day1SurfaceReviewError
         self.day1DocPreviews = day1DocPreviews
         self.day1HandoffPromptCard = day1HandoffPromptCard
         self.officeHoursScreen = officeHoursScreen
@@ -5274,6 +5626,8 @@ struct OpenDesignDayShell: View {
         self.day1HandoffError = day1HandoffError
         self.day1SituationSummary = day1SituationSummary
         self.onChooseDay1SituationGoal = onChooseDay1SituationGoal
+        self.requestDay1SurfaceReview = requestDay1SurfaceReview
+        self.decideDay1SurfaceReview = decideDay1SurfaceReview
         self.startDay1DocHandoff = startDay1DocHandoff
         self.submitStep = submitStep
         self.acceptMission = acceptMission
@@ -5305,16 +5659,60 @@ struct OpenDesignDayShell: View {
         )
     }
 
+    private var activeLockedRailFeature: OpenDesignRailFeature? {
+        guard let feature = OpenDesignRailFeature(destination: railDestination),
+              OpenDesignRailAccessPolicy
+                .state(for: feature, dayProgress: dayProgress)
+                .isLocked else {
+            return nil
+        }
+        return feature
+    }
+
+    private var activeLockedRailAccessState: OpenDesignRailAccessState? {
+        guard let feature = activeLockedRailFeature else { return nil }
+        return OpenDesignRailAccessPolicy.state(for: feature, dayProgress: dayProgress)
+    }
+
+    private var hasLoadedDayProgress: Bool {
+        dayProgress != nil
+    }
+
     private var railItemStatuses: [String: OpenDesignRailItemStatus] {
         var statuses: [String: OpenDesignRailItemStatus] = [:]
         if let briefingRailStatus { statuses["briefing"] = briefingRailStatus }
         if let newsRailStatus { statuses["news"] = newsRailStatus }
+        for feature in OpenDesignRailFeature.allCases {
+            let state = OpenDesignRailAccessPolicy.state(for: feature, dayProgress: dayProgress)
+            if let lockedStatus = OpenDesignRailAccessPolicy.status(
+                for: state,
+                dayProgressLoaded: hasLoadedDayProgress
+            ) {
+                statuses[feature.railItemID] = lockedStatus
+            }
+        }
         return statuses
+    }
+
+    private func openTodayFromLockedPreview() {
+        guard let today = content.railItems.first(where: { $0.id == "today" }) else { return }
+        activateRailItem(today)
+    }
+
+    @ViewBuilder
+    private func lockedRailPreviewContent(for feature: OpenDesignRailFeature) -> some View {
+        OpenDesignLockedRailMockSurface(feature: feature)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            if let selectedReferencePage {
+            if let activeLockedRailFeature, let activeLockedRailAccessState {
+                OpenDesignLockedRailTitlebar(
+                    feature: activeLockedRailFeature,
+                    accessState: activeLockedRailAccessState,
+                    openSearch: toggleSearch
+                )
+            } else if let selectedReferencePage {
                 OpenDesignReferenceTitlebar(
                     page: OpenDesignReferenceCatalog.page(selectedReferencePage),
                     openSearch: toggleSearch,
@@ -5338,6 +5736,9 @@ struct OpenDesignDayShell: View {
                     market: market,
                     openSearch: toggleSearch,
                     shareSummary: shareSummary,
+                    authSession: authSession,
+                    telemetrySurface: "market",
+                    telemetryDay: market.dayNumber,
                     isRightSidebarVisible: layout.showsMetaPanel,
                     toggleRightSidebar: toggleRightSidebar
                 )
@@ -5345,6 +5746,9 @@ struct OpenDesignDayShell: View {
                 OpenDesignDayTitlebar(
                     openSearch: toggleSearch,
                     shareSummary: shareSummary,
+                    authSession: authSession,
+                    telemetrySurface: "today",
+                    telemetryDay: 1,
                     isRightSidebarVisible: layout.showsMetaPanel,
                     toggleRightSidebar: toggleRightSidebar
                 )
@@ -5366,9 +5770,20 @@ struct OpenDesignDayShell: View {
                 .background(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.bg : OpenDesignDayColor.bg)
                 .zIndex(20)
                 .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("opendesign.day.rail")
+                    .accessibilityIdentifier("opendesign.day.rail")
 
-                if let selectedReferencePage {
+                if let activeLockedRailFeature, let activeLockedRailAccessState {
+                    OpenDesignLockedRailFeaturePreview(
+                        feature: activeLockedRailFeature,
+                        accessState: activeLockedRailAccessState,
+                        dayProgressLoaded: hasLoadedDayProgress,
+                        goToday: openTodayFromLockedPreview
+                    ) {
+                        lockedRailPreviewContent(for: activeLockedRailFeature)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
+                } else if let selectedReferencePage {
                     if selectedReferencePage == .settings, let settingsScreen {
                         ZStack {
                             settingsScreen
@@ -5473,6 +5888,10 @@ struct OpenDesignDayShell: View {
                             advanceToNextDay: advanceToNextDay,
                             day1DocPreviews: day1DocPreviews,
                             day1HandoffPromptCard: day1HandoffPromptCard,
+                            day1SurfaceReview: day1SurfaceReview,
+                            day1SurfaceReviewGenerating: day1SurfaceReviewGenerating,
+                            day1SurfaceReviewDecisionPending: day1SurfaceReviewDecisionPending,
+                            day1SurfaceReviewError: day1SurfaceReviewError,
                             activeDay1HandoffDocType: activeDay1HandoffDocType,
                             pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                             isDay1HandoffAwaitingFollowupPrompt: isDay1HandoffAwaitingFollowupPrompt,
@@ -5485,6 +5904,8 @@ struct OpenDesignDayShell: View {
                             bipProofSinkAvailable: bipProofSinkAvailable,
                             saveDay1GoalDraft: saveDay1GoalDraft,
                             onChooseDay1SituationGoal: onChooseDay1SituationGoal,
+                            requestDay1SurfaceReview: requestDay1SurfaceReview,
+                            decideDay1SurfaceReview: decideDay1SurfaceReview,
                             startDay1DocHandoff: startDay1DocHandoff,
                             layout: layout
                         )
@@ -5536,6 +5957,9 @@ private struct OpenDesignMarketTitlebar: View {
     let market: OpenDesignDayContent.Market
     let openSearch: () -> Void
     let shareSummary: String
+    let authSession: MacAuthSession?
+    let telemetrySurface: String
+    let telemetryDay: Int
     let isRightSidebarVisible: Bool
     let toggleRightSidebar: () -> Void
 
@@ -5591,6 +6015,14 @@ private struct OpenDesignMarketTitlebar: View {
     }
 
     private func copyShareSummary() {
+        PostHogTelemetry.capture(
+            "mac_day_page_share_summary_copied",
+            properties: [
+                "surface": telemetrySurface,
+                "day": telemetryDay,
+            ],
+            authSession: authSession
+        )
         copyToPasteboard(shareSummary)
         didCopyShare = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
@@ -5602,6 +6034,9 @@ private struct OpenDesignMarketTitlebar: View {
 private struct OpenDesignDayTitlebar: View {
     let openSearch: () -> Void
     let shareSummary: String
+    let authSession: MacAuthSession?
+    let telemetrySurface: String
+    let telemetryDay: Int
     let isRightSidebarVisible: Bool
     let toggleRightSidebar: () -> Void
 
@@ -5657,6 +6092,14 @@ private struct OpenDesignDayTitlebar: View {
     }
 
     private func copyShareSummary() {
+        PostHogTelemetry.capture(
+            "mac_day_page_share_summary_copied",
+            properties: [
+                "surface": telemetrySurface,
+                "day": telemetryDay,
+            ],
+            authSession: authSession
+        )
         copyToPasteboard(shareSummary)
         didCopyShare = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
@@ -5765,6 +6208,1695 @@ private struct OpenDesignStrategyTitlebar: View {
         .background(OpenDesignDayColor.bg)
         .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
         .openDesignWindowTitlebarAccessibility()
+    }
+}
+
+private struct OpenDesignLockedRailTitlebar: View {
+    let feature: OpenDesignRailFeature
+    let accessState: OpenDesignRailAccessState
+    let openSearch: () -> Void
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 8) {
+                Spacer(minLength: 82)
+                Text("Agentic30")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text("/")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                Text(feature.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 4) {
+                Spacer()
+                OpenDesignToolbarButton(
+                    systemImage: "magnifyingglass",
+                    label: "검색 · ⌘ K",
+                    keyboardKey: "k",
+                    accessibilityIdentifier: "opendesign.rail.locked.search",
+                    action: openSearch
+                )
+            }
+            .padding(.trailing, 12)
+        }
+        .frame(height: 36)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+        .openDesignWindowTitlebarAccessibility()
+    }
+}
+
+private struct OpenDesignLockedRailFeaturePreview<PreviewContent: View>: View {
+    let feature: OpenDesignRailFeature
+    let accessState: OpenDesignRailAccessState
+    let dayProgressLoaded: Bool
+    let goToday: () -> Void
+    private let previewContent: PreviewContent
+
+    init(
+        feature: OpenDesignRailFeature,
+        accessState: OpenDesignRailAccessState,
+        dayProgressLoaded: Bool,
+        goToday: @escaping () -> Void,
+        @ViewBuilder previewContent: () -> PreviewContent
+    ) {
+        self.feature = feature
+        self.accessState = accessState
+        self.dayProgressLoaded = dayProgressLoaded
+        self.goToday = goToday
+        self.previewContent = previewContent()
+    }
+
+    private var requiredDay: Int {
+        accessState.requiredCompletedDay ?? feature.requiredCompletedDay
+    }
+
+    private var primaryMessage: String {
+        OpenDesignRailAccessPolicy.lockedMessage(for: accessState)
+    }
+
+    private var secondaryMessage: String? {
+        dayProgressLoaded ? nil : "진행 상태를 아직 불러오지 못했습니다."
+    }
+
+    var body: some View {
+        ZStack {
+            previewContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .blur(radius: 5.0)
+                .overlay {
+                    OpenDesignDayColor.bg.opacity(0.52)
+                        .allowsHitTesting(false)
+                }
+                .clipped()
+                .accessibilityHidden(true)
+
+            lockedCard
+                .padding(24)
+                .zIndex(1)
+        }
+        .background(OpenDesignDayColor.bg)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(feature.title) 잠김. \(primaryMessage)")
+        .accessibilityIdentifier("opendesign.rail.lockedPreview.\(feature.railItemID)")
+    }
+
+    private var lockedCard: some View {
+        VStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(OpenDesignDayColor.surface2)
+                    .frame(width: 54, height: 54)
+                    .overlay(Circle().stroke(OpenDesignDayColor.border, lineWidth: 1))
+                Image(systemName: feature.systemImage)
+                    .font(.system(size: 21, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(OpenDesignDayColor.bg)
+                    .frame(width: 17, height: 17)
+                    .background(Circle().fill(OpenDesignDayColor.fgSecondary))
+                    .offset(x: 18, y: -18)
+            }
+
+            VStack(spacing: 6) {
+                Text(feature.title)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                if let secondaryMessage {
+                    Text(secondaryMessage)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.amber)
+                }
+                Text(primaryMessage)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button(action: goToday) {
+                Label(
+                    requiredDay == 1 ? "오늘로 돌아가기" : "Office Hours로 돌아가기",
+                    systemImage: "calendar"
+                )
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.bg)
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(OpenDesignDayColor.accent)
+                )
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle())
+            .accessibilityIdentifier("opendesign.rail.lockedPreview.cta")
+        }
+        .padding(24)
+        .frame(maxWidth: 380)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(OpenDesignDayColor.elevated.opacity(0.94))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(OpenDesignDayColor.border, lineWidth: 1)
+                )
+        )
+        .shadow(color: .black.opacity(0.28), radius: 28, x: 0, y: 18)
+    }
+}
+
+nonisolated enum OpenDesignLockedRailMockSurfaceKind: String, CaseIterable, Hashable {
+    case newsMarketRadar
+    case morningBriefing
+    case strategy
+}
+
+nonisolated func openDesignLockedRailMockSurfaceKind(
+    for feature: OpenDesignRailFeature
+) -> OpenDesignLockedRailMockSurfaceKind {
+    switch feature {
+    case .news:
+        return .newsMarketRadar
+    case .morningBriefing:
+        return .morningBriefing
+    case .strategy:
+        return .strategy
+    }
+}
+
+private struct OpenDesignLockedRailMockSurface: View {
+    let feature: OpenDesignRailFeature
+
+    var body: some View {
+        Group {
+            switch openDesignLockedRailMockSurfaceKind(for: feature) {
+            case .newsMarketRadar:
+                OpenDesignLockedNewsMockSurface()
+            case .morningBriefing:
+                OpenDesignLockedMorningBriefingMockSurface()
+            case .strategy:
+                OpenDesignLockedStrategyMockSurface()
+            }
+        }
+        .accessibilityIdentifier("opendesign.rail.lockedPreview.mock.\(feature.railItemID)")
+    }
+}
+
+private enum OpenDesignLockedMockTone: Hashable {
+    case accent
+    case amber
+    case rose
+    case sky
+    case muted
+
+    var color: Color {
+        switch self {
+        case .accent:
+            return OpenDesignDayColor.accent
+        case .amber:
+            return OpenDesignDayColor.amber
+        case .rose:
+            return OpenDesignDayColor.rose
+        case .sky:
+            return OpenDesignDayColor.sky
+        case .muted:
+            return OpenDesignDayColor.muted
+        }
+    }
+
+    var dim: Color {
+        color.opacity(self == .muted ? 0.08 : 0.14)
+    }
+}
+
+private struct OpenDesignLockedMockListRow: Identifiable, Hashable {
+    let id: String
+    let systemImage: String
+    let title: String
+    let detail: String
+    var count: String? = nil
+    var tone: OpenDesignLockedMockTone = .accent
+}
+
+private struct OpenDesignLockedNewsCard: Identifiable, Hashable {
+    let id: String
+    let badge: String
+    let title: String
+    let summary: String
+    let why: String
+    let impact: String
+    let confidence: String
+    let sources: [OpenDesignLockedMockListRow]
+}
+
+private struct OpenDesignLockedNewsLaneGroup: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let hypothesis: String
+    let count: String
+    let tone: OpenDesignLockedMockTone
+    let cards: [OpenDesignLockedNewsCard]
+}
+
+private extension NewsMarketRadarSnapshot {
+    static var lockedRailPreview: NewsMarketRadarSnapshot {
+        NewsMarketRadarSnapshot(
+            schemaVersion: 1,
+            generatedAt: lockedPreviewGeneratedAt,
+            nextRefreshAfter: nil,
+            status: NewsMarketRadarStatus(
+                state: "ready",
+                lastSuccessAt: lockedPreviewGeneratedAt,
+                stale: false,
+                error: nil,
+                reason: nil,
+                researchSource: "mock",
+                stage: nil,
+                progressText: nil,
+                elapsedMs: nil,
+                stepIndex: nil,
+                stepCount: nil,
+                partialFailures: nil,
+                durationMs: nil
+            ),
+            workspaceEvidenceRefs: [],
+            lanes: lockedPreviewLanes
+        )
+    }
+
+    private static var lockedPreviewGeneratedAt: Date? {
+        Calendar.current.date(bySettingHour: 8, minute: 40, second: 0, of: Date())
+    }
+
+    private static var lockedPreviewLanes: [NewsMarketRadarLane] {
+        [
+            NewsMarketRadarLane(
+                id: "icp",
+                title: "ICP",
+                hypothesis: "누가 가장 절박한 사용자인가",
+                impact: "medium",
+                confidence: "medium",
+                cards: [
+                    lockedPreviewCard(
+                        id: "icp-narrow",
+                        title: "넓은 관심보다 불타는 문제를 가진 소수 고객이 우선",
+                        summary: "YC Startup Library는 약하게 관심을 보이는 다수보다 불타는 문제를 가진 소수 고객이 더 중요하다고 설명한다. 초기 ICP는 가입자 수보다 실제 매주 쓰고 돈 낼 이유가 있는 절박한 사용자로 좁혀야 한다.",
+                        why: "30일 안에 고객과 매출을 만들려는 사용자는 일반 생산성 개선보다 훨씬 강한 구매 동기를 가질 수 있다.",
+                        sourceTitle: "YC's essential startup advice · YC Startup Library | Y Combinator",
+                        domain: "ycombinator.com",
+                        url: "https://www.ycombinator.com/library/4D-yc-s-essential-startup-advice",
+                        excerpt: "YC는 불타는 문제를 가진 10명의 고객이 약한 관심을 가진 1000명보다 낫다고 설명한다."
+                    ),
+                    lockedPreviewCard(
+                        id: "icp-opportunity",
+                        title: "기회로 보는 사용자와 추가 업무로 보는 사용자를 구분해야 함",
+                        summary: "Paul Graham의 사례는 같은 문제 영역에서도 어떤 사용자는 새 도구를 기회로 보고, 어떤 사용자는 추가 업무로 본다는 점을 보여준다.",
+                        why: "동일한 기능이라도 구매 의지는 문제를 사업 기회로 인식하는 사용자에게서 더 강하게 나온다.",
+                        sourceTitle: "How to Start a Startup",
+                        domain: "paulgraham.com",
+                        url: "https://paulgraham.com/start.html",
+                        excerpt: "초기 예상 고객보다 웹을 사업 기회로 본 소규모 개인 상인에게 초점을 바꾼 사례가 제시된다."
+                    ),
+                    lockedPreviewCard(
+                        id: "icp-paid-proof",
+                        title: "ICP 해석은 가능하지만 유료 대안 근거는 없음",
+                        summary: "현재 근거는 ICP와 초기 고객 선택 원칙에는 유용하지만, 실제 경쟁 제품 결제 페이지나 구매 행동 근거는 부족하다.",
+                        why: "ICP 방향을 가격 전략으로 곧바로 연결하면 과잉 해석이 될 수 있다.",
+                        sourceTitle: "Use-case selling · Handbook · PostHog",
+                        domain: "posthog.com",
+                        url: "https://posthog.com/handbook/growth/use-case-selling/use-case-selling",
+                        excerpt: "사용 사례별 구매 맥락을 분리해 설명한다."
+                    ),
+                    lockedPreviewCard(
+                        id: "icp-builder",
+                        title: "고성장 제품 빌더와 기술 창업자가 더 강한 ICP 신호",
+                        summary: "PostHog Handbook은 고성장 스타트업의 제품 빌더와 기술 창업자를 핵심 대상으로 정의하고, 취미 개발자는 우선순위가 낮다고 설명한다.",
+                        why: "제품의 30일 결과 약속은 취미 프로젝트보다 실제 성장 압박을 가진 사용자에게 더 설득력 있을 가능성이 높다.",
+                        sourceTitle: "Who we build for · Handbook · PostHog",
+                        domain: "posthog.com",
+                        url: "https://posthog.com/handbook/who-we-build-for",
+                        excerpt: "PostHog는 고성장 스타트업의 제품 빌더와 기술 창업자를 우선 ICP로 설명한다."
+                    ),
+                ]
+            ),
+            NewsMarketRadarLane(
+                id: "problem",
+                title: "문제",
+                hypothesis: "그들이 실제로 겪는 비용/마찰은 무엇인가",
+                impact: "high",
+                confidence: "medium",
+                cards: [
+                    lockedPreviewCard(
+                        id: "problem-time",
+                        title: "문제 파악 시간이 직접 비용으로 보인다",
+                        summary: "PostHog Handbook은 버그 재현 시간이 2시간에서 30-60분으로 줄면 컨텍스트 스위칭과 에스컬레이션이 줄어든다고 설명한다.",
+                        why: "코칭이 있으면 좋다는 수준보다 시간 손실과 반복 판단 비용을 잡아야 구매 근거가 생긴다.",
+                        sourceTitle: "Customer Experience · Handbook · PostHog",
+                        domain: "posthog.com",
+                        url: "https://posthog.com/handbook/growth/use-case-selling/customer-experience",
+                        excerpt: "버그 재현 시간이 줄면 엔지니어링 시간이 절약된다는 근거가 제시된다."
+                    ),
+                    lockedPreviewCard(
+                        id: "problem-launch",
+                        title: "출시 전에는 문제가 덜 아프게 느껴진다",
+                        summary: "YC Library는 초기 출시가 아이디어나 실행의 문제를 빨리 드러내며, 출시 후 문제가 더 긴급해진다고 설명한다.",
+                        why: "사용자가 돈을 낼 문제는 콘텐츠 부족보다 공개 출시와 고객 반응 앞에서 생기는 회피와 지연일 가능성이 있다.",
+                        sourceTitle: "The hardest lessons for startups to learn · YC Startup Library",
+                        domain: "ycombinator.com",
+                        url: "https://www.ycombinator.com/library",
+                        excerpt: "출시와 고객 반응이 초기 팀의 실제 문제를 드러낸다."
+                    ),
+                    lockedPreviewCard(
+                        id: "problem-context",
+                        title: "컨텍스트 전환은 반복 판단 비용으로 누적된다",
+                        summary: "프로젝트 기록, 인터뷰, 지표, 실행 로그가 분리되면 매일 다시 판단해야 하는 비용이 생긴다.",
+                        why: "Agentic30의 로컬 기록 루프는 이 판단 재시작 비용을 줄이는 방향이어야 한다.",
+                        sourceTitle: "Customer Experience · Handbook · PostHog",
+                        domain: "posthog.com",
+                        url: "https://posthog.com/handbook/growth/use-case-selling/customer-experience",
+                        excerpt: "문제 재현과 맥락 수집 비용을 제품 가치로 연결한다."
+                    ),
+                    lockedPreviewCard(
+                        id: "problem-no-ask",
+                        title: "유료 ask가 없으면 PMF 판단이 계속 미뤄진다",
+                        summary: "좋은 피드백과 결제 의향은 다르다. 매일 행동 증거를 묶지 않으면 전략 화면도 가설 문서에 머문다.",
+                        why: "locked preview에서도 다음 행동과 증거 루프가 화면 구조의 중심이어야 한다.",
+                        sourceTitle: "Use-case selling · Handbook · PostHog",
+                        domain: "posthog.com",
+                        url: "https://posthog.com/handbook/growth/use-case-selling/use-case-selling",
+                        excerpt: "가치 제안은 구체적인 사용 사례와 구매 순간으로 연결되어야 한다."
+                    ),
+                ]
+            ),
+            NewsMarketRadarLane(
+                id: "alternatives_pricing",
+                title: "대안/가격",
+                hypothesis: "이미 돈을 쓰는 대안과 가격 기준은 무엇인가",
+                impact: "medium",
+                confidence: "weak",
+                cards: [
+                    lockedPreviewCard(
+                        id: "pricing-proof",
+                        title: "가격 판단은 실제 결제 대안 근거가 필요하다",
+                        summary: "현재 공개 근거는 ICP와 문제 프레이밍에는 강하지만 결제 페이지, 유료 전환, 대체재 가격 근거는 부족하다.",
+                        why: "전략 화면의 수익원 가설은 별도 리서치와 paid ask 반응으로 보강해야 한다.",
+                        sourceTitle: "Use-case selling · Handbook · PostHog",
+                        domain: "posthog.com",
+                        url: "https://posthog.com/handbook/growth/use-case-selling/use-case-selling",
+                        excerpt: "구매 기준은 사용 사례와 예산 맥락에서 검증된다."
+                    ),
+                    lockedPreviewCard(
+                        id: "pricing-byok",
+                        title: "provider BYOK는 구독 가격 구조를 바꾼다",
+                        summary: "AI provider 비용을 포함할지, 사용자가 자신의 키를 연결할지에 따라 가격 설명과 마진 구조가 달라진다.",
+                        why: "macOS assistant의 가격은 소프트웨어 가치와 provider 비용 경계를 분리해야 한다.",
+                        sourceTitle: "Pricing strategy notes",
+                        domain: "agentic30.local",
+                        url: nil,
+                        excerpt: "provider 비용과 앱 구독 가치를 분리해 설명하는 가설이다."
+                    ),
+                    lockedPreviewCard(
+                        id: "pricing-service",
+                        title: "코칭/서비스 대안과 소프트웨어 대안이 섞여 있다",
+                        summary: "사용자는 강의, 코칭, 템플릿, AI 빌드 도구를 모두 대안으로 인식할 수 있다.",
+                        why: "제품 포지션은 더 빠른 코딩이 아니라 고객 증거를 닫는 로컬 루프로 분리해야 한다.",
+                        sourceTitle: "YC Startup Library",
+                        domain: "ycombinator.com",
+                        url: "https://www.ycombinator.com/library",
+                        excerpt: "초기 창업자는 실행보다 고객 검증에서 반복적으로 막힌다."
+                    ),
+                    lockedPreviewCard(
+                        id: "pricing-ask",
+                        title: "명시적 가격 거절까지 모아야 한다",
+                        summary: "관심 있다는 답변만으로는 가격을 정할 수 없다. 결제 완료, 예약판매, 명시적 거절이 필요하다.",
+                        why: "News mock은 전략 판단의 proof target과 연결되는 카드 흐름을 보여야 한다.",
+                        sourceTitle: "Use-case selling · Handbook · PostHog",
+                        domain: "posthog.com",
+                        url: "https://posthog.com/handbook/growth/use-case-selling/use-case-selling",
+                        excerpt: "구매 가능성은 실제 행동 신호로 검증되어야 한다."
+                    ),
+                ]
+            ),
+            NewsMarketRadarLane(
+                id: "channel",
+                title: "채널",
+                hypothesis: "어디서 발견하고 설득할 수 있는가",
+                impact: "medium",
+                confidence: "medium",
+                cards: [
+                    lockedPreviewCard(
+                        id: "channel-community",
+                        title: "커뮤니티는 단기 홍보보다 소유 오디언스 구축에 가깝다",
+                        summary: "PostHog 커뮤니티 문서는 외부 소셜에서 모두에게 말하는 방식보다 사용자가 서로 상호작용할 수 있는 커뮤니티 플랫폼 자체를 만드는 장기 베팅을 강조한다.",
+                        why: "솔로 개발자 대상 제품은 신뢰와 반복 참여가 중요하지만, 실제 ICP가 같은 방식으로 모이는지는 별도 검증이 필요하다.",
+                        sourceTitle: "contents/handbook/community/index.mdx at master · PostHog/posthog.com",
+                        domain: "github.com",
+                        url: "https://github.com/PostHog/posthog.com/blob/master/contents/handbook/community/index.mdx",
+                        excerpt: "자체 커뮤니티를 소유 오디언스로 구축하는 접근을 설명한다."
+                    ),
+                    lockedPreviewCard(
+                        id: "channel-launch",
+                        title: "정렬된 데모 표면은 출시 표면에서 탐색·투표·데모와 함께 작동한다",
+                        summary: "Y Combinator는 Launch YC를 통해 최근 YC 스타트업과 제품 업데이트를 공개적으로 발견할 수 있게 했다.",
+                        why: "솔로 개발자에게는 새 도구를 발견하고 바로 데모를 눌러보는 표면이 중요할 수 있다.",
+                        sourceTitle: "Launch YC: The Launchpad for YC Startups | Y Combinator",
+                        domain: "ycombinator.com",
+                        url: "https://www.ycombinator.com/blog/launch-yc-the-launchpad-for-yc-startups",
+                        excerpt: "출시 표면에서 탐색, 투표, 데모가 함께 작동함을 보여준다."
+                    ),
+                    lockedPreviewCard(
+                        id: "channel-trust",
+                        title: "채널은 신뢰와 반복 참여를 같이 만들어야 한다",
+                        summary: "하루 한 번 전략 판단과 실행 증거를 공유하면 제품 설명보다 신뢰 쌓기에 가까운 채널이 된다.",
+                        why: "공개 기록과 고객 DM은 같은 proof loop에서 연결되어야 한다.",
+                        sourceTitle: "Community · Handbook · PostHog",
+                        domain: "posthog.com",
+                        url: "https://github.com/PostHog/posthog.com/blob/master/contents/handbook/community/index.mdx",
+                        excerpt: "커뮤니티는 반복 참여와 신뢰를 만드는 자산으로 다뤄진다."
+                    ),
+                    lockedPreviewCard(
+                        id: "channel-founder-led",
+                        title: "초기 채널은 founder-led evidence review가 더 적합하다",
+                        summary: "초기에는 자동화된 acquisition보다 인터뷰, DM, 원문 반응, proof review가 더 높은 학습 밀도를 준다.",
+                        why: "Market Radar mock은 읽을거리보다 오늘 보낼 ask와 근거 링크로 이어져야 한다.",
+                        sourceTitle: "YC Startup Library",
+                        domain: "ycombinator.com",
+                        url: "https://www.ycombinator.com/library",
+                        excerpt: "초기 창업은 고객과 직접 대화하는 학습 루프가 중요하다."
+                    ),
+                ]
+            ),
+            NewsMarketRadarLane(
+                id: "platform",
+                title: "플랫폼",
+                hypothesis: "어떤 제품/스토어/배포 제약이 있는가",
+                impact: "high",
+                confidence: "medium",
+                cards: [
+                    lockedPreviewCard(
+                        id: "platform-privacy",
+                        title: "프라이버시와 데이터 처리자 경계가 플랫폼 신뢰의 전제",
+                        summary: "PostHog Handbook은 클라우드 고객이 보낸 데이터는 고객 소유이며 처리자 경계를 명확히 설명한다. 로컬/클라우드 혼합 개발자 도구는 워크스페이스 데이터, 로그, 인터뷰, 인증 정보를 다루는 순간 신뢰 장벽을 만난다.",
+                        why: "인증, 워크스페이스, 텔레메트리, 외부 AI provider를 엮는 제품은 데이터 통제권과 처리자 경계를 명시해야 설치·구매 저항을 줄일 수 있다.",
+                        sourceTitle: "Security & Privacy · Handbook · PostHog",
+                        domain: "posthog.com",
+                        url: "https://posthog.com/handbook/company/security",
+                        excerpt: "고객 데이터 소유권과 처리자 경계를 설명한다."
+                    ),
+                ]
+            ),
+        ]
+    }
+
+    private static func lockedPreviewCard(
+        id: String,
+        title: String,
+        summary: String,
+        why: String,
+        sourceTitle: String,
+        domain: String,
+        url: String?,
+        excerpt: String
+    ) -> NewsMarketRadarCard {
+        NewsMarketRadarCard(
+            id: id,
+            title: title,
+            summary: summary,
+            impact: "high",
+            confidence: "medium",
+            whyItMatters: why,
+            suggestedDocTargets: [],
+            relatedDays: [],
+            relatedAnswerIds: [],
+            sourceRefs: [
+                NewsMarketRadarSourceRef(
+                    id: "\(id)-source",
+                    sourceType: "web",
+                    title: sourceTitle,
+                    url: url,
+                    domain: domain,
+                    path: nil,
+                    publishedAt: nil,
+                    excerpt: excerpt
+                ),
+            ],
+            evidenceStrength: nil
+        )
+    }
+}
+
+private struct OpenDesignLockedNewsMockSurface: View {
+    @State private var userState = NewsMarketRadarUserState()
+
+    private let primaryRows: [OpenDesignLockedMockListRow] = [
+        .init(id: "all", systemImage: "tray.full", title: "전체", detail: "모든 레이더 카드", count: "17"),
+        .init(id: "saved", systemImage: "bookmark.fill", title: "Saved", detail: "이 workspace에서 저장", count: "0", tone: .sky),
+    ]
+
+    private let laneRows: [OpenDesignLockedMockListRow] = [
+        .init(id: "icp", systemImage: "line.3.horizontal.decrease.circle", title: "ICP", detail: "누가 가장 절박한 사용자인가", count: "4", tone: .amber),
+        .init(id: "problem", systemImage: "line.3.horizontal.decrease.circle", title: "문제", detail: "그들이 실제로 겪는 비용/마찰은 무엇인가", count: "4"),
+        .init(id: "alternatives", systemImage: "line.3.horizontal.decrease.circle", title: "대안/가격", detail: "이미 돈을 쓰는 대안과 가격 기준은 무엇인가", count: "4", tone: .amber),
+        .init(id: "channel", systemImage: "line.3.horizontal.decrease.circle", title: "채널", detail: "어디서 발견하고 설득할 수 있는가", count: "4", tone: .amber),
+        .init(id: "platform", systemImage: "line.3.horizontal.decrease.circle", title: "플랫폼", detail: "어떤 제품/스토어/배포 제약이 있는가", count: "1"),
+    ]
+
+    private let sourceRows: [OpenDesignLockedMockListRow] = [
+        .init(id: "web", systemImage: "globe", title: "Web", detail: "출처 그룹", count: "17", tone: .muted),
+    ]
+
+    private let laneGroups: [OpenDesignLockedNewsLaneGroup] = [
+        OpenDesignLockedNewsLaneGroup(
+            id: "icp",
+            title: "ICP",
+            hypothesis: "누가 가장 절박한 사용자인가",
+            count: "4",
+            tone: .amber,
+            cards: [
+                .init(
+                    id: "icp-narrow",
+                    badge: "하이라이트",
+                    title: "넓은 관심보다 불타는 문제를 가진 소수 고객이 우선",
+                    summary: "YC Startup Library는 약하게 관심을 보이는 다수보다 불타는 문제를 가진 소수 고객이 더 중요하다고 설명한다. 초기 ICP는 가입자 수보다 실제 매주 쓰고 돈 낼 이유가 있는 절박한 사용자로 좁혀야 한다.",
+                    why: "30일 안에 고객과 매출을 만들려는 사용자는 일반 생산성 개선보다 훨씬 강한 구매 동기를 가질 수 있다.",
+                    impact: "",
+                    confidence: "",
+                    sources: [
+                        .init(id: "yc", systemImage: "link", title: "YC's essential startup advice · YC Startup Library | Y Combinator", detail: "ycombinator.com · web\nhttps://www.ycombinator.com/library/4D-yc-s-essential-startup-advice\nYC는 불타는 문제를 가진 10명의 고객이 약한 관심을 가진 1000명보다 낫다고 설명한다.", tone: .sky),
+                    ]
+                ),
+                .init(
+                    id: "icp-opportunity",
+                    badge: "",
+                    title: "기회로 보는 사용자와 추가 업무로 보는 사용자를 구분해야 함",
+                    summary: "Paul Graham의 사례는 같은 문제 영역에서도 어떤 사용자는 새 도구를 기회로 보고, 어떤 사용자는 추가 업무로 본다는 점을 보여준다. 메뉴바 앱과 커리큘럼도 사용자의 판단 비용 또는 부담으로 받아들여질 수 있다.",
+                    why: "동일한 기능이라도 구매 의지는 문제를 사업 기회로 인식하는 사용자에게서 더 강하게 나온다.",
+                    impact: "",
+                    confidence: "",
+                    sources: [
+                        .init(id: "pg", systemImage: "link", title: "How to Start a Startup", detail: "paulgraham.com · web\nhttps://paulgraham.com/start.html\n초기 예상 고객보다 웹을 사업 기회로 본 소규모 개인 상인에게 초점을 바꾼 사례가 제시된다.", tone: .sky),
+                    ]
+                ),
+                .init(
+                    id: "icp-paid-proof",
+                    badge: "",
+                    title: "ICP 해석은 가능하지만 유료 대안 근거는 없음",
+                    summary: "현재 근거는 ICP와 초기 고객 선택 원칙에는 유용하지만, 실제 경쟁 제품 결제 페이지나 구매 행동 근거는 부족하다. 가격/대안 결론은 별도 리서치가 필요하다.",
+                    why: "ICP 방향을 가격 전략으로 곧바로 연결하면 과잉 해석이 될 수 있다.",
+                    impact: "",
+                    confidence: "",
+                    sources: [
+                        .init(id: "posthog-usecase", systemImage: "link", title: "Use-case selling · Handbook · PostHog", detail: "posthog.com · web\nhttps://posthog.com/handbook/growth/use-case-selling/use-case-selling", tone: .sky),
+                    ]
+                ),
+            ]
+        ),
+        OpenDesignLockedNewsLaneGroup(
+            id: "problem",
+            title: "문제",
+            hypothesis: "그들이 실제로 겪는 비용/마찰은 무엇인가",
+            count: "4",
+            tone: .accent,
+            cards: [
+                .init(
+                    id: "problem-time",
+                    badge: "",
+                    title: "문제 파악 시간이 직접 비용으로 보인다",
+                    summary: "PostHog Handbook은 버그 재현 시간이 2시간에서 30-60분으로 줄면 컨텍스트 스위칭과 에스컬레이션이 줄어든다고 설명한다. 초기 창업자의 마찰도 낭비 시간과 판단 지연 비용으로 환산해야 한다.",
+                    why: "코칭이 있으면 좋다는 수준보다 시간 손실과 반복 판단 비용을 잡아야 구매 근거가 생긴다.",
+                    impact: "",
+                    confidence: "",
+                    sources: [
+                        .init(id: "posthog-cx", systemImage: "link", title: "Customer Experience · Handbook · PostHog", detail: "posthog.com · web\nhttps://posthog.com/handbook/growth/use-case-selling/customer-experience", tone: .sky),
+                    ]
+                ),
+                .init(
+                    id: "problem-launch",
+                    badge: "",
+                    title: "출시 전에는 문제가 덜 아프게 느껴진다",
+                    summary: "YC Library는 초기 출시가 아이디어나 실행의 문제를 빨리 드러내며, 출시 후 문제가 더 긴급해진다고 설명한다. 검증 지연 자체가 초기 창업자의 강한 문제일 수 있다.",
+                    why: "사용자가 돈을 낼 문제는 콘텐츠 부족보다 공개 출시와 고객 반응 앞에서 생기는 회피와 지연일 가능성이 있다.",
+                    impact: "",
+                    confidence: "",
+                    sources: [
+                        .init(id: "yc-hard", systemImage: "link", title: "The hardest lessons for startups to learn · YC Startup Library", detail: "ycombinator.com · web", tone: .sky),
+                    ]
+                ),
+            ]
+        ),
+        OpenDesignLockedNewsLaneGroup(
+            id: "channel",
+            title: "채널",
+            hypothesis: "어디서 발견하고 설득할 수 있는가",
+            count: "4",
+            tone: .amber,
+            cards: [
+                .init(
+                    id: "channel-community",
+                    badge: "",
+                    title: "커뮤니티는 단기 홍보보다 소유 오디언스 구축에 가깝다",
+                    summary: "PostHog 커뮤니티 문서는 외부 소셜에서 모두에게 말하는 방식보다 사용자가 서로 상호작용할 수 있는 커뮤니티 플랫폼 자체를 만드는 장기 베팅을 강조한다.",
+                    why: "솔로 개발자 대상 제품은 신뢰와 반복 참여가 중요하지만, 실제 ICP가 같은 방식으로 모이는지는 별도 검증이 필요하다.",
+                    impact: "",
+                    confidence: "",
+                    sources: [
+                        .init(id: "posthog-community", systemImage: "link", title: "contents/handbook/community/index.mdx at master · PostHog/posthog.com", detail: "github.com · web\nhttps://github.com/PostHog/posthog.com/blob/master/contents/handbook/community/index.mdx", tone: .sky),
+                    ]
+                ),
+            ]
+        ),
+        OpenDesignLockedNewsLaneGroup(
+            id: "platform",
+            title: "플랫폼",
+            hypothesis: "어떤 제품/스토어/배포 제약이 있는가",
+            count: "1",
+            tone: .accent,
+            cards: [
+                .init(
+                    id: "platform-privacy",
+                    badge: "",
+                    title: "프라이버시와 데이터 처리자 경계가 플랫폼 신뢰의 전제",
+                    summary: "PostHog Handbook은 클라우드 고객이 보낸 데이터는 고객 소유이며 처리자 경계를 명확히 설명한다. 로컬/클라우드 혼합 개발자 도구는 워크스페이스 데이터, 로그, 인터뷰, 인증 정보를 다루는 순간 신뢰 장벽을 만난다.",
+                    why: "인증, 워크스페이스, 텔레메트리, 외부 AI provider를 엮는 제품은 데이터 통제권과 처리자 경계를 명시해야 설치·구매 저항을 줄일 수 있다.",
+                    impact: "",
+                    confidence: "",
+                    sources: [
+                        .init(id: "posthog-security", systemImage: "link", title: "Security & Privacy · Handbook · PostHog", detail: "posthog.com · web\nhttps://posthog.com/handbook/company/security", tone: .sky),
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    var body: some View {
+        GeometryReader { geometry in
+            OpenDesignNewsShell(
+                layout: OpenDesignDayLayoutMetrics(width: geometry.size.width, isMetaPanelExpanded: false),
+                openSearch: {},
+                snapshot: .lockedRailPreview,
+                isPreparing: false,
+                userState: $userState,
+                refresh: {},
+                prepare: {},
+                openSettings: {}
+            )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(OpenDesignDayColor.bg)
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "newspaper")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                Text("Market Radar")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+            }
+            lockedSearchBar("뉴스·가정 검색")
+            sidebarSection("스트림", rows: primaryRows, selectedID: "all")
+            sidebarSection("레이더 레인", rows: laneRows, selectedID: nil)
+            sidebarSection("소스", rows: sourceRows, selectedID: nil)
+            Spacer(minLength: 0)
+            lockedFootnote(title: "로컬 보관", detail: "읽음/저장은 현재 workspace에만 남고 실제 수집은 잠금 해제 뒤 실행됩니다.")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
+    }
+
+    private var header: some View {
+        HStack(spacing: 16) {
+            HStack(spacing: 14) {
+                Image(systemName: "newspaper")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(OpenDesignDayColor.accentDim))
+                    .overlay(Circle().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("시장 리서치 레이더")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text("17 카드 · 17 안 읽음 · 0 저장 · 17 표시 · 마지막 업데이트 오늘 08:40")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 12)
+            lockedGhostButton(icon: "arrow.clockwise", title: "새로고침")
+        }
+        .padding(.horizontal, 28)
+        .frame(minHeight: 68)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private var filterBar: some View {
+        HStack(spacing: 0) {
+            ForEach(["전체", "High", "Medium", "Low", "Unknown"], id: \.self) { title in
+                Text(title)
+                    .font(.system(size: 12, weight: title == "전체" ? .semibold : .medium))
+                    .foregroundStyle(title == "전체" ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+                    .padding(.horizontal, 14)
+                    .frame(height: 40)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(title == "전체" ? OpenDesignDayColor.accent : Color.clear)
+                            .frame(height: 2)
+                    }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 28)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private func sidebarSection(_ title: String, rows: [OpenDesignLockedMockListRow], selectedID: String?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                .padding(.horizontal, 2)
+            ForEach(rows) { row in
+                lockedSidebarRow(row, selected: row.id == selectedID)
+            }
+        }
+    }
+
+    private func laneGroup(_ group: OpenDesignLockedNewsLaneGroup) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text(group.title)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                lockedPill(group.count, tone: group.tone)
+                Spacer(minLength: 0)
+            }
+            Text(group.hypothesis)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(group.cards.enumerated()), id: \.element.id) { index, card in
+                newsCard(card, isHighlighted: group.id == "icp" && index == 0)
+            }
+        }
+    }
+
+    private func newsCard(_ card: OpenDesignLockedNewsCard, isHighlighted: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Circle().fill(OpenDesignDayColor.accent).frame(width: 6, height: 6)
+                        Text("안 읽음")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                        if !card.badge.isEmpty {
+                            lockedPill(card.badge, tone: .accent)
+                        }
+                    }
+                    Text(card.title)
+                        .font(.system(size: isHighlighted ? 18 : 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(card.summary)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 10)
+                HStack(spacing: 6) {
+                    Image(systemName: "envelope.open")
+                    Image(systemName: "bookmark")
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .padding(.top, 4)
+            }
+
+            Text(card.why)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("레퍼런스")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                ForEach(card.sources) { source in
+                    lockedSourceRow(source)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            lockedMockRounded(
+                fill: isHighlighted ? OpenDesignDayColor.accentDim : OpenDesignDayColor.surface,
+                stroke: isHighlighted ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft,
+                radius: 10
+            )
+        )
+    }
+}
+
+private struct OpenDesignLockedMorningBriefingMockSurface: View {
+    private let navRows: [OpenDesignLockedMockListRow] = [
+        .init(id: "summary", systemImage: "circle.fill", title: "오늘의 판정", detail: "검증 우선"),
+        .init(id: "sources", systemImage: "circle.fill", title: "소스 근거", detail: "Cloudflare · GitHub · PostHog"),
+        .init(id: "funnel", systemImage: "chart.bar.fill", title: "증거 퍼널", detail: "방문 → 검증 행동", tone: .sky),
+        .init(id: "timeline", systemImage: "circle", title: "밤사이 타임라인", detail: "7건", tone: .amber),
+        .init(id: "actions", systemImage: "arrow.right.circle.fill", title: "오늘 검증 액션", detail: "먼저 할 일", tone: .amber),
+    ]
+
+    private let sources: [OpenDesignLockedMockListRow] = [
+        .init(id: "cloudflare", systemImage: "cloud.fill", title: "Cloudflare", detail: "신규 체험 흐름과 demo 진입 경로", count: "ready"),
+        .init(id: "github", systemImage: "chevron.left.forwardslash.chevron.right", title: "GitHub", detail: "demo branch, README 변경, release note", count: "ready", tone: .sky),
+        .init(id: "posthog", systemImage: "chart.xyaxis.line", title: "PostHog", detail: "activation 이벤트 3개와 drop-off", count: "ready", tone: .amber),
+    ]
+
+    private let actions: [OpenDesignLockedMockListRow] = [
+        .init(id: "ask", systemImage: "paperplane.fill", title: "고객 1명에게 데모 링크와 유료 ask를 같이 보냅니다.", detail: "답변은 원문 그대로 proof ledger에 연결합니다."),
+        .init(id: "fallback", systemImage: "arrow.uturn.left", title: "반응이 없으면 최근 7일 실제 문제를 다시 묻습니다.", detail: "좋은 아이디어라는 말만 있으면 다음 후보로 이동합니다.", tone: .amber),
+        .init(id: "ledger", systemImage: "doc.text.fill", title: "답변 원문과 행동 증거를 Day 3 proof ledger에 연결합니다.", detail: "관찰 가능한 행동을 우선합니다.", tone: .sky),
+    ]
+
+    var body: some View {
+        MorningBriefingPageView(
+            briefing: .uiTestingSample,
+            previousBriefing: nil,
+            collecting: false,
+            status: MorningBriefing.uiTestingSample.status,
+            sourceProgress: [:],
+            fallbackDay: MorningBriefing.uiTestingSample.day ?? 3,
+            authSession: nil,
+            refresh: {},
+            prepare: {},
+            submitAnomalyLabel: { _ in },
+            applyAction: { _ in },
+            startToday: {}
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(OpenDesignDayColor.bg)
+    }
+
+    private var nav: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Text("오늘 아침")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text("Day 3")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(OpenDesignDayColor.surface))
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    lockedGroupLabel("이 브리핑", trailing: "오늘 08:10")
+                    ForEach(navRows) { row in
+                        lockedMorningNavRow(row, selected: row.id == "summary")
+                    }
+                    lockedGroupLabel("지난 브리핑", trailing: "")
+                    lockedMorningNavRow(
+                        .init(id: "history", systemImage: "clock.arrow.circlepath", title: "어제 브리핑", detail: "Day 2 · 시장 신호", tone: .muted),
+                        selected: false
+                    )
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 12)
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 14) {
+            Text("3")
+                .font(.system(size: 17, weight: .bold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.accent)
+                .frame(width: 44, height: 44)
+                .background(lockedMockRounded(fill: OpenDesignDayColor.accent.opacity(0.14), stroke: OpenDesignDayColor.accent.opacity(0.4), radius: 11))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("오늘 아침 브리핑")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text("Day 3 / 30 · Customer Evidence · 소스 3 연결됨 · 08:10 동기화")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(1)
+            }
+            Spacer()
+            lockedGhostButton(icon: "clock.arrow.circlepath", title: "어제 브리핑")
+            lockedGhostButton(icon: "arrow.clockwise", title: "다시 동기화")
+        }
+        .padding(.horizontal, 28)
+        .frame(height: 70)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private var syncBar: some View {
+        HStack(spacing: 8) {
+            ForEach(sources) { source in
+                HStack(spacing: 7) {
+                    Circle().fill(source.tone.color).frame(width: 6, height: 6)
+                    Text(source.title)
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    Text("연결됨")
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .fontWeight(.medium)
+                }
+                .font(.system(size: 10.5, design: .monospaced))
+                .padding(.horizontal, 11)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(OpenDesignDayColor.surface).overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)))
+            }
+            Spacer(minLength: 8)
+            Label("지난 24시간", systemImage: "clock")
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+        }
+        .padding(.horizontal, 28)
+        .frame(height: 50)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private var verdictCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            lockedSectionHeader(title: "오늘의 판정", meta: "검증 판단 · 증거 8/10")
+            VStack(alignment: .leading, spacing: 10) {
+                lockedPill("traffic_without_activation", tone: .amber)
+                Text("오늘은 기능 확장보다 첫 고객 행동 증거를 닫는 쪽이 우선")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("어제 작업 로그와 GitHub 변경은 데모 가능성을 보여주지만, 구매 또는 반복 사용 신호는 아직 약합니다.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            .background(lockedMockRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+        }
+    }
+
+    private var sourceGrid: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            lockedSectionHeader(title: "소스 근거 · 어제 대비", meta: "판정 아래 원자료")
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                ForEach(sources) { source in
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack(spacing: 8) {
+                            Image(systemName: source.systemImage)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(source.tone.color)
+                            Text(source.title)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(OpenDesignDayColor.fg)
+                        }
+                        Text(source.detail)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        lockedPill(source.count ?? "ready", tone: source.tone)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(lockedMockRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+                }
+            }
+        }
+    }
+
+    private var evidenceFunnel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            lockedSectionHeader(title: "증거 퍼널", meta: "방문 → 다운로드/설치 → 검증 행동")
+            HStack(spacing: 10) {
+                lockedMetricTile("방문", "42", tone: .accent)
+                lockedMetricTile("활성화", "11", tone: .sky)
+                lockedMetricTile("고객 증거", "2", tone: .amber)
+                lockedMetricTile("결제 ask", "0", tone: .rose)
+            }
+        }
+    }
+
+    private var timeline: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            lockedSectionHeader(title: "밤사이 타임라인", meta: "자동 수집 · 사람 개입 0")
+            ForEach([
+                OpenDesignLockedMockListRow(id: "event-1", systemImage: "clock", title: "07:42 GitHub demo branch 업데이트", detail: "공유 가능한 산출물 후보로 묶임", tone: .sky),
+                OpenDesignLockedMockListRow(id: "event-2", systemImage: "chart.xyaxis.line", title: "08:01 activation 이벤트 3개 확인", detail: "방문 대비 행동 증거가 아직 약함", tone: .amber),
+                OpenDesignLockedMockListRow(id: "event-3", systemImage: "paperplane", title: "08:10 오늘 액션 초안 생성", detail: "데모 링크와 유료 ask를 같이 보내기", tone: .accent),
+            ]) { row in
+                lockedTimelineRow(row)
+            }
+        }
+    }
+
+    private var actionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            lockedSectionHeader(title: "오늘 검증 액션 · 3", meta: "요약을 넘어 바로 쓸 수 있게")
+            ForEach(actions) { action in
+                lockedActionRow(action)
+            }
+        }
+    }
+
+    private var summaryPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                lockedMetaTitle("오늘 요약")
+                lockedMetricTile("증거 품질", "8 / 10", tone: .accent)
+                lockedMetricTile("소스", "3 ready", tone: .sky)
+                lockedMetaTitle("수집 진행")
+                ForEach(sources) { source in
+                    lockedCompactRow(source)
+                }
+                lockedMetaTitle("Primary action")
+                lockedMetaText("고객 1명에게 데모 링크와 유료 ask를 같이 보내고, 원문 반응을 proof ledger에 연결합니다.")
+                lockedMetaTitle("다음 잠금 해제")
+                lockedMetaText("Day 3 인터뷰 완료 뒤 실제 브리핑 수집과 drilldown이 실행됩니다.")
+            }
+            .padding(16)
+        }
+    }
+}
+
+private struct OpenDesignLockedStrategyMockSurface: View {
+    @State private var selectedCompetitorID = "agentic30"
+
+    private let content = OpenDesignStrategyDisplayContent.staticReference
+
+    private var selectedCompetitor: OpenDesignStrategyCompetitor {
+        content.competitors.first { $0.id == selectedCompetitorID }
+            ?? content.competitors.first { $0.isAgentic30 }
+            ?? content.competitors[0]
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                stepper
+                commandLine
+                diagnosisSection
+                criteriaSection
+                businessCanvasSection
+                matrixSection
+                swotSection
+                judgementSection
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 1180, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("locked.strategy.mock")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(StrategyBackdropView().ignoresSafeArea())
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Text("BC")
+                .font(.system(size: 18, weight: .bold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.accent)
+                .frame(width: 46, height: 46)
+                .background(lockedMockRounded(fill: OpenDesignDayColor.accent.opacity(0.13), stroke: OpenDesignDayColor.accentLine, radius: 12))
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Agentic30 사업 캔버스")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: 6, height: 6)
+                    Text("Strategy · Business Model -> Competition · SWOT · 근거: SPEC / ICP / VALUES")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(1)
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    Text(openDesignLastUpdatedLabel(nil))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 12)
+            lockedGhostButton(icon: "arrow.clockwise", title: "다시 리서치")
+        }
+    }
+
+    private var stepper: some View {
+        HStack(spacing: 8) {
+            ForEach(OpenDesignStrategyStep.allCases) { step in
+                strategyStep(step.index, step.title, selected: step == .canvas)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var commandLine: some View {
+        Text(content.commandLine)
+            .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .padding(.vertical, 8)
+    }
+
+    private var diagnosisSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(content.diagnosisKicker.uppercased())
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.accent)
+            Text(content.diagnosisTitle)
+                .font(.system(size: 23, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(content.diagnosisLead)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12, alignment: .top)], spacing: 12) {
+                ForEach(content.summaryTiles) { tile in
+                    StrategySummaryTileView(tile: tile)
+                }
+            }
+        }
+    }
+
+    private var criteriaSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            StrategySectionHeader(title: "분석 기준", meta: content.analysisBasisLabel)
+            VStack(spacing: 0) {
+                ForEach(content.criteriaRows) { row in
+                    StrategyCriterionRowView(row: row)
+                    if row.id != content.criteriaRows.last?.id {
+                        Divider().background(OpenDesignDayColor.borderSoft)
+                    }
+                }
+            }
+            .background(StrategyPanelBackground(cornerRadius: 10, fill: OpenDesignDayColor.surface))
+        }
+    }
+
+    private var businessCanvasSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            StrategySectionHeader(title: "비즈니스 캔버스", meta: content.canvasMeta)
+            StrategyBusinessCanvasMatrixView(content: content)
+        }
+    }
+
+    private var matrixSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            StrategySectionHeader(title: "2x2 경쟁 구도 Matrix", meta: content.matrixMeta)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("경쟁은 코딩 생산성 축이 아니라 PMF 증거 축에서 갈립니다.")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Spacer()
+                    Text("가로: 정적 -> Adaptive · 세로: Build -> Evidence")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                }
+                .padding(14)
+                .background(OpenDesignDayColor.surface2)
+
+                Divider().background(OpenDesignDayColor.borderSoft)
+
+                HStack(alignment: .top, spacing: 0) {
+                    StrategyPositioningMatrixView(
+                        competitors: content.competitors,
+                        selectedCompetitorID: $selectedCompetitorID
+                    )
+                    .frame(maxWidth: .infinity)
+
+                    StrategyMatrixDetailPanel(competitor: selectedCompetitor)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(StrategyPanelBackground(cornerRadius: 14, fill: OpenDesignDayColor.surface))
+        }
+    }
+
+    private var swotSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            StrategySectionHeader(title: "SWOT 분석", meta: content.swotMeta)
+            LazyVGrid(columns: swotMatrixColumns, spacing: 12) {
+                ForEach(content.swotGroups) { group in
+                    StrategySWOTCardView(group: group)
+                }
+            }
+        }
+    }
+
+    private var swotMatrixColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(minimum: 0), spacing: 12),
+            count: content.swotMatrixColumnCount
+        )
+    }
+
+    private var judgementSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("전략 판단")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text(content.judgement)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .background(StrategyAccentCalloutBackground(cornerRadius: 14))
+    }
+
+    private func strategyStep(_ index: String, _ title: String, selected: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text(index)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(selected ? OpenDesignDayColor.accent : OpenDesignDayColor.surface))
+                .foregroundStyle(selected ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.muted)
+            Text(title)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .lineLimit(1)
+        }
+        .foregroundStyle(selected ? OpenDesignDayColor.accent : OpenDesignDayColor.fgSecondary)
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(lockedMockRounded(fill: selected ? OpenDesignDayColor.accentDim : OpenDesignDayColor.surface2, stroke: selected ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, radius: 16))
+    }
+}
+
+private func lockedSearchBar(_ placeholder: String) -> some View {
+    HStack(spacing: 8) {
+        Image(systemName: "magnifyingglass")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(OpenDesignDayColor.muted)
+        Text(placeholder)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(OpenDesignDayColor.muted)
+        Spacer(minLength: 0)
+    }
+    .padding(.horizontal, 10)
+    .frame(height: 32)
+    .background(lockedMockRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+}
+
+private func lockedFootnote(title: String, detail: String) -> some View {
+    VStack(alignment: .leading, spacing: 5) {
+        Text(title)
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+        Text(detail)
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(10)
+    .background(lockedMockRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+}
+
+private func lockedSidebarRow(_ row: OpenDesignLockedMockListRow, selected: Bool) -> some View {
+    HStack(spacing: 9) {
+        Image(systemName: row.systemImage)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(row.tone.color)
+            .frame(width: 16)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(row.title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .lineLimit(1)
+            Text(row.detail)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .lineLimit(2)
+        }
+        Spacer(minLength: 6)
+        if let count = row.count {
+            Text(count)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(selected ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                .frame(minWidth: 18)
+        }
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 9)
+    .background(lockedMockRounded(fill: selected ? OpenDesignDayColor.hover : Color.clear, stroke: selected ? OpenDesignDayColor.accentLine : Color.clear, radius: 8))
+}
+
+private func lockedSectionHeader(title: String, meta: String) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+        Text(title)
+            .font(.system(size: 14, weight: .bold))
+            .foregroundStyle(OpenDesignDayColor.fg)
+        Spacer(minLength: 8)
+        Text(meta)
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .lineLimit(1)
+    }
+}
+
+private func lockedPill(_ title: String, tone: OpenDesignLockedMockTone) -> some View {
+    Text(title)
+        .font(.system(size: 10, weight: .bold, design: .monospaced))
+        .foregroundStyle(tone.color)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(Capsule().fill(tone.dim).overlay(Capsule().stroke(tone.color.opacity(0.28), lineWidth: 1)))
+}
+
+private func lockedGhostButton(icon: String, title: String) -> some View {
+    HStack(spacing: 6) {
+        Image(systemName: icon)
+            .font(.system(size: 10, weight: .semibold))
+        Text(title)
+    }
+    .font(.system(size: 11.5, weight: .medium))
+    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+    .padding(.horizontal, 12)
+    .frame(height: 28)
+    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+    .opacity(0.76)
+}
+
+private func lockedSourceRow(_ row: OpenDesignLockedMockListRow) -> some View {
+    HStack(alignment: .top, spacing: 9) {
+        Image(systemName: row.systemImage)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .frame(width: 18)
+        VStack(alignment: .leading, spacing: 5) {
+            Text(row.title)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(row.detail)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer(minLength: 0)
+    }
+    .padding(10)
+    .background(lockedMockRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+}
+
+private func lockedDetailBox(title: String, detail: String, icon: String) -> some View {
+    HStack(alignment: .top, spacing: 8) {
+        Image(systemName: icon)
+            .font(.system(size: 10.5, weight: .bold))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .frame(width: 16)
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            Text(detail)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer(minLength: 0)
+    }
+    .padding(10)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(lockedMockRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+}
+
+private func lockedMetaTitle(_ title: String) -> some View {
+    Text(title)
+        .font(.system(size: 11, weight: .bold, design: .monospaced))
+        .foregroundStyle(OpenDesignDayColor.fg)
+}
+
+private func lockedMetaText(_ text: String) -> some View {
+    Text(text)
+        .font(.system(size: 11.5, weight: .medium))
+        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(lockedMockRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+}
+
+private func lockedCompactRow(_ row: OpenDesignLockedMockListRow) -> some View {
+    HStack(spacing: 9) {
+        Image(systemName: row.systemImage)
+            .font(.system(size: 10.5, weight: .bold))
+            .foregroundStyle(row.tone.color)
+            .frame(width: 16)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(row.title)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+            Text(row.detail)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer(minLength: 0)
+        if let count = row.count {
+            Text(count)
+                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+        }
+    }
+    .padding(10)
+    .background(lockedMockRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+}
+
+private func lockedRecommendation(_ text: String) -> some View {
+    HStack(alignment: .top, spacing: 8) {
+        Image(systemName: "arrow.up.right.circle.fill")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(OpenDesignDayColor.accent)
+        Text(text)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 0)
+    }
+    .padding(10)
+    .background(lockedMockRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+}
+
+private func lockedGroupLabel(_ title: String, trailing: String) -> some View {
+    HStack {
+        Text(title.uppercased())
+        Spacer()
+        Text(trailing)
+            .foregroundStyle(OpenDesignDayColor.muted)
+    }
+    .font(.system(size: 10, design: .monospaced))
+    .kerning(1.0)
+    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+    .padding(.horizontal, 8)
+    .padding(.top, 14)
+    .padding(.bottom, 6)
+}
+
+private func lockedMorningNavRow(_ row: OpenDesignLockedMockListRow, selected: Bool) -> some View {
+    HStack(alignment: .top, spacing: 9) {
+        Image(systemName: row.systemImage)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(row.tone.color)
+            .frame(width: 14, height: 14)
+            .padding(.top, 3)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(row.title)
+                .font(.system(size: 12.5, weight: .medium))
+                .lineLimit(1)
+            Text(row.detail)
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .lineLimit(1)
+        }
+        Spacer(minLength: 0)
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(selected ? OpenDesignDayColor.selected : Color.clear))
+    .foregroundStyle(selected ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+}
+
+private func lockedMetricTile(_ label: String, _ value: String, tone: OpenDesignLockedMockTone) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+        Text(label)
+            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+        Text(value)
+            .font(.system(size: 18, weight: .bold, design: .rounded))
+            .foregroundStyle(tone.color)
+    }
+    .padding(13)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(lockedMockRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+}
+
+private func lockedTimelineRow(_ row: OpenDesignLockedMockListRow) -> some View {
+    HStack(alignment: .top, spacing: 10) {
+        Image(systemName: row.systemImage)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(row.tone.color)
+            .frame(width: 24, height: 24)
+            .background(Circle().fill(row.tone.dim))
+        VStack(alignment: .leading, spacing: 4) {
+            Text(row.title)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+            Text(row.detail)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+        }
+        Spacer(minLength: 0)
+    }
+    .padding(12)
+    .background(lockedMockRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+}
+
+private func lockedActionRow(_ action: OpenDesignLockedMockListRow) -> some View {
+    HStack(alignment: .top, spacing: 11) {
+        Image(systemName: action.systemImage)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(action.tone.color)
+            .frame(width: 28, height: 28)
+            .background(Circle().fill(action.tone.dim))
+        VStack(alignment: .leading, spacing: 4) {
+            Text(action.title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(action.detail)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer(minLength: 0)
+        lockedPill("draft", tone: action.tone)
+    }
+    .padding(14)
+    .background(lockedMockRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+}
+
+private func lockedMockRounded(fill: Color, stroke: Color, radius: CGFloat) -> some View {
+    RoundedRectangle(cornerRadius: radius, style: .continuous)
+        .fill(fill)
+        .overlay(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .stroke(stroke, lineWidth: 1)
+        )
+}
+
+private struct OpenDesignLockedRailMockPreview: View {
+    let feature: OpenDesignRailFeature
+
+    private var rows: [String] {
+        switch feature {
+        case .morningBriefing:
+            return ["고객 증거", "밤사이 신호", "오늘 액션"]
+        case .strategy:
+            return ["ICP", "Wedge", "Canvas"]
+        case .news:
+            return ["시장 신호", "경쟁사", "고객 움직임"]
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Image(systemName: feature.systemImage)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                VStack(alignment: .leading, spacing: 6) {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(OpenDesignDayColor.fg.opacity(0.20))
+                        .frame(width: 170, height: 12)
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(OpenDesignDayColor.muted.opacity(0.20))
+                        .frame(width: 260, height: 9)
+                }
+                Spacer(minLength: 0)
+            }
+
+            LazyVGrid(columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+            ], spacing: 12) {
+                ForEach(rows, id: \.self) { row in
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(row)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(OpenDesignDayColor.surface2)
+                            .frame(height: 82)
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(OpenDesignDayColor.fg.opacity(0.16))
+                            .frame(height: 8)
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(OpenDesignDayColor.muted.opacity(0.16))
+                            .frame(width: 120, height: 8)
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(OpenDesignDayColor.surface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
+                            )
+                    )
+                }
+            }
+
+            VStack(spacing: 8) {
+                ForEach(0..<5, id: \.self) { index in
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(OpenDesignDayColor.muted.opacity(0.22))
+                            .frame(width: 18, height: 18)
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(OpenDesignDayColor.fg.opacity(index == 0 ? 0.18 : 0.11))
+                            .frame(width: index == 0 ? 280 : 220, height: 8)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(OpenDesignDayColor.surface.opacity(0.76))
+                    )
+                }
+            }
+        }
+        .padding(28)
     }
 }
 
@@ -7916,8 +10048,25 @@ private struct OpenDesignRailButton: View {
         usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.accent : OpenDesignDayColor.accent
     }
 
+    private var isLocked: Bool {
+        itemStatus?.isLocked == true
+    }
+
     private var effectiveBadgeTone: OpenDesignRailBadgeTone? {
-        itemStatus?.badgeTone ?? (item.hasNewDot ? .accent : nil)
+        if isLocked { return nil }
+        return itemStatus?.badgeTone ?? (item.hasNewDot ? .accent : nil)
+    }
+
+    private var iconColor: Color {
+        isLocked ? mutedColor : (isActive || isHovered ? foregroundColor : mutedColor)
+    }
+
+    private var tooltipTitle: String {
+        guard let tooltipDetail = itemStatus?.tooltipDetail,
+              !tooltipDetail.isEmpty else {
+            return item.title
+        }
+        return "\(item.title) · \(tooltipDetail)"
     }
 
     private var badgeColor: Color {
@@ -7943,7 +10092,7 @@ private struct OpenDesignRailButton: View {
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: item.systemImage)
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(isActive || isHovered ? foregroundColor : mutedColor)
+                        .foregroundStyle(iconColor)
                         .frame(width: 36, height: 36)
                         .openDesignHoverRow(
                             isHovered: isHovered,
@@ -7968,18 +10117,26 @@ private struct OpenDesignRailButton: View {
                             .frame(width: 6, height: 6)
                             .overlay(Circle().stroke(bgColor, lineWidth: 2))
                             .offset(x: -4, y: 5)
+                    } else if isLocked {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(bgColor)
+                            .frame(width: 13, height: 13)
+                            .background(Circle().fill(mutedColor))
+                            .overlay(Circle().stroke(bgColor, lineWidth: 1.5))
+                            .offset(x: -3, y: 4)
                     }
                 }
             }
             .buttonStyle(OpenDesignInteractiveButtonStyle())
             .onHover { isHovered = $0 }
-            .help(item.title)
+            .help(tooltipTitle)
             .accessibilityLabel(item.title)
             .accessibilityIdentifier("opendesign.day.rail.item.\(item.id)")
             .accessibilityValue(openDesignRailAccessibilityValue(isActive: isActive, status: itemStatus))
 
             if isHovered {
-                OpenDesignRailTooltip(title: item.title, id: item.id, usesOfficeHoursPalette: usesOfficeHoursPalette)
+                OpenDesignRailTooltip(title: tooltipTitle, id: item.id, usesOfficeHoursPalette: usesOfficeHoursPalette)
                     .offset(x: 44)
                     .transition(.opacity)
                     .zIndex(10)
@@ -10066,6 +12223,10 @@ private struct OpenDesignDayMainView: View {
     let advanceToNextDay: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
+    let day1SurfaceReview: Day1SurfaceReview?
+    let day1SurfaceReviewGenerating: Bool
+    let day1SurfaceReviewDecisionPending: String?
+    let day1SurfaceReviewError: String?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let isDay1HandoffAwaitingFollowupPrompt: Bool
@@ -10078,6 +12239,8 @@ private struct OpenDesignDayMainView: View {
     let bipProofSinkAvailable: Bool
     let saveDay1GoalDraft: (Day1GoalDraft) -> Void
     let onChooseDay1SituationGoal: (String) -> Void
+    let requestDay1SurfaceReview: (String, String) -> Void
+    let decideDay1SurfaceReview: (String) -> Void
     let startDay1DocHandoff: (String, [String: Any]) -> Void
     let layout: OpenDesignDayLayoutMetrics
 
@@ -10136,10 +12299,16 @@ private struct OpenDesignDayMainView: View {
                                     advanceToNextDay: advanceToNextDay,
                                     day1DocPreviews: day1DocPreviews,
                                     day1HandoffPromptCard: day1HandoffPromptCard,
+                                    day1SurfaceReview: day1SurfaceReview,
+                                    day1SurfaceReviewGenerating: day1SurfaceReviewGenerating,
+                                    day1SurfaceReviewDecisionPending: day1SurfaceReviewDecisionPending,
+                                    day1SurfaceReviewError: day1SurfaceReviewError,
                                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                                     isDay1HandoffAwaitingFollowupPrompt: isDay1HandoffAwaitingFollowupPrompt,
                                     day1HandoffError: day1HandoffError,
+                                    requestDay1SurfaceReview: requestDay1SurfaceReview,
+                                    decideDay1SurfaceReview: decideDay1SurfaceReview,
                                     startDay1DocHandoff: startDay1DocHandoff,
                                     activateFreeformAnswer: activateFreeformAnswer,
                                     previousAction: previousWorkflowStep,
@@ -10655,10 +12824,16 @@ private struct OpenDesignDayStepWorkspaceView: View {
     let advanceToNextDay: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
+    let day1SurfaceReview: Day1SurfaceReview?
+    let day1SurfaceReviewGenerating: Bool
+    let day1SurfaceReviewDecisionPending: String?
+    let day1SurfaceReviewError: String?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let isDay1HandoffAwaitingFollowupPrompt: Bool
     let day1HandoffError: String?
+    let requestDay1SurfaceReview: (String, String) -> Void
+    let decideDay1SurfaceReview: (String) -> Void
     let startDay1DocHandoff: (String, [String: Any]) -> Void
     let activateFreeformAnswer: (Int) -> Void
     let previousAction: () -> Void
@@ -10717,10 +12892,16 @@ private struct OpenDesignDayStepWorkspaceView: View {
                     advanceToNextDay: advanceToNextDay,
                     day1DocPreviews: day1DocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
+                    day1SurfaceReview: day1SurfaceReview,
+                    day1SurfaceReviewGenerating: day1SurfaceReviewGenerating,
+                    day1SurfaceReviewDecisionPending: day1SurfaceReviewDecisionPending,
+                    day1SurfaceReviewError: day1SurfaceReviewError,
                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                     isDay1HandoffAwaitingFollowupPrompt: isDay1HandoffAwaitingFollowupPrompt,
                     day1HandoffError: day1HandoffError,
+                    requestDay1SurfaceReview: requestDay1SurfaceReview,
+                    decideDay1SurfaceReview: decideDay1SurfaceReview,
                     startDay1DocHandoff: startDay1DocHandoff
                 )
                 .transition(workflowPhaseTransition)
@@ -10870,7 +13051,7 @@ private struct OpenDesignDayHeader: View {
                 )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("핵심 가설 확정")
+                    Text("처음 보여줄 문장")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.fg)
                     HStack(spacing: 8) {
@@ -11791,14 +13972,22 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     let advanceToNextDay: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
+    let day1SurfaceReview: Day1SurfaceReview?
+    let day1SurfaceReviewGenerating: Bool
+    let day1SurfaceReviewDecisionPending: String?
+    let day1SurfaceReviewError: String?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let isDay1HandoffAwaitingFollowupPrompt: Bool
     let day1HandoffError: String?
+    let requestDay1SurfaceReview: (String, String) -> Void
+    let decideDay1SurfaceReview: (String) -> Void
     let startDay1DocHandoff: (String, [String: Any]) -> Void
 
     @State private var showsDetails = false
     @State private var isConfirmHovered = false
+    @State private var surfaceMode = "no_landing"
+    @State private var landingUrl = ""
     @State private var bulkSavingDocType: String?
     @State private var bulkSavePendingDocTypes: [String] = []
     @State private var bulkBackendWrittenDocTypes: Set<String> = []
@@ -11898,18 +14087,18 @@ private struct OpenDesignHypothesisConfirmationCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            OpenDesignSectionHeader(title: "핵심 가설 확정")
+            OpenDesignSectionHeader(title: "처음 보여줄 문장")
 
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("CONFIRM")
+                    Text("SURFACE")
                         .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.accent)
                         .padding(.horizontal, 8)
                         .frame(height: 22)
                         .background(Capsule().fill(OpenDesignDayColor.accentDim))
                         .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
-                    Text("이 가설로 내일 시장 신호를 검증합니다.")
+                    Text("오늘 고객에게 보여줄 첫 문장을 만들고 Day 2 접촉으로 이어갑니다.")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.fg)
                         .fixedSize(horizontal: false, vertical: true)
@@ -11953,7 +14142,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 .accentColor(OpenDesignDayColor.accent)
                 .accessibilityIdentifier("opendesign.day.final.details")
 
-                documentHandoff
+                surfaceReviewBundle
 
                 Button(action: confirmAndAdvance) {
                     confirmButtonLabel
@@ -11993,6 +14182,12 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         }
         .onDisappear {
             cancelBulkSaveAnimation()
+        }
+        .onAppear {
+            completeDayIfSurfaceReviewTerminal()
+        }
+        .onChange(of: day1SurfaceReview?.decision.status ?? "") { _, _ in
+            completeDayIfSurfaceReviewTerminal()
         }
     }
 
@@ -12052,6 +14247,302 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(row.label) \(row.value)")
         .accessibilityIdentifier("opendesign.day.final.row.\(row.id)")
+    }
+
+    private var surfaceReviewBundle: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("처음 보여줄 문장")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .textCase(.uppercase)
+                Spacer(minLength: 0)
+                if let review = day1SurfaceReview {
+                    Text(surfaceReviewStatusLabel(review))
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(review.isTerminal ? OpenDesignDayColor.accent : OpenDesignDayColor.amber)
+                }
+            }
+
+            if let review = day1SurfaceReview {
+                surfaceReviewPreview(review)
+                surfaceReviewProposalPreview(review)
+                surfaceReviewDecisionBar(review)
+            } else {
+                surfaceReviewQuestion
+            }
+
+            if day1SurfaceReviewGenerating {
+                surfaceReviewStatusRow("프로젝트 기록을 읽고 처음 보여줄 문장을 만드는 중입니다.")
+            }
+
+            if let error = day1SurfaceReviewError, !error.isEmpty {
+                Text(error)
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(OpenDesignDayColor.surface2)
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+                    )
+                    .accessibilityIdentifier("opendesign.day.surface.error")
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(OpenDesignDayColor.bgDeep)
+                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+        )
+        .overlay(alignment: .topLeading) {
+            openDesignAccessibilityAnchor("opendesign.day.surface.review", label: "OpenDesign Day First Surface Review")
+        }
+    }
+
+    private var surfaceReviewQuestion: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("고객이 볼 페이지가 있나요?")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+
+            HStack(spacing: 8) {
+                surfaceModeButton(
+                    title: "아직 없어요. 초안부터 만들어주세요",
+                    mode: "no_landing"
+                )
+                surfaceModeButton(
+                    title: "있어요. 주소를 넣을게요",
+                    mode: "existing_url"
+                )
+            }
+
+            if surfaceMode == "existing_url" {
+                TextField("https:// 또는 localhost URL", text: $landingUrl)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .padding(.horizontal, 10)
+                    .frame(height: 34)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(OpenDesignDayColor.surface)
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+                    )
+                    .accessibilityIdentifier("opendesign.day.surface.url")
+            }
+
+            Button {
+                requestDay1SurfaceReview(surfaceMode, landingUrl)
+            } label: {
+                HStack(spacing: 8) {
+                    if day1SurfaceReviewGenerating {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .controlSize(.mini)
+                            .tint(OpenDesignDayColor.accent)
+                            .frame(width: 14, height: 14)
+                            .accessibilityHidden(true)
+                    }
+                    Text(day1SurfaceReviewGenerating ? "생성 중..." : "표면 미리보기 만들기")
+                        .font(.system(size: 12.5, weight: .semibold))
+                }
+                .foregroundStyle(OpenDesignDayColor.bgDeep)
+                .frame(maxWidth: .infinity)
+                .frame(height: 40)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(OpenDesignDayColor.accent))
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: surfaceReviewGenerateDisabled))
+            .disabled(surfaceReviewGenerateDisabled)
+            .accessibilityIdentifier("opendesign.day.surface.generate")
+        }
+    }
+
+    private func surfaceModeButton(title: String, mode: String) -> some View {
+        let isSelected = surfaceMode == mode
+        return Button {
+            surfaceMode = mode
+        } label: {
+            Text(title)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(isSelected ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.fgSecondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 42)
+                .padding(.horizontal, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isSelected ? OpenDesignDayColor.accent : OpenDesignDayColor.surface)
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isSelected ? Color.clear : OpenDesignDayColor.borderSoft, lineWidth: 1))
+                )
+        }
+        .buttonStyle(OpenDesignInteractiveButtonStyle())
+        .accessibilityIdentifier("opendesign.day.surface.mode.\(mode)")
+    }
+
+    private var surfaceReviewGenerateDisabled: Bool {
+        day1SurfaceReviewGenerating
+            || (surfaceMode == "existing_url" && landingUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    private func surfaceReviewPreview(_ review: Day1SurfaceReview) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(review.customerSurface.headline)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(review.customerSurface.subheadline)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                surfaceMiniMetric(label: "고객", value: review.customerSurface.audience)
+                surfaceMiniMetric(label: "문제", value: review.customerSurface.problem)
+                surfaceMiniMetric(label: "CTA", value: review.customerSurface.cta)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(OpenDesignDayColor.surface)
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+        )
+        .accessibilityIdentifier("opendesign.day.surface.preview")
+    }
+
+    private func surfaceMiniMetric(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            Text(value)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func surfaceReviewProposalPreview(_ review: Day1SurfaceReview) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(review.proposals) { proposal in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(proposal.path)
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                        Spacer(minLength: 0)
+                        Text(proposal.action)
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    }
+                    Text(proposal.content)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .lineSpacing(2)
+                        .lineLimit(12)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(OpenDesignDayColor.bgDarker)
+                }
+                .accessibilityIdentifier("opendesign.day.surface.proposal.\(proposal.path)")
+            }
+
+            if !review.reasons.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(review.reasons) { reason in
+                        Text("\(reason.sentence) · \(reason.reason)")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func surfaceReviewDecisionBar(_ review: Day1SurfaceReview) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if review.isTerminal {
+                let files = review.decision.appliedFiles.isEmpty ? "반영 파일 없음" : review.decision.appliedFiles.joined(separator: ", ")
+                surfaceReviewStatusRow("\(surfaceReviewStatusLabel(review)) · CTA \(review.customerSurface.cta) · \(files)")
+            } else {
+                HStack(spacing: 8) {
+                    surfaceDecisionButton(title: "전체 반영", decision: "approved", tone: .approve)
+                    surfaceDecisionButton(title: "거절", decision: "rejected", tone: .reject)
+                }
+            }
+        }
+    }
+
+    private enum SurfaceDecisionTone {
+        case approve
+        case reject
+    }
+
+    private func surfaceDecisionButton(title: String, decision: String, tone: SurfaceDecisionTone) -> some View {
+        let isPending = day1SurfaceReviewDecisionPending == decision
+            || (decision == "approved" && day1SurfaceReviewDecisionPending == "approve")
+            || (decision == "rejected" && day1SurfaceReviewDecisionPending == "reject")
+        let disabled = day1SurfaceReviewDecisionPending != nil || day1SurfaceReviewGenerating
+        let fill = tone == .approve ? OpenDesignDayColor.accent : OpenDesignDayColor.surface
+        let fg = tone == .approve ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.fgSecondary
+        return Button {
+            decideDay1SurfaceReview(decision)
+        } label: {
+            HStack(spacing: 8) {
+                if isPending {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .controlSize(.mini)
+                        .tint(tone == .approve ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.accent)
+                        .frame(width: 14, height: 14)
+                        .accessibilityHidden(true)
+                }
+                Text(isPending ? "저장 중..." : title)
+                    .font(.system(size: 12.5, weight: .semibold))
+            }
+            .foregroundStyle(disabled && !isPending ? OpenDesignDayColor.mutedDeep : fg)
+            .frame(maxWidth: .infinity)
+            .frame(height: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(disabled && !isPending ? OpenDesignDayColor.surface2 : fill)
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: tone == .approve ? 0 : 1))
+            )
+        }
+        .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: disabled))
+        .disabled(disabled)
+        .accessibilityIdentifier("opendesign.day.surface.decision.\(decision)")
+    }
+
+    private func surfaceReviewStatusRow(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.accent)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(OpenDesignDayColor.surface2)
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+            )
+    }
+
+    private func surfaceReviewStatusLabel(_ review: Day1SurfaceReview) -> String {
+        switch review.decision.status {
+        case "approved": return "approved"
+        case "rejected": return "rejected"
+        default: return "preview_ready"
+        }
     }
 
     private var documentHandoff: some View {
@@ -12259,29 +14750,19 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private var confirmButtonTitle: String {
-        if isBulkSaveVisualActive {
-            return "문서 리뷰 중..."
+        if day1SurfaceReviewGenerating {
+            return "처음 보여줄 문장 만드는 중..."
         }
-        if !areDay1DocumentsWritten {
-            if isDay1HandoffPromptActive { return "보완 질문 답변 필요" }
-            if isDay1HandoffAwaitingFollowupPrompt { return "보완 질문 준비 중..." }
-            if isBulkWritingDocuments { return "문서 리뷰 중..." }
-            if pendingDay1HandoffDocType != nil { return "문서 리뷰 중..." }
-            return "문서 검토하기"
+        if day1SurfaceReviewDecisionPending != nil {
+            return "결정 저장 중..."
         }
-        if interaction.dayCompleted {
-            return "Day 2로 이동 ↵"
+        guard let review = day1SurfaceReview else {
+            return "처음 보여줄 문장 만들기"
         }
-        if let alignmentPlan = content.alignmentPlan {
-            if alignmentPlan.signals.evidenceRefs.isEmpty {
-                return "근거 연결하기"
-            }
-            if !alignmentPlan.qualityGate.passed {
-                return "부족한 항목 다시 고르기"
-            }
-            return "Day 1 완료 → Day 2 ↵"
+        if !review.isTerminal {
+            return "Bundle review에서 결정하기"
         }
-        return "가설 확정 → Day 2 ↵"
+        return "Day 2로 이동 ↵"
     }
 
     private var confirmButtonLabel: some View {
@@ -12312,11 +14793,13 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private var confirmButtonShowsSpinner: Bool {
-        isBulkSaveVisualActive || (!areDay1DocumentsWritten && (isBulkWritingDocuments || isDay1HandoffAwaitingFollowupPrompt))
+        day1SurfaceReviewGenerating || day1SurfaceReviewDecisionPending != nil
     }
 
     private var confirmButtonDisabled: Bool {
-        isBulkSaveVisualActive || (!areDay1DocumentsWritten && isDocumentHandoffBusy)
+        day1SurfaceReviewGenerating
+            || day1SurfaceReviewDecisionPending != nil
+            || (day1SurfaceReview != nil && day1SurfaceReview?.isTerminal != true)
     }
 
     private func alignmentDisplayValue(key: String, label: String, fallback: String) -> String {
@@ -12348,7 +14831,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 Text("Day 1이 완료됐습니다.")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.fg)
-                Text("오피스 아워는 좌측 rail의 별도 화면에서 언제든 열 수 있습니다.")
+                Text("처음 보여줄 문장 결정이 저장됐고, Day 2는 이 CTA로 고객 접촉을 시작합니다.")
                     .font(.system(size: 12.5, weight: .regular))
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
             }
@@ -12363,22 +14846,24 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         guard !confirmButtonDisabled else {
             return
         }
-        guard areDay1DocumentsWritten else {
-            beginBulkSaveAnimation()
-            startDay1DocHandoff("all", handoffPayload)
+        guard let review = day1SurfaceReview else {
+            requestDay1SurfaceReview(surfaceMode, landingUrl)
             return
         }
-        if let alignmentPlan = content.alignmentPlan,
-           !interaction.dayCompleted,
-           (alignmentPlan.signals.evidenceRefs.isEmpty || !alignmentPlan.qualityGate.passed) {
-            showsDetails = true
-            return
-        }
+        guard review.isTerminal else { return }
         if !interaction.dayCompleted {
             completeDayAction()
         } else {
             advanceToNextDay()
         }
+    }
+
+    private func completeDayIfSurfaceReviewTerminal() {
+        guard day1SurfaceReview?.isTerminal == true,
+              !interaction.dayCompleted else {
+            return
+        }
+        completeDayAction()
     }
 
     private func beginBulkSaveAnimation() {

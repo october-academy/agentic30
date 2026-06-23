@@ -71,6 +71,15 @@ struct OpenDesignDayContentTests {
         #expect(OpenDesignRailDestination.reference(.news).referencePage == .news)
     }
 
+    @Test func primaryRailItemsUseStrategyNewsBriefingOrder() {
+        let railItems = OpenDesignDayContent.makeRailItems(
+            todayTitle: "오늘 · Day 1",
+            showsDevelopmentOnlyReferencePages: false
+        )
+
+        #expect(railItems.map(\.id) == ["today", "strategy", "news", "briefing", "settings"])
+    }
+
     @Test func railDestinationActivationMovesNewsReferenceDirectlyToStrategy() throws {
         let strategyRailItem = try #require(OpenDesignDayContent.makeRailItems(
             todayTitle: "오늘 · Day 1",
@@ -79,7 +88,65 @@ struct OpenDesignDayContentTests {
 
         let current = OpenDesignRailDestination.reference(.news)
         #expect(openDesignRailDestinationAfterOpeningSearch(current: current) == current)
-        #expect(openDesignRailDestination(for: strategyRailItem, routesTodayToOfficeHours: true) == .strategy)
+        #expect(openDesignRailDestination(for: strategyRailItem, routesTodayToOfficeHours: true) == OpenDesignRailDestination.strategy)
+    }
+
+    @Test func railAccessPolicyLocksFeatureTabsWithoutSidecarDayProgress() {
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.strategy, dayProgress: nil) == .locked(requiredCompletedDay: 1, requiredStep: "first_interview"))
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.news, dayProgress: nil) == .locked(requiredCompletedDay: 2, requiredStep: "interview"))
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.morningBriefing, dayProgress: nil) == .locked(requiredCompletedDay: 3, requiredStep: "interview"))
+
+        let status = OpenDesignRailAccessPolicy.status(
+            for: .locked(requiredCompletedDay: 1, requiredStep: "first_interview"),
+            dayProgressLoaded: false
+        )
+        #expect(status?.isLocked == true)
+        #expect(status?.badgeTone == nil)
+        #expect(openDesignRailAccessibilityValue(isActive: true, status: status) == "active, locked, progress unavailable")
+    }
+
+    @Test func railAccessPolicyUnlocksProgressivelyFromInterviewCompletionOnly() {
+        let day1Progress = Self.makeRailUnlockDayProgress(completedThrough: 1)
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.strategy, dayProgress: day1Progress) == .unlocked)
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.news, dayProgress: day1Progress) == .locked(requiredCompletedDay: 2, requiredStep: "interview"))
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.morningBriefing, dayProgress: day1Progress) == .locked(requiredCompletedDay: 3, requiredStep: "interview"))
+
+        let day2Progress = Self.makeRailUnlockDayProgress(completedThrough: 2)
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.strategy, dayProgress: day2Progress) == .unlocked)
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.news, dayProgress: day2Progress) == .unlocked)
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.morningBriefing, dayProgress: day2Progress) == .locked(requiredCompletedDay: 3, requiredStep: "interview"))
+
+        let day3Progress = Self.makeRailUnlockDayProgress(completedThrough: 3)
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.strategy, dayProgress: day3Progress) == .unlocked)
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.news, dayProgress: day3Progress) == .unlocked)
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.morningBriefing, dayProgress: day3Progress) == .unlocked)
+    }
+
+    @Test func railAccessPolicyIgnoresFoundationCompletedDays() {
+        var foundationProgress = FoundationProgressSnapshot()
+        foundationProgress.completedDays = Set([1, 2, 3])
+
+        #expect(foundationProgress.completedDays == Set([1, 2, 3]))
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.strategy, dayProgress: nil) == .locked(requiredCompletedDay: 1, requiredStep: "first_interview"))
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.news, dayProgress: nil) == .locked(requiredCompletedDay: 2, requiredStep: "interview"))
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.morningBriefing, dayProgress: nil) == .locked(requiredCompletedDay: 3, requiredStep: "interview"))
+    }
+
+    @Test func lockedRailNavigationEffectReturnsNoSideEffect() throws {
+        let newsRailItem = try #require(OpenDesignDayContent.makeRailItems(
+            todayTitle: "오늘 · Day 1",
+            showsDevelopmentOnlyReferencePages: false
+        ).first(where: { $0.id == "news" }))
+        let lockedState = OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.news, dayProgress: nil)
+
+        #expect(openDesignRailNavigationEffect(for: newsRailItem, accessState: lockedState) == .none)
+    }
+
+    @Test func lockedRailMockSurfaceKindsStayFeatureSpecific() {
+        #expect(openDesignLockedRailMockSurfaceKind(for: .news) == .newsMarketRadar)
+        #expect(openDesignLockedRailMockSurfaceKind(for: .morningBriefing) == .morningBriefing)
+        #expect(openDesignLockedRailMockSurfaceKind(for: .strategy) == .strategy)
+        #expect(Set(OpenDesignRailFeature.allCases.map(openDesignLockedRailMockSurfaceKind)).count == 3)
     }
 
     @Test func officeHoursTranscriptRowsHideSyntheticStartPrompt() {
@@ -1194,9 +1261,9 @@ struct OpenDesignDayContentTests {
 
         #expect(content.railItems.map(\.title) == [
             "오늘 · Day 1",
-            "아침 브리핑",
             "전략",
             "뉴스",
+            "아침 브리핑",
             "설정",
         ])
         #expect(content.taskGroups.count == 4)
@@ -1249,9 +1316,9 @@ struct OpenDesignDayContentTests {
 
         #expect(railIDs == [
             "today",
-            "briefing",
             "strategy",
             "news",
+            "briefing",
             "settings",
         ])
         #expect(pageIDs == [
@@ -1288,9 +1355,9 @@ struct OpenDesignDayContentTests {
 
         #expect(productionRailIDs == [
             "today",
-            "briefing",
             "strategy",
             "news",
+            "briefing",
             "settings",
         ])
         #expect(allRailIDs == Set(productionRailIDs))
@@ -1312,9 +1379,9 @@ struct OpenDesignDayContentTests {
 
         #expect(railIDs == [
             "today",
-            "briefing",
             "strategy",
             "news",
+            "briefing",
             "settings",
         ])
     }
@@ -1326,7 +1393,7 @@ struct OpenDesignDayContentTests {
         ).first(where: { $0.id == "strategy" }))
 
         #expect(railItem.title == "전략")
-        #expect(railItem.route == .strategy)
+        #expect(railItem.route == OpenDesignDayContent.RailItem.Route.strategy)
         #expect(openDesignRailNavigationEffect(for: railItem) == .none)
     }
 
@@ -4395,6 +4462,41 @@ struct OpenDesignDayContentTests {
             searchableCopy: ["동적 리서치", "paid ask"],
             generatedAt: nil
         )
+    }
+
+    private static func makeRailUnlockDayProgress(completedThrough maxCompletedDay: Int) -> DayProgress {
+        var days: [String: DayRecord] = [:]
+        for day in 1...maxCompletedDay {
+            if day == 1 {
+                days["1"] = DayRecord(
+                    day: 1,
+                    kind: .day1,
+                    steps: [
+                        "onboarding": .done,
+                        "scan": .done,
+                        "goal": .done,
+                        "first_interview": .done,
+                    ],
+                    goalText: "Day 1",
+                    updatedAt: "2026-06-20"
+                )
+            } else {
+                days[String(day)] = DayRecord(
+                    day: day,
+                    kind: .standard,
+                    steps: [
+                        "scan": .done,
+                        "retro": .done,
+                        "goal": .done,
+                        "interview": .done,
+                        "execution": .pending,
+                    ],
+                    goalText: "Day \(day)",
+                    updatedAt: "2026-06-20"
+                )
+            }
+        }
+        return DayProgress(challengeStartedAt: "2026-06-20", days: days)
     }
 
     private static func evidenceOS(

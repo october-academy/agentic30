@@ -115,6 +115,7 @@ struct MorningBriefingPageView: View {
     /// 수집 중 카드별 라이브 진행(카드 id → 스피너 상태 + 에이전트 로그).
     let sourceProgress: [String: MorningBriefingSourceProgress]
     let fallbackDay: Int
+    let authSession: MacAuthSession?
     let refresh: () -> Void
     let prepare: () -> Void
     let submitAnomalyLabel: (String) -> Void
@@ -141,6 +142,7 @@ struct MorningBriefingPageView: View {
         status: MorningBriefingStatus? = nil,
         sourceProgress: [String: MorningBriefingSourceProgress],
         fallbackDay: Int,
+        authSession: MacAuthSession? = nil,
         refresh: @escaping () -> Void,
         prepare: @escaping () -> Void,
         submitAnomalyLabel: @escaping (String) -> Void,
@@ -154,6 +156,7 @@ struct MorningBriefingPageView: View {
         self.status = status
         self.sourceProgress = sourceProgress
         self.fallbackDay = fallbackDay
+        self.authSession = authSession
         self.refresh = refresh
         self.prepare = prepare
         self.submitAnomalyLabel = submitAnomalyLabel
@@ -275,6 +278,19 @@ struct MorningBriefingPageView: View {
     private var primaryActionDraft: MorningBriefingActionDraft? {
         guard let primaryId = displayBriefing?.customerEvidenceVerdict?.primaryActionId else { return nil }
         return displayBriefing?.actions?.first(where: { $0.id == primaryId })
+    }
+
+    private var telemetryBriefingDay: Int {
+        displayBriefing?.day ?? fallbackDay
+    }
+
+    private func actionTelemetryProperties(for draft: MorningBriefingActionDraft) -> [String: Any] {
+        [
+            "action_id": draft.id,
+            "action_kind": draft.kind ?? "",
+            "briefing_day": telemetryBriefingDay,
+            "is_primary_action": draft.id == displayBriefing?.customerEvidenceVerdict?.primaryActionId,
+        ]
     }
 
     private var yesterdaySectionMeta: String {
@@ -950,6 +966,15 @@ struct MorningBriefingPageView: View {
             Spacer(minLength: 12)
 
             Button {
+                PostHogTelemetry.capture(
+                    "mac_morning_briefing_connect_settings_opened",
+                    properties: [
+                        "missing_source_count": guide.sources?.count ?? 0,
+                        "briefing_day": telemetryBriefingDay,
+                        "viewing_previous": viewingPrevious,
+                    ],
+                    authSession: authSession
+                )
                 openIntegrationsSettings(guide)
             } label: {
                 Text("Settings에서 연결")
@@ -1566,6 +1591,15 @@ struct MorningBriefingPageView: View {
         // (counts-grade at minimum), so this always navigates —
         // same as the briefing.html drill links.
         Button {
+            PostHogTelemetry.capture(
+                "mac_morning_briefing_card_drilldown",
+                properties: [
+                    "card_id": card.id,
+                    "briefing_day": telemetryBriefingDay,
+                    "viewing_previous": viewingPrevious,
+                ],
+                authSession: authSession
+            )
             withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.15)) {
                 presentedDrilldownID = card.id
             }
@@ -2148,6 +2182,11 @@ struct MorningBriefingPageView: View {
                     .lineLimit(2)
                 Spacer()
                 Button {
+                    PostHogTelemetry.capture(
+                        "mac_morning_briefing_action_copied",
+                        properties: actionTelemetryProperties(for: draft),
+                        authSession: authSession
+                    )
                     copyToPasteboard(draft.copyText ?? "")
                     copiedActionIDs.insert(draft.id)
                     showToast("클립보드에 복사됨")

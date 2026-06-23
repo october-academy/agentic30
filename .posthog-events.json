@@ -1,0 +1,27 @@
+[
+  {
+    "event_name": "mac_morning_briefing_card_drilldown",
+    "event_description": "User clicks the drilldown button on a morning briefing source card to see detailed analytics.",
+    "file": "agentic30/MorningBriefingPageView.swift"
+  },
+  {
+    "event_name": "mac_morning_briefing_start_today",
+    "event_description": "User clicks 'Start Today' from the morning briefing to navigate to their day's tasks.",
+    "file": "agentic30/ContentView.swift"
+  },
+  {
+    "event_name": "mac_day_page_share_summary_copied",
+    "event_description": "User copies the daily progress share summary to clipboard from the day page toolbar.",
+    "file": "agentic30/OpenDesignDayPageView.swift"
+  },
+  {
+    "event_name": "mac_day_page_search_opened",
+    "event_description": "User opens the search panel on the day page.",
+    "file": "agentic30/OpenDesignDayPageView.swift"
+  },
+  {
+    "event_name": "mac_intake_step_navigated",
+    "event_description": "User advances or goes back through a step in the IntakeV2 onboarding flow.",
+    "file": "agentic30/IntakeV2FlowView.swift"
+  }
+]
