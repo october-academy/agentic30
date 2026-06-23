@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0.29] - 2026-06-23
+
+### 추가
+- **Day 1 처음 보여줄 문장**: 사용자가 랜딩 유무를 고르면 Agentic30이 고객-facing 첫 화면 문구, `landing.html` 초안, README 재작성 proposal을 만들고 approve/reject 결정을 Day 1 완료 상태로 저장합니다.
+- **Day 1 surface review UI**: Open Design Day 화면에 surface review 생성, bundle preview, 결정 저장, applied file 상태, CTA 요약을 추가했습니다.
+
+### 변경
+- **Office Hours 문서 준비도 게이트**: Day 1 Office Hours가 약한 답변 6개만으로 문서를 저장하지 않고, 결제/계약 증거·구매 조건·현재 대안 비용 같은 하드 증거를 추가로 묻도록 했습니다.
+- **Open Design rail 잠금 정책**: 전략, 뉴스, 아침 브리핑 rail을 실제 Day progress 완료 상태에 맞춰 순차적으로 열리게 했습니다.
+
+### 수정
+- **Day 1 문서 judge prompt 유지**: Office Hours 질문 수 cap 정리 중 문서 저장 전 보완 prompt가 사라지지 않도록 pending request 보존과 테스트를 보강했습니다.
+
 ## [1.0.28] - 2026-06-17
 
 ### 추가
