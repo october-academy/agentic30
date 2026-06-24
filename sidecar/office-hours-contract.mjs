@@ -807,3 +807,147 @@ export function buildValidationAttemptFromTurns(turns = [], { id = "", createdAt
   attempt.migrationDisposition = LEGACY_MIGRATION_DISPOSITION_UNVERIFIED;
   return attempt;
 }
+
+// ── R1.a additive exports (consumed by office-hours-attempt-store.mjs) ─────────
+// These are purely additive: no existing export, behavior, or the four stable
+// ladder helpers (canonicalLadderSignal / isGetUsersLadderSignal /
+// nextLadderSignal / GET_USERS_LADDER_SIGNAL_ORDER) change. buildValidationAttempt-
+// FromTurns above is untouched; the migration-plan builder below sits alongside it
+// and reuses canonicalCardForSignal so the two stay in lock-step.
+
+/**
+ * Look up the frozen card definition for a card type, or null. The CARDS map is
+ * module-private; B3/B4 (and the attempt-store migration) need the cardType →
+ * legacySignalId / transition / requiredFields mapping without re-deriving it.
+ */
+export function cardDefinition(cardType) {
+  const key = String(cardType || "").trim();
+  return CARDS[key] || null;
+}
+
+/**
+ * Build a replayable EVENT PLAN from legacy office-hours turns (the six get_users
+ * signalIds), returning `{ events, migrationMetadata }`.
+ *
+ * Contract (mirrors buildValidationAttemptFromTurns, but emits the event list the
+ * attempt-store will persist so a replay reproduces the SAME projection):
+ *   - Only the cleanly-recoverable gather prefix (activation/candidate/alternative)
+ *     becomes reducer events (define_activation / select_candidate /
+ *     record_alternative).
+ *   - A legacy action_request carries a single text. externalAction / attemptThreshold
+ *     / successCondition CANNOT be reconstructed without fabrication, so we DO NOT
+ *     emit define_action_contract. Instead the recoverable externalAction is recorded
+ *     as ONE `legacy_imported` store-control event (migrationHints), and the plan
+ *     stops at needs_action_contract with
+ *     disposition = LEGACY_MIGRATION_DISPOSITION_UNVERIFIED.
+ *   - Ambiguity (same slot, differing text; alias disagreement; ladder gap;
+ *     unrecognized signalId) throws ValidationAttemptMigrationError
+ *     ("ERR_MIGRATION_AMBIGUOUS"). NEVER fabricates dueAt / threshold / success /
+ *     "legacy"/"1" placeholders.
+ *
+ * `events` is the only authoritative replay artifact; `migrationMetadata` is
+ * descriptive (disposition + the recovered slots) for the host/telemetry.
+ */
+export function buildOfficeHoursMigrationPlan(turns = [], { id = "", createdAt = "" } = {}) {
+  const list = Array.isArray(turns) ? turns : [];
+
+  // Collect canonical-slot answers, detecting alias conflicts + duplicate revisions
+  // exactly as buildValidationAttemptFromTurns does (single source of ambiguity).
+  const byCard = {};
+  for (const turn of list) {
+    const signalId = turn?.signalId ?? turn?.signal_id;
+    const card = canonicalCardForSignal(signalId);
+    const answer = String(turn?.responseText ?? turn?.response ?? "").trim();
+    if (!answer) continue;
+    if (!card) {
+      const rawId = String(signalId || "").trim();
+      if (rawId) {
+        throw new ValidationAttemptMigrationError(
+          `unrecognized signalId in legacy ladder: ${rawId}`,
+          "ERR_MIGRATION_AMBIGUOUS",
+        );
+      }
+      continue;
+    }
+    if (card in byCard) {
+      if (byCard[card] !== answer) {
+        throw new ValidationAttemptMigrationError(
+          `conflicting legacy answers for ${card}`,
+          "ERR_MIGRATION_AMBIGUOUS",
+        );
+      }
+      continue; // identical duplicate — harmless
+    }
+    byCard[card] = answer;
+  }
+
+  // Gap detection identical to buildValidationAttemptFromTurns.
+  const order = ["activation_definition", "candidate_selection", "current_alternative",
+    "action_request", "evidence_contract", "commitment"];
+  let firstGap = -1;
+  for (let i = 0; i < order.length; i += 1) {
+    const present = order[i] in byCard;
+    if (!present && firstGap < 0) firstGap = i;
+    if (present && firstGap >= 0) {
+      throw new ValidationAttemptMigrationError(
+        `legacy ladder gap: ${order[i]} present but ${order[firstGap]} missing`,
+        "ERR_MIGRATION_AMBIGUOUS",
+      );
+    }
+  }
+
+  // Recoverable gather prefix → reducer events. eventIds are deterministic so a
+  // replay through the attempt-store projector is byte-stable.
+  const RECOVERABLE = [
+    ["activation_definition", "define_activation", (v) => ({ activationDefinition: v })],
+    ["candidate_selection", "select_candidate", (v) => ({ candidate: v })],
+    ["current_alternative", "record_alternative", (v) => ({ currentAlternative: v })],
+  ];
+
+  const events = [];
+  let seq = 0;
+  const nextEventId = () => `migrate:${id || "anon"}:${seq++}`;
+  const recoveredSlots = [];
+
+  for (const [card, type, toFields] of RECOVERABLE) {
+    if (!(card in byCard)) {
+      return finishMigrationPlan(events, { disposition: "", recoveredSlots });
+    }
+    events.push({ type, eventId: nextEventId(), fields: toFields(byCard[card]), at: createdAt });
+    recoveredSlots.push(card);
+  }
+
+  // No legacy action_request → recoverable prefix only, no disposition tag.
+  if (!("action_request" in byCard)) {
+    return finishMigrationPlan(events, { disposition: "", recoveredSlots });
+  }
+
+  // action_request present: record the recoverable externalAction as ONE
+  // legacy_imported control event (NOT a define_action_contract — that would
+  // require fabricating threshold/success). Tag the plan unverified.
+  recoveredSlots.push("action_request");
+  events.push({
+    type: "legacy_imported",
+    eventId: nextEventId(),
+    fields: {
+      recoverableFields: { externalAction: byCard.action_request },
+      migrationHints: { externalAction: byCard.action_request },
+      migrationDisposition: LEGACY_MIGRATION_DISPOSITION_UNVERIFIED,
+    },
+    at: createdAt,
+  });
+  return finishMigrationPlan(events, {
+    disposition: LEGACY_MIGRATION_DISPOSITION_UNVERIFIED,
+    recoveredSlots,
+  });
+}
+
+function finishMigrationPlan(events, { disposition, recoveredSlots }) {
+  return {
+    events,
+    migrationMetadata: {
+      disposition: disposition || "",
+      recoveredSlots: [...recoveredSlots],
+    },
+  };
+}
