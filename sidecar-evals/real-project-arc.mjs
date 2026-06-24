@@ -343,8 +343,8 @@ async function maybeSubmitAttemptEvidence({ ws, events, sessionId, day, captured
   ws.send(JSON.stringify({
     type: "office_hours_attempt_evidence",
     // The attempt lives in the throwaway SANDBOX workspace (seed.root), NOT the
-    // source project: every other arc command (day_progress_patch, proof_ledger)
-    // already targets seed.root. Sending captured.projectPath here made the sidecar
+    // source project: every other arc command (day_progress_patch) already targets
+    // seed.root. Sending captured.projectPath here made the sidecar
     // resolveDay1GoalWorkspaceRoot() point at the source repo, where the attempt
     // does not exist → "attempt not found" → the evidence step never landed.
     workspaceRoot,
@@ -519,7 +519,7 @@ export async function runRealProjectArc(projectPath, {
   let stderr = "";
   child.stderr.on("data", (c) => { stderr += String(c); });
 
-  const captured = { runId, mode, label, projectPath: path.resolve(projectPath), days: [], onboardingAnswered: 0, errors: [], evidenceSubmissions: [], attemptEvidenceSubmissions: [], attemptEvidenceEnabled: attemptEvidence === true, hasGoal: Boolean(seed.day1Goal), hasProjectContext: Boolean(seed.projectContext) };
+  const captured = { runId, mode, label, projectPath: path.resolve(projectPath), days: [], onboardingAnswered: 0, errors: [], attemptEvidenceSubmissions: [], attemptEvidenceEnabled: attemptEvidence === true, hasGoal: Boolean(seed.day1Goal), hasProjectContext: Boolean(seed.projectContext) };
   const events = [];
   let ws;
   try {
@@ -573,21 +573,15 @@ export async function runRealProjectArc(projectPath, {
           commitmentText: persona.commitment.text, commitment: persona.commitment,
         }));
         await waitForEventAfter(events, offset, (e) => e.type === "day_progress_state", 30_000);
-        // Submit hard evidence that the day's commitment was acted on, so the
-        // NEXT day's office-hours can reference real accumulated evidence (this is
-        // what lets evidence_use be measured beyond a single Day-1 snapshot).
-        const evOffset = events.length;
-        ws.send(JSON.stringify({
-          type: "proof_ledger_append", sessionId, workspaceRoot: seed.root,
-          event: {
-            type: "interview", status: "verified", strength: "strong", day,
-            customer: persona.commitment.customer, channel: persona.commitment.channel,
-            title: `Day ${day} 약속 이행`,
-            summary: `${persona.commitment.text} — ${persona.commitment.expectedEvidenceKind} 증거 확보`,
-          },
-        }));
-        await waitForEventAfter(events, evOffset, (e) => e.type === "execution_os_state" && e.workspaceRoot === seed.root, 30_000);
-        captured.evidenceSubmissions.push({ day, kind: persona.commitment.expectedEvidenceKind, customer: persona.commitment.customer });
+        // Measurement honesty (R2): the day's evidence is the reducer-graded R2
+        // attempt evidence captured above (maybeSubmitAttemptEvidence →
+        // office_hours_attempt_evidence). The legacy synthetic `proof_ledger_append
+        // {status:"verified", strength:"strong"}` injection was REMOVED — it fabricated
+        // verified strong evidence the ValidationAttempt reducer never accepted, which
+        // both violated R2's grading-authority boundary and gamed the judge's
+        // evidence_use the same way the strong-payment anti-gaming gate is built to
+        // reject. The honest attempt evidence (execution-grade on Day 1, not strong
+        // customer outcome) is what the judge now reads.
       } catch (e) { captured.errors.push(`day${day}: ${e.message}`); }
     }
   } catch (e) {

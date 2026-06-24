@@ -33,18 +33,33 @@ export function buildObservedFromCapture(captured) {
     for (const m of day.assistantMessages || []) if (String(m || "").trim()) assistantMessages.push(String(m));
   }
   const cardTexts = cards.map(renderCardAsText);
-  const submissions = Array.isArray(captured.evidenceSubmissions) ? captured.evidenceSubmissions : [];
-  const evidenceLines = submissions.map((s) => `day${s.day}: ${s.kind} evidence for ${s.customer}`);
+  // Measurement honesty (R2): the judge reads the reducer-graded ValidationAttempt
+  // evidence (office_hours_attempt_evidence), NOT a fabricated strong proof-ledger
+  // event. Each transition maps to its HONEST evidence type — record_action_proof is
+  // EXECUTION evidence (the action happened), it is NOT yet customer-response or
+  // goal-threshold evidence. Over-crediting it as "strong" would recreate the gaming
+  // problem under a new schema. Skips/failures are not credited.
+  const TRANSITION_EVIDENCE_TYPE = {
+    record_action_proof: "execution (action sent; customer response NOT yet observed)",
+    record_customer_outcome: "customer-response",
+    record_goal_proof: "goal-threshold",
+    record_negative_outcome: "valid-negative",
+  };
+  const attemptSubs = Array.isArray(captured.attemptEvidenceSubmissions) ? captured.attemptEvidenceSubmissions : [];
+  const landed = attemptSubs.filter((s) => s && s.success === true && !s.skipped);
+  const skipped = attemptSubs.filter((s) => s && s.skipped);
+  const evidenceLines = landed.map((s) => `day${s.day}: ${s.transition} → ${TRANSITION_EVIDENCE_TYPE[s.transition] || "graded"} evidence (kind=${s.kind}, reducer-graded)`);
   const days = (captured.days || []).map((d) => d.day);
   return {
     visible_outputs: {
       assistant_messages: [...assistantMessages, ...cardTexts],
       structured_cards: cards,
-      proof_target: submissions.length ? `${submissions.length} accumulated evidence records across days ${days.join(",")}` : "",
+      proof_target: landed.length ? `${landed.length} reducer-graded attempt evidence record(s) across days ${days.join(",")} (execution-grade on Day 1; NOT confirmed strong customer outcome)` : "",
     },
-    sidecar_events: ["office_hours_start", "office_hours_pending_input", "submit_user_input", ...(submissions.length ? ["proof_ledger_append"] : [])],
+    sidecar_events: ["office_hours_start", "office_hours_pending_input", "submit_user_input", ...(landed.length ? ["office_hours_attempt_evidence"] : [])],
     accumulated_evidence: evidenceLines,
-    notes: `Office Hours locked get_users cards across days [${days.join(", ")}] for user project "${captured.label}". hasGoal=${captured.hasGoal} hasProjectContext=${captured.hasProjectContext}. ${submissions.length ? `Across days, ${submissions.length} hard-evidence records were submitted and later days could reference them: ${evidenceLines.join("; ")}.` : ""} Day outcomes: ${(captured.days || []).map((d) => `day${d.day}:${d.outcome}`).join(", ")}`,
+    attempt_evidence: { landed: landed.length, skipped: skipped.length, transitions: landed.map((s) => s.transition) },
+    notes: `Office Hours locked get_users cards across days [${days.join(", ")}] for user project "${captured.label}". hasGoal=${captured.hasGoal} hasProjectContext=${captured.hasProjectContext}. ${landed.length ? `Reducer-graded attempt evidence landed: ${evidenceLines.join("; ")}. Day-1 attempt evidence is EXECUTION-grade (the action was taken), NOT confirmed customer outcome — do not score it as strong proof.` : "No reducer-graded attempt evidence landed this run."} Day outcomes: ${(captured.days || []).map((d) => `day${d.day}:${d.outcome}`).join(", ")}`,
   };
 }
 
