@@ -15,8 +15,9 @@
 // R0 hardening (this file): the reducer is upgraded from prototype to runtime
 // authority. plan ≠ action, contract ≠ proof. The six interview slots map 1:1 to
 // six cards. Transition-level `requires` + `allowedFields` are enforced so a card
-// validator bypass cannot move state. event.eventId gives idempotency. Migration
-// is fail-closed (throws on ambiguity; never fabricates dueAt/threshold/success).
+// validator bypass cannot move state. event.eventId gives idempotency. There is no
+// legacy turn-log migration path: every attempt starts fresh at needs_definition
+// (owner directive — no legacy, no backward-compat, fail explicitly).
 //
 // This module is PURE: no I/O, standard library only, no feature flags, no
 // fallbacks. Illegal input is an explicit throw. Callers (index.mjs) adopt it in
@@ -492,6 +493,35 @@ function applyFields(attempt, type, def, fields, event) {
     patch[key] = value;
   }
 
+  // dueAt verification for schedule_execution (GPT R1.b H): the commitment lease
+  // must be a parseable timestamp strictly in the FUTURE relative to the event's
+  // own `at`. A blank, unparseable, or past dueAt is rejected — we never accept a
+  // "due now / due yesterday" lease as a real commitment.
+  if (type === "schedule_execution") {
+    const dueRaw = String(fields.dueAt || "").trim();
+    const dueMs = Date.parse(dueRaw);
+    if (!Number.isFinite(dueMs)) {
+      throw new ValidationAttemptTransitionError(
+        `schedule_execution received an unparseable dueAt: ${dueRaw || "(empty)"}`,
+        "ERR_INVALID_DUE_AT",
+      );
+    }
+    const atRaw = event?.at != null ? String(event.at).trim() : "";
+    const atMs = Date.parse(atRaw);
+    if (!Number.isFinite(atMs)) {
+      throw new ValidationAttemptTransitionError(
+        "schedule_execution requires a parseable event.at to validate dueAt",
+        "ERR_INVALID_DUE_AT",
+      );
+    }
+    if (!(dueMs > atMs)) {
+      throw new ValidationAttemptTransitionError(
+        `schedule_execution dueAt (${dueRaw}) must be in the future relative to ${atRaw}`,
+        "ERR_INVALID_DUE_AT",
+      );
+    }
+  }
+
   // Deadline verification for expire_no_response (now >= responseDueAt or throw).
   if (type === "expire_no_response") {
     const responseDueAt = String(fields.responseDueAt || "").trim();
@@ -679,9 +709,13 @@ export function nextLadderSignal(answeredSignalIds = []) {
  * Day-1 close acceptability (GPT Q2 — R2 prep; UX wiring is post-R1).
  * Three dispositions close cleanly:
  *   - action proof attached (status ≥ awaiting_customer_outcome)
- *   - execution_scheduled WITH an exact dueAt (timeboxed lease; "can't do it now" escape)
+ *   - execution_scheduled WITH a real future dueAt (timeboxed lease; "can't do it
+ *     now" escape) — validated the SAME way the reducer validates it (GPT R1.b H):
+ *     parseable AND strictly after the attempt's last-update baseline.
  *   - blocked (blockerReason + nextUnblockAction) or carried (carryReason)
- * A plan-only (needs_* gather) attempt is NOT an acceptable close.
+ * A plan-only (needs_* gather) attempt is NOT an acceptable close. A scheduled
+ * attempt carrying an unparseable/past dueAt throws ERR_INVALID_DUE_AT — it is
+ * never silently treated as either an acceptable or a defensively-rejected close.
  */
 export function isAcceptableDay1Close(attempt) {
   if (!attempt) return false;
@@ -692,9 +726,23 @@ export function isAcceptableDay1Close(attempt) {
     && (VALIDATION_ATTEMPT_WAIT_STATES.has(attempt.status) || VALIDATION_ATTEMPT_TERMINAL_STATES.has(attempt.status))) {
     return true;
   }
-  // Plan complete with an exact deadline = timeboxed lease.
+  // Plan complete with an exact deadline = timeboxed lease. An empty dueAt is a
+  // defensive false (no lease at all); a present-but-invalid dueAt is a hard error.
   if (attempt.status === "execution_scheduled") {
-    return Boolean(String(attempt.dueAt || "").trim());
+    const dueRaw = String(attempt.dueAt || "").trim();
+    if (!dueRaw) return false;
+    const dueMs = Date.parse(dueRaw);
+    // Baseline "now-at-schedule-time": updatedAt is stamped when the lease was set,
+    // falling back to createdAt for an attempt that never moved.
+    const baseRaw = String(attempt.updatedAt || attempt.createdAt || "").trim();
+    const baseMs = Date.parse(baseRaw);
+    if (!Number.isFinite(dueMs) || !Number.isFinite(baseMs) || !(dueMs > baseMs)) {
+      throw new ValidationAttemptTransitionError(
+        `isAcceptableDay1Close: invalid dueAt (${dueRaw || "(empty)"}) for scheduled attempt`,
+        "ERR_INVALID_DUE_AT",
+      );
+    }
+    return true;
   }
   return false;
 }
@@ -705,249 +753,17 @@ export function canStartNewAttempt(attempts = []) {
   return list.every((a) => VALIDATION_ATTEMPT_RESOLVED_STATES.has(a?.status));
 }
 
-// ── Legacy adapter (review step 2: reduce existing signalId turns → attempt) ───
-export class ValidationAttemptMigrationError extends Error {
-  constructor(message, code) {
-    super(message);
-    this.name = "ValidationAttemptMigrationError";
-    this.code = code || "ERR_MIGRATION";
-  }
-}
-
-// A migrated session whose plan is recoverable but whose execution cannot be
-// verified from the legacy turn log. The host must NOT promote it to execution.
-export const LEGACY_MIGRATION_DISPOSITION_UNVERIFIED = "legacy_interview_complete_but_execution_unverified";
-
-/**
- * Build a ValidationAttempt from existing office-hours turn-log entries (the six
- * legacy get_users signalIds). PURE and FAIL-CLOSED (GPT 6.12):
- *   - Only recoverable PLAN fields advance the attempt; no real proof exists in a
- *     legacy turn log, so the result advances AT MOST to execution_scheduled (and
- *     in practice — since dueAt/threshold/success are unrecoverable — stops before
- *     it, tagged unverified).
- *   - It NEVER fabricates dueAt / attemptThreshold / successCondition.
- *   - Ambiguity throws ValidationAttemptMigrationError("ERR_MIGRATION_AMBIGUOUS"):
- *       * the same canonical slot answered more than once with differing text,
- *       * a prefixed + bare alias of the same slot disagreeing,
- *       * a downstream slot answered while an upstream slot is missing (gap),
- *       * an unrecognized signalId mixed into the get_users ladder.
- * Returns the attempt; read `migrationDisposition` for the unverified case.
- */
-export function buildValidationAttemptFromTurns(turns = [], { id = "", createdAt = "" } = {}) {
-  const list = Array.isArray(turns) ? turns : [];
-
-  // Collect canonical-slot answers, detecting alias conflicts + duplicate revisions.
-  const byCard = {};
-  for (const turn of list) {
-    const signalId = turn?.signalId ?? turn?.signal_id;
-    const card = canonicalCardForSignal(signalId);
-    const answer = String(turn?.responseText ?? turn?.response ?? "").trim();
-    if (!answer) continue;
-    if (!card) {
-      // An id that is neither a known card nor a ladder alias is ambiguous noise.
-      const rawId = String(signalId || "").trim();
-      if (rawId) {
-        throw new ValidationAttemptMigrationError(
-          `unrecognized signalId in legacy ladder: ${rawId}`,
-          "ERR_MIGRATION_AMBIGUOUS",
-        );
-      }
-      continue;
-    }
-    if (card in byCard) {
-      if (byCard[card] !== answer) {
-        throw new ValidationAttemptMigrationError(
-          `conflicting legacy answers for ${card}`,
-          "ERR_MIGRATION_AMBIGUOUS",
-        );
-      }
-      continue; // identical duplicate — harmless
-    }
-    byCard[card] = answer;
-  }
-
-  // Gap detection: a present downstream slot with a missing upstream slot is ambiguous.
-  const order = ["activation_definition", "candidate_selection", "current_alternative",
-    "action_request", "evidence_contract", "commitment"];
-  let firstGap = -1;
-  for (let i = 0; i < order.length; i += 1) {
-    const present = order[i] in byCard;
-    if (!present && firstGap < 0) firstGap = i;
-    if (present && firstGap >= 0) {
-      throw new ValidationAttemptMigrationError(
-        `legacy ladder gap: ${order[i]} present but ${order[firstGap]} missing`,
-        "ERR_MIGRATION_AMBIGUOUS",
-      );
-    }
-  }
-
-  // The ordered ladder of cleanly-recoverable gather slots. The action_request,
-  // evidence_contract and commitment slots cannot be reconstructed from a single
-  // legacy answer without fabricating fields, so we stop at needs_action_contract.
-  const RECOVERABLE = [
-    ["activation_definition", "define_activation", (v) => ({ activationDefinition: v })],
-    ["candidate_selection", "select_candidate", (v) => ({ candidate: v })],
-    ["current_alternative", "record_alternative", (v) => ({ currentAlternative: v })],
-  ];
-
-  let attempt = createValidationAttempt({ id, goalLane: "get_users", createdAt });
-  let seq = 0;
-  const ev = (type, fields) => ({ type, eventId: `migrate:${id || "anon"}:${seq++}`, fields, at: createdAt });
-
-  for (const [card, type, toFields] of RECOVERABLE) {
-    if (!(card in byCard)) return attempt; // ordered ladder; stop at first gap
-    attempt = reduceValidationAttempt(attempt, ev(type, toFields(byCard[card])));
-  }
-
-  // action_request: legacy text becomes externalAction, but attemptThreshold and
-  // successCondition CANNOT be recovered → we refuse to fabricate and cannot fire
-  // define_action_contract. Stamp externalAction for context and tag unverified.
-  if (!("action_request" in byCard)) return attempt;
-  attempt = { ...attempt, externalAction: byCard.action_request };
-  attempt.migrationDisposition = LEGACY_MIGRATION_DISPOSITION_UNVERIFIED;
-  return attempt;
-}
-
-// ── R1.a additive exports (consumed by office-hours-attempt-store.mjs) ─────────
-// These are purely additive: no existing export, behavior, or the four stable
-// ladder helpers (canonicalLadderSignal / isGetUsersLadderSignal /
-// nextLadderSignal / GET_USERS_LADDER_SIGNAL_ORDER) change. buildValidationAttempt-
-// FromTurns above is untouched; the migration-plan builder below sits alongside it
-// and reuses canonicalCardForSignal so the two stay in lock-step.
+// ── Card definition accessor (consumed by office-hours-attempt-store.mjs) ──────
+// No legacy turn-log migration: there is no backward-compat path. A fresh interview
+// always begins clean at needs_definition via startAttempt; old turn logs are
+// transcript-only and never seed an attempt.
 
 /**
  * Look up the frozen card definition for a card type, or null. The CARDS map is
- * module-private; B3/B4 (and the attempt-store migration) need the cardType →
- * legacySignalId / transition / requiredFields mapping without re-deriving it.
+ * module-private; callers need the cardType → legacySignalId / transition /
+ * requiredFields mapping (live wire identity) without re-deriving it.
  */
 export function cardDefinition(cardType) {
   const key = String(cardType || "").trim();
   return CARDS[key] || null;
-}
-
-/**
- * Build a replayable EVENT PLAN from legacy office-hours turns (the six get_users
- * signalIds), returning `{ events, migrationMetadata }`.
- *
- * Contract (mirrors buildValidationAttemptFromTurns, but emits the event list the
- * attempt-store will persist so a replay reproduces the SAME projection):
- *   - Only the cleanly-recoverable gather prefix (activation/candidate/alternative)
- *     becomes reducer events (define_activation / select_candidate /
- *     record_alternative).
- *   - A legacy action_request carries a single text. externalAction / attemptThreshold
- *     / successCondition CANNOT be reconstructed without fabrication, so we DO NOT
- *     emit define_action_contract. Instead the recoverable externalAction is recorded
- *     as ONE `legacy_imported` store-control event (migrationHints), and the plan
- *     stops at needs_action_contract with
- *     disposition = LEGACY_MIGRATION_DISPOSITION_UNVERIFIED.
- *   - Ambiguity (same slot, differing text; alias disagreement; ladder gap;
- *     unrecognized signalId) throws ValidationAttemptMigrationError
- *     ("ERR_MIGRATION_AMBIGUOUS"). NEVER fabricates dueAt / threshold / success /
- *     "legacy"/"1" placeholders.
- *
- * `events` is the only authoritative replay artifact; `migrationMetadata` is
- * descriptive (disposition + the recovered slots) for the host/telemetry.
- */
-export function buildOfficeHoursMigrationPlan(turns = [], { id = "", createdAt = "" } = {}) {
-  const list = Array.isArray(turns) ? turns : [];
-
-  // Collect canonical-slot answers, detecting alias conflicts + duplicate revisions
-  // exactly as buildValidationAttemptFromTurns does (single source of ambiguity).
-  const byCard = {};
-  for (const turn of list) {
-    const signalId = turn?.signalId ?? turn?.signal_id;
-    const card = canonicalCardForSignal(signalId);
-    const answer = String(turn?.responseText ?? turn?.response ?? "").trim();
-    if (!answer) continue;
-    if (!card) {
-      const rawId = String(signalId || "").trim();
-      if (rawId) {
-        throw new ValidationAttemptMigrationError(
-          `unrecognized signalId in legacy ladder: ${rawId}`,
-          "ERR_MIGRATION_AMBIGUOUS",
-        );
-      }
-      continue;
-    }
-    if (card in byCard) {
-      if (byCard[card] !== answer) {
-        throw new ValidationAttemptMigrationError(
-          `conflicting legacy answers for ${card}`,
-          "ERR_MIGRATION_AMBIGUOUS",
-        );
-      }
-      continue; // identical duplicate — harmless
-    }
-    byCard[card] = answer;
-  }
-
-  // Gap detection identical to buildValidationAttemptFromTurns.
-  const order = ["activation_definition", "candidate_selection", "current_alternative",
-    "action_request", "evidence_contract", "commitment"];
-  let firstGap = -1;
-  for (let i = 0; i < order.length; i += 1) {
-    const present = order[i] in byCard;
-    if (!present && firstGap < 0) firstGap = i;
-    if (present && firstGap >= 0) {
-      throw new ValidationAttemptMigrationError(
-        `legacy ladder gap: ${order[i]} present but ${order[firstGap]} missing`,
-        "ERR_MIGRATION_AMBIGUOUS",
-      );
-    }
-  }
-
-  // Recoverable gather prefix → reducer events. eventIds are deterministic so a
-  // replay through the attempt-store projector is byte-stable.
-  const RECOVERABLE = [
-    ["activation_definition", "define_activation", (v) => ({ activationDefinition: v })],
-    ["candidate_selection", "select_candidate", (v) => ({ candidate: v })],
-    ["current_alternative", "record_alternative", (v) => ({ currentAlternative: v })],
-  ];
-
-  const events = [];
-  let seq = 0;
-  const nextEventId = () => `migrate:${id || "anon"}:${seq++}`;
-  const recoveredSlots = [];
-
-  for (const [card, type, toFields] of RECOVERABLE) {
-    if (!(card in byCard)) {
-      return finishMigrationPlan(events, { disposition: "", recoveredSlots });
-    }
-    events.push({ type, eventId: nextEventId(), fields: toFields(byCard[card]), at: createdAt });
-    recoveredSlots.push(card);
-  }
-
-  // No legacy action_request → recoverable prefix only, no disposition tag.
-  if (!("action_request" in byCard)) {
-    return finishMigrationPlan(events, { disposition: "", recoveredSlots });
-  }
-
-  // action_request present: record the recoverable externalAction as ONE
-  // legacy_imported control event (NOT a define_action_contract — that would
-  // require fabricating threshold/success). Tag the plan unverified.
-  recoveredSlots.push("action_request");
-  events.push({
-    type: "legacy_imported",
-    eventId: nextEventId(),
-    fields: {
-      recoverableFields: { externalAction: byCard.action_request },
-      migrationHints: { externalAction: byCard.action_request },
-      migrationDisposition: LEGACY_MIGRATION_DISPOSITION_UNVERIFIED,
-    },
-    at: createdAt,
-  });
-  return finishMigrationPlan(events, {
-    disposition: LEGACY_MIGRATION_DISPOSITION_UNVERIFIED,
-    recoveredSlots,
-  });
-}
-
-function finishMigrationPlan(events, { disposition, recoveredSlots }) {
-  return {
-    events,
-    migrationMetadata: {
-      disposition: disposition || "",
-      recoveredSlots: [...recoveredSlots],
-    },
-  };
 }

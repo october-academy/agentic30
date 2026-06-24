@@ -13,11 +13,9 @@ import {
   VALIDATION_ATTEMPT_CARD_TYPES,
   LEGACY_SIGNAL_ALIASES,
   NEGATIVE_OUTCOME_KINDS,
-  LEGACY_MIGRATION_DISPOSITION_UNVERIFIED,
   createValidationAttempt,
   reduceValidationAttempt,
   ValidationAttemptTransitionError,
-  ValidationAttemptMigrationError,
   gradeEvidence,
   stableStringify,
   payloadHashOf,
@@ -27,7 +25,6 @@ import {
   canonicalCardForSignal,
   isAcceptableDay1Close,
   canStartNewAttempt,
-  buildValidationAttemptFromTurns,
   GET_USERS_LADDER_SIGNAL_ORDER,
   canonicalLadderSignal,
   isGetUsersLadderSignal,
@@ -52,7 +49,9 @@ function scheduledAttempt() {
   a = step(a, "record_alternative", { currentAlternative: "유튜브 명상 영상" });
   a = step(a, "define_action_contract", { externalAction: "카톡 전송", attemptThreshold: "1명 1회", successCondition: "핵심 흐름 완료" });
   a = step(a, "define_evidence_contract", { expectedProofKind: "dm_sent_screenshot", evidenceLocation: "카톡 캡처" });
-  a = step(a, "schedule_execution", { dueAt: "2026-06-24T18:00:00Z", commitmentNote: "퇴근 후 발송" });
+  // schedule_execution validates dueAt > event.at (GPT R1.b H), so stamp an `at`
+  // earlier than the dueAt (08:00 < 18:00).
+  a = step(a, "schedule_execution", { dueAt: "2026-06-24T18:00:00Z", commitmentNote: "퇴근 후 발송" }, "2026-06-24T08:00:00Z");
   return a;
 }
 
@@ -218,6 +217,9 @@ test("legal/illegal transition matrix: every (state × transition) is legal or t
       const expectLegal = LEGAL_SET.has(key);
       const base = attemptInStatus(status);
       const event = { type, eventId: `matrix-${status}-${type}`, fields: fieldsFor(type) };
+      // schedule_execution validates dueAt > event.at (GPT R1.b H); stamp an `at`
+      // before the fieldsFor() dueAt so the legal case still passes.
+      if (type === "schedule_execution") event.at = "2026-06-24T08:00:00Z";
       if (expectLegal) {
         const next = reduceValidationAttempt(base, event);
         assert.ok(next && next.status, `${key} should be legal`);
@@ -497,19 +499,20 @@ test("canStartNewAttempt: suspended (carried/blocked) is NOT resolved → false"
 
 // ── nextCardType: 6-step advance then "" at execution_scheduled ─────────────────
 test("nextCardType advances through the six gather states in order, then '' at execution_scheduled", () => {
-  let a = createValidationAttempt({ id: "a" });
+  let a = createValidationAttempt({ id: "a", createdAt: "2026-06-24T00:00:00Z" });
   const expected = [
-    ["needs_definition", "activation_definition", "define_activation", { activationDefinition: "x" }],
-    ["needs_candidate", "candidate_selection", "select_candidate", { candidate: "y" }],
-    ["needs_alternative", "current_alternative", "record_alternative", { currentAlternative: "z" }],
-    ["needs_action_contract", "action_request", "define_action_contract", { externalAction: "a", attemptThreshold: "1", successCondition: "b" }],
-    ["needs_evidence_contract", "evidence_contract", "define_evidence_contract", { expectedProofKind: "dm_sent_screenshot", evidenceLocation: "l" }],
-    ["needs_commitment", "commitment", "schedule_execution", { dueAt: "2026-06-24T18:00:00Z" }],
+    ["needs_definition", "activation_definition", "define_activation", { activationDefinition: "x" }, undefined],
+    ["needs_candidate", "candidate_selection", "select_candidate", { candidate: "y" }, undefined],
+    ["needs_alternative", "current_alternative", "record_alternative", { currentAlternative: "z" }, undefined],
+    ["needs_action_contract", "action_request", "define_action_contract", { externalAction: "a", attemptThreshold: "1", successCondition: "b" }, undefined],
+    ["needs_evidence_contract", "evidence_contract", "define_evidence_contract", { expectedProofKind: "dm_sent_screenshot", evidenceLocation: "l" }, undefined],
+    // schedule_execution validates dueAt > event.at (GPT R1.b H).
+    ["needs_commitment", "commitment", "schedule_execution", { dueAt: "2026-06-24T18:00:00Z" }, "2026-06-24T08:00:00Z"],
   ];
-  for (const [status, card, type, fields] of expected) {
+  for (const [status, card, type, fields, at] of expected) {
     assert.equal(a.status, status);
     assert.equal(nextCardType(a), card);
-    a = step(a, type, fields);
+    a = step(a, type, fields, at);
   }
   assert.equal(a.status, "execution_scheduled");
   assert.equal(nextCardType(a), ""); // WAIT → no card
@@ -569,9 +572,9 @@ test("isAcceptableDay1Close: plan-only false; scheduled/action-proof/blocked/car
   for (const s of VALIDATION_ATTEMPT_ACTIVE_STATES) {
     assert.equal(isAcceptableDay1Close(attemptInStatus(s)), false, `gather ${s} must not close`);
   }
-  // execution_scheduled WITH dueAt → true (timeboxed lease)
+  // execution_scheduled WITH a real future dueAt → true (timeboxed lease)
   assert.equal(isAcceptableDay1Close(scheduledAttempt()), true);
-  // execution_scheduled WITHOUT dueAt → false (defensive)
+  // execution_scheduled WITHOUT dueAt → false (defensive: no lease at all)
   assert.equal(isAcceptableDay1Close({ ...scheduledAttempt(), dueAt: "" }), false);
   // action proof attached → true
   assert.equal(isAcceptableDay1Close(awaitingAttempt()), true);
@@ -583,95 +586,52 @@ test("isAcceptableDay1Close: plan-only false; scheduled/action-proof/blocked/car
   assert.equal(isAcceptableDay1Close(null), false);
 });
 
-// ── 6.12: migration ────────────────────────────────────────────────────────────
-test("migration: complete legacy turns advance through the recoverable gather slots, tagged unverified", () => {
-  const turns = [
-    { signalId: "get_users_active_user_definition", responseText: "첫 명상 완료" },
-    { signalId: "office_hours_get_users_first_candidate", responseText: "김OO" },
-    { signalId: "get_users_current_alternative", responseText: "유튜브" },
-    { signalId: "get_users_today_request", responseText: "카톡으로 권유" },
-    { signalId: "get_users_evidence_format", responseText: "캡처" },
-    { signalId: "get_users_day1_commitment", responseText: "오늘 저녁" },
-  ];
-  const a = buildValidationAttemptFromTurns(turns, { id: "mig1", createdAt: "2026-06-01T00:00:00Z" });
-  // Recovered the three clean slots + externalAction; stopped before fabricating contract fields.
-  assert.equal(a.activationDefinition, "첫 명상 완료");
-  assert.equal(a.candidate, "김OO");
-  assert.equal(a.currentAlternative, "유튜브");
-  assert.equal(a.externalAction, "카톡으로 권유");
-  // Never fabricated dueAt / attemptThreshold / successCondition.
-  assert.equal(a.dueAt, "");
-  assert.equal(a.attemptThreshold, "");
-  assert.equal(a.successCondition, "");
-  // Did NOT advance into WAIT — execution unverified.
-  assert.equal(a.status, "needs_action_contract");
-  assert.equal(a.migrationDisposition, LEGACY_MIGRATION_DISPOSITION_UNVERIFIED);
-  // No fabricated evidence / appliedEvents reference only real migrate events.
-  assert.equal(a.actionProof, null);
-  assert.equal(a.evidence.length, 0);
+// ── isAcceptableDay1Close dueAt validation (GPT R1.b H) ────────────────────────
+test("isAcceptableDay1Close: a present-but-invalid dueAt throws ERR_INVALID_DUE_AT", () => {
+  // scheduledAttempt() stamps updatedAt = 2026-06-24T08:00:00Z (the schedule `at`).
+  // An unparseable dueAt → throw.
+  assert.throws(
+    () => isAcceptableDay1Close({ ...scheduledAttempt(), dueAt: "not-a-date" }),
+    (e) => e instanceof ValidationAttemptTransitionError && e.code === "ERR_INVALID_DUE_AT",
+  );
+  // A PAST dueAt (before the schedule baseline) → throw.
+  assert.throws(
+    () => isAcceptableDay1Close({ ...scheduledAttempt(), dueAt: "2026-06-23T00:00:00Z" }),
+    (e) => e instanceof ValidationAttemptTransitionError && e.code === "ERR_INVALID_DUE_AT",
+  );
+  // A valid future dueAt → true (no throw).
+  assert.equal(isAcceptableDay1Close({ ...scheduledAttempt(), dueAt: "2026-06-25T00:00:00Z" }), true);
 });
 
-test("migration: a short legacy log advances only as far as it cleanly can", () => {
-  const turns = [
-    { signalId: "get_users_active_user_definition", responseText: "A" },
-    { signalId: "get_users_first_candidate", responseText: "B" },
-  ];
-  const a = buildValidationAttemptFromTurns(turns, { id: "mig2" });
-  assert.equal(a.status, "needs_alternative");
-  assert.equal(a.candidate, "B");
-  assert.equal(a.migrationDisposition, undefined); // not yet at the unverified action slot
+// ── schedule_execution dueAt validation in the reducer (GPT R1.b H) ────────────
+test("schedule_execution rejects an unparseable or past dueAt (ERR_INVALID_DUE_AT)", () => {
+  const base = attemptInStatus("needs_commitment"); // createdAt "" via attemptInStatus
+  // Unparseable dueAt → throw.
+  assert.throws(
+    () => reduceValidationAttempt(base, { type: "schedule_execution", eventId: "se-bad", fields: { dueAt: "garbage" }, at: "2026-06-24T08:00:00Z" }),
+    (e) => e instanceof ValidationAttemptTransitionError && e.code === "ERR_INVALID_DUE_AT",
+  );
+  // dueAt NOT after event.at (equal) → throw.
+  assert.throws(
+    () => reduceValidationAttempt(base, { type: "schedule_execution", eventId: "se-eq", fields: { dueAt: "2026-06-24T08:00:00Z" }, at: "2026-06-24T08:00:00Z" }),
+    (e) => e instanceof ValidationAttemptTransitionError && e.code === "ERR_INVALID_DUE_AT",
+  );
+  // Missing event.at → cannot validate → throw.
+  assert.throws(
+    () => reduceValidationAttempt(base, { type: "schedule_execution", eventId: "se-noat", fields: { dueAt: "2026-06-24T18:00:00Z" } }),
+    (e) => e instanceof ValidationAttemptTransitionError && e.code === "ERR_INVALID_DUE_AT",
+  );
+  // Valid future dueAt → passes.
+  const ok = reduceValidationAttempt(base, { type: "schedule_execution", eventId: "se-ok", fields: { dueAt: "2026-06-24T18:00:00Z" }, at: "2026-06-24T08:00:00Z" });
+  assert.equal(ok.status, "execution_scheduled");
+  assert.equal(ok.dueAt, "2026-06-24T18:00:00Z");
 });
 
-test("migration is fail-closed: ambiguity throws ERR_MIGRATION_AMBIGUOUS, no fabrication", () => {
-  // conflicting answers for the same slot
-  assert.throws(
-    () => buildValidationAttemptFromTurns([
-      { signalId: "get_users_active_user_definition", responseText: "A" },
-      { signalId: "get_users_active_user_definition", responseText: "B" },
-    ], { id: "m" }),
-    (e) => e instanceof ValidationAttemptMigrationError && e.code === "ERR_MIGRATION_AMBIGUOUS",
-  );
-  // prefixed + bare alias of the same slot disagreeing
-  assert.throws(
-    () => buildValidationAttemptFromTurns([
-      { signalId: "get_users_first_candidate", responseText: "X" },
-      { signalId: "office_hours_get_users_first_candidate", responseText: "Y" },
-    ], { id: "m" }),
-    (e) => e.code === "ERR_MIGRATION_AMBIGUOUS",
-  );
-  // downstream slot present while an upstream slot is missing (gap)
-  assert.throws(
-    () => buildValidationAttemptFromTurns([
-      { signalId: "get_users_active_user_definition", responseText: "A" },
-      { signalId: "get_users_current_alternative", responseText: "C" }, // skipped candidate
-    ], { id: "m" }),
-    (e) => e.code === "ERR_MIGRATION_AMBIGUOUS",
-  );
-  // unrecognized signalId mixed into the ladder
-  assert.throws(
-    () => buildValidationAttemptFromTurns([
-      { signalId: "get_users_active_user_definition", responseText: "A" },
-      { signalId: "totally_unknown_signal", responseText: "??" },
-    ], { id: "m" }),
-    (e) => e.code === "ERR_MIGRATION_AMBIGUOUS",
-  );
-});
-
-test("migration: identical duplicate answers are harmless (not ambiguous)", () => {
-  const a = buildValidationAttemptFromTurns([
-    { signalId: "get_users_active_user_definition", responseText: "same" },
-    { signalId: "office_hours_get_users_active_user_definition", responseText: "same" },
-    { signalId: "get_users_first_candidate", responseText: "김" },
-  ], { id: "m" });
-  assert.equal(a.activationDefinition, "same");
-  assert.equal(a.status, "needs_alternative");
-});
-
-test("migration: empty turn list yields a fresh needs_definition attempt", () => {
-  const a = buildValidationAttemptFromTurns([], { id: "m" });
-  assert.equal(a.status, "needs_definition");
-  assert.equal(a.migrationDisposition, undefined);
-});
+// Legacy turn-log → attempt migration (buildValidationAttemptFromTurns /
+// buildOfficeHoursMigrationPlan / LEGACY_MIGRATION_DISPOSITION_UNVERIFIED /
+// ValidationAttemptMigrationError) was removed per the owner directive (no legacy,
+// no backward-compat); every attempt now starts fresh at needs_definition, so there
+// are no migration tests here.
 
 // ── Property: terminal/suspended states never transition back to active ─────────
 test("property: no transition can move a TERMINAL attempt back to an active state", () => {
@@ -701,7 +661,8 @@ test("determinism: the same event sequence yields the same final attempt", () =>
     { type: "record_alternative", eventId: "e3", fields: { currentAlternative: "alt" } },
     { type: "define_action_contract", eventId: "e4", fields: { externalAction: "act", attemptThreshold: "1", successCondition: "ok" } },
     { type: "define_evidence_contract", eventId: "e5", fields: { expectedProofKind: "dm_sent_screenshot", evidenceLocation: "loc" } },
-    { type: "schedule_execution", eventId: "e6", fields: { dueAt: "2026-06-24T18:00:00Z" } },
+    // schedule_execution validates dueAt > event.at (GPT R1.b H).
+    { type: "schedule_execution", eventId: "e6", fields: { dueAt: "2026-06-24T18:00:00Z" }, at: "2026-06-24T08:00:00Z" },
     { type: "record_action_proof", eventId: "e7", fields: { evidence: { kind: "dm_sent_screenshot", ref: "r" } } },
   ];
   const run = () => {

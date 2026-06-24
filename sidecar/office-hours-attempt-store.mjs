@@ -5,10 +5,11 @@
 // What this module is: the single writer + reader for the per-workspace
 // office-hours-attempts.json event log. It owns durability (fsync + dir-sync),
 // concurrency (owner-token lease lock), idempotency (eventId == requestId,
-// checked BEFORE the CAS revision check), a durable outbox (deliveries[] for
-// restart re-post), and a projector that replays raw events through the pure
-// contract reducer (reduceValidationAttempt) plus two store-level control events
-// the reducer does not know about (legacy_imported, answer_superseded).
+// checked BEFORE the CAS revision check), a durable 3-state outbox (deliveries[]:
+// pending → posted → consumed, plus canceled, for restart re-post), and a
+// projector that replays raw events through the pure contract reducer
+// (reduceValidationAttempt) plus one store-level control event the reducer does
+// not know about (answer_superseded — a logical revision of an earlier answer).
 //
 // What this module is NOT: it does not advance state itself, does not call the
 // LLM, and is not referenced by the running daemon. State authority stays in
@@ -21,7 +22,8 @@
 //     authoritative commit write through atomic-store.atomicWriteJson because it
 //     lacks fsync + directory-sync; we implement a durable writer here instead.
 //   - No feature flags, no silent fallbacks. Every failure throws a coded Error.
-//   - The migration plan NEVER fabricates dueAt/threshold/successCondition.
+//   - There is NO legacy turn-log migration path here: callers always seed a fresh
+//     attempt via startAttempt. The store fabricates nothing.
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -37,8 +39,13 @@ import {
   createValidationAttempt,
   reduceValidationAttempt,
   canStartNewAttempt,
-  stableStringify,
+  payloadHashOf,
+  cardDefinition,
+  VALIDATION_ATTEMPT_ACTIVE_STATES,
+  VALIDATION_ATTEMPT_WAIT_STATES,
 } from "./office-hours-contract.mjs";
+
+const ACTIVE_GATHER_STATES = new Set(VALIDATION_ATTEMPT_ACTIVE_STATES);
 
 export const OFFICE_HOURS_ATTEMPTS_SCHEMA_VERSION = 1;
 export const OFFICE_HOURS_ATTEMPTS_SCHEMA = "agentic30.memory.office_hours_attempts.v1";
@@ -113,6 +120,40 @@ export async function loadAttemptLog({ workspaceRoot } = {}) {
       `attempt log "attempts" must be an object at ${filePath}`,
       "ERR_ATTEMPT_LOG_PARSE",
     );
+  }
+  // Per-record strict validation (fail-closed; owner directive: no fail-open). A
+  // structurally-valid root with a corrupt record (events non-array, deliveries
+  // non-object, bad revision) must THROW — never be silently coerced to empty by a
+  // downstream `Array.isArray(...)?:[]` / `||{}`, which would fabricate authority and
+  // let a commit overwrite/destroy the corrupt-but-present prior data.
+  for (const [key, record] of Object.entries(parsed.attempts)) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      throw new AttemptStoreError(`attempt record ${key} must be an object at ${filePath}`, "ERR_ATTEMPT_LOG_SCHEMA");
+    }
+    if (typeof record.attemptId !== "string" || !record.attemptId.trim()) {
+      throw new AttemptStoreError(`attempt record ${key} has invalid attemptId at ${filePath}`, "ERR_ATTEMPT_LOG_SCHEMA");
+    }
+    if (typeof record.revision !== "number" || !Number.isFinite(record.revision) || record.revision < 0) {
+      throw new AttemptStoreError(`attempt record ${key} has invalid revision at ${filePath}`, "ERR_ATTEMPT_LOG_SCHEMA");
+    }
+    if (!Array.isArray(record.events)) {
+      throw new AttemptStoreError(`attempt record ${key} events must be an array at ${filePath}`, "ERR_ATTEMPT_LOG_SCHEMA");
+    }
+    if (!record.deliveries || typeof record.deliveries !== "object" || Array.isArray(record.deliveries)) {
+      throw new AttemptStoreError(`attempt record ${key} deliveries must be an object at ${filePath}`, "ERR_ATTEMPT_LOG_SCHEMA");
+    }
+    // Each delivery must carry a CANONICAL status. A non-canonical value (a legacy
+    // "delivered", or a partial/foreign write) would be silently excluded from the
+    // re-post set and rejected by every delivery transition — an un-consumed response
+    // lost with no recovery path. Fail closed instead of fail-open.
+    for (const [evId, delivery] of Object.entries(record.deliveries)) {
+      if (!delivery || typeof delivery !== "object" || Array.isArray(delivery)) {
+        throw new AttemptStoreError(`attempt record ${key} delivery ${evId} must be an object at ${filePath}`, "ERR_ATTEMPT_LOG_SCHEMA");
+      }
+      if (!["pending", "posted", "consumed", "canceled"].includes(delivery.status)) {
+        throw new AttemptStoreError(`attempt record ${key} delivery ${evId} has invalid status "${String(delivery.status)}" at ${filePath}`, "ERR_ATTEMPT_LOG_SCHEMA");
+      }
+    }
   }
   return parsed;
 }
@@ -251,9 +292,39 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ── Idempotency payload equality (spec §assertSameCommandPayload; GPT#1) ───────
-// Two commands are "the same" iff their type and fields match. The server `at`
-// timestamp is EXCLUDED so a crash-retry that re-stamps `at` is still idempotent.
+// ── Idempotency payload equality (spec §assertSameCommandPayload; GPT R1.b E) ──
+// Two commands are "the same" iff their type, fields AND audit region all match.
+// The server `at` timestamp is EXCLUDED (a crash-retry re-stamps `at`, which must
+// still be idempotent) but the audit (questionText / responseText /
+// responseDescription / promptSnapshot / submissions) IS part of the identity:
+// a retry that reuses the same requestId but carries a different captured answer
+// or prompt is a genuine CONFLICT, not a false dedupe. The hash is canonical
+// (stable key order) so field/audit key ordering never matters.
+function commandIdentityHash(command) {
+  return payloadHashOf({
+    type: String(command?.type || ""),
+    fields: command?.fields && typeof command.fields === "object" && !Array.isArray(command.fields)
+      ? command.fields
+      : {},
+    audit: auditIdentity(command?.audit),
+  });
+}
+
+// The audit subset that participates in command identity. normalizeAudit shapes
+// stored events identically, so a stored prior and an incoming command hash equal.
+function auditIdentity(audit) {
+  if (!audit || typeof audit !== "object" || Array.isArray(audit)) {
+    return { questionText: "", responseText: "", responseDescription: "", promptSnapshot: null, submissions: [] };
+  }
+  return {
+    questionText: typeof audit.questionText === "string" ? audit.questionText : "",
+    responseText: typeof audit.responseText === "string" ? audit.responseText : "",
+    responseDescription: typeof audit.responseDescription === "string" ? audit.responseDescription : "",
+    promptSnapshot: audit.promptSnapshot ?? null,
+    submissions: Array.isArray(audit.submissions) ? audit.submissions : [],
+  };
+}
+
 export function assertSameCommandPayload(prior, event) {
   const priorType = String(prior?.type || "");
   const eventType = String(event?.type || "");
@@ -263,36 +334,31 @@ export function assertSameCommandPayload(prior, event) {
       "ERR_EVENT_ID_CONFLICT",
     );
   }
-  const priorFields = stableStringify(prior?.fields ?? {});
-  const eventFields = stableStringify(event?.fields ?? {});
-  if (priorFields !== eventFields) {
+  if (commandIdentityHash(prior) !== commandIdentityHash(event)) {
     throw new AttemptStoreError(
-      `event ${eventType} payload differs from the prior command for the same eventId`,
+      `event ${eventType} payload (fields/audit) differs from the prior command for the same eventId`,
       "ERR_EVENT_ID_CONFLICT",
     );
   }
 }
 
 // ── Projector (spec §projectAttemptFromEvents) ───────────────────────────────
-// Replays raw events into a ValidationAttempt projection. Handles three event
-// classes:
+// Replays raw events into a ValidationAttempt projection. Two event classes:
 //   1. reducer transitions (define_activation, …) → reduceValidationAttempt.
-//   2. legacy_imported (store control) → apply recoverable fields / hints /
-//      disposition directly, WITHOUT passing to the reducer (avoids
-//      ERR_UNKNOWN_TRANSITION).
-//   3. answer_superseded (store control) → logical branch replacement: replay the
-//      effective branch up to but EXCLUDING targetEventId, drop the superseded
-//      downstream events from the effective set, then apply the replacement
-//      reducer event. Raw events[] are preserved; only the projection changes.
-const STORE_CONTROL_EVENT_TYPES = Object.freeze(new Set(["legacy_imported", "answer_superseded"]));
+//   2. answer_superseded (the ONLY store-control event) → logical revision of an
+//      earlier answer: at the supersede's position in the timeline, the effective
+//      branch is truncated back to BEFORE targetEventId and the replacement reducer
+//      event is spliced in. Crucially, this is processed SEQUENTIALLY over the raw
+//      timeline (GPT R1.b C) so any events appended AFTER the supersede are
+//      preserved: A → B → S(A→A′) → C projects to [A′, C], NOT [A′]. Repeated
+//      revisions are supported — a later supersede targets whatever is in the
+//      effective branch at its own position. Raw events[] are never mutated.
+// answer_superseded is the ONLY store-level control event; everything else is a
+// reducer transition. Classification is a direct string compare at the two sites
+// that need it (resolveEffectiveEvents, applyProjectionEvent).
 
 export function projectAttemptFromEvents(events = [], { id = "", goalLane = "get_users", createdAt = "" } = {}) {
-  const raw = Array.isArray(events) ? events : [];
-
-  // Resolve the EFFECTIVE event list by applying any answer_superseded directives
-  // as logical branch replacements over the raw timeline. We never mutate `raw`.
-  const effective = resolveEffectiveEvents(raw);
-
+  const effective = resolveEffectiveEvents(events);
   let attempt = createValidationAttempt({ id, goalLane, createdAt });
   for (const event of effective) {
     attempt = applyProjectionEvent(attempt, event);
@@ -300,64 +366,65 @@ export function projectAttemptFromEvents(events = [], { id = "", goalLane = "get
   return attempt;
 }
 
-// Apply answer_superseded directives to produce the effective (replayable) event
-// stream. Each answer_superseded names a targetEventId (the answer being
-// replaced) and carries a `replacement` reducer event. Semantics:
-//   - keep every effective event strictly BEFORE targetEventId,
-//   - drop targetEventId and every later reducer-transition event (the superseded
-//     downstream branch), keeping any control events,
-//   - splice in the replacement reducer event at the target's position.
-// Multiple supersede directives apply in timeline order, each over the prior
-// effective stream.
-function resolveEffectiveEvents(raw) {
-  let effective = raw.filter((e) => e && e.type !== "answer_superseded");
-  const directives = raw.filter((e) => e && e.type === "answer_superseded");
-
-  for (const directive of directives) {
-    const fields = directive.fields && typeof directive.fields === "object" ? directive.fields : {};
-    const targetEventId = String(fields.targetEventId || "").trim();
-    if (!targetEventId) {
-      throw new AttemptStoreError(
-        "answer_superseded requires fields.targetEventId",
-        "ERR_SUPERSEDE_NO_TARGET",
-      );
+// Resolve the EFFECTIVE (replayable) event list by walking the raw timeline ONCE,
+// in order. A non-supersede event is appended to the current effective branch. An
+// answer_superseded is applied AT ITS POSITION: it truncates the effective branch
+// back to just before its targetEventId and splices in the replacement reducer
+// event. Events that come after the supersede in the raw timeline are then appended
+// onto the revised branch, so they survive the revision. We never mutate `events`.
+function resolveEffectiveEvents(events) {
+  const raw = Array.isArray(events) ? events : [];
+  const effective = [];
+  for (const ev of raw) {
+    if (!ev) continue;
+    if (ev.type !== "answer_superseded") {
+      effective.push(ev);
+      continue;
     }
-    const replacement = fields.replacement;
-    if (!replacement || typeof replacement !== "object" || !replacement.type) {
-      throw new AttemptStoreError(
-        "answer_superseded requires a fields.replacement reducer event",
-        "ERR_SUPERSEDE_NO_REPLACEMENT",
-      );
-    }
-    const targetIndex = effective.findIndex((e) => e && e.eventId === targetEventId);
-    if (targetIndex < 0) {
-      throw new AttemptStoreError(
-        `answer_superseded targetEventId not found in effective branch: ${targetEventId}`,
-        "ERR_SUPERSEDE_TARGET_MISSING",
-      );
-    }
-    const before = effective.slice(0, targetIndex);
-    // Downstream after the target: keep control events, drop superseded reducer
-    // transitions (the branch being replaced).
-    const after = effective
-      .slice(targetIndex + 1)
-      .filter((e) => e && STORE_CONTROL_EVENT_TYPES.has(e.type));
-    // The replacement is itself a reducer event; give it a stable synthetic
-    // eventId so the reducer's own idempotency bookkeeping stays consistent.
-    const replacementEvent = {
-      ...replacement,
-      eventId: String(replacement.eventId || `superseded:${targetEventId}`),
-    };
-    effective = [...before, replacementEvent, ...after];
+    applySupersedeToBranch(effective, ev);
   }
   return effective;
 }
 
+// Mutate `effective` (the in-progress branch) per a single answer_superseded
+// directive: find targetEventId in the CURRENT branch, drop it and everything that
+// followed it in the branch (the superseded downstream), then push the replacement.
+function applySupersedeToBranch(effective, directive) {
+  const fields = directive.fields && typeof directive.fields === "object" ? directive.fields : {};
+  const targetEventId = String(fields.targetEventId || "").trim();
+  if (!targetEventId) {
+    throw new AttemptStoreError(
+      "answer_superseded requires fields.targetEventId",
+      "ERR_SUPERSEDE_NO_TARGET",
+    );
+  }
+  const replacement = fields.replacement;
+  if (!replacement || typeof replacement !== "object" || !replacement.type) {
+    throw new AttemptStoreError(
+      "answer_superseded requires a fields.replacement reducer event",
+      "ERR_SUPERSEDE_NO_REPLACEMENT",
+    );
+  }
+  const targetIndex = effective.findIndex((e) => e && e.eventId === targetEventId);
+  if (targetIndex < 0) {
+    throw new AttemptStoreError(
+      `answer_superseded targetEventId not found in effective branch: ${targetEventId}`,
+      "ERR_SUPERSEDE_TARGET_MISSING",
+    );
+  }
+  // Truncate to just before the target (drop target + its downstream within the
+  // current branch), then splice in the replacement reducer event.
+  effective.length = targetIndex;
+  effective.push({
+    ...replacement,
+    // Stable synthetic eventId keyed by the supersede directive so the reducer's
+    // idempotency bookkeeping stays consistent and repeated revisions don't collide.
+    eventId: String(replacement.eventId || `superseded:${directive.eventId || targetEventId}`),
+  });
+}
+
 function applyProjectionEvent(attempt, event) {
   const type = String(event?.type || "").trim();
-  if (type === "legacy_imported") {
-    return applyLegacyImported(attempt, event);
-  }
   if (type === "answer_superseded") {
     // Already resolved away in resolveEffectiveEvents; should never reach here.
     throw new AttemptStoreError(
@@ -374,42 +441,44 @@ function applyProjectionEvent(attempt, event) {
   });
 }
 
-// legacy_imported: bring recoverable plan fields, migrationHints, and the
-// migrationDisposition into the projection WITHOUT a reducer transition. The
-// recoverable fields are applied as a plain patch; recoverableState (if present
-// and legal) is honored so a migrated interview can resume at the right slot.
-function applyLegacyImported(attempt, event) {
-  const fields = event?.fields && typeof event.fields === "object" ? event.fields : {};
-  const next = { ...attempt };
-
-  const recoverable = fields.recoverableFields && typeof fields.recoverableFields === "object"
-    ? fields.recoverableFields
-    : {};
-  for (const [key, value] of Object.entries(recoverable)) {
-    next[key] = value;
-  }
-  if (fields.migrationHints !== undefined) {
-    next.migrationHints = fields.migrationHints;
-  }
-  if (typeof fields.migrationDisposition === "string" && fields.migrationDisposition) {
-    next.migrationDisposition = fields.migrationDisposition;
-  }
-  if (typeof fields.recoverableState === "string" && fields.recoverableState) {
-    next.status = fields.recoverableState;
+// ── Outbox ↔ effective-branch reconciliation (one rule for all delivery validity) ─
+// A delivery keyed K is a valid re-post target IFF its EFFECT is in the current
+// effective branch. A normal event's effect is the event itself (id K). A supersede's
+// effect is the replacement it splices in, whose synthetic id is `superseded:K`. This
+// single predicate replaces the per-call ad-hoc cancellation logic, so a supersede
+// that drops a branch — or a re-commit of an already-reverted event — can never leave
+// a stale pending/posted delivery that re-posts a now-invalid response after a crash.
+function effectiveEventIdSet(events) {
+  return new Set(resolveEffectiveEvents(events).map((e) => e && e.eventId).filter(Boolean));
+}
+function deliveryEffectInBranch(deliveryKey, effectiveIds) {
+  return effectiveIds.has(deliveryKey) || effectiveIds.has(`superseded:${deliveryKey}`);
+}
+// Cancel every pending/posted delivery whose effect is no longer in the branch.
+function reconcileDeliveriesToBranch(deliveries, effectiveIds) {
+  const next = { ...(deliveries || {}) };
+  for (const [k, d] of Object.entries(next)) {
+    if (d && (d.status === "pending" || d.status === "posted") && !deliveryEffectInBranch(k, effectiveIds)) {
+      next[k] = { ...d, status: "canceled" };
+    }
   }
   return next;
 }
 
 // ── projectAttempt (read + replay, NO in-process cache; GPT#10) ───────────────
+// Returns ONE read snapshot: { projection, revision, record, effectiveEvents }
+// (GPT R1.b F). `revision` is required for the supersede/commit CAS token plumbing;
+// `effectiveEvents` is the post-supersede branch the projection was built from.
+// Returns null for an unknown attemptId.
 export async function projectAttempt({ workspaceRoot, attemptId } = {}) {
   const log = await loadAttemptLog({ workspaceRoot });
   const record = log.attempts[attemptId];
   if (!record) return null;
-  return projectAttemptFromEvents(record.events || [], {
-    id: record.attemptId,
-    goalLane: record.goalLane,
-    createdAt: record.createdAt,
-  });
+  const events = Array.isArray(record.events) ? record.events : [];
+  const meta = { id: record.attemptId, goalLane: record.goalLane, createdAt: record.createdAt };
+  const effectiveEvents = resolveEffectiveEvents(events);
+  const projection = projectAttemptFromEvents(events, meta);
+  return { projection, revision: record.revision, record, effectiveEvents };
 }
 
 // ── startAttempt (spec §startAttempt; GPT#9 check+create one operation) ────────
@@ -477,12 +546,16 @@ export async function startAttempt({
 //   1. strict load; record must exist.
 //   2. eventId = event.requestId (required).
 //   3. IDEMPOTENCY BEFORE CAS: if eventId already present, compare payload
-//      (type+fields only, excluding `at`) → return {applied:false} regardless of
-//      a stale expectedRevision. Re-queue a missing pending delivery.
+//      (type + fields + audit, excluding `at`) → return {applied:false} regardless
+//      of a stale expectedRevision. Re-queue a missing pending delivery.
 //   4. CAS: only for a FIRST-SEEN event — record.revision !== expectedRevision
 //      throws ERR_ATTEMPT_REVISION_CONFLICT.
-//   5. project + reduce (illegal transition throws — fail-closed).
-//   6. append raw event (audit included), revision++, record pending delivery.
+//   5. build the raw candidate event, then VALIDATE THE WHOLE CANDIDATE LOG through
+//      the projector (GPT R1.b B): projectAttemptFromEvents([...events, rawEvent]).
+//      The projector understands control events (answer_superseded) the single-event
+//      reducer does not, so this is what lets answer_superseded ever commit. Any
+//      illegal transition / supersede violation throws here = fail-closed.
+//   6. durable-write the candidate log ONLY on success, revision++, queue delivery.
 //   7. durable atomic write.
 export async function commitAttemptEvent({
   workspaceRoot,
@@ -501,6 +574,30 @@ export async function commitAttemptEvent({
   const requestId = typeof event.requestId === "string" ? event.requestId.trim() : "";
   if (!requestId) {
     throw new AttemptStoreError("event.requestId is required (== eventId)", "ERR_NO_REQUEST_ID");
+  }
+  // Two RESERVED internal eventId namespaces the store mints itself; a caller
+  // requestId in either would collide and corrupt the supersede machinery
+  // (fail-closed — reject):
+  //   "superseded:" — projector synthetic replacement ids (`superseded:<directiveId>`);
+  //                   a collision would let a supersede over-cancel a surviving delivery.
+  //   "revise:"     — deterministic supersede command ids (supersedeCommandId); a
+  //                   collision would make a later legitimate supersede falsely dedupe
+  //                   (idempotency match) and silently skip all its guards.
+  if (requestId.startsWith("superseded:") || requestId.startsWith("revise:")) {
+    throw new AttemptStoreError(
+      'event.requestId may not use a reserved namespace ("superseded:" / "revise:")',
+      "ERR_RESERVED_EVENT_ID",
+    );
+  }
+  // Store-level control events (answer_superseded) are produced ONLY by
+  // supersedeAnswer, which runs all the revision guards. Committing one out-of-band
+  // here would be persisted by the projector with ZERO guards (CAS/status/target/
+  // hash/delivery-cancel all skipped), corrupting the effective branch. Reject it.
+  if (String(event.type || "") === "answer_superseded") {
+    throw new AttemptStoreError(
+      "answer_superseded is a control event; use supersedeAnswer, not commitAttemptEvent",
+      "ERR_CONTROL_EVENT_VIA_COMMIT",
+    );
   }
   const eventId = requestId; // requestId IS the eventId
 
@@ -523,8 +620,11 @@ export async function commitAttemptEvent({
         createdAt: record.createdAt,
       });
       // Re-queue a delivery that was requested but never recorded (CP2 / crash
-      // between event-append and delivery write). Never overwrite a delivered one.
-      if (responsePayload !== undefined && !record.deliveries?.[eventId]) {
+      // between event-append and delivery write). Never overwrite an existing one, and
+      // NEVER re-queue for an event a later supersede has dropped from the effective
+      // branch (else the re-post set gains a stale, already-reverted confirmation).
+      const reQueueInBranch = deliveryEffectInBranch(eventId, effectiveEventIdSet(events));
+      if (responsePayload !== undefined && !record.deliveries?.[eventId] && reQueueInBranch) {
         const updatedAt = toIso(now);
         const nextRecord = {
           ...record,
@@ -557,20 +657,11 @@ export async function commitAttemptEvent({
       );
     }
 
-    // 5. project + reduce (illegal transition → reducer throws = fail-closed).
-    const projection = projectAttemptFromEvents(events, {
-      id: record.attemptId,
-      goalLane: record.goalLane,
-      createdAt: record.createdAt,
-    });
-    const next = reduceValidationAttempt(projection, {
-      type: event.type,
-      eventId,
-      fields: event.fields,
-      at: event.at,
-    });
-
-    // 6. append raw event (with immutable audit), bump revision, queue delivery.
+    // 5. Build the raw candidate event, then validate the WHOLE candidate log via
+    // the projector (GPT R1.b B). The projector folds reducer transitions AND
+    // resolves control events (answer_superseded); an illegal transition or an
+    // invalid supersede throws here, so nothing is written = fail-closed.
+    const meta = { id: record.attemptId, goalLane: record.goalLane, createdAt: record.createdAt };
     const rawEvent = {
       eventId,
       type: String(event.type || ""),
@@ -581,6 +672,9 @@ export async function commitAttemptEvent({
       audit: normalizeAudit(event.audit),
     };
     const nextEvents = [...events, rawEvent];
+    const next = projectAttemptFromEvents(nextEvents, meta);
+
+    // 6. append raw event (with immutable audit), bump revision, queue delivery.
     const nextRevision = record.revision + 1;
     const updatedAt = toIso(now);
 
@@ -614,20 +708,266 @@ export async function commitAttemptEvent({
   });
 }
 
-function normalizeAudit(audit) {
-  if (!audit || typeof audit !== "object" || Array.isArray(audit)) {
-    return { questionText: "", responseText: "", promptSnapshot: null, submissions: [] };
-  }
-  return {
-    questionText: typeof audit.questionText === "string" ? audit.questionText : "",
-    responseText: typeof audit.responseText === "string" ? audit.responseText : "",
-    promptSnapshot: audit.promptSnapshot ?? null,
-    submissions: Array.isArray(audit.submissions) ? audit.submissions : [],
-  };
+// ── supersedeAnswer (spec §G — revise an earlier gather answer) ───────────────
+// The six gather transitions are the "plan". Before any irreversible action proof
+// is recorded the founder may revise an earlier answer (e.g. picked the wrong
+// candidate). This is the ONLY producer of answer_superseded events; it runs ALL
+// the guards inside the lock, BEFORE the durable write, then cancels any downstream
+// deliveries the revision drops.
+//
+
+// The deterministic supersede command id (retry-safe): re-sending the SAME revision
+// yields the SAME eventId, so the idempotency gate dedupes it (no double-append).
+export function supersedeCommandId(attemptId, targetEventId, replacement) {
+  const replacementHash = payloadHashOf({
+    type: String(replacement?.type || ""),
+    fields: replacement?.fields && typeof replacement.fields === "object" ? replacement.fields : {},
+  });
+  return `revise:${attemptId}:${targetEventId}:${replacementHash}`;
 }
 
-// ── Durable outbox (spec §deliveries; GPT#2) ──────────────────────────────────
-export async function markDelivered({ workspaceRoot, attemptId, eventId } = {}) {
+// Canonical hash of a stored target event EXCLUDING the server `at` (matches the
+// command-identity convention): targetEventId + type + fields + audit.
+function targetPayloadHash(targetEvent) {
+  return payloadHashOf({
+    eventId: String(targetEvent?.eventId || ""),
+    type: String(targetEvent?.type || ""),
+    fields: targetEvent?.fields && typeof targetEvent.fields === "object" ? targetEvent.fields : {},
+    audit: auditIdentity(targetEvent?.audit),
+  });
+}
+
+export async function supersedeAnswer({
+  workspaceRoot,
+  attemptId,
+  expectedRevision,
+  targetEventId,
+  cardType,
+  transition,
+  expectedTargetPayloadHash,
+  replacement,
+  responsePayload,
+  now = new Date(),
+} = {}) {
+  if (!attemptId) throw new AttemptStoreError("attemptId is required", "ERR_NO_ATTEMPT_ID");
+  const tgt = String(targetEventId || "").trim();
+  if (!tgt) throw new AttemptStoreError("targetEventId is required", "ERR_SUPERSEDE_NO_TARGET");
+  if (!replacement || typeof replacement !== "object" || !replacement.type) {
+    throw new AttemptStoreError("replacement reducer event is required", "ERR_SUPERSEDE_NO_REPLACEMENT");
+  }
+
+  const filePath = resolveOfficeHoursAttemptLogPath({ workspaceRoot });
+  return withAttemptLeaseLock(filePath, async () => {
+    const log = await loadAttemptLog({ workspaceRoot });
+    const record = log.attempts[attemptId];
+    if (!record) {
+      throw new AttemptStoreError(`attempt ${attemptId} not found`, "ERR_ATTEMPT_NOT_FOUND");
+    }
+    const events = Array.isArray(record.events) ? record.events : [];
+    const meta = { id: record.attemptId, goalLane: record.goalLane, createdAt: record.createdAt };
+
+    // The deterministic command id (== eventId == requestId) makes a retry idempotent.
+    const eventId = supersedeCommandId(attemptId, tgt, replacement);
+
+    // IDEMPOTENCY BEFORE CAS: the identical revision was already committed → no-op.
+    const priorSupersede = events.find((e) => e && e.eventId === eventId);
+    if (priorSupersede) {
+      const projection = projectAttemptFromEvents(events, meta);
+      // CP2 (mirror commitAttemptEvent's re-queue): if the supersede was durably
+      // appended but its delivery write was lost — or the first call carried no
+      // responsePayload and a retry carries one — re-queue the supersede's own pending
+      // delivery, but ONLY while the supersede is still in effect (its replacement
+      // `superseded:<eventId>` is in the branch; a later supersede may have dropped it).
+      const stillInBranch = deliveryEffectInBranch(eventId, effectiveEventIdSet(events));
+      if (responsePayload !== undefined && !record.deliveries?.[eventId] && stillInBranch) {
+        const updatedAt = toIso(now);
+        const nextRecord = {
+          ...record,
+          updatedAt,
+          deliveries: {
+            ...(record.deliveries || {}),
+            [eventId]: {
+              sessionId: record.createdSessionId || "",
+              requestId: eventId,
+              responsePayload,
+              status: "pending",
+            },
+          },
+        };
+        const nextLog = { ...log, updatedAt, attempts: { ...log.attempts, [attemptId]: nextRecord } };
+        await durableWriteJson(filePath, nextLog);
+      }
+      return { projection, revision: record.revision, eventId, applied: false };
+    }
+
+    // GUARD 1 — expectedRevision CAS (only for a first-seen supersede).
+    if (record.revision !== expectedRevision) {
+      throw new AttemptStoreError(
+        `revision conflict: expected ${String(expectedRevision)} but store is at ${record.revision}`,
+        "ERR_ATTEMPT_REVISION_CONFLICT",
+      );
+    }
+
+    // The current EFFECTIVE branch is what we revise against (post any prior supersede).
+    const effective = resolveEffectiveEvents(events);
+
+    // GUARD 5 — supersede is allowed ONLY while the attempt is still in an ACTIVE
+    // gather state (pre-action). Gate on the PROJECTED STATUS, not a hardcoded set of
+    // transition names: a terminal close via abandon_attempt carries none of the
+    // "irreversible" action transitions yet must still block revision (otherwise a
+    // failed/abandoned attempt could be silently resurrected to an active state).
+    // WAIT states (plan committed to execution) keep the ERR_SUPERSEDE_AFTER_IRREVERSIBLE
+    // code; terminal/suspended report ERR_SUPERSEDE_NOT_ACTIVE. Intentionally stricter
+    // than "allow if a suspended attempt's resumeState is gather": a blocked/carried
+    // attempt must be unblocked/resumed first, then revised — revising a suspended
+    // attempt in place is disallowed (fail-closed, simpler, no in-place edit of a
+    // suspended record).
+    const currentStatus = projectAttemptFromEvents(events, meta).status;
+    if (!ACTIVE_GATHER_STATES.has(currentStatus)) {
+      throw new AttemptStoreError(
+        `cannot supersede: attempt status is ${currentStatus}, not an active gather state`,
+        VALIDATION_ATTEMPT_WAIT_STATES.has(currentStatus)
+          ? "ERR_SUPERSEDE_AFTER_IRREVERSIBLE"
+          : "ERR_SUPERSEDE_NOT_ACTIVE",
+      );
+    }
+
+    // GUARD 2 — targetEventId must exist in the current effective branch.
+    const targetEvent = effective.find((e) => e && e.eventId === tgt);
+    if (!targetEvent) {
+      throw new AttemptStoreError(
+        `supersede target not found in effective branch: ${tgt}`,
+        "ERR_SUPERSEDE_TARGET_MISSING",
+      );
+    }
+
+    // GUARD 3 — the target is a gather transition matching the requested
+    // cardType/transition, and the replacement targets the SAME slot.
+    const card = cardDefinition(cardType);
+    if (!card) {
+      throw new AttemptStoreError(`unknown cardType: ${String(cardType)}`, "ERR_SUPERSEDE_BAD_CARD");
+    }
+    const wantTransition = String(transition || card.transition);
+    if (card.transition !== wantTransition) {
+      throw new AttemptStoreError(
+        `transition ${wantTransition} does not match card ${cardType} (${card.transition})`,
+        "ERR_SUPERSEDE_BAD_TRANSITION",
+      );
+    }
+    if (String(targetEvent.type) !== card.transition) {
+      throw new AttemptStoreError(
+        `target ${tgt} is a ${targetEvent.type}, not the ${card.transition} of card ${cardType}`,
+        "ERR_SUPERSEDE_BAD_TARGET",
+      );
+    }
+    if (String(replacement.type) !== card.transition) {
+      throw new AttemptStoreError(
+        `replacement must be a ${card.transition} (got ${replacement.type})`,
+        "ERR_SUPERSEDE_BAD_REPLACEMENT",
+      );
+    }
+
+    // GUARD 4 — expectedTargetPayloadHash must match the stored target (excl. server at).
+    if (expectedTargetPayloadHash !== undefined) {
+      const actual = targetPayloadHash(targetEvent);
+      if (String(expectedTargetPayloadHash) !== actual) {
+        throw new AttemptStoreError(
+          `supersede target payload hash mismatch for ${tgt}`,
+          "ERR_SUPERSEDE_TARGET_CHANGED",
+        );
+      }
+    }
+
+    // Build the answer_superseded raw event. The replacement carries its own `at`
+    // (defaults to the supersede's `at`) so transition-level time checks still apply.
+    const at = now != null ? toIso(now) : new Date().toISOString();
+    const replacementEvent = {
+      type: String(replacement.type),
+      fields: replacement.fields && typeof replacement.fields === "object" ? replacement.fields : {},
+      at: replacement.at != null ? String(replacement.at) : at,
+    };
+    const rawEvent = {
+      eventId,
+      type: "answer_superseded",
+      fields: { targetEventId: tgt, replacement: replacementEvent },
+      at,
+      requestId: eventId,
+      sessionId: record.createdSessionId || "",
+      audit: normalizeAudit(undefined),
+    };
+    const nextEvents = [...events, rawEvent];
+
+    // GUARD 6 — the whole candidate branch must replay cleanly through the projector
+    // (the projector resolves the supersede and folds the replacement; an illegal
+    // replacement throws here = fail-closed, nothing written).
+    const next = projectAttemptFromEvents(nextEvents, meta);
+
+    // GUARD 7 — reconcile the outbox against the NEW effective branch. Any pending/
+    // posted delivery whose effect this revision dropped is canceled. This single
+    // sweep subsumes the per-event downstream cancellation AND a prior supersede's own
+    // delivery (keyed `revise:...`, whose effect `superseded:revise:...` is no longer
+    // in the branch) — so no reverted confirmation lingers in the re-post set.
+    const newEffectiveIds = effectiveEventIdSet(nextEvents);
+    const nextDeliveries = reconcileDeliveriesToBranch(record.deliveries, newEffectiveIds);
+    // Queue the supersede's own delivery if requested (its effect — the replacement
+    // `superseded:<eventId>` — IS in the new branch, so it is a valid re-post target).
+    if (responsePayload !== undefined) {
+      nextDeliveries[eventId] = {
+        sessionId: rawEvent.sessionId,
+        requestId: eventId,
+        responsePayload,
+        status: "pending",
+      };
+    }
+
+    const nextRevision = record.revision + 1;
+    const updatedAt = toIso(now);
+    const nextRecord = {
+      ...record,
+      revision: nextRevision,
+      updatedAt,
+      events: nextEvents,
+      deliveries: nextDeliveries,
+    };
+    const nextLog = {
+      ...log,
+      updatedAt,
+      attempts: { ...log.attempts, [attemptId]: nextRecord },
+    };
+    await durableWriteJson(filePath, nextLog);
+    return { projection: next, revision: nextRevision, eventId, applied: true };
+  });
+}
+
+// The persisted audit shape. Mirrors auditIdentity() so a stored prior event and
+// an incoming retry command hash identically in assertSameCommandPayload (GPT R1.b
+// E): the audit is part of command identity, never silently dropped.
+function normalizeAudit(audit) {
+  return auditIdentity(audit);
+}
+
+// ── Durable outbox — 3-state lifecycle (GPT R1.b D) ───────────────────────────
+// A delivery moves pending → posted → consumed, with canceled as a terminal escape
+// when a supersede drops the downstream event the delivery belonged to. The states:
+//   pending   — committed, response written to the record, not yet posted to a client
+//   posted    — written to the live transport / response file (may be lost on crash)
+//   consumed  — a provider/waitForUserInputResponse confirmed it actually read it
+//   canceled  — superseded downstream; must NOT be re-posted
+// pendingDeliveries() returns BOTH pending AND posted: a posted-but-not-consumed
+// delivery is a legitimate re-post target after a crash (the old "delivered = done"
+// model lost exactly these). consumed + canceled are excluded.
+export const DELIVERY_STATES = Object.freeze(["pending", "posted", "consumed", "canceled"]);
+
+// Legal forward transitions. Same-state re-marks are idempotent (applied:false);
+// any other move throws ERR_DELIVERY_TRANSITION (fail-closed, never fail-open).
+const DELIVERY_TRANSITIONS = Object.freeze({
+  pending: new Set(["posted", "consumed", "canceled"]),
+  posted: new Set(["consumed", "canceled"]),
+  consumed: new Set([]),
+  canceled: new Set([]),
+});
+
+async function transitionDelivery({ workspaceRoot, attemptId, eventId }, toStatus) {
   if (!attemptId) throw new AttemptStoreError("attemptId is required", "ERR_NO_ATTEMPT_ID");
   if (!eventId) throw new AttemptStoreError("eventId is required", "ERR_NO_EVENT_ID");
   const filePath = resolveOfficeHoursAttemptLogPath({ workspaceRoot });
@@ -641,8 +981,16 @@ export async function markDelivered({ workspaceRoot, attemptId, eventId } = {}) 
     if (!delivery) {
       throw new AttemptStoreError(`no delivery for event ${eventId}`, "ERR_NO_DELIVERY");
     }
-    if (delivery.status === "delivered") {
-      return { applied: false, status: "delivered" }; // idempotent
+    const from = String(delivery.status || "pending");
+    if (from === toStatus) {
+      return { applied: false, status: toStatus }; // idempotent re-mark
+    }
+    const allowed = DELIVERY_TRANSITIONS[from];
+    if (!allowed || !allowed.has(toStatus)) {
+      throw new AttemptStoreError(
+        `illegal delivery transition ${from} → ${toStatus} for event ${eventId}`,
+        "ERR_DELIVERY_TRANSITION",
+      );
     }
     const updatedAt = new Date().toISOString();
     const nextRecord = {
@@ -650,7 +998,7 @@ export async function markDelivered({ workspaceRoot, attemptId, eventId } = {}) 
       updatedAt,
       deliveries: {
         ...record.deliveries,
-        [eventId]: { ...delivery, status: "delivered" },
+        [eventId]: { ...delivery, status: toStatus },
       },
     };
     const nextLog = {
@@ -659,21 +1007,39 @@ export async function markDelivered({ workspaceRoot, attemptId, eventId } = {}) 
       attempts: { ...log.attempts, [attemptId]: nextRecord },
     };
     await durableWriteJson(filePath, nextLog);
-    return { applied: true, status: "delivered" };
+    return { applied: true, status: toStatus };
   });
 }
 
-// List every pending delivery across all attempts (restart re-post; GPT#2).
+// pending → posted: the response was written to the live transport / response file.
+export async function markPosted({ workspaceRoot, attemptId, eventId } = {}) {
+  return transitionDelivery({ workspaceRoot, attemptId, eventId }, "posted");
+}
+
+// posted (or pending) → consumed: a provider / waitForUserInputResponse confirmed
+// it actually read the response. Only now is the delivery durably done.
+export async function markConsumed({ workspaceRoot, attemptId, eventId } = {}) {
+  return transitionDelivery({ workspaceRoot, attemptId, eventId }, "consumed");
+}
+
+// pending/posted → canceled: the downstream event was superseded; never re-post.
+export async function markCanceled({ workspaceRoot, attemptId, eventId } = {}) {
+  return transitionDelivery({ workspaceRoot, attemptId, eventId }, "canceled");
+}
+
+// Re-post targets across all attempts: BOTH pending and posted (a posted delivery
+// may have been lost in a crash before it was consumed). consumed + canceled excluded.
 export async function pendingDeliveries({ workspaceRoot } = {}) {
   const log = await loadAttemptLog({ workspaceRoot });
   const out = [];
   for (const record of Object.values(log.attempts)) {
     const deliveries = record.deliveries || {};
     for (const [eventId, delivery] of Object.entries(deliveries)) {
-      if (delivery && delivery.status === "pending") {
+      if (delivery && (delivery.status === "pending" || delivery.status === "posted")) {
         out.push({
           attemptId: record.attemptId,
           eventId,
+          status: delivery.status,
           sessionId: delivery.sessionId || "",
           requestId: delivery.requestId || "",
           responsePayload: delivery.responsePayload,
