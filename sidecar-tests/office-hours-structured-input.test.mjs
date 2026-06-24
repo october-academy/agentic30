@@ -1576,3 +1576,156 @@ test("canonicalGetUsersLadderSignal maps prefixed and bare ids; gate advances pa
     "get_users_current_alternative",
   );
 })
+
+// ── Host hard-stamp for the locked Day-1 get_users ladder ─────────────────────
+// The host (index.mjs) computes the next ladder slot from the turn log via
+// nextGetUsersLadderSignal and passes it as ladderSignalOverride. These tests pin
+// the boundary where the override is consumed: a card lacking a signalId in a
+// locked get_users flow is stamped, and the stamp wins over a wrong/stale
+// model-provided signalId. They also prove the fuzzy ladder regex is gone.
+
+test("hard-stamp: inline card with NO signalId gets the host-decided ladder slot", () => {
+  // Simulates codex emitting a Day-1 get_users card via inline_decision with no
+  // generation.signalId. With active_user_definition answered, the host stamps
+  // first_candidate — exactly what the regression failed to do.
+  const answered = ["get_users_active_user_definition"];
+  const hostOverride = nextGetUsersLadderSignal(answered);
+  assert.equal(hostOverride, "get_users_first_candidate");
+
+  const payload = buildOfficeHoursInlineStructuredPromptPayload({
+    sessionId: "session-hardstamp-1",
+    provider: "codex",
+    ladderSignalOverride: hostOverride,
+    assistantMessage: {
+      content: "활성 사용자 기준을 정했으니 다음을 확인합니다.",
+      inlineDecision: {
+        // NO header/intent/signalId — the model omitted slot identity entirely.
+        question: "이번 주 첫 결과 완료를 부탁할 후보는 어디서 고를까요?",
+        options: [
+          { label: "scan에서 보인 solo dev", description: "오늘 바로 연락할 수 있습니다." },
+          { label: "최근 대화자", description: "맥락이 이미 있습니다." },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    },
+  });
+
+  assert.ok(payload, "payload should be produced (no fail-closed when stamp present)");
+  assert.equal(payload.generation.signalId, "get_users_first_candidate");
+  assert.equal(payload.questions[0].questionId, "get_users_first_candidate");
+  assert.equal(payload.generation.signalLabel, "첫 후보 확정");
+  // Adaptive copy stays model-generated — only the slot is host-owned.
+  assert.equal(
+    payload.questions[0].question,
+    "이번 주 첫 결과 완료를 부탁할 후보는 어디서 고를까요?",
+  );
+});
+
+test("hard-stamp: host override wins over a WRONG model-provided signalId", () => {
+  // The model repeated active_user_definition (the observed loop). The host has
+  // already moved on to current_alternative and stamps that, overriding the model.
+  const answered = ["get_users_active_user_definition", "get_users_first_candidate"];
+  const hostOverride = nextGetUsersLadderSignal(answered);
+  assert.equal(hostOverride, "get_users_current_alternative");
+
+  const payload = buildOfficeHoursInlineStructuredPromptPayload({
+    sessionId: "session-hardstamp-2",
+    provider: "codex",
+    ladderSignalOverride: hostOverride,
+    assistantMessage: {
+      content: "활성 사용자 정의를 다시 묻습니다.",
+      inlineDecision: {
+        // Model insists on the already-answered slot.
+        header: "활성 사용자 기준",
+        signalId: "get_users_active_user_definition",
+        question: "활성 사용자 1명은 어떤 핵심 행동을 끝내야 하나요?",
+        options: [
+          { label: "첫 가치 완료", description: "핵심 결과를 끝냅니다." },
+          { label: "반복 사용 완료", description: "다시 돌아옵니다." },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    },
+  });
+
+  assert.ok(payload);
+  // Host wins: NOT active_user_definition.
+  assert.equal(payload.generation.signalId, "get_users_current_alternative");
+  assert.equal(payload.questions[0].questionId, "get_users_current_alternative");
+  assert.notEqual(payload.generation.signalId, "get_users_active_user_definition");
+});
+
+test("hard-stamp: override accepts a prefixed ladder signal and canonicalizes it", () => {
+  const payload = buildOfficeHoursInlineStructuredPromptPayload({
+    sessionId: "session-hardstamp-3",
+    provider: "codex",
+    ladderSignalOverride: "office_hours_get_users_today_request",
+    assistantMessage: {
+      content: "다음 단계입니다.",
+      inlineDecision: {
+        question: "오늘 보낼 요청은 무엇인가요?",
+        options: [
+          { label: "DM", description: "오늘 DM을 보냅니다." },
+          { label: "이메일", description: "오늘 메일을 보냅니다." },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    },
+  });
+  assert.ok(payload);
+  assert.equal(payload.generation.signalId, "get_users_today_request");
+});
+
+test("fuzzy ladder regex removed: get_users-flavored text without signalId no longer self-classifies", () => {
+  // Before the hard-stamp wiring, a card whose question mentioned 활성 사용자 was
+  // fuzzily mapped to get_users_active_user_definition even with no signalId. With
+  // the fuzzy ladder stems removed AND no host override, that card must now fail
+  // closed (the host, not the text, owns the slot).
+  assert.throws(
+    () => buildOfficeHoursInlineStructuredPromptPayload({
+      sessionId: "session-no-fuzzy",
+      provider: "codex",
+      // No ladderSignalOverride (non-locked surface / nothing stamped).
+      assistantMessage: {
+        content: "활성 사용자 기준을 정해야 합니다.",
+        inlineDecision: {
+          // get_users-flavored text but NO intent/signalId/header.
+          question: "활성 사용자 1명으로 세려면 어떤 핵심 행동을 끝내야 하나요?",
+          options: [
+            { label: "첫 가치 완료", description: "핵심 결과를 끝냅니다." },
+            { label: "반복 사용 완료", description: "다시 돌아옵니다." },
+          ],
+          allowFreeText: true,
+          requiresFreeText: false,
+        },
+      },
+    }),
+    /inline_decision intent or signalId is required/,
+  );
+});
+
+test("fuzzy ladder regex removed: non-ladder fuzzy stems still classify (status_quo)", () => {
+  // The non-ladder fuzzy stems (demand/stage/status_quo/…) must remain for other
+  // surfaces. A status-quo-flavored card with no explicit signalId still resolves.
+  const payload = buildOfficeHoursInlineStructuredPromptPayload({
+    sessionId: "session-statusquo-fuzzy",
+    provider: "codex",
+    assistantMessage: {
+      content: "현재 대안을 확인합니다.",
+      inlineDecision: {
+        question: "지금은 무엇으로 버티고 있나요?",
+        options: [
+          { label: "수작업", description: "직접 합니다." },
+          { label: "다른 도구", description: "유료 도구를 씁니다." },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    },
+  });
+  assert.ok(payload);
+  assert.equal(payload.generation.signalId, "office_hours_status_quo");
+});

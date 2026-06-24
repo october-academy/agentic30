@@ -9007,6 +9007,47 @@ function assertOfficeHoursPendingUserInputAttached(session, toolState) {
   throw new Error("structured input tool returned pending_user_input but no pending request was attachable");
 }
 
+// True for the one flow that owns a host-decided ladder: the locked Day-1
+// get_users goal interview. Mirrors the submit-handler check (line ~2253) so the
+// promote path and the continuation path agree on when the host stamps slots.
+function isLockedDay1GetUsersContext(context = "") {
+  return isOfficeHoursLockedDay1GoalContext(context)
+    && /Goal lane:\s*get_users\b/i.test(String(context || ""));
+}
+
+// HOST HARD-STAMP: compute the canonical next ladder signalId for the locked Day-1
+// get_users flow from the session's already-answered turns. The host — not the
+// model — owns slot identity/order, so this value is stamped onto the emitted card
+// regardless of what the model put in generation.signalId. Returns "" for
+// non-locked flows (no stamp). Throws (fail-closed, per the contract) when the next
+// slot cannot be determined inside a locked get_users flow: silently guessing the
+// slot is exactly the bug this replaces.
+async function resolveLockedGetUsersLadderSignalOverride(session, context = "") {
+  if (!isLockedDay1GetUsersContext(context)) return "";
+  let turnLog = null;
+  try {
+    turnLog = await loadOfficeHoursTurnLog({ workspaceRoot });
+  } catch (error) {
+    throw new Error(
+      `locked Day 1 get_users flow could not load the turn log to decide the next ladder slot: ${error?.message || error}`,
+    );
+  }
+  const answered = new Set(
+    (turnLog?.turns || [])
+      .filter((turn) => String(turn?.sessionId || "") === session.id)
+      .map((turn) => canonicalGetUsersLadderSignal(turn?.signalId))
+      .filter(Boolean),
+  );
+  const next = nextGetUsersLadderSignal(answered);
+  if (!next) {
+    // All six slots answered: the interview is complete and the host shows the
+    // commitment close instead of another card. Returning "" lets the caller skip
+    // promotion rather than fabricate a seventh slot.
+    return "";
+  }
+  return next;
+}
+
 async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMessage, {
   context = "",
   source = "provider_result",
@@ -9017,11 +9058,18 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
     && /generated_by:\s*office-hours|handoff_for:\s*plan-ceo-review|CEO Review Handoff/i.test(String(assistantMessage.content || ""))) {
     return null;
   }
+  const ladderSignalOverride = await resolveLockedGetUsersLadderSignalOverride(session, context);
+  if (isLockedDay1GetUsersContext(context) && !ladderSignalOverride) {
+    // Locked get_users flow with every ladder slot already answered: do not open a
+    // new card. The host surfaces the commitment close.
+    return null;
+  }
   const payload = buildOfficeHoursInlineStructuredPromptPayload({
     sessionId: session.id,
     provider: session.provider,
     assistantMessage,
     context,
+    ladderSignalOverride,
   });
   if (!payload) return null;
 

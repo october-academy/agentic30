@@ -532,6 +532,13 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
   provider = "codex",
   assistantMessage = null,
   context = "",
+  // HOST HARD-STAMP (locked Day-1 get_users). When the host has computed the
+  // canonical next ladder signalId from the session's already-answered turns, it
+  // passes it here. The resulting card's intent/signalId/questionId/header/label
+  // are forced to that slot, overriding whatever the model emitted or omitted. The
+  // visible question/options copy stays model-generated (adaptive). "" means "no
+  // host stamp" (non-locked surfaces), and the normal intent resolution applies.
+  ladderSignalOverride = "",
 } = {}) {
   if (!sessionId) return null;
   const inlineDecision = assistantMessage?.inlineDecision || null;
@@ -544,10 +551,14 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
   if (options.length < 2) {
     throw officeHoursStructuredInputContractError("inline_decision.options must contain at least two choices");
   }
+  // A canonical ladder signalId is also the intent name, so when the host stamps a
+  // slot it both resolves the intent and forces the signalId/questionId below.
+  const stampedLadderSignal = canonicalLadderSignal(ladderSignalOverride);
   const intent = resolveOfficeHoursQuestionIntent({
     inlineDecision,
     question,
     assistantContent: assistantMessage?.content || "",
+    ladderSignalOverride: stampedLadderSignal,
   });
   if (!intent) {
     throw officeHoursStructuredInputContractError("inline_decision intent or signalId is required");
@@ -575,7 +586,7 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
 
   const questions = [
     {
-      questionId: resolveOfficeHoursQuestionId(inlineDecision, intent),
+      questionId: resolveOfficeHoursQuestionId(inlineDecision, intent, stampedLadderSignal),
       header: String(inlineDecision?.header || "").trim().slice(0, 32) || officeHoursIntentHeader(intent),
       question,
       helperText:
@@ -606,7 +617,7 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
     generation: {
       mode: OFFICE_HOURS_INLINE_MODE,
       docType: "day1_step",
-      signalId: resolveOfficeHoursSignalId(inlineDecision, intent),
+      signalId: resolveOfficeHoursSignalId(inlineDecision, intent, stampedLadderSignal),
       signalLabel: officeHoursSignalLabel(intent),
     },
   };
@@ -878,7 +889,16 @@ function resolveOfficeHoursQuestionIntent({
   inlineDecision = null,
   question = "",
   assistantContent = "",
+  // HOST HARD-STAMP. When the host has decided the canonical next ladder slot
+  // (locked Day-1 get_users flow), it passes the canonical ladder signalId here.
+  // It wins over the model's explicit intent/signalId/header AND over every fuzzy
+  // stem below — the host owns slot identity/order; the LLM owns only the visible
+  // copy. This is what let us delete the brittle fuzzy get_users ladder regex.
+  ladderSignalOverride = "",
 } = {}) {
+  const override = normalizeOfficeHoursIntent(ladderSignalOverride);
+  if (override) return override;
+
   const explicit = normalizeOfficeHoursIntent(
     inlineDecision?.intent
       || inlineDecision?.questionIntent
@@ -893,38 +913,17 @@ function resolveOfficeHoursQuestionIntent({
   // assistantContent (full provider prose) is intentionally excluded: explanatory
   // text often mentions another slot's keywords (첫 가치, 현재 대안, 증거 형식 …) and
   // would mis-classify the card. Match the question and header only.
+  //
+  // NOTE: the get_users ladder slots are NOT fuzzily classified here. In the locked
+  // Day-1 get_users flow the host computes the next ladder slot from the turn log and
+  // hard-stamps it via `ladderSignalOverride` above, so the brittle Korean-text stems
+  // that used to map 활성 사용자/첫 후보/현재 대안/… were removed. The stems below serve
+  // OTHER (non-locked) office-hours surfaces only.
   const haystack = [
     question,
     inlineDecision?.question,
     inlineDecision?.header,
   ].filter(Boolean).join("\n").toLowerCase();
-  // Fuzzy ladder fallback. NOTE (2026-06-24): this is a SAFETY NET for the live
-  // inline-decision path — codex frequently emits a Day-1 card via inline_decision
-  // WITHOUT a generation.signalId, and these stems are what classify it. Removing
-  // them (intended as a fail-closed step toward the state-machine redesign) broke
-  // live office-hours outright (cards=0 timeout, "inline_decision intent or
-  // signalId is required"), because nothing supplies the signalId yet. Fail-closed
-  // only becomes safe AFTER the host decides nextSignalId and stamps the card
-  // (the full attempt-driven wiring). Until then, keep this fallback. Stems key on
-  // the decision asked, not on option labels (labels are context-generated).
-  if (/active user|activated users|activation action|활성 사용자|활성\s*행동|핵심\s*활성|핵심 행동.*세|어디까지 끝내/.test(haystack)) {
-    return "get_users_active_user_definition";
-  }
-  if (/첫 후보|후보 1명|후보.*정할|후보.*고르|누구.*먼저.*연락|first candidate/.test(haystack)) {
-    return "get_users_first_candidate";
-  }
-  if (/현재 대안|무엇으로 버티|지금.*무엇으로|지금.*어떻게.*해결|current alternative/.test(haystack)) {
-    return "get_users_current_alternative";
-  }
-  if (/오늘 요청|오늘.*보낼.*요청|오늘.*어떤 요청|오늘.*보내면.*확인|today.*request/.test(haystack)) {
-    return "get_users_today_request";
-  }
-  if (/증거 형식|어떤 기록.*있어야|무엇을 증거로|증거.*남길|evidence format/.test(haystack)) {
-    return "get_users_evidence_format";
-  }
-  if (/오늘 약속|오늘의 약속|몇 시까지.*보내|오늘.*누구에게.*보내|day ?1 commitment/.test(haystack)) {
-    return "get_users_day1_commitment";
-  }
   if (/demand|수요|증거|누가.*원하|관심 말고|돈.*시간.*우회|would.*upset/.test(haystack)) {
     return "demand";
   }
@@ -979,7 +978,11 @@ function normalizeOfficeHoursIntent(value = "") {
   return "";
 }
 
-function resolveOfficeHoursQuestionId(inlineDecision, intent = "") {
+function resolveOfficeHoursQuestionId(inlineDecision, intent = "", ladderSignalOverride = "") {
+  // Host hard-stamp wins over the model's explicit questionId so a locked-flow card
+  // cannot carry a duplicate/wrong slot id.
+  const stamped = canonicalLadderSignal(ladderSignalOverride);
+  if (stamped) return stamped;
   const explicit = String(
     inlineDecision?.questionId
       || inlineDecision?.question_id
@@ -996,7 +999,11 @@ function resolveOfficeHoursQuestionId(inlineDecision, intent = "") {
   return "";
 }
 
-function resolveOfficeHoursSignalId(inlineDecision, intent = "") {
+function resolveOfficeHoursSignalId(inlineDecision, intent = "", ladderSignalOverride = "") {
+  // Host hard-stamp wins over the model's explicit signalId (this is the core of the
+  // host-owns-slot fix: the model only owns visible copy, never the slot identity).
+  const stamped = canonicalLadderSignal(ladderSignalOverride);
+  if (stamped) return stamped;
   const explicit = String(
     inlineDecision?.signalId
       || inlineDecision?.signal_id
