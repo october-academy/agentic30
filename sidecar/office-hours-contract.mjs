@@ -8,46 +8,70 @@
 // stage drift, document-readiness infinite loop, ICP leak, out-of-order slots)
 // are not prompt bugs — they are the failure mode of letting the LLM choose state
 // while the host re-normalizes strings after the fact. The fix is to make the
-// "plan → act → external reaction → evidence" lifecycle ONE typed domain object
-// (ValidationAttempt) advanced by a pure reducer, with the LLM owning only the
-// visible copy of each card.
+// "plan → schedule → act → external reaction → evidence" lifecycle ONE typed
+// domain object (ValidationAttempt) advanced by a pure reducer, with the LLM
+// owning only the visible copy of each card.
 //
-// This module is PURE + ADDITIVE: it introduces the contract and reducer with no
-// I/O and no wiring. Callers (index.mjs) adopt it behind a feature flag in a later
-// step; existing signalIds remain valid via legacySignalAliases so nothing breaks.
+// R0 hardening (this file): the reducer is upgraded from prototype to runtime
+// authority. plan ≠ action, contract ≠ proof. The six interview slots map 1:1 to
+// six cards. Transition-level `requires` + `allowedFields` are enforced so a card
+// validator bypass cannot move state. event.eventId gives idempotency. Migration
+// is fail-closed (throws on ambiguity; never fabricates dueAt/threshold/success).
+//
+// This module is PURE: no I/O, standard library only, no feature flags, no
+// fallbacks. Illegal input is an explicit throw. Callers (index.mjs) adopt it in
+// R1; existing signalIds remain valid via LEGACY_SIGNAL_ALIASES.
 
-export const OFFICE_HOURS_CONTRACT_SCHEMA_VERSION = 1;
+export const OFFICE_HOURS_CONTRACT_SCHEMA_VERSION = 2;
 
 // ── States ───────────────────────────────────────────────────────────────────
-// Linear happy path, plus blocked/carried reachable from any active state, plus
-// terminal succeeded/failed. A Day is a *view* over an attempt, not its own flow:
-//   Day-1 creates the first attempt and ideally reaches action_performed.
-//   Day-2 RESUMES the same attempt (does not start a new interview).
-//   A new attempt is only created when the prior one is resolved.
+// ACTIVE (gather) = needs_definition .. needs_commitment — six interview slots.
+// WAIT = execution_scheduled, awaiting_customer_outcome, outcome_observed.
+//   execution_scheduled  → plan complete, action NOT yet performed (R2 fork point)
+//   awaiting_customer_outcome → action proof recorded
+//   outcome_observed     → customer outcome recorded
+// TERMINAL = succeeded | failed.
+// SUSPENDED = blocked | carried (NOT resolved; resumeState preserved).
 export const VALIDATION_ATTEMPT_STATES = Object.freeze([
   "needs_definition",
   "needs_candidate",
-  "ready_to_execute",
-  "action_performed",
+  "needs_alternative",
+  "needs_action_contract",
+  "needs_evidence_contract",
+  "needs_commitment",
+  "execution_scheduled",
   "awaiting_customer_outcome",
-  "evidence_received",
-  "blocked",
-  "carried",
+  "outcome_observed",
   "succeeded",
   "failed",
+  "blocked",
+  "carried",
 ]);
 
-const ACTIVE_STATES = Object.freeze(new Set([
+// Six ACTIVE gather states (the interview), in ladder order.
+export const VALIDATION_ATTEMPT_ACTIVE_STATES = Object.freeze([
   "needs_definition",
   "needs_candidate",
-  "ready_to_execute",
-  "action_performed",
+  "needs_alternative",
+  "needs_action_contract",
+  "needs_evidence_contract",
+  "needs_commitment",
+]);
+const ACTIVE_STATES = Object.freeze(new Set(VALIDATION_ATTEMPT_ACTIVE_STATES));
+
+// WAIT states: plan complete, evidence accumulating, not yet terminal.
+export const VALIDATION_ATTEMPT_WAIT_STATES = Object.freeze(new Set([
+  "execution_scheduled",
   "awaiting_customer_outcome",
-  "evidence_received",
+  "outcome_observed",
 ]));
 
 export const VALIDATION_ATTEMPT_TERMINAL_STATES = Object.freeze(new Set(["succeeded", "failed"]));
-export const VALIDATION_ATTEMPT_RESOLVED_STATES = Object.freeze(new Set(["succeeded", "failed", "carried"]));
+export const VALIDATION_ATTEMPT_SUSPENDED_STATES = Object.freeze(new Set(["blocked", "carried"]));
+
+// GPT 6.8: RESOLVED = TERMINAL only. A suspended (blocked/carried) attempt is NOT
+// resolved — it must be resumed or abandoned before a new attempt may start.
+export const VALIDATION_ATTEMPT_RESOLVED_STATES = VALIDATION_ATTEMPT_TERMINAL_STATES;
 
 // ── Evidence grades ──────────────────────────────────────────────────────────
 // The review's core distinction: an outbound DM screenshot proves OUTREACH
@@ -81,27 +105,112 @@ export const REJECTED_EVIDENCE_KINDS = Object.freeze(new Set([
   "self_report", "ai_output", "draft", "demo", "plan", "intent_only",
 ]));
 
+// Negative-outcome kinds that may legally drive record_negative_outcome → failed
+// (GPT 6.7). A bare free-text reason can never fail an attempt.
+export const NEGATIVE_OUTCOME_KINDS = Object.freeze(new Set(["refusal", "drop_off_step"]));
+
 // ── Transitions ──────────────────────────────────────────────────────────────
-// Each transition declares the states it may fire from and the state it moves to.
-// `requires` lists attempt fields that must be present for the transition to be
-// legal (host-enforced; the LLM cannot bypass these by emitting a card).
+// Each transition declares:
+//   from / fromAny / fromActiveOrSuspended — legal source states
+//   to              — destination (or "resumeState" sentinel for unblock/resume)
+//   requires        — attempt fields that must be present AFTER applying the event
+//   allowedFields   — the ONLY field keys the event may carry (allowlist; GPT 6.10)
+//   evidenceGrade   — if set, the `evidence` field is graded and the grade is
+//                     enforced; the graded record lands in `evidenceSlot`
+//   evidenceKinds   — if set, the evidence.kind must be a member (GPT 6.7)
+// `requires`/`allowedFields` are enforced HERE, at the transition, so a card
+// validator bypass cannot move state (GPT 6.3).
 const TRANSITIONS = Object.freeze({
-  define_activation: { from: ["needs_definition"], to: "needs_candidate", requires: ["activationDefinition"] },
-  select_candidate: { from: ["needs_candidate"], to: "ready_to_execute", requires: ["candidate"] },
-  perform_action: { from: ["ready_to_execute"], to: "action_performed", requires: ["externalAction", "dueAt"] },
-  attach_action_proof: { from: ["action_performed"], to: "awaiting_customer_outcome", requires: ["actionProof"] },
-  attach_outcome: { from: ["awaiting_customer_outcome"], to: "evidence_received", requires: ["customerOutcome"] },
-  succeed: { from: ["evidence_received"], to: "succeeded", requires: ["goalProof"] },
-  fail: { from: ["evidence_received", "awaiting_customer_outcome"], to: "failed", requires: ["failureReason"] },
-  // From any active state:
-  block: { fromAny: true, to: "blocked", requires: ["blockerReason", "nextUnblockAction"] },
-  carry: { fromAny: true, to: "carried", requires: ["carryReason"] },
+  // ── Six gather transitions (one per interview slot / card) ──────────────────
+  define_activation: {
+    from: ["needs_definition"], to: "needs_candidate",
+    requires: ["activationDefinition"], allowedFields: ["activationDefinition"],
+  },
+  select_candidate: {
+    from: ["needs_candidate"], to: "needs_alternative",
+    requires: ["candidate"], allowedFields: ["candidate", "candidateId"],
+  },
+  record_alternative: {
+    from: ["needs_alternative"], to: "needs_action_contract",
+    requires: ["currentAlternative"], allowedFields: ["currentAlternative"],
+  },
+  define_action_contract: {
+    from: ["needs_action_contract"], to: "needs_evidence_contract",
+    requires: ["externalAction", "attemptThreshold", "successCondition"],
+    allowedFields: ["externalAction", "attemptThreshold", "successCondition"],
+  },
+  define_evidence_contract: {
+    from: ["needs_evidence_contract"], to: "needs_commitment",
+    requires: ["expectedProofKind", "evidenceLocation"],
+    allowedFields: ["expectedProofKind", "evidenceLocation"],
+  },
+  schedule_execution: {
+    from: ["needs_commitment"], to: "execution_scheduled",
+    requires: ["dueAt"], allowedFields: ["dueAt", "commitmentNote"],
+  },
+  // ── Real action / outcome / goal (proof, not plan) ──────────────────────────
+  record_action_proof: {
+    from: ["execution_scheduled"], to: "awaiting_customer_outcome",
+    requires: ["actionProof"], allowedFields: ["evidence"],
+    evidenceGrade: "action_proof", evidenceSlot: "actionProof",
+  },
+  record_customer_outcome: {
+    from: ["awaiting_customer_outcome"], to: "outcome_observed",
+    requires: ["customerOutcome"], allowedFields: ["evidence"],
+    evidenceGrade: "customer_outcome", evidenceSlot: "customerOutcome", // GPT 6.5
+  },
+  // GPT 6.6: direct goal proof — the candidate paid/activated right after outreach,
+  // so the founder can jump straight to succeeded from any WAIT state.
+  record_goal_proof: {
+    from: ["execution_scheduled", "awaiting_customer_outcome", "outcome_observed"],
+    to: "succeeded",
+    requires: ["goalProof"], allowedFields: ["evidence"],
+    evidenceGrade: "goal_proof", evidenceSlot: "goalProof",
+  },
+  // GPT 6.7: verified negative outcome — graded customer_outcome AND a refusal/drop_off kind.
+  record_negative_outcome: {
+    from: ["awaiting_customer_outcome", "outcome_observed"], to: "failed",
+    requires: ["negativeOutcome"], allowedFields: ["evidence"],
+    evidenceGrade: "customer_outcome", evidenceSlot: "negativeOutcome",
+    evidenceKinds: NEGATIVE_OUTCOME_KINDS,
+  },
+  // Deadline-driven fail. The reducer verifies now >= responseDueAt or throws.
+  expire_no_response: {
+    from: ["awaiting_customer_outcome"], to: "failed",
+    requires: ["responseDueAt"], allowedFields: ["responseDueAt", "now"],
+  },
+  // User-approved abandon — the only free-text fail path.
+  abandon_attempt: {
+    fromActiveOrSuspended: true, to: "failed",
+    requires: ["abandonReason"], allowedFields: ["abandonReason"],
+  },
+  // ── Suspend / resume (GPT 6.8) ──────────────────────────────────────────────
+  block: {
+    fromAny: "active", to: "blocked",
+    requires: ["blockerReason", "nextUnblockAction"],
+    allowedFields: ["blockerReason", "nextUnblockAction"], savesResumeState: true,
+  },
+  unblock: {
+    from: ["blocked"], to: "resumeState",
+    requires: [], allowedFields: [],
+  },
+  carry: {
+    fromAny: "active", to: "carried",
+    requires: ["carryReason"], allowedFields: ["carryReason"], savesResumeState: true,
+  },
+  resume: {
+    from: ["carried"], to: "resumeState",
+    requires: [], allowedFields: [],
+  },
 });
 
-// ── Cards (presentation slots) ───────────────────────────────────────────────
+export const VALIDATION_ATTEMPT_TRANSITIONS = Object.freeze(Object.keys(TRANSITIONS));
+
+// ── Cards (presentation slots) — 6, 1:1 with the six interview slots (GPT 6.1) ─
 // The host decides WHICH card to render from the attempt state; the LLM fills the
-// visible question/labels/descriptions only. requiredFields lets the validator
-// reject a card that structurally omits what the slot must capture.
+// visible question/labels/descriptions only. requiredFields lets a card validator
+// reject a card that structurally omits what the slot must capture, but the
+// reducer's transition `requires` is the real authority.
 const CARDS = Object.freeze({
   activation_definition: {
     forState: "needs_definition",
@@ -115,39 +224,51 @@ const CARDS = Object.freeze({
     legacySignalId: "get_users_first_candidate",
     requiredFields: ["candidate"],
   },
-  action_contract: {
-    forState: "ready_to_execute",
-    transition: "perform_action",
-    // Folds current_alternative + today_request + day1_commitment into ONE card
-    // (review Q1: slots 4-6 are one execution contract, not three interviews).
-    legacySignalId: "get_users_today_request",
-    requiredFields: ["candidate", "externalAction", "dueAt", "attemptThreshold", "successCondition"],
-    optionalFields: ["currentAlternative"],
+  current_alternative: {
+    forState: "needs_alternative",
+    transition: "record_alternative",
+    legacySignalId: "get_users_current_alternative",
+    requiredFields: ["currentAlternative"],
   },
-  evidence_capture: {
-    forState: "action_performed",
-    transition: "attach_action_proof",
+  action_request: {
+    forState: "needs_action_contract",
+    transition: "define_action_contract",
+    legacySignalId: "get_users_today_request",
+    requiredFields: ["externalAction", "attemptThreshold", "successCondition"],
+  },
+  evidence_contract: {
+    forState: "needs_evidence_contract",
+    transition: "define_evidence_contract",
     legacySignalId: "get_users_evidence_format",
-    requiredFields: ["actionProof"],
+    requiredFields: ["expectedProofKind", "evidenceLocation"],
+  },
+  commitment: {
+    forState: "needs_commitment",
+    transition: "schedule_execution",
+    legacySignalId: "get_users_day1_commitment",
+    requiredFields: ["dueAt"],
   },
 });
 
-// Legacy signalId → canonical card, so existing telemetry / older UI keep working
-// during the additive migration (review's non-breaking step 3).
+export const VALIDATION_ATTEMPT_CARD_TYPES = Object.freeze(Object.keys(CARDS));
+
+// Legacy signalId → canonical card, 1:1 (GPT 6.1). Existing telemetry / older UI
+// keep working during the additive migration. The office_hours_ prefix the inline
+// path adds is tolerated 1:1 as well.
 export const LEGACY_SIGNAL_ALIASES = Object.freeze({
   get_users_active_user_definition: "activation_definition",
   get_users_first_candidate: "candidate_selection",
-  get_users_current_alternative: "action_contract",
-  get_users_today_request: "action_contract",
-  get_users_evidence_format: "evidence_capture",
-  get_users_day1_commitment: "action_contract",
+  get_users_current_alternative: "current_alternative",
+  get_users_today_request: "action_request",
+  get_users_evidence_format: "evidence_contract",
+  get_users_day1_commitment: "commitment",
   // tolerate the office_hours_ prefix the inline path adds
   office_hours_get_users_active_user_definition: "activation_definition",
   office_hours_get_users_first_candidate: "candidate_selection",
-  office_hours_get_users_current_alternative: "action_contract",
-  office_hours_get_users_today_request: "action_contract",
-  office_hours_get_users_evidence_format: "evidence_capture",
-  office_hours_get_users_day1_commitment: "action_contract",
+  office_hours_get_users_current_alternative: "current_alternative",
+  office_hours_get_users_today_request: "action_request",
+  office_hours_get_users_evidence_format: "evidence_contract",
+  office_hours_get_users_day1_commitment: "commitment",
 });
 
 export const OFFICE_HOURS_CONTRACTS = Object.freeze({
@@ -170,21 +291,35 @@ export function createValidationAttempt({ id = "", goalLane = "get_users", creat
     id: String(id || ""),
     goalLane,
     status: "needs_definition",
+    // gather slots
     activationDefinition: "",
     candidate: "",
+    candidateId: "",
     currentAlternative: "",
     externalAction: "",
-    dueAt: "",
     attemptThreshold: "",
     successCondition: "",
+    expectedProofKind: "",
+    evidenceLocation: "",
+    dueAt: "",
+    commitmentNote: "",
+    // proof slots
     actionProof: null,
     customerOutcome: null,
     goalProof: null,
+    negativeOutcome: null,
+    // fail / deadline
+    responseDueAt: "",
+    abandonReason: "",
+    // suspend / resume
     blockerReason: "",
     nextUnblockAction: "",
     carryReason: "",
-    failureReason: "",
+    resumeState: "",
+    // bookkeeping — appliedEvents is authoritative (GPT 6.9); appliedTransitions
+    // is a derived convenience kept for telemetry/back-compat.
     appliedTransitions: [],
+    appliedEvents: [], // [{ eventId, type, payloadHash }]
     evidence: [],
     createdAt: String(createdAt || ""),
     updatedAt: String(createdAt || ""),
@@ -200,13 +335,65 @@ export class ValidationAttemptTransitionError extends Error {
   }
 }
 
+/** Stable JSON stringify: object keys sorted recursively so payloadHash is order-independent. Pure. */
+export function stableStringify(value) {
+  return JSON.stringify(sortValue(value === undefined ? null : value));
+}
+
+function sortValue(value) {
+  if (Array.isArray(value)) return value.map(sortValue);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value).sort()) out[key] = sortValue(value[key]);
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Small, pure, dependency-free 53-bit hash of a payload (cyrb53-style), returned
+ * as a hex string. Standard library only — no crypto import (keeps the module's
+ * import surface empty per the spec). Used for event idempotency, not security.
+ */
+export function payloadHashOf(payload) {
+  const str = stableStringify(payload);
+  let h1 = 0xdeadbeef ^ 0;
+  let h2 = 0x41c6ce57 ^ 0;
+  for (let i = 0; i < str.length; i += 1) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  const n = 4294967296 * (2097151 & h2) + (h1 >>> 0);
+  return n.toString(16).padStart(14, "0");
+}
+
+function legalFromFor(def, status) {
+  if (def.fromAny === "active") return ACTIVE_STATES.has(status);
+  if (def.fromActiveOrSuspended) {
+    return ACTIVE_STATES.has(status)
+      || VALIDATION_ATTEMPT_WAIT_STATES.has(status)
+      || VALIDATION_ATTEMPT_SUSPENDED_STATES.has(status);
+  }
+  return Array.isArray(def.from) && def.from.includes(status);
+}
+
 /**
  * Apply an event to an attempt and return the NEXT attempt (immutable). Throws a
- * ValidationAttemptTransitionError for an illegal transition. This is the single
+ * ValidationAttemptTransitionError for any illegal input. This is the single
  * authority for state — the LLM cannot move state by emitting a card; only a
- * validated event here can. (Review invariants 1, 3, 4, 5.)
+ * validated event here can.
  *
- * event = { type: <transitionName>, fields?: {}, at?: ISOstring }
+ * event = { type: <transitionName>, eventId: <string>, fields?: {}, at?: ISOstring }
+ *
+ * Idempotency (GPT 6.9):
+ *   - eventId is REQUIRED → else ERR_EVENT_ID_REQUIRED.
+ *   - same eventId + same payloadHash → no-op, returns the unchanged attempt.
+ *   - same eventId + different payloadHash → ERR_EVENT_ID_CONFLICT.
  */
 export function reduceValidationAttempt(attempt, event = {}) {
   if (!attempt || typeof attempt !== "object") {
@@ -217,20 +404,49 @@ export function reduceValidationAttempt(attempt, event = {}) {
   if (!def) {
     throw new ValidationAttemptTransitionError(`unknown transition: ${type}`, "ERR_UNKNOWN_TRANSITION");
   }
-  // Invariant 1: the same linear transition is never applied twice.
-  if (!def.fromAny && attempt.appliedTransitions.includes(type)) {
-    throw new ValidationAttemptTransitionError(`transition already applied: ${type}`, "ERR_DUPLICATE_TRANSITION");
+
+  // eventId idempotency gate (GPT 6.9) — checked before any state work.
+  const eventId = typeof event?.eventId === "string" ? event.eventId.trim() : "";
+  if (!eventId) {
+    throw new ValidationAttemptTransitionError("event.eventId is required", "ERR_EVENT_ID_REQUIRED");
   }
+  const rawFields = event.fields && typeof event.fields === "object" && !Array.isArray(event.fields)
+    ? event.fields
+    : {};
+  const payloadHash = payloadHashOf({ type, fields: rawFields, at: event.at ?? null });
+  const applied = Array.isArray(attempt.appliedEvents) ? attempt.appliedEvents : [];
+  const prior = applied.find((e) => e && e.eventId === eventId);
+  if (prior) {
+    if (prior.payloadHash === payloadHash) return attempt; // idempotent replay
+    throw new ValidationAttemptTransitionError(
+      `event ${eventId} already applied with a different payload`,
+      "ERR_EVENT_ID_CONFLICT",
+    );
+  }
+
   // Legal-from check.
-  const legalFrom = def.fromAny ? ACTIVE_STATES.has(attempt.status) : def.from.includes(attempt.status);
-  if (!legalFrom) {
+  if (!legalFromFor(def, attempt.status)) {
     throw new ValidationAttemptTransitionError(
       `transition ${type} not allowed from ${attempt.status}`,
       "ERR_ILLEGAL_FROM",
     );
   }
-  const fields = event.fields && typeof event.fields === "object" ? event.fields : {};
-  const next = { ...attempt, ...applyFields(attempt, type, fields) };
+
+  // allowedFields allowlist (GPT 6.10) — any unknown key throws.
+  const allowed = new Set(def.allowedFields || []);
+  for (const key of Object.keys(rawFields)) {
+    if (!allowed.has(key)) {
+      throw new ValidationAttemptTransitionError(
+        `transition ${type} does not allow field: ${key}`,
+        "ERR_UNKNOWN_FIELD",
+      );
+    }
+  }
+
+  // Compute the field patch (and classify evidence) for this transition.
+  const patch = applyFields(attempt, type, def, rawFields, event);
+
+  const next = { ...attempt, ...patch };
 
   // Required-field gate (host-enforced; invariants 3 & 4).
   for (const req of def.requires || []) {
@@ -241,51 +457,103 @@ export function reduceValidationAttempt(attempt, event = {}) {
       );
     }
   }
-  next.status = def.to;
-  next.appliedTransitions = def.fromAny ? attempt.appliedTransitions.slice() : [...attempt.appliedTransitions, type];
+
+  // Resolve destination, including the resumeState sentinel for unblock/resume.
+  let destination = def.to;
+  if (destination === "resumeState") {
+    const target = String(attempt.resumeState || "").trim();
+    if (!target || !VALIDATION_ATTEMPT_STATES.includes(target)) {
+      throw new ValidationAttemptTransitionError(
+        `cannot resume: no resumeState saved (transition ${type})`,
+        "ERR_NO_RESUME_STATE",
+      );
+    }
+    destination = target;
+    next.resumeState = "";
+  } else if (def.savesResumeState) {
+    next.resumeState = attempt.status;
+  }
+
+  next.status = destination;
+  next.appliedTransitions = [...(attempt.appliedTransitions || []), type];
+  next.appliedEvents = [...applied, { eventId, type, payloadHash }];
   if (event.at) next.updatedAt = String(event.at);
   return next;
 }
 
 // Map a transition's incoming fields onto the attempt, classifying any evidence.
-function applyFields(attempt, type, fields) {
+function applyFields(attempt, type, def, fields, event) {
   const patch = {};
+
+  // Plain (non-evidence) fields: copy through the (already-validated) allowlist.
   for (const [key, value] of Object.entries(fields)) {
-    if (key === "evidence") continue; // handled below
+    if (key === "evidence") continue; // graded below
+    if (key === "now") continue;      // deadline check input, not a stored field
     patch[key] = value;
   }
-  // Evidence attachment transitions carry an evidence record we grade + store.
-  if (type === "attach_action_proof" && fields.evidence) {
-    const graded = gradeEvidence(fields.evidence);
-    if (graded.grade !== "action_proof") {
+
+  // Deadline verification for expire_no_response (now >= responseDueAt or throw).
+  if (type === "expire_no_response") {
+    const responseDueAt = String(fields.responseDueAt || "").trim();
+    if (!responseDueAt) {
       throw new ValidationAttemptTransitionError(
-        "attach_action_proof requires action_proof-grade evidence",
+        "expire_no_response requires responseDueAt",
+        "ERR_MISSING_REQUIRED_FIELD",
+      );
+    }
+    const nowRaw = fields.now != null ? fields.now : event?.at;
+    const now = nowRaw != null ? String(nowRaw).trim() : "";
+    if (!now) {
+      throw new ValidationAttemptTransitionError(
+        "expire_no_response requires `now` (or event.at) to verify the deadline",
+        "ERR_DEADLINE_NOT_REACHED",
+      );
+    }
+    const nowMs = Date.parse(now);
+    const dueMs = Date.parse(responseDueAt);
+    if (Number.isNaN(nowMs) || Number.isNaN(dueMs)) {
+      throw new ValidationAttemptTransitionError(
+        "expire_no_response received an unparseable timestamp",
+        "ERR_DEADLINE_NOT_REACHED",
+      );
+    }
+    if (nowMs < dueMs) {
+      throw new ValidationAttemptTransitionError(
+        `deadline not reached: now (${now}) < responseDueAt (${responseDueAt})`,
+        "ERR_DEADLINE_NOT_REACHED",
+      );
+    }
+  }
+
+  // Evidence-bearing transitions: grade the record and enforce grade + kind.
+  if (def.evidenceGrade) {
+    if (!fields.evidence) {
+      throw new ValidationAttemptTransitionError(
+        `transition ${type} requires an evidence record`,
+        "ERR_MISSING_REQUIRED_FIELD",
+      );
+    }
+    const graded = gradeEvidence(fields.evidence);
+    if (graded.rejected || graded.grade !== def.evidenceGrade) {
+      throw new ValidationAttemptTransitionError(
+        `transition ${type} requires ${def.evidenceGrade}-grade evidence`,
         "ERR_WRONG_EVIDENCE_GRADE",
       );
     }
-    patch.actionProof = graded;
-    patch.evidence = [...attempt.evidence, graded];
-  }
-  if (type === "attach_outcome" && fields.evidence) {
-    const graded = gradeEvidence(fields.evidence);
-    patch.customerOutcome = graded;
-    patch.evidence = [...attempt.evidence, graded];
-  }
-  if (type === "succeed" && fields.evidence) {
-    const graded = gradeEvidence(fields.evidence);
-    if (graded.grade !== "goal_proof") {
+    if (def.evidenceKinds && !def.evidenceKinds.has(graded.kind)) {
       throw new ValidationAttemptTransitionError(
-        "succeed requires goal_proof-grade evidence",
-        "ERR_WRONG_EVIDENCE_GRADE",
+        `transition ${type} does not accept evidence kind: ${graded.kind || "(none)"}`,
+        "ERR_WRONG_EVIDENCE_KIND",
       );
     }
-    patch.goalProof = graded;
-    patch.evidence = [...attempt.evidence, graded];
+    patch[def.evidenceSlot] = graded;
+    patch.evidence = [...(attempt.evidence || []), graded];
   }
+
   return patch;
 }
 
-/** Classify an evidence record by kind; rejects self-report/ai/draft. Pure. */
+/** Classify an evidence record by kind; rejects self-report/ai/draft/unknown. Pure. */
 export function gradeEvidence(record = {}) {
   const kind = String(record?.kind || "").trim();
   if (!kind || REJECTED_EVIDENCE_KINDS.has(kind)) {
@@ -303,13 +571,52 @@ function isEmptyField(value) {
 }
 
 // ── Host-owned derivations (the LLM never decides these) ──────────────────────
-/** The next card to render for an attempt, or "" when the attempt is resolved. */
+/** The next card to render, or "" when not in an ACTIVE gather state. */
 export function nextCardType(attempt) {
-  if (!attempt || VALIDATION_ATTEMPT_RESOLVED_STATES.has(attempt.status) || attempt.status === "blocked") return "";
+  if (!attempt || !ACTIVE_STATES.has(attempt.status)) return "";
   for (const [cardType, card] of Object.entries(CARDS)) {
     if (card.forState === attempt.status) return cardType;
   }
   return "";
+}
+
+/**
+ * Typed-union "what should happen next" for an attempt (GPT 6.11). Shapes:
+ *   { kind: "card", cardType }
+ *   { kind: "wait", reason: "action" | "customer_outcome" | "goal" }
+ *   { kind: "blocked", blocker: { blockerReason, nextUnblockAction } }
+ *   { kind: "carried", carry: { carryReason } }
+ *   { kind: "terminal", outcome: "succeeded" | "failed" }
+ * Throws ERR_UNMAPPED_STATE for a malformed/unknown status.
+ */
+export function nextAttemptAction(attempt) {
+  if (!attempt || typeof attempt !== "object") {
+    throw new ValidationAttemptTransitionError("attempt is required", "ERR_NO_ATTEMPT");
+  }
+  const status = attempt.status;
+  if (VALIDATION_ATTEMPT_TERMINAL_STATES.has(status)) {
+    return { kind: "terminal", outcome: status };
+  }
+  if (status === "blocked") {
+    return {
+      kind: "blocked",
+      blocker: { blockerReason: attempt.blockerReason, nextUnblockAction: attempt.nextUnblockAction },
+    };
+  }
+  if (status === "carried") {
+    return { kind: "carried", carry: { carryReason: attempt.carryReason } };
+  }
+  if (status === "execution_scheduled") return { kind: "wait", reason: "action" };
+  if (status === "awaiting_customer_outcome") return { kind: "wait", reason: "customer_outcome" };
+  if (status === "outcome_observed") return { kind: "wait", reason: "goal" };
+  if (ACTIVE_STATES.has(status)) {
+    const cardType = nextCardType(attempt);
+    if (cardType) return { kind: "card", cardType };
+  }
+  throw new ValidationAttemptTransitionError(
+    `no next action mapped for status: ${String(status)}`,
+    "ERR_UNMAPPED_STATE",
+  );
 }
 
 /** Required fields still missing for the current card (computed ONCE, no LLM loop). */
@@ -368,15 +675,28 @@ export function nextLadderSignal(answeredSignalIds = []) {
   return GET_USERS_LADDER_SIGNAL_ORDER.find((id) => !answered.has(id)) || "";
 }
 
-/** Day-1 may end only with real external-action proof or an explicit blocker/carry. */
+/**
+ * Day-1 close acceptability (GPT Q2 — R2 prep; UX wiring is post-R1).
+ * Three dispositions close cleanly:
+ *   - action proof attached (status ≥ awaiting_customer_outcome)
+ *   - execution_scheduled WITH an exact dueAt (timeboxed lease; "can't do it now" escape)
+ *   - blocked (blockerReason + nextUnblockAction) or carried (carryReason)
+ * A plan-only (needs_* gather) attempt is NOT an acceptable close.
+ */
 export function isAcceptableDay1Close(attempt) {
   if (!attempt) return false;
   if (attempt.status === "blocked") return Boolean(attempt.blockerReason && attempt.nextUnblockAction);
   if (attempt.status === "carried") return Boolean(attempt.carryReason);
-  // Reaching action_performed WITH attached action proof, or further.
-  const idx = VALIDATION_ATTEMPT_STATES.indexOf(attempt.status);
-  const awaitingIdx = VALIDATION_ATTEMPT_STATES.indexOf("awaiting_customer_outcome");
-  return Boolean(attempt.actionProof) && idx >= awaitingIdx;
+  // Real external-action proof attached (any WAIT/terminal state carrying it).
+  if (attempt.actionProof
+    && (VALIDATION_ATTEMPT_WAIT_STATES.has(attempt.status) || VALIDATION_ATTEMPT_TERMINAL_STATES.has(attempt.status))) {
+    return true;
+  }
+  // Plan complete with an exact deadline = timeboxed lease.
+  if (attempt.status === "execution_scheduled") {
+    return Boolean(String(attempt.dueAt || "").trim());
+  }
+  return false;
 }
 
 /** Whether a NEW attempt may be created (invariant 2: no new discovery while one is open). */
@@ -386,39 +706,104 @@ export function canStartNewAttempt(attempts = []) {
 }
 
 // ── Legacy adapter (review step 2: reduce existing signalId turns → attempt) ───
+export class ValidationAttemptMigrationError extends Error {
+  constructor(message, code) {
+    super(message);
+    this.name = "ValidationAttemptMigrationError";
+    this.code = code || "ERR_MIGRATION";
+  }
+}
+
+// A migrated session whose plan is recoverable but whose execution cannot be
+// verified from the legacy turn log. The host must NOT promote it to execution.
+export const LEGACY_MIGRATION_DISPOSITION_UNVERIFIED = "legacy_interview_complete_but_execution_unverified";
+
 /**
  * Build a ValidationAttempt from existing office-hours turn-log entries (the six
- * legacy get_users signalIds). PURE — used for the additive shadow migration so
- * the new state machine can read existing sessions without changing how cards are
- * produced. Legacy turns capture PLANS only (no real action proof), so the result
- * advances at most to `action_performed`; it never fabricates evidence (this is
- * exactly the review's point that the old ladder produced definitions/plans, not
- * proof). Stops at the first illegal/duplicate transition (best-effort).
+ * legacy get_users signalIds). PURE and FAIL-CLOSED (GPT 6.12):
+ *   - Only recoverable PLAN fields advance the attempt; no real proof exists in a
+ *     legacy turn log, so the result advances AT MOST to execution_scheduled (and
+ *     in practice — since dueAt/threshold/success are unrecoverable — stops before
+ *     it, tagged unverified).
+ *   - It NEVER fabricates dueAt / attemptThreshold / successCondition.
+ *   - Ambiguity throws ValidationAttemptMigrationError("ERR_MIGRATION_AMBIGUOUS"):
+ *       * the same canonical slot answered more than once with differing text,
+ *       * a prefixed + bare alias of the same slot disagreeing,
+ *       * a downstream slot answered while an upstream slot is missing (gap),
+ *       * an unrecognized signalId mixed into the get_users ladder.
+ * Returns the attempt; read `migrationDisposition` for the unverified case.
  */
 export function buildValidationAttemptFromTurns(turns = [], { id = "", createdAt = "" } = {}) {
-  let attempt = createValidationAttempt({ id, goalLane: "get_users", createdAt });
+  const list = Array.isArray(turns) ? turns : [];
+
+  // Collect canonical-slot answers, detecting alias conflicts + duplicate revisions.
   const byCard = {};
-  for (const turn of Array.isArray(turns) ? turns : []) {
-    const card = canonicalCardForSignal(turn?.signalId || turn?.signal_id);
-    const answer = String(turn?.responseText || turn?.response || "").trim();
-    if (card && answer && !(card in byCard)) byCard[card] = answer;
+  for (const turn of list) {
+    const signalId = turn?.signalId ?? turn?.signal_id;
+    const card = canonicalCardForSignal(signalId);
+    const answer = String(turn?.responseText ?? turn?.response ?? "").trim();
+    if (!answer) continue;
+    if (!card) {
+      // An id that is neither a known card nor a ladder alias is ambiguous noise.
+      const rawId = String(signalId || "").trim();
+      if (rawId) {
+        throw new ValidationAttemptMigrationError(
+          `unrecognized signalId in legacy ladder: ${rawId}`,
+          "ERR_MIGRATION_AMBIGUOUS",
+        );
+      }
+      continue;
+    }
+    if (card in byCard) {
+      if (byCard[card] !== answer) {
+        throw new ValidationAttemptMigrationError(
+          `conflicting legacy answers for ${card}`,
+          "ERR_MIGRATION_AMBIGUOUS",
+        );
+      }
+      continue; // identical duplicate — harmless
+    }
+    byCard[card] = answer;
   }
-  const steps = [
-    ["activation_definition", "define_activation", (v) => ({ activationDefinition: v })],
-    ["candidate_selection", "select_candidate", (v) => ({ candidate: v })],
-    // action_contract folds current_alternative/today_request/day1_commitment;
-    // legacy answer becomes the externalAction with placeholder contract fields.
-    ["action_contract", "perform_action", (v) => ({
-      externalAction: v, dueAt: "legacy", attemptThreshold: "1", successCondition: v,
-    })],
-  ];
-  for (const [card, type, toFields] of steps) {
-    if (!(card in byCard)) break; // ladder is ordered; stop at first gap
-    try {
-      attempt = reduceValidationAttempt(attempt, { type, fields: toFields(byCard[card]) });
-    } catch {
-      break; // illegal/duplicate — keep the partial attempt
+
+  // Gap detection: a present downstream slot with a missing upstream slot is ambiguous.
+  const order = ["activation_definition", "candidate_selection", "current_alternative",
+    "action_request", "evidence_contract", "commitment"];
+  let firstGap = -1;
+  for (let i = 0; i < order.length; i += 1) {
+    const present = order[i] in byCard;
+    if (!present && firstGap < 0) firstGap = i;
+    if (present && firstGap >= 0) {
+      throw new ValidationAttemptMigrationError(
+        `legacy ladder gap: ${order[i]} present but ${order[firstGap]} missing`,
+        "ERR_MIGRATION_AMBIGUOUS",
+      );
     }
   }
+
+  // The ordered ladder of cleanly-recoverable gather slots. The action_request,
+  // evidence_contract and commitment slots cannot be reconstructed from a single
+  // legacy answer without fabricating fields, so we stop at needs_action_contract.
+  const RECOVERABLE = [
+    ["activation_definition", "define_activation", (v) => ({ activationDefinition: v })],
+    ["candidate_selection", "select_candidate", (v) => ({ candidate: v })],
+    ["current_alternative", "record_alternative", (v) => ({ currentAlternative: v })],
+  ];
+
+  let attempt = createValidationAttempt({ id, goalLane: "get_users", createdAt });
+  let seq = 0;
+  const ev = (type, fields) => ({ type, eventId: `migrate:${id || "anon"}:${seq++}`, fields, at: createdAt });
+
+  for (const [card, type, toFields] of RECOVERABLE) {
+    if (!(card in byCard)) return attempt; // ordered ladder; stop at first gap
+    attempt = reduceValidationAttempt(attempt, ev(type, toFields(byCard[card])));
+  }
+
+  // action_request: legacy text becomes externalAction, but attemptThreshold and
+  // successCondition CANNOT be recovered → we refuse to fabricate and cannot fire
+  // define_action_contract. Stamp externalAction for context and tag unverified.
+  if (!("action_request" in byCard)) return attempt;
+  attempt = { ...attempt, externalAction: byCard.action_request };
+  attempt.migrationDisposition = LEGACY_MIGRATION_DISPOSITION_UNVERIFIED;
   return attempt;
 }
