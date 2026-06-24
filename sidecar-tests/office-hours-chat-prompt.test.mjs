@@ -182,11 +182,49 @@ test("office-hours locked Day 1 get_users prompt forces active-user definition f
   assert.match(prompt, /not eligible for smart-skip/);
   assert.match(prompt, /get_users_active_user_definition/);
   assert.match(prompt, /signalLabel `활성 사용자 기준`/);
-  assert.match(prompt, /이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요/);
-  assert.match(prompt, /첫 가치 완료/);
-  assert.match(prompt, /반복 사용 완료/);
-  assert.match(prompt, /수동 파일럿 성공/);
+  assert.match(prompt, /Generate the visible active-user-definition question and option labels from the injected context/);
+  assert.match(prompt, /Source-Derived Project Context/);
+  assert.match(prompt, /no file-read tools in this surface/);
+  assert.match(prompt, /goal text, customer, problem, validation action/);
+  assert.match(prompt, /Thin-context honesty/);
+  assert.match(prompt, /project-specific activation event found in context/);
   assert.match(prompt, /가입, 대기 신청, 페이지 조회, 좋아요, 팔로워/);
+  assert.match(prompt, /adaptive locked Day 1 get_users question ladder/);
+  assert.match(prompt, /signalId\/semantic slot is fixed/);
+  assert.match(prompt, /get_users_first_candidate/);
+  assert.match(prompt, /named people, handles, segments, channels, or evidence-backed sources/);
+  assert.match(prompt, /get_users_current_alternative/);
+  assert.match(prompt, /product domain's likely current alternatives/);
+  assert.match(prompt, /get_users_today_request/);
+  assert.match(prompt, /one request the founder can send today/);
+  assert.match(prompt, /get_users_evidence_format/);
+  assert.match(prompt, /available surfaces in the project context/);
+  assert.match(prompt, /get_users_day1_commitment/);
+  assert.match(prompt, /candidate, request, deadline, and evidence format/);
+  assert.ok(prompt.includes("MUST NOT ask `고객 후보 1명은 어디에서 찾을 건가요?` as a standalone sourcing question"));
+  assert.match(prompt, /candidate, request, and evidence format/);
+  assert.doesNotMatch(prompt, /Options exactly: `바로 연락할 사람`/);
+  assert.doesNotMatch(prompt, /The card question MUST be: `가입이나 조회가 아니라/);
+});
+
+test("office-hours prompt injects the project context brief when provided and omits it otherwise", () => {
+  const baseArgs = {
+    provider: "codex",
+    context: ["DAY1_LOCKED_GOAL", "Goal lane: get_users / 활성 사용자 100명 모으기"].join("\n"),
+  };
+  const brief = [
+    "## Source-Derived Project Context",
+    "Product: dongdong",
+    "Problem: 핵심 문제 확인 필요",
+  ].join("\n");
+
+  const withBrief = buildOfficeHoursChatSystemPrompt("/workspace", { ...baseArgs, projectContextBrief: brief });
+  // The brief's row content only appears when the brief is actually injected;
+  // the literal section header also occurs inside the prompt rules, so assert on a row.
+  assert.ok(withBrief.includes("Product: dongdong"));
+
+  const withoutBrief = buildOfficeHoursChatSystemPrompt("/workspace", baseArgs);
+  assert.doesNotMatch(withoutBrief, /Product: dongdong/);
 });
 
 test("office-hours Day 2+ goal-driven prompt requires live briefing and goal-specific routing", () => {

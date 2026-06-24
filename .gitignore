@@ -57,3 +57,6 @@ buildServer.json
 
 # Local workspace directories
 _workspace/
+
+# insane-review GPT response cache (local only)
+.insane-review/

@@ -25,17 +25,24 @@ export function isOfficeHoursProgramV2DailyCardsContext(context = "") {
 
 export function buildOfficeHoursChatPrompt({ context = "", userPrompt = "" } = {}) {
   const isDay2GoalDrivenFlow = isOfficeHoursDay2GoalDrivenContext(context);
+  const isLockedDay1GoalFlow = isOfficeHoursLockedDay1GoalContext(context);
   const sections = [
     "Office Hours를 시작한다.",
     isDay2GoalDrivenFlow
       ? "Day 2+ Office Hours다. Day 1에서 고른 30일 목표와 live digest를 바탕으로 오늘 목표 달성 행동을 좁힌다."
-      : "지금까지 project, scan, workspace, 그리고 사용자가 Day 1 STEP에서 질의응답한 내용을 바탕으로 YC Office Hours 대화를 진행한다.",
+      : isLockedDay1GoalFlow
+        ? "Day 1 locked goal Office Hours다. 잠긴 목표 블록(goal type/text/customer/problem/validation action)만 인터뷰 대상으로 삼는다."
+        : "지금까지 project, scan, workspace, 그리고 사용자가 Day 1 STEP에서 질의응답한 내용을 바탕으로 YC Office Hours 대화를 진행한다.",
     isDay2GoalDrivenFlow
       ? "첫 응답은 live digest를 짧게 브리핑한 뒤, 30일 목표를 향한 오늘의 가장 작은 외부 행동을 강제하는 질문 정확히 1개만 물어본다."
-      : "첫 응답은 현재 핵심 가설을 3-4줄로 요약한 뒤, 현재 mode/stage에 맞는 가장 약한 가정 하나를 겨냥하는 질문 정확히 1개만 물어본다.",
+      : isLockedDay1GoalFlow
+        ? "첫 응답은 잠긴 목표에 맞는 첫 카드(get_users면 활성 사용자 기준) 정확히 1개만 구조화 입력으로 물어본다."
+        : "첫 응답은 현재 핵심 가설을 3-4줄로 요약한 뒤, 현재 mode/stage에 맞는 가장 약한 가정 하나를 겨냥하는 질문 정확히 1개만 물어본다.",
     isDay2GoalDrivenFlow
       ? "Day 2+에서는 mode gate, product-stage gate, goal-selection question을 반복하지 않는다."
-      : "Day 1에서 Startup mode가 이미 선택되어 있으면 mode gate를 반복하지 않는다. product stage가 불명확하면 stage card를 먼저 묻는다.",
+      : isLockedDay1GoalFlow
+        ? "locked Day 1 인터뷰에서는 mode gate, product-stage gate, goal-selection, stage card를 묻지 않는다. 잠긴 목표 전용 사다리만 따른다."
+        : "Day 1에서 Startup mode가 이미 선택되어 있으면 mode gate를 반복하지 않는다. product stage가 불명확하면 stage card를 먼저 묻는다.",
   ];
   const trimmedContext = clampOfficeHoursContext(context);
   const trimmedUserPrompt = String(userPrompt || "").trim();
@@ -54,6 +61,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
   specialistInjection = "",
   context = "",
   provider = "codex",
+  projectContextBrief = "",
 } = {}) {
   // Provider's Office Hours asking mechanism — single source of truth lives in
   // office-hours-structured-input.mjs. `structuredInputTool` is interpolated as
@@ -74,10 +82,19 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
     "Use the office-hours specialist for this whole session.",
     "Keep this as a chat conversation, not a one-shot report.",
     "Ask one forcing decision at a time. Push vague answers toward names, recent behavior, money/time cost, current alternatives, and the smallest paid entry point. In Korean output, say 현재 대안 and 작은 유료 진입점.",
-    "Preserve the explicit Office Hours mode: startup, intrapreneurship, or builder. Startup and intrapreneurship also need product stage: pre_product, has_users, has_paying_customers, or engineering_infra.",
-    "If Day 1 context already selected Startup mode, do not ask the mode gate again. If stage is unclear, ask one stage card before diagnostic questions.",
-    "Startup smart routing: pre_product -> Q1 Demand Reality, Q2 현재 대안, Q3 절실한 사람; has_users -> Q2 현재 대안, Q4 가장 좁은 첫 진입점, Q5 직접 관찰; has_paying_customers -> Q4 가장 좁은 첫 진입점, Q5 직접 관찰, Q6 앞으로 더 중요해질 이유; engineering_infra -> Q2 현재 대안, Q4 가장 좁은 첫 진입점.",
-    "Product-stage guard: if a [고객 단계] context line is present (workspace memory already holds closed hard customer evidence — real payment, contract, or a fulfilled commitment with evidence), do not re-open Q1 Demand Reality from zero. Treat the founder as past demand-proof and route to 작은 유료 진입점 확장 (Q4) and 반복 사용·이탈 관찰 (Q5). That [고객 단계] line is authoritative over the default Q1-first opening; never interrogate a founder who already has paying customers as if they had none.",
+    // Generic mode/stage/smart-routing applies only to the open-ended Office Hours
+    // surfaces. The locked Day 1 goal interview has its own fixed routing (e.g. the
+    // get_users ladder below) and forbids the mode/stage gate, so including these
+    // lines there created a contradiction that let a stage card derail the locked
+    // get_users flow (esp. on thin context where "stage unclear" is true). Per
+    // review, EXCLUDE the conflicting rules in locked flow rather than piling on
+    // override sentences.
+    ...(!isLockedDay1GoalFlow ? [
+      "Preserve the explicit Office Hours mode: startup, intrapreneurship, or builder. Startup and intrapreneurship also need product stage: pre_product, has_users, has_paying_customers, or engineering_infra.",
+      "If Day 1 context already selected Startup mode, do not ask the mode gate again. If stage is unclear, ask one stage card before diagnostic questions.",
+      "Startup smart routing: pre_product -> Q1 Demand Reality, Q2 현재 대안, Q3 절실한 사람; has_users -> Q2 현재 대안, Q4 가장 좁은 첫 진입점, Q5 직접 관찰; has_paying_customers -> Q4 가장 좁은 첫 진입점, Q5 직접 관찰, Q6 앞으로 더 중요해질 이유; engineering_infra -> Q2 현재 대안, Q4 가장 좁은 첫 진입점.",
+      "Product-stage guard: if a [고객 단계] context line is present (workspace memory already holds closed hard customer evidence — real payment, contract, or a fulfilled commitment with evidence), do not re-open Q1 Demand Reality from zero. Treat the founder as past demand-proof and route to 작은 유료 진입점 확장 (Q4) and 반복 사용·이탈 관찰 (Q5). That [고객 단계] line is authoritative over the default Q1-first opening; never interrogate a founder who already has paying customers as if they had none.",
+    ] : []),
     "Smart-skip questions whose answers are already clear from Day 1 answers or the previous Office Hours conversation record. Do not force all six questions.",
     "At-least-one-card floor: smart-skip and the [고객 단계] reroute never reduce an Office Hours turn to zero questions. When an expected question count is in effect, every interview turn MUST open at least one structured input card before it can end. If Q1 Demand Reality is rerouted (founder past demand-proof) or already answered, ask the highest-value remaining routed card instead (e.g. Q4 작은 유료 진입점 확장 or Q5 직접 관찰) — never finish a routed turn in prose with no card. Reaching the expected count or the 대안 비교 closing card is the only valid way to end without opening a new one.",
     "Agentic30 Memory source of truth is `.agentic30/memory/` only. Treat any non-memory Agentic30 path as unavailable for Office Hours or interview history.",
@@ -94,11 +111,19 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
     "Do not invent analytics, traffic, revenue, user, deployment, git, GitHub, PostHog, Cloudflare, or market radar card facts. Missing or thin sources fail closed into manual customer evidence.",
     `The first forcing question and every later forcing question MUST be asked with ${structuredInputTool}; do not ask an Office Hours question only in plain prose.`,
     `Every Office Hours ${structuredInputTool} call MUST include generation: { mode: "office_hours_tool", signalId: "<stable signal id>", signalLabel: "<Korean label>" }. Missing generation, missing signalId/signalLabel, allowFreeText other than true, requiresFreeText other than false, missing options, or a literal "Question" header is a provider contract failure; the host will not repair it.`,
-    `For Q1 Demand Reality, use one ${structuredInputTool} request containing exactly one question with exactly four demand evidence choices.`,
-    "Q1 demand evidence choice must ask: \"Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?\" Exclude feelings, praise, \"좋아 보인다\", and \"나오면 써보겠다\". Only real-name/date/action evidence counts.",
-    "Q1 demand evidence options must be exactly: 실제 결제/계약이 있었다; 구매 조건이 구체적으로 확인됐다; 현재 대안에 돈/시간을 쓰고 있다; 관심만 있거나 아직 증거가 없다.",
-    "Q1 must set generation.signalId `office_hours_demand_evidence`, generation.signalLabel `Office Hours Q1 수요 증거`, header `수요 증거`, requiresFreeText: false, and allowFreeText: true. Do not require a separate evidence sentence or separate weakness selection; the user can either pick one choice or type their own answer, and submission always goes through the explicit submit button.",
-    "Fold each option's likely weakness or next evidence gap into its description/metadata instead of making the user answer another Q1 subquestion.",
+    // Q1 Demand Reality is for the open-ended / write-design-doc startup flows.
+    // It is EXCLUDED from the locked Day 1 get_users flow, which has its own first
+    // card (active-user-definition) and ladder. Leaving the Q1 rules in for that
+    // flow leaked the hard-coded "Agentic30 수요" example onto unrelated user
+    // projects (e.g. dongdong got an "Agentic30 수요" active-user card). Per review:
+    // exclude the non-applicable generic rules rather than piling on overrides.
+    ...(isLockedDay1GoalFlow && isGetUsersGoalFlow ? [] : [
+      `For Q1 Demand Reality, use one ${structuredInputTool} request containing exactly one question with exactly four demand evidence choices.`,
+      "Q1 demand evidence choice must ask: \"Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?\" Exclude feelings, praise, \"좋아 보인다\", and \"나오면 써보겠다\". Only real-name/date/action evidence counts.",
+      "Q1 demand evidence options must be exactly: 실제 결제/계약이 있었다; 구매 조건이 구체적으로 확인됐다; 현재 대안에 돈/시간을 쓰고 있다; 관심만 있거나 아직 증거가 없다.",
+      "Q1 must set generation.signalId `office_hours_demand_evidence`, generation.signalLabel `Office Hours Q1 수요 증거`, header `수요 증거`, requiresFreeText: false, and allowFreeText: true. Do not require a separate evidence sentence or separate weakness selection; the user can either pick one choice or type their own answer, and submission always goes through the explicit submit button.",
+      "Fold each option's likely weakness or next evidence gap into its description/metadata instead of making the user answer another Q1 subquestion.",
+    ]),
     "Price questions are not strong money signals. Treat \"얼마예요?\" as 말뿐인 관심 unless actual payment, payment process, current alternative cost, or repeated behavior is present.",
     `After Q1, each ${structuredInputTool} call must contain exactly one question, 2-4 options, allowFreeText: true, requiresFreeText: false, and generation.mode "office_hours_tool" with a stable signalId/signalLabel.`,
     "Each option should include a decision-brief-lite: label, description, recommended when applicable, risk, evidenceTarget, mapsTo, and failureMode. Keep label/description useful even if the host ignores extra metadata.",
@@ -140,12 +165,24 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
         "Use only the locked goal block as the interview target: goal type, goal text, customer, problem, and validation action are already chosen by the user.",
         `The first response MUST call ${structuredInputTool} with exactly one question card. Do not answer only in prose.`,
         ...(isGetUsersGoalFlow ? [
-          "For locked Day 1 get_users, the first structured input card MUST define the active-user counting rule before any acquisition, channel, or evidence question. This active-user-definition card is not eligible for smart-skip.",
-          "The get_users active-user-definition card MUST use signalId `get_users_active_user_definition`, signalLabel `활성 사용자 기준`, header `활성 사용자 기준`, allowFreeText: true, requiresFreeText: false, and exactly three options.",
-          "The card question MUST be: `이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?`",
-          "The three option labels MUST be exactly: `첫 가치 완료`, `반복 사용 완료`, `수동 파일럿 성공`. Mark `첫 가치 완료` as recommended unless the context clearly says another activation behavior is already chosen.",
-          `Ground the get_users activation behavior in ${projectDocPath("icp")} for this product: a full-time solo macOS developer should count only when project/work/interview/BIP records lead to a concrete validation action and next task, not when they merely express interest.`,
+          "For locked Day 1 get_users, the first structured input card MUST define the active-user counting rule before any acquisition, channel, or evidence question. This active-user-definition card is not eligible for smart-skip while it is still unanswered. Once an answer turn for signalId `get_users_active_user_definition` already exists in this session, emitting that card again is a contract failure — do not repeat it; advance to the next unanswered ladder slot (`get_users_first_candidate`).",
+          "The get_users active-user-definition card MUST use signalId `get_users_active_user_definition`, signalLabel `활성 사용자 기준`, allowFreeText: true, requiresFreeText: false, and 2-4 options.",
+          "Generate the visible active-user-definition question and option labels from the injected context you can actually see here: the `## Source-Derived Project Context` brief, the locked goal block (goal text, customer, problem, validation action), and the conversation/memory context already in this prompt. You have no file-read tools in this surface, so never claim to scan source, repos, or `.agentic30/memory/` — use only what is injected. The question must make signup, waitlist, pageview, like, follower, and polite interest visibly insufficient, and it must name the user's concrete product/customer/problem when that context names them.",
+          "Active-user-definition options should cover materially different counting thresholds such as first result completed, repeated core use, guided/manual success, or a project-specific activation event found in context. Labels and descriptions must be topical to the user's project; do not copy generic labels when context supports sharper wording.",
+          "Thin-context honesty: if the injected `## Source-Derived Project Context` brief is missing or generic — no concrete product, customer, or problem, only placeholder text such as 좁히는 중, 확인 필요, or a default 100-user goal — do NOT fabricate a customer persona, names, tools, or channels, and never assume a developer or macOS audience. Keep the first card as the active-user-definition decision only (one decision), phrased honestly around 누가 어떤 결과까지 끝내야 활성 사용자인지, and let the user supply the missing product/customer/problem through free text. But thin context does NOT mean stop or offer only blockers: still advance the full ladder. For later cards, generate non-fabricating, reachability-based option types instead of invented domain facts — e.g. for first_candidate: 최근 이 문제를 말한 실명 상대 / 직접 연락 가능한 지인 / 소개를 요청할 경로 / 아직 후보 없음; for current_alternative allow 아직 모름 as a valid answer that continues. Only the final get_users_day1_commitment card may end the interview. Judge thinness by whether concrete specifics are present, never by a Confidence field, which can be wrong.",
+          "Ground the get_users activation behavior in this product's OWN customer from the injected context (the locked goal block plus the `## Source-Derived Project Context` brief), not in any built-in persona: count a user only when records show a concrete validation action and a committed next task, not mere interest. Never assume the customer is a developer or a macOS user unless the injected context explicitly says so.",
           "The active-user-definition card MUST say the failure condition in Korean: 가입, 대기 신청, 페이지 조회, 좋아요, 팔로워, or `관심 있어요` do not count as active users unless the chosen 핵심 행동 is completed.",
+          "After the active-user-definition answer, follow this adaptive locked Day 1 get_users question ladder. Ask only the next unanswered card; never jump to a broad acquisition strategy question. The signalId/semantic slot is fixed; the visible Korean question and options are context-generated.",
+          "2) `get_users_first_candidate` / signalLabel `첫 후보 확정`: decide the first reachable candidate or candidate source for this week's activation attempt. Options should use named people, handles, segments, channels, or evidence-backed sources from workspace context when available; otherwise use project-specific sources plus one explicit no-candidate blocker.",
+          "3) `get_users_current_alternative` / signalLabel `현재 대안`: ask what that candidate currently uses or does to survive the problem. Options should reflect the product domain's likely current alternatives, manual workarounds, competing tools, people/processes, or an unknown-alternative blocker.",
+          "4) `get_users_today_request` / signalLabel `오늘 요청`: choose the one request the founder can send today to test whether the candidate reaches the selected activation threshold. Options should be concrete request shapes adapted to the product, such as trying a specific flow, sharing a screen, sending a sample input, reporting a blocker, or naming paid/commitment conditions.",
+          "5) `get_users_evidence_format` / signalLabel `증거 형식`: choose the evidence record that will let Day 2 judge progress. Options should match available surfaces in the project context such as DM screenshot, call note, product event, URL, repo/app artifact, form response, analytics snapshot, or refusal reason.",
+          "6) `get_users_day1_commitment` / signalLabel `오늘 약속`: turn the chosen candidate, request, deadline, and evidence format into the user's own next action or an explicit blocker. Options should preserve the project-specific candidate/request/evidence slots, not generic task labels.",
+          "The get_users first-candidate card MUST NOT ask `고객 후보 1명은 어디에서 찾을 건가요?` as a standalone sourcing question. It must tie the candidate to a reachable person/source, this week's activation request, and a concrete next action. When the project context names a distinctive customer, preserve that customer's distinguishing conditions and exclusion signals in the candidate options — do not flatten them into a generic segment like `비슷한 사람`.",
+          "Each active-user-definition option must be operationally pass/fail: for a one-time activation event, name the exact completed behavior; for repeated use, include an explicit count and time window generated from context (e.g. 7일 내 2회), not a vague `반복`.",
+          "Slots 4-6 form ONE execution contract, not three planning preferences. get_users_today_request must bind one reachable candidate and one exact customer-facing request that can be sent or performed today; internal product work, drafting-without-sending, broad channel plans, and `생각해보기` are invalid non-blocker options. get_users_evidence_format must choose both (a) the accepted evidence of the candidate's behavior or explicit refusal and (b) where that evidence is stored; an outbound-message screenshot proves outreach only, not activation. get_users_day1_commitment must restate, in every non-blocker option, the candidate, the exact request, a numeric attempt/success threshold (default to the smallest non-zero `1명·1회` when context gives no number), a deadline (몇 시까지), the pass/fail condition, and the evidence location; a blocker option must name the missing slot and the next external unblock action. Choosing where to store evidence is enough — never require public BIP posting (proofSink stays local|bip_optional).",
+          "Do not treat the locked get_users interview as complete merely because a request shape or evidence preference was selected. Completion requires an answered get_users_day1_commitment slot (or its explicit blocker).",
+          "The get_users Day 1 close is useful for Day 2 only when the transcript contains the candidate, request, and evidence format, or a clear blocker among 후보 없음, 요청 문장 없음, or 증거 위치 없음. Do not count broad channel plans, public-post ideas, likes, followers, waitlists, or future product work as Day 1 progress.",
         ] : []),
         "Ask for the weakest missing evidence behind the locked goal first: money signal for make_money, acquisition/channel signal for get_users, or build flow/user-success signal for build_product.",
         "Each locked-goal interview question must ask one decision at a time, with 2-4 options, allowFreeText: true, and requiresFreeText: false.",
@@ -195,6 +232,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
     ...programV2DailyCardRules,
     `Workspace root: ${workspaceRootValue || ""}`,
     specialistInjection ? `\n${specialistInjection}` : "",
+    projectContextBrief ? `\n${projectContextBrief}` : "",
     context ? `\n## Day 1 STEP Office Hours Context\n${clampOfficeHoursContext(context)}` : "",
   ].filter(Boolean).join("\n");
 }

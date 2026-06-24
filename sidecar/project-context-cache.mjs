@@ -139,6 +139,14 @@ function looksInvalidContextField(field, value) {
 export function formatProjectContextForPrompt(projectContext, {
   title = "## Source-Derived Project Context",
   missing = "",
+  // Additive options (defaults preserve the original BIP behavior). Consumers that
+  // inject this brief into a system prompt (e.g. Office Hours) should drop the
+  // free-form Evidence rows and the Confidence value and supply a context-specific
+  // note, so user-authored evidence text cannot be promoted to a system instruction
+  // and an unreliable confidence flag is not read as fact.
+  includeEvidence = true,
+  includeConfidence = true,
+  note = "This compact project brief was refreshed during onboarding scan or Day completion. Do not rescan source code during BIP generation.",
 } = {}) {
   const context = projectContext ? normalizeProjectContextCache(projectContext) : null;
   if (!context) return missing;
@@ -152,13 +160,13 @@ export function formatProjectContextForPrompt(projectContext, {
     ["Values", context.values],
     ["Likely users", context.likelyUsers?.join(", ")],
     ["Stage", context.stage && context.stage !== "unknown" ? context.stage : ""],
-    ["Confidence", context.confidence],
-    ["Evidence", context.evidenceRefs?.join(" / ")],
+    ...(includeConfidence ? [["Confidence", context.confidence]] : []),
+    ...(includeEvidence ? [["Evidence", context.evidenceRefs?.join(" / ")]] : []),
   ].filter(([, value]) => value);
   if (!rows.length) return missing;
   return [
     title,
-    "This compact project brief was refreshed during onboarding scan or Day completion. Do not rescan source code during BIP generation.",
+    ...(note ? [note] : []),
     ...rows.map(([label, value]) => `${label}: ${value}`),
   ].join("\n");
 }

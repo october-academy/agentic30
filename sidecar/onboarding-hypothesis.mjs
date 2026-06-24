@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 
 import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
 import { renderAgentHistoryEvidence } from "./agent-work-history.mjs";
+import { extractPdfText } from "./pdf-text.mjs";
 
 const MAX_CONTEXT_CHARS = 24_000;
 const MAX_EVIDENCE = 5;
@@ -117,6 +118,19 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(
   contextParts.push(...manifestEvidence.contextParts);
   documentContextParts.push(...manifestEvidence.contextParts);
 
+  // PDF proposals/specs: for a project whose only real signal is a PDF (no
+  // README/source), this is what turns a generic context into a specific one.
+  // Feeds documentContext so inferProductBrief/inferProductName see real text.
+  const pdfPaths = await findWorkspacePdfs(root);
+  for (const pdfPath of pdfPaths) {
+    const loaded = await readWorkspacePdf(root, pdfPath, 6000);
+    if (!loaded) continue;
+    const headline = firstMeaningfulLine(loaded.content);
+    evidence.push(headline ? `PDF ${pdfPath}: ${headline}` : `PDF: ${pdfPath}`);
+    contextParts.push(loaded.content);
+    documentContextParts.push(loaded.content);
+  }
+
   const recentFiles = await readRecentGitFiles(root);
   if (recentFiles.length > 0) {
     evidence.push(`최근 변경: ${recentFiles.slice(0, 3).join(", ")}`);
@@ -130,11 +144,10 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(
 
   // Recent agent work (~/.claude + ~/.codex) is computed by the caller and
   // injected (keeps this function free of home-dir I/O + keeps unit tests
-  // hermetic). It surfaces as a light evidence bullet here and is carried whole
-  // on `recentWork` for the Day-1 situation summary generator.
-  if (agentHistory) {
-    evidence.push(...renderAgentHistoryEvidence(agentHistory));
-  }
+  // hermetic). Kept SEPARATE from real project evidence so it can only TRAIL the
+  // evidence list (ordering guard) — otherwise self-referential history (e.g. an
+  // onboarding command) crowds out / impersonates real signal on a thin project.
+  const agentEvidence = agentHistory ? renderAgentHistoryEvidence(agentHistory) : [];
 
   const context = contextParts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
   const documentContext = documentContextParts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
@@ -155,13 +168,18 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(
   const stage = extractedSignals.stage && extractedSignals.stage !== "unknown"
     ? extractedSignals.stage
     : inferProjectStage({ context, docPaths, recentFiles, packageJson });
-  const compactEvidence = uniqueCompact([
+  // Real project evidence (workspace signals, README, PDF, docs, manifests,
+  // source) leads; agent-history is strictly trailing filler.
+  const realEvidence = uniqueCompact([
     ...evidenceFromWorkspaceEvidence(workspaceEvidence),
     ...evidence,
-  ]).slice(0, MAX_EVIDENCE);
+  ]);
+  const compactEvidence = uniqueCompact([...realEvidence, ...agentEvidence]).slice(0, MAX_EVIDENCE);
+  // Confidence counts ONLY real evidence so a lone self-referential history
+  // bullet cannot bump a starved project to medium.
   const confidence = strongerConfidence(
     workspaceEvidence?.confidence,
-    inferConfidence({ likelyUsers, evidence: compactEvidence, stage, projectKind }),
+    inferConfidence({ likelyUsers, evidence: realEvidence, stage, projectKind }),
   );
   const hypothesis = {
     productName,
@@ -406,6 +424,9 @@ function inferProductBrief({ context, productName = "" }) {
     /^##[ \t]+제품 한 문장[^\n]*\n+\*\*([^*\n]+)\*\*/im,
     /^###[ \t]+설명[^\n]*\n+([^\n]*?(?:모른다|막혀 있다)[^\n]*)/im,
     /^[ \t]*([^#\n]*?(?:무엇을\s*(?:팔아야|만들어야|검증해야)|누구에게\s*팔아야|첫\s*사용자를\s*데려올지|막혀 있다|모른다)[^\n]*)/im,
+    // PDF/proposal sections (one-line flowed text; punctuation glyphs may be
+    // mangled to digits, so the separator class tolerates : - · 8 etc.).
+    /(?:목적\s*및\s*필요성|해결\s*과제|시장\s*기회|배경)[\s:：·\-8]*([가-힣A-Za-z][^\n]{8,150})/,
     /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:problem|pain)[ \t]*[:：-][ \t]*([^\n]+)/im,
   ]);
   const purpose = firstSemanticMatch(context, [
@@ -413,6 +434,9 @@ function inferProductBrief({ context, productName = "" }) {
     /^[ \t]*\*\*미션:\*\*[ \t]*([^\n]+)/im,
     /^##[ \t]+프로젝트 미션[^\n]*\n+[ \t]*([^\n]+)/im,
     /^[ \t]*\*\*핵심 가치:\*\*[ \t]*([^\n]+)/im,
+    // PDF/proposal one-liner intro after "프로젝트 소개" (stop at the next bullet
+    // or section keyword so it stays a single sentence).
+    /프로젝트\s*소개[\s:：·\-]*([가-힣A-Za-z][^\n]{8,120}?)(?:\s*[-–·]\s|기술\s*키워드|프로젝트\s*개요|$)/,
   ]);
   const goal = firstSemanticMatch(context, [
     /^[ \t]*\*\*(?:목표|goal)[ \t]*[:：]\*\*[ \t]*([^\n]+)/im,
@@ -688,6 +712,54 @@ async function readWorkspaceFile(root, relativePath, maxChars) {
   }
 }
 
+// PDFs are read on a dedicated path: the utf8 readWorkspaceFile cap (2MB) is
+// deliberately left untouched, while PDFs get a higher BYTE cap (proposal PDFs
+// routinely embed multi-MB images) and are read as a Buffer, then text-extracted.
+// Returns null when no usable text is recovered (honest blank, no fabrication).
+async function readWorkspacePdf(root, relativePath, maxChars, { maxBytes = 16_000_000 } = {}) {
+  const normalizedPath = cleanWorkspaceRelativePath(relativePath);
+  if (!normalizedPath || hasDeniedWorkspacePathSegment(normalizedPath)) return null;
+  const resolved = path.resolve(root, normalizedPath);
+  if (!isPathInside(resolved, root)) return null;
+  try {
+    const stat = await fs.stat(resolved);
+    if (!stat.isFile() || stat.size > maxBytes) return null;
+    const buffer = await fs.readFile(resolved);
+    const text = extractPdfText(buffer, { maxChars });
+    if (!text) return null;
+    return {
+      relativePath: path.relative(root, resolved).split(path.sep).join(path.posix.sep),
+      content: text,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Enumerate up to a few PDF files near the workspace root (depth <= 2), skipping
+// denied/dot segments. A project whose only signal is a proposal PDF (no README,
+// no source) becomes non-generic only once these are read.
+async function findWorkspacePdfs(root, { maxDepth = 2, maxFiles = 3 } = {}) {
+  const found = [];
+  async function walk(dir, depth) {
+    if (found.length >= maxFiles || depth > maxDepth) return;
+    let entries = [];
+    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (found.length >= maxFiles) return;
+      const name = entry.name;
+      if (name.startsWith(".") || name === "node_modules") continue;
+      const abs = path.join(dir, name);
+      if (entry.isDirectory()) { await walk(abs, depth + 1); }
+      else if (entry.isFile() && name.toLowerCase().endsWith(".pdf")) {
+        found.push(path.relative(root, abs).split(path.sep).join(path.posix.sep));
+      }
+    }
+  }
+  await walk(root, 0);
+  return found;
+}
+
 function cleanWorkspaceRelativePath(value) {
   const text = String(value || "").trim();
   if (!text || text.includes("\0") || path.isAbsolute(text)) return "";
@@ -753,6 +825,15 @@ function firstMarkdownHeading(content) {
     .split(/\r?\n/)
     .find((item) => /^#\s+/.test(item.trim()));
   return line ? line.replace(/^#\s+/, "").trim().slice(0, 80) : "";
+}
+
+// First non-trivial line of recovered text, for a short evidence headline.
+function firstMeaningfulLine(content) {
+  const line = String(content || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .find((item) => item.length >= 4);
+  return line ? line.slice(0, 80) : "";
 }
 
 function projectKindLabel(projectKind) {

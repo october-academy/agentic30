@@ -435,12 +435,28 @@ function buildNextQuestion({ facts, evidenceDebt, commitments }) {
 // "verbal_interest_or_no_evidence" (self-report) and "paid_or_time_current_alternative"
 // (status-quo problem signal) are excluded. Only demand-evidence turns qualify;
 // the sourceType check below pins this to real office-hours turns, not commitments
-// or digests. Tune as the bar evolves (see structured-input.mjs
-// DEMAND_EVIDENCE_OPTIONS vs ACTIVE_USER_DEFINITION_OPTIONS).
+// or digests. Tune as the bar evolves; demand evidence stays canonical while
+// active-user definition options are adaptive to project context.
 export const OFFICE_HOURS_HARD_EVIDENCE_INTENTS = Object.freeze([
   "actual_payment_or_contract",
   "concrete_purchase_conditions",
 ]);
+
+// The locked Day 1 get_users cards (active-user definition + the candidate →
+// alternative → request → evidence-format → commitment ladder) now generate their
+// option metadata adaptively, so a model could emit a hard-evidence nextIntent
+// (e.g. actual_payment_or_contract) on a card that is only a definition or a plan,
+// not a real transaction. These slots are excluded from hard-evidence detection
+// regardless of the LLM-authored nextIntent. Every other turn (Q1 demand evidence,
+// paid-entry wedge, etc.) keeps the canonical nextIntent-based detection.
+const OFFICE_HOURS_NON_HARD_EVIDENCE_SIGNALS = Object.freeze(new Set([
+  "get_users_active_user_definition",
+  "get_users_first_candidate",
+  "get_users_current_alternative",
+  "get_users_today_request",
+  "get_users_evidence_format",
+  "get_users_day1_commitment",
+]));
 
 // Graduated pressure: early cycles pass on the ladder intent alone; once the
 // program reaches this cycle, a real payment_record artifact must also back the
@@ -452,8 +468,14 @@ export const OFFICE_HOURS_ARTIFACT_GATE_MIN_CYCLE = 3;
 export function officeHoursEvidenceHasHardEvidence(evidenceState = {}) {
   const refs = Array.isArray(evidenceState?.references) ? evidenceState.references : [];
   const hard = new Set(OFFICE_HOURS_HARD_EVIDENCE_INTENTS);
+  // Exclude the adaptive Day 1 get_users slots so an LLM-authored nextIntent on a
+  // definition/plan card cannot be miscounted as a real transaction; trust the
+  // canonical nextIntent on every other turn. signalId is carried on the turn ref
+  // (see the office_hours_turn references above).
   const hasLadderHard = refs.some((ref) =>
-    ref?.sourceType === "office_hours_turn" && hard.has(cleanText(ref?.nextIntent)));
+    ref?.sourceType === "office_hours_turn"
+    && !OFFICE_HOURS_NON_HARD_EVIDENCE_SIGNALS.has(cleanText(ref?.signalId))
+    && hard.has(cleanText(ref?.nextIntent)));
   const isPastEarlyCycle = refs.some((ref) =>
     Number.isInteger(ref?.cycle) && ref.cycle >= OFFICE_HOURS_ARTIFACT_GATE_MIN_CYCLE);
   if (!isPastEarlyCycle) return hasLadderHard;

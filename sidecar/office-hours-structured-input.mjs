@@ -3,6 +3,12 @@ import {
   isStructuredInputToolName,
 } from "./structured-input-tools.mjs";
 import { normalizeOfficeHoursUiCopyRequest } from "./office-hours-copy-rules.mjs";
+import {
+  GET_USERS_LADDER_SIGNAL_ORDER,
+  canonicalLadderSignal,
+  isGetUsersLadderSignal,
+  nextLadderSignal,
+} from "./office-hours-contract.mjs";
 
 export const OFFICE_HOURS_INLINE_MODE = "office_hours_inline";
 // Origin stamp for Office Hours questions asked through the host TOOL channel
@@ -66,36 +72,6 @@ const DEMAND_EVIDENCE_OPTIONS = Object.freeze([
     failureMode: "실제 행동 없이 제품을 만들면 수요 공백이 남습니다.",
   }),
 ]);
-const ACTIVE_USER_DEFINITION_OPTIONS = Object.freeze([
-  Object.freeze({
-    label: "첫 가치 완료",
-    description: "고객 후보가 첫 실행 기록, 검증 행동, 다음 과제까지 제품의 핵심 결과를 처음 끝낸 순간만 활성 사용자로 셉니다.",
-    nextIntent: "first_value_completed",
-    recommended: true,
-    risk: "가입이나 방문만으로는 실제 사용이 증명되지 않습니다.",
-    evidenceTarget: "첫 가치 완료 이벤트, 실행 기록, 검증 행동, 다음 과제",
-    mapsTo: "get_users_active_user_definition",
-    failureMode: "핵심 결과 완료가 없으면 활성 사용자로 세지 않습니다.",
-  }),
-  Object.freeze({
-    label: "반복 사용 완료",
-    description: "정해진 기간 안에 같은 고객 후보가 다시 돌아와 핵심 행동을 반복한 경우만 셉니다.",
-    nextIntent: "repeat_use_completed",
-    risk: "반복 기준이 너무 높으면 초기 유입 실험 속도가 느려질 수 있습니다.",
-    evidenceTarget: "재방문/반복 핵심 행동 이벤트",
-    mapsTo: "get_users_active_user_definition",
-    failureMode: "한 번 둘러본 사용자나 단순 가입자는 제외합니다.",
-  }),
-  Object.freeze({
-    label: "수동 파일럿 성공",
-    description: "자동화 전이라도 수동으로 고객 후보의 문제를 해결하고 결과 확인까지 끝낸 사람만 셉니다.",
-    nextIntent: "manual_pilot_success",
-    risk: "수동 성공을 제품 사용으로 착각하지 않도록 완료 기준과 증거를 남겨야 합니다.",
-    evidenceTarget: "파일럿 완료 기록, 사용자 반응, 다음 행동/과제",
-    mapsTo: "get_users_active_user_definition",
-    failureMode: "관심 표현이나 미완료 상담은 제외합니다.",
-  }),
-]);
 const DAILY_CARD_SUBMISSION_CHOICES = new Set([
   "attach_evidence",
   "resolve_without_evidence",
@@ -132,6 +108,11 @@ const KNOWN_OFFICE_HOURS_INTENTS = new Set([
   "alternatives",
   "future_fit",
   "get_users_active_user_definition",
+  "get_users_first_candidate",
+  "get_users_current_alternative",
+  "get_users_today_request",
+  "get_users_evidence_format",
+  "get_users_day1_commitment",
 ]);
 
 export class OfficeHoursDailyCardSubmissionError extends Error {
@@ -314,13 +295,6 @@ export function assertOfficeHoursStructuredInputContract(request = {}) {
       options,
       DEMAND_EVIDENCE_OPTIONS.map((option) => option.label),
       "office_hours_demand_evidence",
-    );
-  }
-  if (signalId === ACTIVE_USER_DEFINITION_QUESTION_ID) {
-    assertExactOfficeHoursOptionLabels(
-      options,
-      ACTIVE_USER_DEFINITION_OPTIONS.map((option) => option.label),
-      "get_users_active_user_definition",
     );
   }
 }
@@ -639,19 +613,46 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
   return prepareOfficeHoursStructuredInputRequest(normalizeOfficeHoursUiCopyRequest(payload));
 }
 
+// The canonical get_users ladder now lives in office-hours-contract.mjs (single
+// source of truth). These re-exports preserve the existing import names used by
+// index.mjs and tests after the consolidation.
+export const GET_USERS_LADDER_ORDER = GET_USERS_LADDER_SIGNAL_ORDER;
+export const canonicalGetUsersLadderSignal = canonicalLadderSignal;
+export const nextGetUsersLadderSignal = nextLadderSignal;
+
 export function buildOfficeHoursStructuredInputContinuationPrompt({
   responseText = "",
   responseDescription = "",
+  // Locked get_users semantic state (optional): when present, the continuation
+  // tells the provider exactly which slots are done and which single slot is
+  // allowed next, so it cannot duplicate or jump the ladder.
+  getUsersAnsweredSignalIds = null,
+  getUsersNextSignalId = null,
 } = {}) {
   const lines = [
     "Office Hours structured-card answer received.",
     "Use this answer as the user's latest Office Hours response and continue the YC forcing-question conversation.",
     "Do not end with a vague confirmation. If another decision or missing input is needed, ask the next forcing question through the host structured input tool with 2-4 options and allowFreeText: true.",
     "For fixed-count interviews, keep opening the next structured card until the expected count is reached or a terminal completion card is recorded; prose-only 'next assumption' text is a provider failure.",
+  ];
+  if (Array.isArray(getUsersAnsweredSignalIds)) {
+    const answered = getUsersAnsweredSignalIds.map((id) => String(id || "").trim()).filter(Boolean);
+    const next = String(getUsersNextSignalId || "").trim();
+    lines.push(
+      "",
+      "## Locked Day 1 get_users ladder state",
+      "Flow: locked_day1_get_users",
+      `Already answered signalIds: [${answered.join(", ")}]`,
+      next
+        ? `The next and ONLY allowed card is generation.signalId \`${next}\`. Generate exactly that slot; a duplicate of an already-answered signalId, an office_hours_stage card, or any out-of-order slot is invalid and must not be emitted.`
+        : "All six ladder slots are answered. Do not open another card; let the host show the commitment close.",
+    );
+  }
+  lines.push(
     "",
     "## User structured-card answer",
     String(responseText || "").trim() || "(empty)",
-  ];
+  );
   const description = String(responseDescription || "").trim();
   if (description) {
     lines.push("", "## Selected option evidence hints", description);
@@ -888,15 +889,24 @@ function resolveOfficeHoursQuestionIntent({
   );
   if (explicit) return explicit;
 
+  // Fallback only — the explicit signalId/intent/header path above is the authority.
+  // assistantContent (full provider prose) is intentionally excluded: explanatory
+  // text often mentions another slot's keywords (첫 가치, 현재 대안, 증거 형식 …) and
+  // would mis-classify the card. Match the question and header only.
   const haystack = [
     question,
-    assistantContent,
     inlineDecision?.question,
     inlineDecision?.header,
   ].filter(Boolean).join("\n").toLowerCase();
-  if (/active user|activated users|activation action|활성 사용자|활성\s*행동|핵심\s*활성|첫 가치|반복 사용|수동 파일럿/.test(haystack)) {
-    return "get_users_active_user_definition";
-  }
+  // get_users ladder slots resolve ONLY via the explicit signalId/intent path
+  // (normalizeOfficeHoursIntent + canonicalLadderSignal). The legacy fuzzy regex
+  // ladder was removed: per the fundamental review, recovering ladder state from
+  // free-text question strings is exactly the "string-based state reconstruction"
+  // failure mode. With adaptive copy, a ladder card MUST carry its canonical
+  // signalId; if it does not, this returns no get_users slot and the caller
+  // fails closed (prepare throws "intent or signalId is required") rather than
+  // silently mis-classifying. The non-ladder fuzzy stems below remain for the
+  // open-ended (non-locked) interview surfaces only.
   if (/demand|수요|증거|누가.*원하|관심 말고|돈.*시간.*우회|would.*upset/.test(haystack)) {
     return "demand";
   }
@@ -927,6 +937,19 @@ function resolveOfficeHoursQuestionIntent({
 function normalizeOfficeHoursIntent(value = "") {
   const text = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   if (!text) return "";
+  // An exact canonical id wins over every fuzzy substring rule below. Without
+  // this, `get_users_current_alternative` was swallowed by the generic
+  // `includes("alternative")` branch and mis-resolved to `alternatives`, which
+  // then produced signalId `office_hours_alternatives` and tripped the terminal
+  // 대안 비교 path. Specific get_users slots are also checked before the generic
+  // substrings so an aliased value still lands on the right slot.
+  if (KNOWN_OFFICE_HOURS_INTENTS.has(text)) return text;
+  if (text.includes("get_users_active_user_definition") || text.includes("active_user") || text.includes("activation")) return "get_users_active_user_definition";
+  if (text.includes("get_users_first_candidate") || text.includes("first_candidate")) return "get_users_first_candidate";
+  if (text.includes("get_users_current_alternative") || text.includes("current_alternative")) return "get_users_current_alternative";
+  if (text.includes("get_users_today_request") || text.includes("today_request")) return "get_users_today_request";
+  if (text.includes("get_users_evidence_format") || text.includes("evidence_format")) return "get_users_evidence_format";
+  if (text.includes("get_users_day1_commitment") || text.includes("day1_commitment")) return "get_users_day1_commitment";
   if (text.includes("demand") || text.includes("q1") || text.includes("수요")) return "demand";
   if (text.includes("stage")) return "stage";
   if (text.includes("status_quo") || text.includes("status") || text.includes("q2")) return "status_quo";
@@ -935,8 +958,7 @@ function normalizeOfficeHoursIntent(value = "") {
   if (text.includes("premise")) return "premise";
   if (text.includes("alternative")) return "alternatives";
   if (text.includes("future") || text.includes("q6")) return "future_fit";
-  if (text.includes("get_users_active_user_definition") || text.includes("active_user") || text.includes("activation")) return "get_users_active_user_definition";
-  return KNOWN_OFFICE_HOURS_INTENTS.has(text) ? text : "";
+  return "";
 }
 
 function resolveOfficeHoursQuestionId(inlineDecision, intent = "") {
@@ -986,6 +1008,16 @@ function officeHoursIntentHeader(intent = "") {
       return "앞으로 더 중요해질 이유";
     case "get_users_active_user_definition":
       return "활성 사용자 기준";
+    case "get_users_first_candidate":
+      return "첫 후보";
+    case "get_users_current_alternative":
+      return "현재 대안";
+    case "get_users_today_request":
+      return "오늘 요청";
+    case "get_users_evidence_format":
+      return "증거 형식";
+    case "get_users_day1_commitment":
+      return "오늘 약속";
     default:
       return "";
   }
@@ -1011,6 +1043,16 @@ function officeHoursSignalLabel(intent = "") {
       return "Office Hours Q6 앞으로 더 중요해질 이유";
     case "get_users_active_user_definition":
       return "활성 사용자 기준";
+    case "get_users_first_candidate":
+      return "첫 후보 확정";
+    case "get_users_current_alternative":
+      return "현재 대안";
+    case "get_users_today_request":
+      return "오늘 요청";
+    case "get_users_evidence_format":
+      return "증거 형식";
+    case "get_users_day1_commitment":
+      return "오늘 약속";
     default:
       return "";
   }

@@ -486,6 +486,34 @@ test("Hard-evidence gate blocks self-report-only evidence and records debt (ER-1
   };
   const r3 = await judgeOfficeHoursEvidenceDocuments({ provider: "deterministic", evidenceState: definitionOnly, documents });
   assert.ok((r3.evidenceDebt || []).includes(OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT));
+  // GPT-5.5 Pro review (adaptive get_users cards): those slots now generate option
+  // metadata freely, so a hard-evidence nextIntent on a Day 1 plan/definition card
+  // must NOT count — the signalId blocklist keeps it from faking a transaction.
+  const adaptiveSlotPaymentIntent = {
+    references: [{
+      sourceType: "office_hours_turn",
+      id: "t3",
+      signalId: "get_users_today_request",
+      nextIntent: "actual_payment_or_contract",
+    }],
+    facts: {},
+    nextQuestion: "",
+  };
+  const r5 = await judgeOfficeHoursEvidenceDocuments({ provider: "deterministic", evidenceState: adaptiveSlotPaymentIntent, documents });
+  assert.ok((r5.evidenceDebt || []).includes(OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT));
+  // ...but the same payment nextIntent on the locked Q1 demand card still counts.
+  const demandPaymentIntent = {
+    references: [{
+      sourceType: "office_hours_turn",
+      id: "t4",
+      signalId: "office_hours_demand_evidence",
+      nextIntent: "actual_payment_or_contract",
+    }],
+    facts: {},
+    nextQuestion: "",
+  };
+  const r6 = await judgeOfficeHoursEvidenceDocuments({ provider: "deterministic", evidenceState: demandPaymentIntent, documents });
+  assert.ok(!(r6.evidenceDebt || []).includes(OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT));
   // A hard intent on a non-turn reference (e.g. commitment) must not count.
   const commitmentIntent = {
     references: [{ sourceType: "office_hours_commitment", id: "cm", nextIntent: "actual_payment_or_contract" }],

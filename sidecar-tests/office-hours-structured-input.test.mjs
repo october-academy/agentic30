@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { canonicalGetUsersLadderSignal } from "../sidecar/office-hours-structured-input.mjs";
 import * as officeHoursStructuredInput from "../sidecar/office-hours-structured-input.mjs";
 import {
   OFFICE_HOURS_INLINE_MODE,
@@ -11,6 +12,8 @@ import {
   buildOfficeHoursInlineStructuredPromptPayload,
   buildOfficeHoursStructuredQuestionTranscriptText,
   buildOfficeHoursStructuredInputContinuationPrompt,
+  GET_USERS_LADDER_ORDER,
+  nextGetUsersLadderSignal,
   extractOfficeHoursChatEmphasis,
   formatSelectedOptionEvidenceHint,
   isOfficeHoursStructuredInputMode,
@@ -374,11 +377,20 @@ test("prepareOfficeHoursStructuredInputRequest accepts explicit active-user-defi
     questions: [
       {
         header: "활성 사용자 기준",
-        question: "이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?",
+        question: "Agentic30에서 전업 1인 개발자를 활성 사용자 1명으로 세려면 어떤 실행이 끝나야 하나요?",
         options: [
-          { label: "첫 가치 완료", description: "핵심 결과를 처음 끝냅니다." },
-          { label: "반복 사용 완료", description: "정해진 기간에 다시 씁니다." },
-          { label: "수동 파일럿 성공", description: "수동으로라도 원하는 결과를 얻습니다." },
+          {
+            label: "스캔 후 다음 과제 확정",
+            description: "프로젝트 스캔을 끝내고 오늘 검증할 다음 과제까지 정한 사람만 셉니다.",
+          },
+          {
+            label: "Office Hours에서 요청 발송",
+            description: "고객 후보에게 보낼 요청 문장을 만들고 실제 발송까지 끝낸 사람만 셉니다.",
+          },
+          {
+            label: "BIP 기록까지 남김",
+            description: "공개 기록이나 로컬 증거에 검증 행동과 다음 작업을 남긴 사람만 셉니다.",
+          },
         ],
         allowFreeText: true,
         requiresFreeText: false,
@@ -389,9 +401,92 @@ test("prepareOfficeHoursStructuredInputRequest accepts explicit active-user-defi
   assert.equal(prepared.questions[0].header, "활성 사용자 기준");
   assert.equal(
     prepared.questions[0].question,
-    "이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?",
+    "Agentic30에서 전업 1인 개발자를 활성 사용자 1명으로 세려면 어떤 실행이 끝나야 하나요?",
+  );
+  assert.deepEqual(
+    prepared.questions[0].options.map((option) => option.label),
+    ["스캔 후 다음 과제 확정", "Office Hours에서 요청 발송", "BIP 기록까지 남김"],
+  );
+  assert.deepEqual(
+    prepared.questions[0].options.map((option) => option.description),
+    [
+      "프로젝트 스캔을 끝내고 오늘 검증할 다음 과제까지 정한 사람만 셉니다.",
+      "고객 후보에게 보낼 요청 문장을 만들고 실제 발송까지 끝낸 사람만 셉니다.",
+      "공개 기록이나 로컬 증거에 검증 행동과 다음 작업을 남긴 사람만 셉니다.",
+    ],
   );
   assert.equal(prepared.generation.signalId, "get_users_active_user_definition");
+});
+
+test("Office Hours Korean UI-copy humanizer preserves adaptive locked Day 1 get-users cards", () => {
+  const request = {
+    toolName: "agentic30_request_user_input",
+    title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "get_users_first_candidate",
+      signalLabel: "첫 고객 후보 경로",
+    },
+    questions: [
+      {
+        questionId: "get_users_first_candidate",
+        header: "첫 고객 후보 경로",
+        question: "Agentic30의 첫 결과 완료를 부탁할 전업 1인 개발자 후보는 이번 주 어디서 고를까요?",
+        freeTextPlaceholder: "예: 김OO, macOS 개발자, 오늘 보낼 DM캡쳐",
+        options: [
+          {
+            label: "scan에서 보인 solo dev",
+            description: "워크스페이스 scan에서 반복적으로 보인 고객 후보라 오늘 바로 연락할 수 있습니다.",
+            nextIntent: "known_reachable_person",
+            recommended: true,
+            risk: "지인 편향이 있을 수 있습니다.",
+            evidenceTarget: "이름/핸들, 채널, 보낼 요청",
+            mapsTo: "get_users_first_candidate",
+            failureMode: "실명 후보가 없으면 후보 찾기 행동으로 낮춥니다.",
+          },
+          {
+            label: "최근 Office Hours 대화자",
+            description: "이미 Agentic30 문제 맥락이 있어 현재 대안과 막힌 지점을 더 쉽게 확인할 수 있습니다.",
+            nextIntent: "recent_conversation",
+          },
+          {
+            label: "BIP 글 답글 작성자",
+            description: "좋아요 수가 아니라 답글이나 DM처럼 대화로 이어진 반응에서 시작합니다.",
+            nextIntent: "public_reply_or_dm",
+          },
+          {
+            label: "후보 이름 없음",
+            description: "정직하게 비어 있으면 오늘은 전업 1인 개발자 이름을 찾는 행동부터 정합니다.",
+            nextIntent: "no_candidate_yet",
+          },
+        ],
+        allowFreeText: true,
+        requiresFreeText: false,
+      },
+    ],
+  };
+
+  const normalized = normalizeOfficeHoursUiCopyRequest(request);
+  const question = normalized.questions[0];
+
+  assert.equal(question.header, "첫 고객 후보 경로");
+  assert.equal(question.question, "Agentic30의 첫 결과 완료를 부탁할 전업 1인 개발자 후보는 이번 주 어디서 고를까요?");
+  assert.equal(question.freeTextPlaceholder, "예: 김OO, macOS 개발자, 오늘 보낼 DM 캡처");
+  assert.deepEqual(
+    question.options.map((option) => [option.label, option.description]),
+    [
+      ["scan에서 보인 solo dev", "워크스페이스 scan에서 반복적으로 보인 고객 후보라 오늘 바로 연락할 수 있습니다."],
+      ["최근 Office Hours 대화자", "이미 Agentic30 문제 맥락이 있어 현재 대안과 막힌 지점을 더 쉽게 확인할 수 있습니다."],
+      ["BIP 글 답글 작성자", "좋아요 수가 아니라 답글이나 DM처럼 대화로 이어진 반응에서 시작합니다."],
+      ["후보 이름 없음", "정직하게 비어 있으면 오늘은 전업 1인 개발자 이름을 찾는 행동부터 정합니다."],
+    ],
+  );
+  assert.equal(question.options[0].recommended, true);
+  assert.equal(question.options[0].risk, "지인 편향이 있을 수 있습니다.");
+  assert.equal(question.options[0].evidenceTarget, "이름/핸들, 채널, 보낼 요청");
+  assert.equal(question.options[0].failureMode, "실명 후보가 없으면 후보 찾기 행동으로 낮춥니다.");
+  assert.equal(question.allowFreeText, true);
+  assert.equal(question.requiresFreeText, false);
 });
 
 test("Office Hours Korean UI-copy contract detects awkward visible copy before rewrite", () => {
@@ -1414,3 +1509,70 @@ test("extractOfficeHoursChatEmphasis returns empty for non-string input", () => 
   assert.deepEqual(extractOfficeHoursChatEmphasis(undefined), { text: "", emphasis: [] });
   assert.deepEqual(extractOfficeHoursChatEmphasis(""), { text: "", emphasis: [] });
 });
+
+test("nextGetUsersLadderSignal returns the first unanswered slot in canonical order", () => {
+  assert.deepEqual(GET_USERS_LADDER_ORDER, [
+    "get_users_active_user_definition",
+    "get_users_first_candidate",
+    "get_users_current_alternative",
+    "get_users_today_request",
+    "get_users_evidence_format",
+    "get_users_day1_commitment",
+  ]);
+  // Empty → first slot.
+  assert.equal(nextGetUsersLadderSignal([]), "get_users_active_user_definition");
+  // First answered → second slot (accepts array or Set).
+  assert.equal(nextGetUsersLadderSignal(["get_users_active_user_definition"]), "get_users_first_candidate");
+  assert.equal(nextGetUsersLadderSignal(new Set(["get_users_active_user_definition"])), "get_users_first_candidate");
+  // Out-of-order answers still resolve the earliest unanswered slot.
+  assert.equal(
+    nextGetUsersLadderSignal(["get_users_active_user_definition", "get_users_current_alternative"]),
+    "get_users_first_candidate",
+  );
+  // All answered → "" (interview complete).
+  assert.equal(nextGetUsersLadderSignal(GET_USERS_LADDER_ORDER), "");
+  // Unknown/stray ids are ignored.
+  assert.equal(nextGetUsersLadderSignal(["office_hours_stage", "bogus"]), "get_users_active_user_definition");
+});
+
+test("continuation prompt injects locked get_users ladder state when provided", () => {
+  const prompt = buildOfficeHoursStructuredInputContinuationPrompt({
+    responseText: "첫 결과 완료",
+    getUsersAnsweredSignalIds: ["get_users_active_user_definition"],
+    getUsersNextSignalId: "get_users_first_candidate",
+  });
+  assert.match(prompt, /Flow: locked_day1_get_users/);
+  assert.match(prompt, /Already answered signalIds: \[get_users_active_user_definition\]/);
+  assert.match(prompt, /next and ONLY allowed card is generation\.signalId `get_users_first_candidate`/);
+  assert.match(prompt, /duplicate of an already-answered signalId, an office_hours_stage card, or any out-of-order slot is invalid/);
+});
+
+test("continuation prompt says do-not-open-another when all slots answered", () => {
+  const prompt = buildOfficeHoursStructuredInputContinuationPrompt({
+    responseText: "오늘 약속 확정",
+    getUsersAnsweredSignalIds: GET_USERS_LADDER_ORDER.slice(),
+    getUsersNextSignalId: "",
+  });
+  assert.match(prompt, /All six ladder slots are answered\. Do not open another card/);
+});
+
+test("continuation prompt omits ladder state when not provided (non-get_users)", () => {
+  const prompt = buildOfficeHoursStructuredInputContinuationPrompt({ responseText: "답변" });
+  assert.doesNotMatch(prompt, /Locked Day 1 get_users ladder state/);
+  assert.doesNotMatch(prompt, /Flow: locked_day1_get_users/);
+});
+
+test("canonicalGetUsersLadderSignal maps prefixed and bare ids; gate advances past prefixed answers", () => {
+  assert.equal(canonicalGetUsersLadderSignal("get_users_first_candidate"), "get_users_first_candidate");
+  // The inline path prefixes get_users slots — must still resolve.
+  assert.equal(canonicalGetUsersLadderSignal("office_hours_get_users_first_candidate"), "get_users_first_candidate");
+  assert.equal(canonicalGetUsersLadderSignal("office_hours_get_users_current_alternative"), "get_users_current_alternative");
+  assert.equal(canonicalGetUsersLadderSignal("office_hours_alternatives"), "");
+  assert.equal(canonicalGetUsersLadderSignal(""), "");
+  // Regression for the observed dongdong first_candidate ×4: a prefixed answered
+  // slot must advance the gate instead of being ignored.
+  assert.equal(
+    nextGetUsersLadderSignal(["get_users_active_user_definition", "office_hours_get_users_first_candidate"]),
+    "get_users_current_alternative",
+  );
+})

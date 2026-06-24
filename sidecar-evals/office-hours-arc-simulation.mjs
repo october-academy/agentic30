@@ -97,6 +97,40 @@ export const OFFICE_HOURS_ARC_PERSONAS = Object.freeze({
       text: "Threads에 데모 공개하고 공개 URL 남기기",
     }),
   },
+  // Domain-matched persona for a Buddhist mindfulness app project (e.g. dongdong).
+  // The default icp-solo-dev persona answers "조은성 개발자", which mismatches a
+  // non-developer product and makes the judge penalize the cards as off-ICP even
+  // when they adapt correctly. This persona answers in the project's own domain so
+  // the measurement reflects real card→customer fit rather than a persona mismatch.
+  "mindfulness-app": {
+    id: "mindfulness-app",
+    label: "마음챙김/불교 앱 창업자 (0매출)",
+    mode: "startup",
+    description: "비개발 도메인 페르소나. 불교·마음챙김 앱의 실제 고객(2030 직장인)으로 답해 카드가 도메인에 적응하는지 측정한다.",
+    answers: Object.freeze([
+      "명상이나 불경 콘텐츠를 한 번 끝까지 완료하고 다음 날 다시 앱을 연 사람만 활성 사용자로 세요.",
+      "아직 결제는 없어요. 불교에 관심 있는 30대 직장인 지인 몇 명이 \"써보고 싶다\" 했지만 돈 얘기는 없었어요.",
+      "불교에 관심 있는 30대 직장인 지인 한 명이요. 최근 명상 앱을 찾던 친구예요.",
+      "그 친구는 지금 유튜브 명상 영상이나 종이 불경을 봐요. 이 문제로 쓴 돈은 0원이에요.",
+      "오늘 뭘 보낼지 모르겠어요. 일단 명상 콘텐츠를 더 다듬고 보여주는 게 낫지 않을까요?",
+      "맞아요, 또 콘텐츠로 도망쳤네요. 오늘 그 친구에게 베타 앱으로 명상 1회 해보고 느낌을 말해달라고 카톡 보낼게요. 캡처 남길게요.",
+      "비슷한 명상 앱 3개를 노션 표에 가격이랑 정리했어요.",
+      "그 친구에게 Mom Test 질문으로 접촉했어요. 과거에 마음챙김을 어떻게 시도했는지 물었고 답장 캡처 남겼어요.",
+      "가장 약한 부분은 첫 명상까지 가는 온보딩 흐름이에요.",
+      "돈 낼 후보는 그 친구 1명으로 좁혔고, 비슷한 앱에 월 9900원 쓴다는 숫자를 확인했어요.",
+      "가격·받을 결과·기한을 넣은 유료 베타 제안을 그 친구에게 보냈어요. 보낸 캡처 있어요.",
+      "7일차 결정: 약한 증거지만 continue 하기로 했어요. supporting과 counter 증거를 둘 다 연결했어요.",
+      "네, 그걸로 오늘 마무리할게요.",
+      "네, 그걸로 오늘 마무리할게요.",
+    ]),
+    commitment: Object.freeze({
+      customer: "마음챙김에 관심 있는 30대 직장인 지인",
+      channel: "kakao",
+      message: "베타 앱으로 명상 1회 해보고 느낌 알려줄 수 있어?",
+      expectedEvidenceKind: "screenshot",
+      text: "지인에게 카톡으로 베타 명상 1회 요청 + 사용 캡처",
+    }),
+  },
 });
 
 /**
