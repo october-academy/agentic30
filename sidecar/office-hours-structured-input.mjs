@@ -898,15 +898,33 @@ function resolveOfficeHoursQuestionIntent({
     inlineDecision?.question,
     inlineDecision?.header,
   ].filter(Boolean).join("\n").toLowerCase();
-  // get_users ladder slots resolve ONLY via the explicit signalId/intent path
-  // (normalizeOfficeHoursIntent + canonicalLadderSignal). The legacy fuzzy regex
-  // ladder was removed: per the fundamental review, recovering ladder state from
-  // free-text question strings is exactly the "string-based state reconstruction"
-  // failure mode. With adaptive copy, a ladder card MUST carry its canonical
-  // signalId; if it does not, this returns no get_users slot and the caller
-  // fails closed (prepare throws "intent or signalId is required") rather than
-  // silently mis-classifying. The non-ladder fuzzy stems below remain for the
-  // open-ended (non-locked) interview surfaces only.
+  // Fuzzy ladder fallback. NOTE (2026-06-24): this is a SAFETY NET for the live
+  // inline-decision path — codex frequently emits a Day-1 card via inline_decision
+  // WITHOUT a generation.signalId, and these stems are what classify it. Removing
+  // them (intended as a fail-closed step toward the state-machine redesign) broke
+  // live office-hours outright (cards=0 timeout, "inline_decision intent or
+  // signalId is required"), because nothing supplies the signalId yet. Fail-closed
+  // only becomes safe AFTER the host decides nextSignalId and stamps the card
+  // (the full attempt-driven wiring). Until then, keep this fallback. Stems key on
+  // the decision asked, not on option labels (labels are context-generated).
+  if (/active user|activated users|activation action|활성 사용자|활성\s*행동|핵심\s*활성|핵심 행동.*세|어디까지 끝내/.test(haystack)) {
+    return "get_users_active_user_definition";
+  }
+  if (/첫 후보|후보 1명|후보.*정할|후보.*고르|누구.*먼저.*연락|first candidate/.test(haystack)) {
+    return "get_users_first_candidate";
+  }
+  if (/현재 대안|무엇으로 버티|지금.*무엇으로|지금.*어떻게.*해결|current alternative/.test(haystack)) {
+    return "get_users_current_alternative";
+  }
+  if (/오늘 요청|오늘.*보낼.*요청|오늘.*어떤 요청|오늘.*보내면.*확인|today.*request/.test(haystack)) {
+    return "get_users_today_request";
+  }
+  if (/증거 형식|어떤 기록.*있어야|무엇을 증거로|증거.*남길|evidence format/.test(haystack)) {
+    return "get_users_evidence_format";
+  }
+  if (/오늘 약속|오늘의 약속|몇 시까지.*보내|오늘.*누구에게.*보내|day ?1 commitment/.test(haystack)) {
+    return "get_users_day1_commitment";
+  }
   if (/demand|수요|증거|누가.*원하|관심 말고|돈.*시간.*우회|would.*upset/.test(haystack)) {
     return "demand";
   }
