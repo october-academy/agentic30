@@ -2,6 +2,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { projectDocPath } from "./project-doc-paths.mjs";
 import { dedupeOfficeHoursTurnsKeepLast } from "./office-hours-resume.mjs";
+// R2: the ValidationAttempt is the SINGLE writer for Day-1 action/customer/goal
+// proof. The Evidence OS consumes it READ-ONLY by replaying the attempt event log
+// through the SAME projector the store uses, then projecting the graded evidence
+// records into references. We reuse projectAttemptFromEvents (pure, no I/O) rather
+// than re-deriving the evidence shape — no import cycle: the attempt store does not
+// import this module.
+import { projectAttemptFromEvents } from "./office-hours-attempt-store.mjs";
 
 export const OFFICE_HOURS_EVIDENCE_SCHEMA_VERSION = 1;
 export const OFFICE_HOURS_EVIDENCE_SCHEMA = "agentic30.office_hours.evidence.v1";
@@ -16,11 +23,12 @@ export async function buildOfficeHoursEvidenceState({
   now = () => new Date(),
 } = {}) {
   const root = path.resolve(workspaceRoot || ".");
-  const [turnLog, ledger, dailyDigest, proofLedger] = await Promise.all([
+  const [turnLog, ledger, dailyDigest, proofLedger, attemptLog] = await Promise.all([
     readJson(fsImpl, path.join(root, ".agentic30", "memory", "office-hours-turns.json")),
     readJson(fsImpl, path.join(root, ".agentic30", "memory", "office-hours-ledger.json")),
     readJson(fsImpl, path.join(root, ".agentic30", "office-hours-daily-digest.json")),
     readJson(fsImpl, path.join(root, ".agentic30", "proof-ledger.json")),
+    readJson(fsImpl, path.join(root, ".agentic30", "memory", "office-hours-attempts.json")),
   ]);
   const turns = normalizeTurns(turnLog?.turns);
   const commitments = normalizeCommitments(ledger?.commitments);
@@ -36,6 +44,7 @@ export async function buildOfficeHoursEvidenceState({
     commitments,
     dailyDigest,
     proofPaymentRefs: normalizeProofLedgerPaymentRefs(proofLedger),
+    attemptEvidenceRefs: normalizeAttemptEvidenceRefs(attemptLog),
   });
   const evidenceDebt = uniqueStrings([
     ...deriveEvidenceDebt({ facts, turns, commitments, dailyDigest }),
@@ -493,6 +502,62 @@ export function officeHoursEvidenceHasHardEvidence(evidenceState = {}) {
 // graceful: a missing/corrupt proof-ledger yields [].
 const OFFICE_HOURS_ARTIFACT_PAYMENT_STATUSES = Object.freeze(["verified", "accepted"]);
 
+// R2: project the ValidationAttempt event log into evidence references. We replay
+// each attempt's raw events through the store's pure projector and emit one ref per
+// GRADED evidence record (actionProof / customerOutcome / goalProof / negative).
+//
+// ★ LOAD-BEARING SECURITY INVARIANT (do not weaken): these refs ALWAYS carry
+//   sourceType:"office_hours_attempt" and NEVER sourceType:"proof_ledger" nor
+//   strength:"strong". The strong-payment artifact-gate cross-check
+//   (officeHoursEvidenceHasHardEvidence → hasStrongPayment) only counts a
+//   proof_ledger ref with strength "strong", so an attempt's payment goal_proof
+//   ("agreed a price but never charged") can NEVER satisfy the gate by construction.
+//   A founder still must go through the proof-ledger (inferProofStrength gated) for
+//   real verified money. Read-only + graceful: a missing/corrupt log yields [].
+function normalizeAttemptEvidenceRefs(attemptLog) {
+  const attempts = attemptLog && typeof attemptLog === "object" && !Array.isArray(attemptLog)
+    ? attemptLog.attempts
+    : null;
+  if (!attempts || typeof attempts !== "object") return [];
+  const refs = [];
+  for (const record of Object.values(attempts)) {
+    if (!record || typeof record !== "object") continue;
+    let projection;
+    try {
+      projection = projectAttemptFromEvents(record.events || [], {
+        id: record.attemptId,
+        goalLane: record.goalLane,
+        createdAt: record.createdAt,
+      });
+    } catch {
+      // A corrupt attempt branch must not break the whole evidence state (read-only
+      // consumer): skip it. The store itself fails closed on write; this is display.
+      continue;
+    }
+    const evidence = Array.isArray(projection?.evidence) ? projection.evidence : [];
+    let slot = 0;
+    for (const graded of evidence) {
+      if (!graded || typeof graded !== "object") continue;
+      const grade = cleanText(graded.grade);
+      if (!grade) continue; // never project a rejected/ungraded record
+      refs.push({
+        sourceType: "office_hours_attempt",
+        id: `${cleanText(record.attemptId) || "attempt"}-ev${slot++}`,
+        attemptId: cleanText(record.attemptId),
+        goalLane: cleanText(record.goalLane) || "get_users",
+        day: integerOrNull(record.day),
+        status: cleanText(projection.status),
+        grade,
+        kind: cleanText(graded.kind),
+        ref: cleanText(graded.ref),
+        capturedAt: cleanText(graded.capturedAt),
+        source: cleanText(graded.source),
+      });
+    }
+  }
+  return refs;
+}
+
 function normalizeProofLedgerPaymentRefs(proofLedger) {
   const events = Array.isArray(proofLedger?.events) ? proofLedger.events : [];
   const refs = [];
@@ -515,7 +580,7 @@ function normalizeProofLedgerPaymentRefs(proofLedger) {
   return refs;
 }
 
-function buildReferences({ turns, commitments, dailyDigest, proofPaymentRefs = [] }) {
+function buildReferences({ turns, commitments, dailyDigest, proofPaymentRefs = [], attemptEvidenceRefs = [] }) {
   const refs = [];
   for (const turn of turns) {
     refs.push({
@@ -561,6 +626,7 @@ function buildReferences({ turns, commitments, dailyDigest, proofPaymentRefs = [
       biggestEvidenceGap: normalizeStringList(dailyDigest.briefing?.biggestEvidenceGap).join(" "),
     });
   }
+  for (const ref of attemptEvidenceRefs) refs.push(ref);
   for (const ref of proofPaymentRefs) refs.push(ref);
   return refs.slice(0, MAX_REFS);
 }

@@ -753,6 +753,40 @@ export function canStartNewAttempt(attempts = []) {
   return list.every((a) => VALIDATION_ATTEMPT_RESOLVED_STATES.has(a?.status));
 }
 
+// ── WAIT-reason → required evidence grade (R2) ────────────────────────────────
+// nextAttemptAction emits a WAIT shape { kind:"wait", reason } for the three
+// post-gather states. The reason maps 1:1 to the evidence GRADE the next proof
+// transition demands. This is the SINGLE source the host handler + the Mac
+// kind-picker both read so the attach affordance and the reducer agree on what
+// grade a given WAIT state will accept. Pure; returns null for any unknown reason
+// (caller fail-closes). Note: a `goal` WAIT also legally accepts a `goal_proof`
+// jump from the action/customer states (record_goal_proof.from), but the
+// REQUIRED grade for the reason itself is the one a same-state transition needs.
+const WAIT_REASON_REQUIRED_GRADE = Object.freeze({
+  action: "action_proof",
+  customer_outcome: "customer_outcome",
+  goal: "goal_proof",
+});
+
+export function requiredGradeForWaitReason(reason = "") {
+  const key = String(reason || "").trim();
+  return WAIT_REASON_REQUIRED_GRADE[key] || null;
+}
+
+// ── Transition → required evidence grade (R2 FIX 2) ───────────────────────────
+// The reducer is the grading AUTHORITY (each graded transition declares
+// evidenceGrade and re-validates on commit). This accessor lets the host handler
+// fail-closed CONSISTENTLY before commit for ALL graded proof transitions —
+// including record_goal_proof, which the wait-reason map cannot cover because a
+// goal_proof jump is legal from three WAIT states (execution_scheduled /
+// awaiting_customer_outcome / outcome_observed). Returns the declared evidenceGrade
+// for the transition, or null for a transition that carries no graded evidence
+// record (expire_no_response / abandon_attempt / block / carry / gather / resume).
+export function requiredGradeForTransition(transition = "") {
+  const def = TRANSITIONS[String(transition || "").trim()];
+  return def?.evidenceGrade || null;
+}
+
 // ── Card definition accessor (consumed by office-hours-attempt-store.mjs) ──────
 // No legacy turn-log migration: there is no backward-compat path. A fresh interview
 // always begins clean at needs_definition via startAttempt; old turn logs are

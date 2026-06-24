@@ -519,6 +519,10 @@ struct OfficeHoursRuntime: Codable, Hashable {
     var nextAction: OfficeHoursNextAction? = nil
     /// answered / total(=6) 게더 진행도.
     var gatherProgress: OfficeHoursGatherProgress? = nil
+    /// R2: 호스트가 isAcceptableDay1Close(projection)에서 파생한 Day-1 마감 가능 여부
+    /// (행동 증거 첨부 / 타임박스 실행 리스 / blocked / carried). additive optional —
+    /// 구버전 사이드카가 안 보내면 nil. Mac은 이 값으로 "오늘 닫기 가능"을 재파생 없이 표시.
+    var acceptableDay1Close: Bool? = nil
 }
 
 struct OfficeHoursNextAction: Codable, Hashable {

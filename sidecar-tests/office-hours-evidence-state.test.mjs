@@ -23,6 +23,10 @@ import {
   writeAllDay1HandoffDocuments,
 } from "../sidecar/idd-doc-gate.mjs";
 import { projectDocPath } from "../sidecar/project-doc-paths.mjs";
+import {
+  startAttempt,
+  commitAttemptEvent,
+} from "../sidecar/office-hours-attempt-store.mjs";
 
 async function withTempWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-oh-evidence-"));
@@ -689,6 +693,81 @@ test("Artifact gate: at MIN_CYCLE, unqualified payment evidence stays blocked", 
     // (c) payment_record verified but medium strength
     await writeProofLedgerFixture(root, [{ id: "pe-c", type: "payment_record", status: "verified", strength: "medium", day: 5 }]);
     assert.equal(officeHoursEvidenceHasHardEvidence(await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} })), false);
+  });
+});
+
+// ── R2: attempt-evidence projection + strong-payment invariant ────────────────
+// Drive a real ValidationAttempt all the way to a `payment` goal_proof via the
+// store API (faithful: this is exactly the event chain the handler commits), so
+// office-hours-attempts.json carries a SUCCEEDED attempt with a payment goal_proof.
+const ATTEMPT_ISO = "2026-06-13T00:00:00.000Z";
+async function seedAttemptWithPaymentGoalProof(root) {
+  const attemptId = "attempt-payment-1";
+  await startAttempt({ workspaceRoot: root, goalLane: "get_users", day: 5, attemptId, now: new Date(ATTEMPT_ISO) });
+  const gather = [
+    ["define_activation", { activationDefinition: "첫 결제 완료" }],
+    ["select_candidate", { candidate: "AI로 많이 만들었지만 못 판 사람" }],
+    ["record_alternative", { currentAlternative: "그냥 더 만든다" }],
+    ["define_action_contract", { externalAction: "DM 발송", attemptThreshold: "3명", successCondition: "1명 결제" }],
+    ["define_evidence_contract", { expectedProofKind: "payment", evidenceLocation: "스크린샷" }],
+    ["schedule_execution", { dueAt: "2026-06-14T00:00:00.000Z", commitmentNote: "오늘 3명에게 보낸다" }],
+  ];
+  let rev = 0;
+  for (let i = 0; i < gather.length; i++) {
+    const [type, fields] = gather[i];
+    const res = await commitAttemptEvent({
+      workspaceRoot: root, attemptId, expectedRevision: rev,
+      event: { type, fields, at: ATTEMPT_ISO, requestId: `gather-${i}` },
+    });
+    rev = res.revision;
+  }
+  // The proof step: a payment goal_proof recorded on the attempt → status succeeded.
+  await commitAttemptEvent({
+    workspaceRoot: root, attemptId, expectedRevision: rev,
+    event: {
+      type: "record_goal_proof", at: ATTEMPT_ISO, requestId: "goal-payment",
+      fields: { evidence: { kind: "payment", ref: "sim://day1/receipt.png", capturedAt: ATTEMPT_ISO, source: "test" } },
+    },
+  });
+  return attemptId;
+}
+
+test("R2: attempt payment goal_proof projects as office_hours_attempt ref (never proof_ledger/strong)", async () => {
+  await withTempWorkspace(async (root) => {
+    await seedAttemptWithPaymentGoalProof(root);
+    const state = await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} });
+    const attemptRefs = state.references.filter((ref) => ref.sourceType === "office_hours_attempt");
+    assert.equal(attemptRefs.length, 1, "exactly one graded attempt evidence ref");
+    const ref = attemptRefs[0];
+    assert.equal(ref.grade, "goal_proof");
+    assert.equal(ref.kind, "payment");
+    assert.equal(ref.ref, "sim://day1/receipt.png");
+    assert.equal(ref.status, "succeeded");
+    // ★ INVARIANT: the attempt ref must NEVER masquerade as a strong proof-ledger ref.
+    assert.notEqual(ref.sourceType, "proof_ledger");
+    assert.notEqual(ref.strength, "strong");
+    assert.equal(ref.strength, undefined);
+  });
+});
+
+test("R2 ★INVARIANT: attempt-only payment goal_proof past MIN_CYCLE does NOT satisfy the strong-payment gate", async () => {
+  await withTempWorkspace(async (root) => {
+    // hasLadderHard + past MIN_CYCLE so the gate REQUIRES strong payment — the exact
+    // condition under which "agreed a price but never charged" must still fail.
+    await writeArtifactGateFixture(root, {
+      turns: [paidEntryTurn(1)],
+      commitments: [cycleCommitment(OFFICE_HOURS_ARTIFACT_GATE_MIN_CYCLE)],
+    });
+    await seedAttemptWithPaymentGoalProof(root); // attempt payment goal_proof, NO proof-ledger
+    const state = await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} });
+    // The attempt ref is present, but it is sourceType office_hours_attempt, so the
+    // strong-payment cross-check (proof_ledger + strong) is NOT satisfied.
+    assert.ok(state.references.some((ref) => ref.sourceType === "office_hours_attempt" && ref.kind === "payment"));
+    assert.equal(officeHoursEvidenceHasHardEvidence(state), false);
+    // And a REAL verified strong proof-ledger payment DOES still pass — proving the
+    // gate is intact, not just universally blocking.
+    await writeProofLedgerFixture(root, [{ id: "pe-real", type: "payment_record", status: "verified", strength: "strong", day: 5 }]);
+    assert.equal(officeHoursEvidenceHasHardEvidence(await buildOfficeHoursEvidenceState({ workspaceRoot: root, day1Handoff: {} })), true);
   });
 });
 

@@ -500,6 +500,12 @@ import {
   isAcceptableDay1Close,
   payloadHashOf as officeHoursPayloadHashOf,
   VALIDATION_ATTEMPT_ACTIVE_STATES,
+  // R2: ValidationAttempt now owns Day-1 action/customer/goal proof. The host
+  // routes the six evidence transitions through commitAttemptEvent and does ONLY
+  // a pre-commit ref-presence + transition→grade sanity check (the reducer is the
+  // authority — gradeEvidence/requiredGradeForTransition are the single source).
+  gradeEvidence,
+  requiredGradeForTransition,
 } from "./office-hours-contract.mjs";
 import { describeVendor as describeGstackVendor } from "./vendor-skill-loader.mjs";
 import {
@@ -1676,6 +1682,7 @@ async function handleClientMessage(socket, payload) {
           if (wireDTO) {
             session.runtime.officeHours.nextAction = wireDTO.nextAction;
             session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+            session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
           }
         }
       }
@@ -2067,6 +2074,7 @@ async function handleClientMessage(socket, payload) {
             if (wireDTO) {
               session.runtime.officeHours.nextAction = wireDTO.nextAction;
               session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+              session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
             }
           }
           officeHoursAttemptProjectionAfterAnswer = result.projection;
@@ -2252,7 +2260,21 @@ async function handleClientMessage(socket, payload) {
             day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day) || 0,
           });
         });
-        if (!isDay1DocHandoffJudgeResponse) {
+        // R2 doc-readiness leak gate (CRUX): the locked Day-1 get_users lane is
+        // owned end-to-end by the ValidationAttempt projection — its completion is
+        // attemptCompletionPredicates ONLY and it must NEVER issue a
+        // day1_document_readiness_followup. A get_users card can reach this
+        // non-attempt branch when the provider emitted it through the tool channel
+        // without the {attemptId} promotion stamp (codex's tool path vs the inline
+        // promote path); without this guard the count-based gate re-issues
+        // doc-readiness on turns 6,7 (observed in the LIVE max-turns-8 arc), which
+        // blocks the attempt from reaching WAIT + the evidence step. Discriminate by
+        // the DURABLE persisted context (not attemptId presence — that pointer can be
+        // transiently absent), mirroring officeHoursRuntimeGatherComplete.
+        const submitIsLockedGetUsers = isLockedDay1GetUsersContext(
+          String(session.runtime?.officeHours?.context || ""),
+        );
+        if (!isDay1DocHandoffJudgeResponse && !submitIsLockedGetUsers) {
           officeHoursProgressAfterAnswer = await getOfficeHoursQuestionProgress(session, {
             currentRequestId: requestId,
           });
@@ -2851,6 +2873,10 @@ async function handleClientMessage(socket, payload) {
     }
     case "day_progress_patch": {
       await handleDayProgressPatch(socket, payload);
+      return;
+    }
+    case "office_hours_attempt_evidence": {
+      await handleOfficeHoursAttemptEvidence(socket, payload);
       return;
     }
     case "office_hours_commitment_evidence": {
@@ -4393,12 +4419,235 @@ async function sendOfficeHoursEvidenceState(socket, root, { broadcastToAll = tru
   await emitProgramNotificationSchedule(socket, root, { broadcastToAll });
 }
 
+// ── R2: ValidationAttempt owns Day-1 action/customer/goal proof ───────────────
+// The six evidence transitions the reducer defines, routed through the SAME store
+// writer (commitAttemptEvent) the gather submit uses. The host does NO grading: it
+// (a) resolves the attempt, (b) asserts the transition is legal for the current
+// nextAttemptAction shape (fail-closed pre-filter — the reducer is the authority),
+// (c) requires a non-empty `ref` for evidence-grade kinds (mirrors the legacy
+// normalizeEvidence locator requirement so "kind only, no artifact" fails before
+// commit), then (d) commits. CAS via expectedRevision; requestId == eventId for
+// store idempotency. A rejected kind / wrong grade / illegal state makes the
+// reducer throw → success:false (NO fail-open, NO soften).
+const OFFICE_HOURS_ATTEMPT_EVIDENCE_TRANSITIONS = Object.freeze(new Set([
+  "record_action_proof",
+  "record_customer_outcome",
+  "record_goal_proof",
+  "record_negative_outcome",
+  "expire_no_response",
+  "abandon_attempt",
+]));
+// Transitions whose grade is enforced by the reducer AND that demand a real evidence
+// locator (host-side ref-presence pre-check). expire_no_response carries a deadline
+// (responseDueAt), abandon_attempt carries a free-text reason — neither bears an
+// evidence record, so they are NOT in this set.
+const OFFICE_HOURS_ATTEMPT_EVIDENCE_GRADED_TRANSITIONS = Object.freeze(new Set([
+  "record_action_proof",
+  "record_customer_outcome",
+  "record_goal_proof",
+  "record_negative_outcome",
+]));
+
+async function handleOfficeHoursAttemptEvidence(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  const sessionId = String(payload.sessionId ?? payload.session_id ?? "").trim();
+  const attemptId = String(payload.attemptId ?? payload.attempt_id ?? "").trim();
+  const transition = String(payload.transition ?? payload.type ?? "").trim();
+  const requestId = String(payload.requestId ?? payload.request_id ?? "").trim();
+  const at = new Date().toISOString();
+  try {
+    if (!attemptId) throw new Error("attemptId is required.");
+    if (!requestId) throw new Error("requestId is required (== eventId for store idempotency).");
+    if (!OFFICE_HOURS_ATTEMPT_EVIDENCE_TRANSITIONS.has(transition)) {
+      throw new Error(`unsupported attempt-evidence transition: ${transition || "(none)"}`);
+    }
+    const expectedRevisionRaw = payload.expectedRevision ?? payload.expected_revision;
+    const expectedRevision = Number.isInteger(expectedRevisionRaw)
+      ? expectedRevisionRaw
+      : Number.parseInt(String(expectedRevisionRaw ?? ""), 10);
+    if (!Number.isInteger(expectedRevision)) {
+      throw new Error("expectedRevision (CAS token) is required and must be an integer.");
+    }
+
+    // (a) Resolve the attempt; fail-closed if the pointer is dangling.
+    const snapshot = await projectAttempt({ workspaceRoot: root, attemptId });
+    if (!snapshot) throw new Error(`attempt ${attemptId} not found.`);
+    // (b) Legality pre-filter against the typed nextAction union. nextAttemptAction
+    // THROWS for a corrupt/unmapped state — do not swallow.
+    const currentAction = nextAttemptAction(snapshot.projection);
+    if (transition === "abandon_attempt") {
+      // abandon is legal from any active/suspended (NOT terminal) state.
+      if (currentAction.kind === "terminal") {
+        throw new Error("abandon_attempt is illegal: the attempt is already resolved (terminal).");
+      }
+    } else if (currentAction.kind !== "wait") {
+      // The five proof/deadline transitions are only legal from a WAIT state.
+      throw new Error(
+        `transition ${transition} requires a WAIT state, but the attempt is "${currentAction.kind}".`,
+      );
+    }
+
+    // (c) Build the reducer fields per transition + host-side ref-presence/grade
+    // pre-check for evidence-grade transitions.
+    const fields = {};
+    if (OFFICE_HOURS_ATTEMPT_EVIDENCE_GRADED_TRANSITIONS.has(transition)) {
+      const evidence = payload.evidence && typeof payload.evidence === "object" && !Array.isArray(payload.evidence)
+        ? payload.evidence
+        : null;
+      if (!evidence) throw new Error(`transition ${transition} requires an evidence record.`);
+      const kind = String(evidence.kind ?? "").trim();
+      const ref = String(evidence.ref ?? "").trim();
+      if (!ref) {
+        // Mirror the legacy normalizeEvidence locator requirement: a graded proof
+        // must point at a real artifact (screenshot path / URL / log locator).
+        throw new Error(`transition ${transition} requires a non-empty evidence.ref (artifact locator).`);
+      }
+      // Fast fail-closed grade check (the reducer re-grades and is the authority).
+      // FIX 2: validate the grade for EVERY graded transition CONSISTENTLY against the
+      // grade the TRANSITION declares (record_action_proof→action_proof,
+      // record_customer_outcome→customer_outcome, record_goal_proof→goal_proof,
+      // record_negative_outcome→customer_outcome) — not against the WAIT reason. A
+      // goal_proof jump is legal from three WAIT states, so the wait-reason map could
+      // not cover record_goal_proof and the handler previously EXEMPTED it; the
+      // transition→grade map covers all of them. The reducer re-validates and the
+      // sourceType guard protects the strong-payment gate, but the handler must be
+      // fail-closed consistently here too (no soften, no exemption).
+      const graded = gradeEvidence({ kind });
+      if (graded.rejected) {
+        throw new Error(`evidence kind "${kind || "(none)"}" is rejected and never proves anything.`);
+      }
+      const requiredGrade = requiredGradeForTransition(transition);
+      if (!requiredGrade) {
+        // A graded transition with no declared evidenceGrade is a contract break, not
+        // a soft-pass: fail-closed rather than committing an ungraded proof.
+        throw new Error(`transition ${transition} declares no evidence grade; refusing to commit ungraded proof.`);
+      }
+      if (graded.grade !== requiredGrade) {
+        throw new Error(
+          `transition ${transition} requires ${requiredGrade}-grade evidence, got ${graded.grade || "(none)"}.`,
+        );
+      }
+      fields.evidence = {
+        kind,
+        ref,
+        capturedAt: String(evidence.capturedAt ?? evidence.captured_at ?? at).trim() || at,
+        source: String(evidence.source ?? "").trim(),
+        note: String(evidence.note ?? "").trim(),
+      };
+    } else if (transition === "expire_no_response") {
+      const responseDueAt = String(payload.responseDueAt ?? payload.response_due_at ?? snapshot.projection?.responseDueAt ?? "").trim();
+      if (!responseDueAt) throw new Error("expire_no_response requires responseDueAt.");
+      fields.responseDueAt = responseDueAt;
+      fields.now = at;
+    } else if (transition === "abandon_attempt") {
+      const abandonReason = String(payload.abandonReason ?? payload.abandon_reason ?? payload.reason ?? payload.note ?? "").replace(/\s+/g, " ").trim();
+      if (!abandonReason) throw new Error("abandon_attempt requires an abandonReason.");
+      fields.abandonReason = abandonReason;
+    }
+
+    // (d) Commit through the single store writer. The reducer does ALL grading +
+    // legality enforcement; a rejected kind / wrong grade / illegal transition
+    // throws here (fail-closed). CAS via expectedRevision; requestId == eventId.
+    const result = await commitAttemptEvent({
+      workspaceRoot: root,
+      attemptId,
+      expectedRevision,
+      event: {
+        type: transition,
+        fields,
+        at,
+        requestId,
+        sessionId,
+        audit: {
+          source: "office_hours_attempt_evidence",
+          transition,
+          evidenceKind: fields.evidence?.kind || "",
+        },
+      },
+      responsePayload: { sessionId, requestId, transition },
+    });
+
+    // Refresh the session runtime DTO if this attempt is the active session pointer.
+    const session = sessionId ? state.sessions.get(sessionId) : null;
+    if (session?.runtime?.officeHours
+      && String(session.runtime.officeHours.attemptId || "").trim() === attemptId) {
+      session.runtime.officeHours.revision = result.revision;
+      const wireDTO = deriveOfficeHoursWireDTO(result.projection);
+      if (wireDTO) {
+        session.runtime.officeHours.nextAction = wireDTO.nextAction;
+        session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+        session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
+      }
+      touch(session);
+      await persistSessions();
+      await markPosted({ workspaceRoot: root, attemptId, eventId: requestId }).catch((error) => {
+        telemetry.captureException(error, {
+          operation: "office_hours_attempt_evidence_mark_posted",
+          session_id: sessionId,
+          request_id: requestId,
+        });
+      });
+      broadcast({ type: "session_updated", session });
+    } else {
+      // No live session pointer (e.g. headless arc / daemon restart): still mark the
+      // delivery posted so the store outbox does not re-deliver.
+      await markPosted({ workspaceRoot: root, attemptId, eventId: requestId }).catch((error) => {
+        telemetry.captureException(error, {
+          operation: "office_hours_attempt_evidence_mark_posted",
+          request_id: requestId,
+        });
+      });
+    }
+
+    telemetry.captureEvent("mac_sidecar_office_hours_attempt_evidence", {
+      workspace_basename: path.basename(root),
+      transition,
+      applied: result.applied === true,
+      revision: result.revision,
+      evidence_kind: fields.evidence?.kind || "",
+    });
+    // Project the now-updated attempt evidence into the Evidence OS read model.
+    await sendOfficeHoursEvidenceState(socket, root);
+  } catch (error) {
+    telemetry.captureException(error, { operation: "office_hours_attempt_evidence" });
+    send(socket, { type: "day_progress_state", workspaceRoot: root, success: false, error: formatError(error) });
+  }
+}
+
 async function handleOfficeHoursCommitmentEvidence(socket, payload = {}) {
   const root = resolveDay1GoalWorkspaceRoot(payload);
   const commitmentId = String(payload.commitmentId ?? payload.commitment_id ?? "").trim();
   const evidence = normalizeCommitmentEvidencePayload(payload.evidence ?? payload);
+  // ★R2 two-writer fix (fail-closed): the ValidationAttempt is the SOLE writer for
+  // Day-1 get_users action/customer/goal proof. A payload that carries an attemptId
+  // belongs to that lane — it MUST go through office_hours_attempt_evidence, never
+  // the legacy commitment writer (two authorities grading the same Day-1 concern is
+  // the renormalization failure mode R0 killed). Reject rather than soften.
+  const attemptId = String(payload.attemptId ?? payload.attempt_id ?? "").trim();
+  if (attemptId) {
+    const error = new Error(
+      "office_hours_commitment_evidence rejects an attempt-scoped payload: route Day-1 get_users proof through office_hours_attempt_evidence.",
+    );
+    telemetry.captureException(error, { operation: "office_hours_commitment_evidence_attempt_rejected" });
+    send(socket, { type: "day_progress_state", workspaceRoot: root, success: false, error: formatError(error) });
+    return;
+  }
   try {
     if (!commitmentId) throw new Error("commitmentId is required.");
+    // FIX 3 (two-writer reverse-lookup, fail-closed): the attemptId-on-payload reject
+    // above is bypassable by omitting the field. The ROBUST guard is a workspace
+    // reverse-lookup: if THIS workspace holds an open (non-terminal) get_users
+    // attempt, that attempt is the SOLE Day-1 writer and any commitment-evidence
+    // submission for this workspace would be a SECOND authority grading the same
+    // Day-1 get_users concern (the renormalization failure R0 killed). Reject it.
+    // Non-get_users / Day2+ commitments (no open get_users attempt in the workspace)
+    // fall through and grade normally. A store/projection error PROPAGATES — it is
+    // never swallowed into a pass.
+    if (await workspaceHasOpenGetUsersAttempt(root)) {
+      throw new Error(
+        "office_hours_commitment_evidence is refused while an open get_users ValidationAttempt owns Day-1 proof for this workspace: route the proof through office_hours_attempt_evidence.",
+      );
+    }
     await gradeCommitment({
       workspaceRoot: root,
       commitmentId,
@@ -8078,9 +8327,19 @@ function deriveOfficeHoursWireDTO(projection) {
     total,
     appliedTransitions.filter((t) => gatherTransitions.has(t)).length,
   );
+  // R2: surface whether the attempt is in an acceptable Day-1 close disposition
+  // (action proof attached / timeboxed execution lease / blocked / carried) so the
+  // Mac can show "오늘 닫기 가능" without re-deriving. Fail-closed by design: a
+  // scheduled attempt carrying a corrupt/past dueAt makes isAcceptableDay1Close
+  // THROW (ERR_INVALID_DUE_AT) — we do NOT swallow it (a swallow would wedge the
+  // client with a silently-false close flag). The gather submit guarantees a valid
+  // future dueAt (buildAttemptCommandFromCard: dueAt = commitAt + 24h), so in
+  // practice this never fires for a freshly scheduled attempt.
+  const acceptableDay1Close = isAcceptableDay1Close(projection) === true;
   return {
     nextAction,
     gatherProgress: { answered, total },
+    acceptableDay1Close,
   };
 }
 
@@ -8169,6 +8428,29 @@ async function findOpenGetUsersAttempt(sessionId = "") {
     }
   }
   return null;
+}
+
+// FIX 3 (two-writer reverse-lookup): does THIS workspace hold ANY non-terminal
+// get_users ValidationAttempt, regardless of which session created it? The legacy
+// commitment writer must defer to the attempt whenever one is open — the attempt is
+// the SOLE Day-1 get_users writer. Unlike findOpenGetUsersAttempt (session-scoped,
+// for restart recovery) this scans every get_users attempt in the workspace and
+// returns true for gathering / WAIT / blocked / carried (everything except terminal
+// succeeded|failed — the same boundary canStartNewAttempt uses). Fail-closed: a
+// store/projection error propagates (the caller must NOT swallow it into a pass).
+async function workspaceHasOpenGetUsersAttempt(root = workspaceRoot) {
+  const log = await loadAttemptLog({ workspaceRoot: root });
+  for (const record of Object.values(log.attempts || {})) {
+    if (String(record?.goalLane || "get_users") !== "get_users") continue;
+    const snapshot = await projectAttempt({ workspaceRoot: root, attemptId: record.attemptId });
+    if (!snapshot) continue;
+    // nextAttemptAction THROWS for a corrupt/unmapped state — do not swallow; a
+    // workspace with an unreadable attempt must surface, not silently pass the legacy
+    // commitment writer.
+    const action = nextAttemptAction(snapshot.projection);
+    if (action && action.kind !== "terminal") return true;
+  }
+  return false;
 }
 
 // Host-side completion read. For the locked Day-1 get_users flow the authority is
@@ -9577,6 +9859,7 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
         if (wireDTO) {
           session.runtime.officeHours.nextAction = wireDTO.nextAction;
           session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+          session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
         }
       }
       return null;
@@ -9906,6 +10189,7 @@ async function runOfficeHours(session, {
           if (wireDTO) {
             session.runtime.officeHours.nextAction = wireDTO.nextAction;
             session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+            session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
           }
         }
       } else {
@@ -10162,6 +10446,7 @@ async function runOfficeHours(session, {
             if (wireDTO) {
               session.runtime.officeHours.nextAction = wireDTO.nextAction;
               session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+              session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
             }
           }
         } else {
@@ -10290,6 +10575,7 @@ async function runOfficeHours(session, {
         if (wireDTO) {
           session.runtime.officeHours.nextAction = wireDTO.nextAction;
           session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+          session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
         }
       }
     }

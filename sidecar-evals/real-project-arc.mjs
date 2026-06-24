@@ -310,6 +310,67 @@ export function buildDay1LockedGoalContext({ day, goal, onboarding, projectConte
   return lines.join("\n");
 }
 
+// ── R2: simulated graded attempt-evidence submission ────────────────────────
+// Read the post-gather WAIT DTO and submit the matching graded proof through the
+// office_hours_attempt_evidence command. Maps the WAIT reason → transition + a
+// graded (non-rejected, non-payment) evidence kind, so the attempt accumulates the
+// real action→outcome→goal chain across days. No-op (records a skip) if the session
+// is not in a WAIT state (e.g. still gathering, or already resolved).
+const ATTEMPT_EVIDENCE_STEP_BY_REASON = Object.freeze({
+  action: { transition: "record_action_proof", kind: "dm_sent_screenshot" },
+  customer_outcome: { transition: "record_customer_outcome", kind: "customer_reply" },
+  // goal proof: activation, NOT payment (keeps the strong-payment gate honest).
+  goal: { transition: "record_goal_proof", kind: "activation_event" },
+});
+
+async function maybeSubmitAttemptEvidence({ ws, events, sessionId, day, captured, workspaceRoot }) {
+  const session = latestSession(events, sessionId);
+  const officeHours = session?.runtime?.officeHours;
+  const nextAction = officeHours?.nextAction;
+  const attemptId = String(officeHours?.attemptId || "").trim();
+  const expectedRevision = officeHours?.revision;
+  if (!attemptId || nextAction?.kind !== "wait") {
+    captured.attemptEvidenceSubmissions.push({ day, skipped: true, reason: nextAction?.kind || "no_attempt" });
+    return;
+  }
+  const step = ATTEMPT_EVIDENCE_STEP_BY_REASON[nextAction.reason];
+  if (!step) {
+    captured.attemptEvidenceSubmissions.push({ day, skipped: true, reason: `unmapped:${nextAction.reason}` });
+    return;
+  }
+  const requestId = `arc-attempt-evidence-${day}-${step.transition}`;
+  const offset = events.length;
+  ws.send(JSON.stringify({
+    type: "office_hours_attempt_evidence",
+    // The attempt lives in the throwaway SANDBOX workspace (seed.root), NOT the
+    // source project: every other arc command (day_progress_patch, proof_ledger)
+    // already targets seed.root. Sending captured.projectPath here made the sidecar
+    // resolveDay1GoalWorkspaceRoot() point at the source repo, where the attempt
+    // does not exist → "attempt not found" → the evidence step never landed.
+    workspaceRoot,
+    sessionId,
+    attemptId,
+    expectedRevision,
+    transition: step.transition,
+    requestId,
+    evidence: {
+      kind: step.kind,
+      ref: `sim://day${day}/${step.transition}.png`,
+      capturedAt: new Date().toISOString(),
+      source: "arc_sim",
+    },
+  }));
+  const result = await waitForEventAfter(events, offset, (e) => e.type === "day_progress_state", 30_000).catch(() => null);
+  captured.attemptEvidenceSubmissions.push({
+    day,
+    waitReason: nextAction.reason,
+    transition: step.transition,
+    kind: step.kind,
+    success: result ? result.success !== false : false,
+    error: result?.error || (result ? "" : "timeout"),
+  });
+}
+
 // ── one day of office-hours, capturing cards ────────────────────────────────
 async function runOfficeHoursDay({ ws, events, sessionId, day, maxTurns, persona, baseTurn, answeredRequestIds, context, perTurnTimeoutMs }) {
   const dayLog = { day, questions: [], assistantMessages: [], outcome: "", repeatedSignals: [] };
@@ -430,6 +491,11 @@ export async function runRealProjectArc(projectPath, {
   perTurnTimeoutMs = 200_000,
   goalOverride = null,
   projectContextOverride = null,
+  // R2 measurement: after gather completes (WAIT DTO), submit a synthetic-but-GRADED
+  // action/goal proof through the new office_hours_attempt_evidence command so the
+  // attempt captures real graded evidence (not plan-only). Pass `false` to reproduce
+  // the R1.b-baseline arc (no attempt-evidence step) for a before/after judge diff.
+  attemptEvidence = true,
 } = {}) {
   const persona = OFFICE_HOURS_ARC_PERSONAS[personaId];
   const runId = new Date().toISOString().replaceAll(/[:.]/g, "-");
@@ -453,7 +519,7 @@ export async function runRealProjectArc(projectPath, {
   let stderr = "";
   child.stderr.on("data", (c) => { stderr += String(c); });
 
-  const captured = { runId, mode, label, projectPath: path.resolve(projectPath), days: [], onboardingAnswered: 0, errors: [], evidenceSubmissions: [], hasGoal: Boolean(seed.day1Goal), hasProjectContext: Boolean(seed.projectContext) };
+  const captured = { runId, mode, label, projectPath: path.resolve(projectPath), days: [], onboardingAnswered: 0, errors: [], evidenceSubmissions: [], attemptEvidenceSubmissions: [], attemptEvidenceEnabled: attemptEvidence === true, hasGoal: Boolean(seed.day1Goal), hasProjectContext: Boolean(seed.projectContext) };
   const events = [];
   let ws;
   try {
@@ -488,6 +554,17 @@ export async function runRealProjectArc(projectPath, {
         });
         captured.days.push(dayLog);
         baseTurn += turnsUsed;
+        // R2: after gather completes the attempt sits in a WAIT state and surfaces
+        // nextAction={kind:"wait", reason}. Submit a synthetic-but-GRADED proof
+        // through the office_hours_attempt_evidence command so the attempt captures
+        // real action/customer/goal proof (vs plan-only) — this is what moves
+        // evidence_use/goal_alignment in the judge. The grading + provenance path is
+        // identical to production; only the `ref` is a sim:// locator (the harness
+        // cannot attach a real screenshot). Payment is intentionally NOT used for
+        // goal proof, to keep the strong-payment anti-gaming gate honest.
+        if (attemptEvidence) {
+          await maybeSubmitAttemptEvidence({ ws, events, sessionId, day, captured, workspaceRoot: seed.root });
+        }
         // commit the day so memory/commitment carries to the next day
         const offset = events.length;
         ws.send(JSON.stringify({
@@ -559,6 +636,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (a === "--max-turns") opts.maxTurnsPerDay = Number(argv[++i]);
     else if (a === "--goal-file") opts.goalOverride = readJsonSync(argv[++i]);
     else if (a === "--context-file") opts.projectContextOverride = readJsonSync(argv[++i]);
+    // R2 before/after: --no-attempt-evidence reproduces the R1.b-baseline arc.
+    else if (a === "--no-attempt-evidence") opts.attemptEvidence = false;
+    else if (a === "--attempt-evidence") opts.attemptEvidence = true;
   }
   if (!projectPath) { console.error("usage: real-project-arc.mjs --project <path> [--days 1,2] [--live]"); process.exit(2); }
   runRealProjectArc(projectPath, opts)

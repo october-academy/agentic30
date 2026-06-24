@@ -4953,6 +4953,91 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    /// R2: the ValidationAttempt is the SINGLE writer for Day-1 get_users action/
+    /// customer/goal proof. After gather completes the attempt sits in a WAIT state
+    /// (runtime.officeHours.nextAction.kind == "wait"); this routes a graded proof
+    /// through the new `office_hours_attempt_evidence` command with the attempt CAS
+    /// token (expectedRevision) + provenance. The sidecar reducer is the grading
+    /// authority — a rejected kind / wrong grade / missing ref fails closed there.
+    @discardableResult
+    func submitOfficeHoursAttemptEvidence(
+        attemptId: String,
+        expectedRevision: Int,
+        transition: String,
+        kind: String,
+        ref: String,
+        note: String = "",
+        sessionId: String? = nil,
+        workspaceRoot explicitRoot: String? = nil
+    ) -> Bool {
+        guard isConnected else { return false }
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = attemptId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tx = transition.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRef = ref.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty, !id.isEmpty, !tx.isEmpty else { return false }
+        // Mirror the host ref-presence requirement: an evidence-grade transition must
+        // carry a real artifact locator. abandon_attempt / expire_no_response do not.
+        let evidenceTransition = tx == "record_action_proof"
+            || tx == "record_customer_outcome"
+            || tx == "record_goal_proof"
+            || tx == "record_negative_outcome"
+        if evidenceTransition && (trimmedRef.isEmpty || trimmedKind.isEmpty) { return false }
+        var payload: [String: Any] = [
+            "type": "office_hours_attempt_evidence",
+            "workspaceRoot": root,
+            "attemptId": id,
+            "expectedRevision": expectedRevision,
+            "transition": tx,
+            "requestId": UUID().uuidString,
+        ]
+        if let sid = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines), !sid.isEmpty {
+            payload["sessionId"] = sid
+        }
+        if evidenceTransition {
+            payload["evidence"] = [
+                "kind": trimmedKind,
+                "ref": trimmedRef,
+                "capturedAt": ISO8601DateFormatter().string(from: Date()),
+                "source": "mac_user",
+                "note": note.trimmingCharacters(in: .whitespacesAndNewlines),
+            ]
+        }
+        return sidecar.send(payload: payload)
+    }
+
+    /// R2 WAIT escape: abandon the open attempt (the only free-text fail path). Lets a
+    /// founder who closed Day-1 timeboxed but cannot attach proof free the lane so a
+    /// new attempt can start (canStartNewAttempt blocks while one is in WAIT).
+    @discardableResult
+    func abandonOfficeHoursAttempt(
+        attemptId: String,
+        expectedRevision: Int,
+        reason: String,
+        sessionId: String? = nil,
+        workspaceRoot explicitRoot: String? = nil
+    ) -> Bool {
+        guard isConnected else { return false }
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = attemptId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty, !id.isEmpty, !trimmedReason.isEmpty else { return false }
+        var payload: [String: Any] = [
+            "type": "office_hours_attempt_evidence",
+            "workspaceRoot": root,
+            "attemptId": id,
+            "expectedRevision": expectedRevision,
+            "transition": "abandon_attempt",
+            "requestId": UUID().uuidString,
+            "abandonReason": trimmedReason,
+        ]
+        if let sid = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines), !sid.isEmpty {
+            payload["sessionId"] = sid
+        }
+        return sidecar.send(payload: payload)
+    }
+
     @discardableResult
     func carryForwardOfficeHoursCommitment(
         commitmentId: String,

@@ -81,7 +81,8 @@ struct SidecarEventDecodingTests {
                   "attemptId": "attempt-1",
                   "revision": 6,
                   "nextAction": { "kind": "wait", "reason": "action" },
-                  "gatherProgress": { "answered": 6, "total": 6 }
+                  "gatherProgress": { "answered": 6, "total": 6 },
+                  "acceptableDay1Close": true
                 }
               }
             }
@@ -167,6 +168,8 @@ struct SidecarEventDecodingTests {
         #expect(event.sessions?.first?.runtime?.officeHours?.nextAction?.kind == "wait")
         #expect(event.sessions?.first?.runtime?.officeHours?.nextAction?.waitReason == "action")
         #expect(event.sessions?.first?.runtime?.officeHours?.gatherProgress?.answered == 6)
+        // R2: the wire DTO carries the host-derived Day-1 close acceptability flag.
+        #expect(event.sessions?.first?.runtime?.officeHours?.acceptableDay1Close == true)
     }
 
     @MainActor @Test func decodesStreamingStateOnMessageReplacedEvent() throws {
