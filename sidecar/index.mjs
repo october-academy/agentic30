@@ -432,8 +432,6 @@ import {
   countOfficeHoursTurnsForSession,
   extractOfficeHoursChatEmphasis,
   formatSelectedOptionEvidenceHint,
-  nextGetUsersLadderSignal,
-  canonicalGetUsersLadderSignal,
   hasOfficeHoursTerminalTurnForSession,
   isOfficeHoursStructuredInputMode,
   isOfficeHoursStructuredInputToolEvent,
@@ -483,6 +481,26 @@ import {
   buildSpecialistInjection,
   selectSpecialist,
 } from "./specialist-router.mjs";
+// R1.b cutover — ValidationAttempt event store + pure contract are the runtime
+// authority for the locked Day-1 get_users office-hours flow. No legacy turn-log
+// migration: attempts are seeded fresh and resumed by store lookup only.
+import {
+  startAttempt,
+  commitAttemptEvent,
+  supersedeAnswer,
+  projectAttempt,
+  loadAttemptLog,
+  markPosted,
+  pendingDeliveries,
+} from "./office-hours-attempt-store.mjs";
+import {
+  nextAttemptAction,
+  cardDefinition,
+  canonicalCardForSignal,
+  isAcceptableDay1Close,
+  payloadHashOf as officeHoursPayloadHashOf,
+  VALIDATION_ATTEMPT_ACTIVE_STATES,
+} from "./office-hours-contract.mjs";
 import { describeVendor as describeGstackVendor } from "./vendor-skill-loader.mjs";
 import {
   buildFirstPromptForDay,
@@ -704,6 +722,42 @@ try {
   await ensureUserInputDirs(appSupportPath);
   await clearUserInputArtifacts(appSupportPath);
   await loadSessions();
+  // R1.b: re-post the durable office-hours outbox BEFORE syncPendingUserInputRequests.
+  // A commit that crashed between writing the event and writing/consuming the
+  // response file leaves a pending|posted delivery; re-writing the response file
+  // (atomic) and re-marking it posted recovers the blocked submit idempotently.
+  // clearUserInputArtifacts above wiped the prior response files, so this restores
+  // exactly the committed responses (consumed/canceled deliveries are excluded).
+  try {
+    const deliveries = await pendingDeliveries({ workspaceRoot });
+    for (const delivery of deliveries) {
+      const responsePayload = delivery.responsePayload;
+      if (!responsePayload || typeof responsePayload !== "object") continue;
+      const sessionId = String(responsePayload.sessionId || delivery.sessionId || "").trim();
+      const deliveryRequestId = String(responsePayload.requestId || delivery.requestId || "").trim();
+      if (!sessionId || !deliveryRequestId) continue;
+      await writeUserInputResponse(appSupportPath, {
+        sessionId,
+        requestId: deliveryRequestId,
+        response: responsePayload.response ?? responsePayload,
+      });
+      // markPosted is delivery bookkeeping (the response file IS already written =
+      // the run will resume). A failure here is non-fatal but must NOT be swallowed
+      // silently: log it (the delivery stays pending and a later boot re-posts
+      // idempotently). Per-delivery so one bad record doesn't block the others.
+      await markPosted({ workspaceRoot, attemptId: delivery.attemptId, eventId: delivery.eventId })
+        .catch((error) => captureSidecarLog("office_hours attempt mark-posted failed (boot re-post)", "warn", {
+          operation: "office_hours_attempt_mark_posted_boot",
+          attemptId: delivery.attemptId,
+          ...errorTelemetryProperties(error),
+        }));
+    }
+  } catch (error) {
+    captureSidecarLog("office_hours attempt outbox re-post failed", "error", {
+      operation: "office_hours_attempt_outbox_repost",
+      ...errorTelemetryProperties(error),
+    });
+  }
   state.bipCoach = mergeBipConfigIntoCoachState(
     await loadBipCoachState(bipCoachFilePath),
     currentBipConfig(),
@@ -1478,10 +1532,10 @@ async function handleClientMessage(socket, payload) {
       if (
         session.runtime?.officeHours?.active === true
         && !session.error
-        && (
-          session.runtime.officeHours.completedByExpectedCount === true
-          || session.runtime.officeHours.terminalAnswered === true
-        )
+        // R1.b: gather complete = the ValidationAttempt projection's nextAction is
+        // no longer a card. Restarting a completed interview would re-run the run.
+        && Boolean(session.runtime.officeHours.nextAction?.kind)
+        && session.runtime.officeHours.nextAction.kind !== "card"
       ) {
         await broadcastOfficeHoursStartNoop(session);
         return;
@@ -1557,12 +1611,77 @@ async function handleClientMessage(socket, payload) {
       }
       const userResponseDescription = collectSelectedOptionDescriptions(promptRequest, response);
       const officeHoursStructuredQuestionText = buildOfficeHoursStructuredQuestionTranscriptText(promptRequest);
-      const officeHoursTerminalAnswered = isOfficeHoursTerminalAlternativesRequest(promptRequest);
       const answeredGeneration = promptRequest.generation || null;
       const runtimeDay = normalizeOfficeHoursDay(session.runtime?.officeHours?.day);
       const source = String(session.runtime?.officeHours?.source || "office_hours_revision");
       const context = activeOfficeHoursContext(session);
 
+      // R1.b: a revision of an already-committed gather answer is an
+      // answer_superseded control event (pre-action only). The original answer's
+      // eventId == the original submit requestId == this prompt's requestId.
+      const reviseAttemptId = String(answeredGeneration?.attemptId || session.runtime?.officeHours?.attemptId || "").trim();
+      if (reviseAttemptId) {
+        const snapshot = await projectAttempt({ workspaceRoot, attemptId: reviseAttemptId });
+        if (!snapshot) {
+          throw new Error(`Office Hours answer revision could not project attempt ${reviseAttemptId}.`);
+        }
+        const reviseAt = new Date().toISOString();
+        const command = buildAttemptCommandFromCard(
+          promptRequest,
+          response,
+          answeredGeneration?.signalId || "",
+          {
+            responseText: userResponseText,
+            responseDescription: userResponseDescription,
+            questionText: officeHoursStructuredQuestionText,
+            at: reviseAt,
+          },
+        );
+        if (!command) {
+          throw new Error(
+            `Office Hours answer revision could not build a replacement command for signal ${answeredGeneration?.signalId || "(none)"}.`,
+          );
+        }
+        const targetEvent = (snapshot.effectiveEvents || [])
+          .find((e) => e && e.eventId === requestId);
+        if (!targetEvent) {
+          throw new Error(`Office Hours answer revision target ${requestId} is not in the attempt's effective branch.`);
+        }
+        const expectedTargetPayloadHash = officeHoursPayloadHashOf({
+          eventId: String(targetEvent.eventId || ""),
+          type: String(targetEvent.type || ""),
+          fields: targetEvent.fields && typeof targetEvent.fields === "object" ? targetEvent.fields : {},
+          audit: {
+            questionText: typeof targetEvent.audit?.questionText === "string" ? targetEvent.audit.questionText : "",
+            responseText: typeof targetEvent.audit?.responseText === "string" ? targetEvent.audit.responseText : "",
+            responseDescription: typeof targetEvent.audit?.responseDescription === "string" ? targetEvent.audit.responseDescription : "",
+            promptSnapshot: targetEvent.audit?.promptSnapshot ?? null,
+            submissions: Array.isArray(targetEvent.audit?.submissions) ? targetEvent.audit.submissions : [],
+          },
+        });
+        const result = await supersedeAnswer({
+          workspaceRoot,
+          attemptId: reviseAttemptId,
+          expectedRevision: snapshot.revision,
+          targetEventId: requestId,
+          cardType: command.cardType,
+          transition: command.type,
+          expectedTargetPayloadHash,
+          replacement: { type: command.type, fields: command.fields, at: reviseAt },
+        });
+        if (session.runtime?.officeHours) {
+          session.runtime.officeHours.attemptId = reviseAttemptId;
+          session.runtime.officeHours.revision = result.revision;
+          const wireDTO = deriveOfficeHoursWireDTO(result.projection);
+          if (wireDTO) {
+            session.runtime.officeHours.nextAction = wireDTO.nextAction;
+            session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+          }
+        }
+      }
+
+      // Transcript rebuild only (Mac history display). The committed answer is the
+      // attempt event; the turn log is regenerated for visible history.
       const revision = await reviseOfficeHoursTurn({
         workspaceRoot,
         requestId,
@@ -1578,7 +1697,6 @@ async function handleClientMessage(socket, payload) {
           responseDescription: userResponseDescription,
           promptSnapshot: promptRequest,
           submissions: response.responses,
-          ...(officeHoursTerminalAnswered ? { terminal: true } : {}),
         },
       });
 
@@ -1597,14 +1715,8 @@ async function handleClientMessage(socket, payload) {
       session.messages = [];
       session.pendingUserInput = null;
       if (session.runtime?.officeHours) {
-        const {
-          terminalAnswered,
-          completedByExpectedCount,
-          completedQuestionCount,
-          ...officeHours
-        } = session.runtime.officeHours;
         session.runtime.officeHours = {
-          ...officeHours,
+          ...session.runtime.officeHours,
           active: true,
         };
       }
@@ -1887,26 +1999,19 @@ async function handleClientMessage(socket, payload) {
       const hasNonBlockingOfficeHoursCardRun = hasActiveRun
         && isCodexOfficeHoursNonBlockingPendingInput(session, pendingUserInput);
       const hasBlockingActiveRun = hasActiveRun && !hasNonBlockingOfficeHoursCardRun;
-      // Record the turn BEFORE writing the response file: that write resumes a
-      // blocked Claude run, and detectIncompleteOfficeHoursInterview counts
-      // these turns when that run concludes — the final answer must be durable
-      // before the run can race ahead to its conclusion.
+      // R1.b: the ValidationAttempt event store is the runtime authority for the
+      // locked Day-1 get_users flow. A gather card answer is COMMITTED to the store
+      // (idempotent on requestId, CAS-guarded on the pending generation token) BEFORE
+      // the response file is written, then the delivery is marked posted. No fail-open
+      // catch: a commit failure rejects the submit. The pending generation carries the
+      // {attemptId, expectedRevision, cardType, transition} stamped at promotion time.
+      const answeredGenerationAttemptId = String(answeredGeneration?.attemptId || "").trim();
+      let officeHoursAttemptProjectionAfterAnswer = null;
+      // Non-get_users completion bookkeeping (count + Day-1 doc-readiness).
       let officeHoursProgressAfterAnswer = null;
       let officeHoursDocumentReadinessAfterAnswer = null;
       let officeHoursNeedsDocumentReadinessFollowup = false;
       if (isOfficeHoursStructuredInputResponse && userResponseText) {
-        // Answering the 대안 비교 closing card IS interview completion: the
-        // prompt smart-skips routed questions, so a finished interview can
-        // hold fewer answers than the Mac client's expected count. Stamp the
-        // signal on the turn (durable, retry-safe) and on the live session
-        // runtime (broadcast to the Mac client, which gates the commitment
-        // bar on it) so the incomplete-interview detector and the UI both
-        // treat this as a conclusion, not an early stop.
-        const officeHoursTerminalAnswered = !isDay1DocHandoffJudgeResponse
-          && isOfficeHoursTerminalAlternativesRequest(pendingUserInput);
-        if (officeHoursTerminalAnswered && session.runtime?.officeHours) {
-          session.runtime.officeHours.terminalAnswered = true;
-        }
         captureSidecarLog(
           "office_hours_interview_answer_submitted",
           "info",
@@ -1916,9 +2021,203 @@ async function handleClientMessage(socket, payload) {
             response,
             responseText: userResponseText,
             responseDescription: userResponseDescription,
-            terminal: officeHoursTerminalAnswered,
+            terminal: false,
           }),
         );
+        if (answeredGenerationAttemptId) {
+          // ── Locked get_users gather answer → commit-before-response ──────────────
+          const commitAt = new Date().toISOString();
+          const command = buildAttemptCommandFromCard(
+            pendingUserInput,
+            response,
+            answeredGeneration?.signalId || "",
+            {
+              responseText: userResponseText,
+              responseDescription: userResponseDescription,
+              questionText: officeHoursStructuredQuestionText,
+              at: commitAt,
+            },
+          );
+          if (!command) {
+            throw new Error(
+              `office hours submit could not build an attempt command for signal ${answeredGeneration?.signalId || "(none)"}`,
+            );
+          }
+          const expectedRevision = Number.isInteger(answeredGeneration?.expectedRevision)
+            ? answeredGeneration.expectedRevision
+            : Number.parseInt(String(answeredGeneration?.expectedRevision ?? ""), 10);
+          const result = await commitAttemptEvent({
+            workspaceRoot,
+            attemptId: answeredGenerationAttemptId,
+            expectedRevision,
+            event: {
+              type: command.type,
+              fields: command.fields,
+              at: commitAt,
+              requestId,
+              sessionId: session.id,
+              audit: command.audit,
+            },
+            responsePayload: { sessionId: session.id, requestId, response },
+          });
+          if (session.runtime?.officeHours) {
+            session.runtime.officeHours.attemptId = answeredGenerationAttemptId;
+            session.runtime.officeHours.revision = result.revision;
+            const wireDTO = deriveOfficeHoursWireDTO(result.projection);
+            if (wireDTO) {
+              session.runtime.officeHours.nextAction = wireDTO.nextAction;
+              session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+            }
+          }
+          officeHoursAttemptProjectionAfterAnswer = result.projection;
+          // Transcript turn (Mac history display only — NOT authority). Regenerable
+          // from the committed event audit; appended best-effort.
+          try {
+            await appendOfficeHoursTurn({
+              workspaceRoot,
+              turn: {
+                day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day),
+                sessionId: session.id,
+                requestId,
+                mode: answeredGeneration?.mode || "office_hours_structured_input",
+                signalId: answeredGeneration?.signalId || "",
+                signalLabel: answeredGeneration?.signalLabel || "",
+                questionText: officeHoursStructuredQuestionText,
+                responseText: userResponseText,
+                responseDescription: userResponseDescription,
+                promptSnapshot: pendingUserInput,
+                submissions: response.responses,
+              },
+            });
+            await clearOfficeHoursPendingQuestionForSession(session, requestId, "answer_submitted");
+          } catch (error) {
+            telemetry.captureException(error, {
+              operation: "office_hours_turn_append",
+              session_id: session.id,
+            });
+          }
+          await refreshOfficeHoursRuntimePromptSnapshots(session).catch((error) => {
+            reportError(error, {
+              operation: "office_hours_prompt_snapshot_refresh",
+              session_id: session.id,
+              provider: session.provider,
+              request_id: requestId,
+              day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day) || 0,
+            });
+          });
+          // Commit succeeded → write the response file (atomic) THEN mark posted.
+          await writeUserInputResponse(appSupportPath, {
+            sessionId: session.id,
+            requestId,
+            response,
+          });
+          await markPosted({ workspaceRoot, attemptId: answeredGenerationAttemptId, eventId: requestId })
+            .catch((error) => {
+              telemetry.captureException(error, {
+                operation: "office_hours_attempt_mark_posted",
+                session_id: session.id,
+                request_id: requestId,
+              });
+            });
+          if (!hasBlockingActiveRun) {
+            await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
+          }
+          state.resolvedUserInputIds.add(requestId);
+          session.pendingUserInput = null;
+          const predicates = attemptCompletionPredicates(officeHoursAttemptProjectionAfterAnswer);
+          const officeHoursGatherComplete = predicates.gatherComplete;
+          session.status = officeHoursGatherComplete
+            ? "idle"
+            : hasBlockingActiveRun || Boolean(iddContinuationPromptForRun) ? "running" : "idle";
+          if (officeHoursGatherComplete) {
+            session.error = null;
+            await abortActiveOfficeHoursRunAtQuestionCap(session);
+          }
+          touch(session);
+          await persistSessions();
+          telemetry.captureEvent("mac_sidecar_structured_input_received", {
+            session_id: session.id,
+            provider: session.provider,
+            request_id: requestId,
+            response_count: Array.isArray(payload.responses) ? payload.responses.length : 0,
+          });
+          if (officeHoursGatherComplete) {
+            emitOfficeHoursStatus(session, { stage: "completed", requestId });
+            telemetry.captureEvent("mac_sidecar_office_hours_gather_complete", {
+              session_id: session.id,
+              provider: session.provider,
+              attempt_id: answeredGenerationAttemptId,
+              revision: result.revision,
+              source: session.runtime?.officeHours?.source || "",
+            });
+            broadcast({ type: "session_updated", session });
+            return;
+          }
+          const shouldRunGetUsersContinuation = !hasActiveRun && Boolean(userResponseText);
+          const shouldQueueGetUsersContinuation = hasNonBlockingOfficeHoursCardRun && Boolean(userResponseText);
+          let getUsersLadderState = {};
+          let nextAction = null;
+          try {
+            nextAction = nextAttemptAction(officeHoursAttemptProjectionAfterAnswer);
+          } catch {
+            nextAction = null;
+          }
+          if (nextAction?.kind === "card") {
+            const nextCard = cardDefinition(nextAction.cardType);
+            const nextSignalId = nextCard?.legacySignalId || "";
+            const answeredSignals = (officeHoursAttemptProjectionAfterAnswer.appliedTransitions || [])
+              .map((t) => {
+                for (const ct of ["activation_definition", "candidate_selection", "current_alternative", "action_request", "evidence_contract", "commitment"]) {
+                  const def = cardDefinition(ct);
+                  if (def?.transition === t) return def.legacySignalId;
+                }
+                return "";
+              })
+              .filter(Boolean);
+            getUsersLadderState = {
+              getUsersAnsweredSignalIds: answeredSignals,
+              getUsersNextSignalId: nextSignalId,
+            };
+          }
+          if (shouldQueueGetUsersContinuation) {
+            enqueueSilentPrompt(
+              session,
+              buildOfficeHoursStructuredInputContinuationPrompt({
+                responseText: userResponseText,
+                responseDescription: userResponseDescription,
+                ...getUsersLadderState,
+              }),
+              { executionIntent: "chat" },
+            );
+            session.status = "running";
+            await persistSessions();
+            broadcast({ type: "session_updated", session });
+            return;
+          }
+          if (!shouldRunGetUsersContinuation) {
+            broadcast({ type: "session_updated", session });
+            return;
+          }
+          await runPrompt(
+            session,
+            buildOfficeHoursStructuredInputContinuationPrompt({
+              responseText: userResponseText,
+              responseDescription: userResponseDescription,
+              ...getUsersLadderState,
+            }),
+            { displayUserMessage: false, defaultTitle: session.title },
+          );
+          return;
+        }
+        // ── Non-attempt office-hours answer (non-get_users locked Day-1 lanes,
+        // Day2+, terminal-alternatives) ── these keep the original count-based
+        // completion + Day-1 doc-readiness follow-up (this cut is scoped to the
+        // locked get_users lane only).
+        const officeHoursTerminalAnswered = !isDay1DocHandoffJudgeResponse
+          && isOfficeHoursTerminalAlternativesRequest(pendingUserInput);
+        if (officeHoursTerminalAnswered && session.runtime?.officeHours) {
+          session.runtime.officeHours.terminalAnswered = true;
+        }
         try {
           await appendOfficeHoursTurn({
             workspaceRoot,
@@ -1937,11 +2236,7 @@ async function handleClientMessage(socket, payload) {
               ...(officeHoursTerminalAnswered ? { terminal: true } : {}),
             },
           });
-          await clearOfficeHoursPendingQuestionForSession(
-            session,
-            requestId,
-            "answer_submitted",
-          );
+          await clearOfficeHoursPendingQuestionForSession(session, requestId, "answer_submitted");
         } catch (error) {
           telemetry.captureException(error, {
             operation: "office_hours_turn_append",
@@ -1971,8 +2266,6 @@ async function handleClientMessage(socket, payload) {
             if (officeHoursNeedsDocumentReadinessFollowup) {
               session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
             } else {
-              // Either ready, or the follow-up cap is reached — proceed instead of
-              // re-asking the same readiness card forever.
               stampOfficeHoursExpectedCountCompletion(session, officeHoursProgressAfterAnswer);
             }
           } else {
@@ -2231,7 +2524,8 @@ async function handleClientMessage(socket, payload) {
         response_count: Array.isArray(payload.responses) ? payload.responses.length : 0,
       });
       const hasSelectedStructuredOption = response.responses?.some((entry) => entry.selectedOptions?.length);
-      if (officeHoursQuestionCapReached) {
+      const officeHoursQuestionCapReached2 = Boolean(officeHoursProgressAfterAnswer?.capReached);
+      if (officeHoursQuestionCapReached2) {
         emitOfficeHoursQuestionCapCompleted(session, officeHoursProgressAfterAnswer, requestId);
         broadcast({ type: "session_updated", session });
         return;
@@ -2242,33 +2536,11 @@ async function handleClientMessage(socket, payload) {
       const shouldQueueOfficeHoursContinuation = hasNonBlockingOfficeHoursCardRun
         && isOfficeHoursStructuredInputResponse
         && Boolean(userResponseText);
-      // Locked Day 1 get_users: tell the continuation which ladder slots are
-      // answered and which single slot comes next, so the provider stops
-      // re-emitting an answered card (the observed active-user/first-candidate
-      // duplicates) or inserting an out-of-ladder card. The host owns slot
-      // identity/order; the visible copy stays LLM-generated.
-      let getUsersLadderState = {};
-      if (isOfficeHoursStructuredInputResponse) {
-        const ohContext = activeOfficeHoursContext(session);
-        if (isOfficeHoursLockedDay1GoalContext(ohContext) && /Goal lane:\s*get_users\b/i.test(ohContext)) {
-          const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot }).catch(() => null);
-          // Canonicalize: turn signalIds may carry the office_hours_ prefix (inline
-          // path) while the ladder order is bare. Without this the gate never
-          // advances and the model re-emits the same slot.
-          const answered = new Set(
-            (turnLog?.turns || [])
-              .filter((turn) => String(turn?.sessionId || "") === session.id)
-              .map((turn) => canonicalGetUsersLadderSignal(turn?.signalId))
-              .filter(Boolean),
-          );
-          const answeredCanonical = canonicalGetUsersLadderSignal(answeredSignalId);
-          if (answeredCanonical) answered.add(answeredCanonical);
-          getUsersLadderState = {
-            getUsersAnsweredSignalIds: [...answered],
-            getUsersNextSignalId: nextGetUsersLadderSignal(answered),
-          };
-        }
-      }
+      // R1.b: the locked Day-1 get_users flow is handled in the ValidationAttempt
+      // branch above (which returns early with reducer-derived ladder state). This
+      // continuation path serves only non-attempt office-hours flows (non-get_users
+      // locked Day-1 lanes, Day2+), which carry no reducer ladder gate.
+      const getUsersLadderState = {};
       if (shouldQueueOfficeHoursContinuation) {
         enqueueSilentPrompt(
           session,
@@ -5304,7 +5576,7 @@ async function runPrompt(
       session.error = null;
       if (officeHoursContext) {
         emitOfficeHoursStatus(session, {
-          stage: session.runtime?.officeHours?.completedByExpectedCount === true
+          stage: officeHoursRuntimeGatherComplete(session)
             ? "completed"
             : "aborted",
           messageId: assistantMessage.id,
@@ -7708,12 +7980,232 @@ async function buildOfficeHoursCyclePreamble(day = null) {
   }
 }
 
+// ── R1.b ValidationAttempt runtime authority — pure helpers ───────────────────
+// These translate between the locked Day-1 get_users office-hours card surface and
+// the event store / pure contract. They are the ONLY bridge: every host completion
+// / promotion / ordering decision routes through projectAttempt + nextAttemptAction
+// + attemptCompletionPredicates. No turn-count / terminalAnswered / doc-readiness
+// authority survives in this flow.
+
+// Map a (legacy/prefixed) signalId to the canonical card type, or "" when it is
+// not one of the six locked get_users gather slots.
+function officeHoursCardTypeForSignal(signalId = "") {
+  return canonicalCardForSignal(signalId);
+}
+
+// Build the reducer command for a gather card answer. The card's transition +
+// requiredFields come from the FINAL contract; the user's free-text answer fills
+// every required field (the reducer enforces non-empty), while the full structured
+// answer lands in audit so the transcript can be regenerated from the event log.
+// `schedule_execution` (the commitment slot) needs a parseable FUTURE dueAt; the
+// commitment is a same-day timebox, so we derive dueAt = end of the commit day and
+// keep the user's words in commitmentNote. Returns null for non-gather signals.
+function buildAttemptCommandFromCard(pendingUserInput, response, answeredSignalId, {
+  responseText = "",
+  responseDescription = "",
+  questionText = "",
+  at = new Date().toISOString(),
+} = {}) {
+  const cardType = officeHoursCardTypeForSignal(answeredSignalId);
+  if (!cardType) return null;
+  const card = cardDefinition(cardType);
+  if (!card) return null;
+  const answer = String(responseText || "").trim();
+  if (!answer) return null;
+  const required = Array.isArray(card.requiredFields) ? card.requiredFields : [];
+  const fields = {};
+  if (card.transition === "schedule_execution") {
+    // dueAt must parse AND be strictly future relative to `at` (contract guard).
+    const atMs = Date.parse(at);
+    const baseMs = Number.isFinite(atMs) ? atMs : Date.now();
+    fields.dueAt = new Date(baseMs + 24 * 60 * 60 * 1000).toISOString();
+    fields.commitmentNote = answer;
+  } else {
+    for (const key of required) {
+      fields[key] = answer;
+    }
+  }
+  const audit = {
+    questionText: String(questionText || ""),
+    responseText: answer,
+    responseDescription: String(responseDescription || ""),
+    promptSnapshot: pendingUserInput ?? null,
+    submissions: Array.isArray(response?.responses) ? response.responses : [],
+  };
+  return { type: card.transition, fields, audit, cardType };
+}
+
+// Separation-of-concerns completion predicates (no count gate, no doc-readiness).
+// gatherComplete: the six-slot interview is done (next action is no longer a card).
+// acceptableDay1Close: a real Day-1 disposition (action proof / timeboxed lease /
+// blocked / carried). attemptResolved: terminal (succeeded|failed).
+function attemptCompletionPredicates(projection) {
+  if (!projection || typeof projection !== "object") {
+    return { gatherComplete: false, acceptableDay1Close: false, attemptResolved: false };
+  }
+  // No fail-open: a corrupt projection must surface (fail-closed). Swallowing the
+  // throw here would silently report not-complete and wedge the flow / leak to legacy.
+  const action = nextAttemptAction(projection);
+  const gatherComplete = Boolean(action) && action.kind !== "card";
+  const acceptableDay1Close = isAcceptableDay1Close(projection) === true;
+  const attemptResolved = action?.kind === "terminal";
+  return { gatherComplete, acceptableDay1Close, attemptResolved };
+}
+
+// Project the locked Day-1 get_users wire DTO carried to the Mac client. The host
+// authority pointer ({attemptId, revision}) plus a derived, READ-ONLY display:
+// nextAction (mirrors nextAttemptAction) + gatherProgress {answered, total}. No
+// terminalAnswered / documentReadiness — the Mac decides completion from
+// nextAction.kind.
+function deriveOfficeHoursWireDTO(projection) {
+  if (!projection || typeof projection !== "object") return null;
+  // No fail-open: a corrupt projection must throw, not silently become nextAction=null
+  // (the Mac decides completion from nextAction.kind — a null would wedge the client).
+  const nextAction = nextAttemptAction(projection);
+  const total = VALIDATION_ATTEMPT_ACTIVE_STATES.length;
+  const appliedTransitions = Array.isArray(projection.appliedTransitions)
+    ? projection.appliedTransitions
+    : [];
+  const gatherTransitions = new Set([
+    "define_activation",
+    "select_candidate",
+    "record_alternative",
+    "define_action_contract",
+    "define_evidence_contract",
+    "schedule_execution",
+  ]);
+  const answered = Math.min(
+    total,
+    appliedTransitions.filter((t) => gatherTransitions.has(t)).length,
+  );
+  return {
+    nextAction,
+    gatherProgress: { answered, total },
+  };
+}
+
+// Resolve (or fabricate) the ValidationAttempt for a session in the locked Day-1
+// get_users flow. NO legacy turn-log migration: (a) reuse the session's pointer;
+// (b) recover the pointer from the store (daemon restart / prior session) by
+// scanning for a non-terminal get_users attempt in this workspace; (c) start a
+// fresh attempt. Fail-closed: a lost race on startAttempt re-scans, then throws.
+async function ensureOfficeHoursAttemptForSession(session, {
+  day = null,
+  source = "",
+} = {}) {
+  if (!session?.runtime?.officeHours) {
+    throw new Error("ensureOfficeHoursAttemptForSession requires an active office-hours runtime");
+  }
+  const existingId = String(session.runtime.officeHours.attemptId || "").trim();
+  if (existingId) {
+    const snapshot = await projectAttempt({ workspaceRoot, attemptId: existingId });
+    if (snapshot) {
+      session.runtime.officeHours.attemptId = existingId;
+      session.runtime.officeHours.revision = snapshot.revision;
+      return { attemptId: existingId, revision: snapshot.revision, projection: snapshot.projection };
+    }
+    // Pointer references a non-existent attempt — fall through to recover/start.
+  }
+  const recovered = await findOpenGetUsersAttempt(session.id);
+  if (recovered) {
+    session.runtime.officeHours.attemptId = recovered.attemptId;
+    session.runtime.officeHours.revision = recovered.revision;
+    return recovered;
+  }
+  const attemptId = randomUUID();
+  try {
+    const record = await startAttempt({
+      workspaceRoot,
+      goalLane: "get_users",
+      day: normalizeOfficeHoursDay(day) || normalizeOfficeHoursDay(session.runtime.officeHours.day) || null,
+      source: String(source || session.runtime.officeHours.source || ""),
+      sessionId: session.id,
+      attemptId,
+    });
+    session.runtime.officeHours.attemptId = record.attemptId;
+    session.runtime.officeHours.revision = record.revision;
+    const snapshot = await projectAttempt({ workspaceRoot, attemptId: record.attemptId });
+    if (!snapshot) {
+      // Fail-closed: a just-started attempt must be readable. A null projection here
+      // means a store write was lost — surface it, do not propagate a null authority.
+      throw new Error(`ensureOfficeHoursAttemptForSession: attempt ${record.attemptId} unreadable immediately after startAttempt`);
+    }
+    return { attemptId: record.attemptId, revision: record.revision, projection: snapshot.projection };
+  } catch (error) {
+    if (error?.code === "ERR_ATTEMPT_ALREADY_OPEN") {
+      // A concurrent caller opened one between our scan and startAttempt: re-scan.
+      const raced = await findOpenGetUsersAttempt(session.id);
+      if (raced) {
+        session.runtime.officeHours.attemptId = raced.attemptId;
+        session.runtime.officeHours.revision = raced.revision;
+        return raced;
+      }
+    }
+    throw error;
+  }
+}
+
+// Scan the store for a single non-terminal get_users attempt THIS session created,
+// to re-attach to after a daemon restart that dropped the in-memory pointer. Filter
+// by createdSessionId (the session's stable id, preserved across restart): never
+// hijack another session's in-flight attempt in the same workspace.
+async function findOpenGetUsersAttempt(sessionId = "") {
+  const wantSessionId = String(sessionId || "").trim();
+  const log = await loadAttemptLog({ workspaceRoot });
+  for (const record of Object.values(log.attempts || {})) {
+    if (String(record?.goalLane || "get_users") !== "get_users") continue;
+    if (wantSessionId && String(record?.createdSessionId || "") !== wantSessionId) continue;
+    const snapshot = await projectAttempt({ workspaceRoot, attemptId: record.attemptId });
+    if (!snapshot) continue;
+    const action = (() => {
+      try {
+        return nextAttemptAction(snapshot.projection);
+      } catch {
+        return null;
+      }
+    })();
+    if (action && action.kind !== "terminal") {
+      return { attemptId: record.attemptId, revision: snapshot.revision, projection: snapshot.projection };
+    }
+  }
+  return null;
+}
+
+// Host-side completion read. For the locked Day-1 get_users flow the authority is
+// the projection-derived nextAction (no longer a card). Non-get_users lanes keep
+// their count/terminal completion stamps (this cut is scoped to get_users).
+function officeHoursRuntimeGatherComplete(session = null) {
+  const officeHours = session?.runtime?.officeHours;
+  if (!officeHours) return false;
+  // Discriminate the lane by the persisted CONTEXT, not by attemptId presence: the
+  // attemptId pointer can be transiently absent after a daemon restart (before
+  // ensureOfficeHoursAttemptForSession re-attaches), but the get_users context is
+  // durable. A get_users session must NEVER read the legacy completion stamps.
+  if (isLockedDay1GetUsersContext(officeHours.context || "")) {
+    // Authority is the projection-derived nextAction ONLY. If it is absent (not
+    // persisted across restart), report not-complete so the flow re-derives it from
+    // the store rather than leaking to terminalAnswered/completedByExpectedCount.
+    const kind = String(officeHours.nextAction?.kind || "").trim();
+    return kind === "" ? false : kind !== "card";
+  }
+  // Non-get_users lanes keep their legacy count/terminal completion stamps.
+  const kind = String(officeHours.nextAction?.kind || "").trim();
+  if (kind) return kind !== "card";
+  return officeHours.completedByExpectedCount === true || officeHours.terminalAnswered === true;
+}
+
 function attachOfficeHoursRuntime(runtime = {}, officeHours = null) {
   if (!officeHours) return runtime || {};
   const prior = runtime?.officeHours;
   return {
     ...(runtime || {}),
     officeHours: {
+      // R1.b: the host owns the {attemptId, revision} authority pointer. A
+      // provider runtime update must never clobber it — carry it forward from the
+      // prior runtime when the incoming officeHours object does not set it.
+      ...(prior?.attemptId && !officeHours.attemptId
+        ? { attemptId: prior.attemptId, revision: prior.revision }
+        : {}),
       // The submit handler stamps terminalAnswered on the LIVE session
       // runtime mid-run (when the 대안 비교 closing card is answered); the
       // run-end re-attach passes the run-START officeHours object, so the
@@ -8525,7 +9017,9 @@ function shouldFailDetachedOfficeHoursPendingSession(session = null) {
   if (session.status === "running" || session.status === "awaiting_input" || session.status === "error") return false;
   const officeHours = session.runtime?.officeHours;
   if (officeHours?.active !== true) return false;
-  if (officeHours.completedByExpectedCount === true || officeHours.terminalAnswered === true) return false;
+  // R1.b: a gather-complete attempt (nextAction no longer a card) is not a
+  // detached failure — its close is carried by the projection-derived runtime.
+  if (officeHoursRuntimeGatherComplete(session)) return false;
   return Boolean(normalizeOfficeHoursDay(officeHours.day));
 }
 
@@ -8869,6 +9363,26 @@ function emitOfficeHoursStatus(session, {
 // a hard upper bound: hitting it is completion, while stopping before it without
 // a pending card is a failure.
 async function detectIncompleteOfficeHoursInterview(session, context) {
+  // R1.b: for the locked Day-1 get_users flow the ValidationAttempt projection is
+  // authority. The interview is incomplete iff the attempt is still gathering
+  // (nextAction.kind === "card") when the run ended with no card on deck. No
+  // turn-count read in this path.
+  if (isLockedDay1GetUsersContext(context)) {
+    const attemptId = String(session?.runtime?.officeHours?.attemptId || "").trim();
+    if (!attemptId) return null;
+    // Fail-closed: do NOT swallow store/projection errors. projectAttempt returns
+    // null only for a genuinely absent attempt (→ nothing incomplete); a store ERR_*
+    // or a corrupt projection must surface, not be masked as "complete".
+    const snapshot = await projectAttempt({ workspaceRoot, attemptId });
+    if (!snapshot) return null;
+    const action = nextAttemptAction(snapshot.projection);
+    if (!action || action.kind !== "card") return null;
+    const dto = deriveOfficeHoursWireDTO(snapshot.projection);
+    const answered = dto?.gatherProgress?.answered ?? 0;
+    const total = dto?.gatherProgress?.total ?? VALIDATION_ATTEMPT_ACTIVE_STATES.length;
+    return { expected: total, answered };
+  }
+  // Non-locked office-hours (Day2+): expected-count detection preserved.
   const progress = await getOfficeHoursQuestionProgress(session, { context });
   if (!progress.expected || progress.complete) return null;
   return { expected: progress.expected, answered: progress.answered };
@@ -9022,32 +9536,6 @@ function isLockedDay1GetUsersContext(context = "") {
 // non-locked flows (no stamp). Throws (fail-closed, per the contract) when the next
 // slot cannot be determined inside a locked get_users flow: silently guessing the
 // slot is exactly the bug this replaces.
-async function resolveLockedGetUsersLadderSignalOverride(session, context = "") {
-  if (!isLockedDay1GetUsersContext(context)) return "";
-  let turnLog = null;
-  try {
-    turnLog = await loadOfficeHoursTurnLog({ workspaceRoot });
-  } catch (error) {
-    throw new Error(
-      `locked Day 1 get_users flow could not load the turn log to decide the next ladder slot: ${error?.message || error}`,
-    );
-  }
-  const answered = new Set(
-    (turnLog?.turns || [])
-      .filter((turn) => String(turn?.sessionId || "") === session.id)
-      .map((turn) => canonicalGetUsersLadderSignal(turn?.signalId))
-      .filter(Boolean),
-  );
-  const next = nextGetUsersLadderSignal(answered);
-  if (!next) {
-    // All six slots answered: the interview is complete and the host shows the
-    // commitment close instead of another card. Returning "" lets the caller skip
-    // promotion rather than fabricate a seventh slot.
-    return "";
-  }
-  return next;
-}
-
 async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMessage, {
   context = "",
   source = "provider_result",
@@ -9058,11 +9546,50 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
     && /generated_by:\s*office-hours|handoff_for:\s*plan-ceo-review|CEO Review Handoff/i.test(String(assistantMessage.content || ""))) {
     return null;
   }
-  const ladderSignalOverride = await resolveLockedGetUsersLadderSignalOverride(session, context);
-  if (isLockedDay1GetUsersContext(context) && !ladderSignalOverride) {
-    // Locked get_users flow with every ladder slot already answered: do not open a
-    // new card. The host surfaces the commitment close.
-    return null;
+  // R1.b: the ValidationAttempt projection — not a turn-log scan — owns slot
+  // identity/order for the locked Day-1 get_users flow. Resolve (or seed) the
+  // attempt, read the next action; promote a card only while gathering.
+  const isLockedGetUsers = isLockedDay1GetUsersContext(context);
+  let ladderSignalOverride = "";
+  let attemptToken = null;
+  if (isLockedGetUsers) {
+    const ensured = await ensureOfficeHoursAttemptForSession(session, {
+      day: session.runtime?.officeHours?.day,
+      source: session.runtime?.officeHours?.source,
+    });
+    const snapshot = await projectAttempt({ workspaceRoot, attemptId: ensured.attemptId });
+    if (!snapshot) {
+      throw new Error(`locked get_users promote could not project attempt ${ensured.attemptId}`);
+    }
+    let action = null;
+    try {
+      action = nextAttemptAction(snapshot.projection);
+    } catch (error) {
+      throw new Error(`locked get_users promote could not derive next action: ${error?.message || error}`);
+    }
+    if (action.kind !== "card") {
+      // Gather complete (wait/terminal/blocked/carried): do not open a new card.
+      // The host surfaces the close from the projection-derived runtime DTO.
+      if (session.runtime?.officeHours) {
+        session.runtime.officeHours.attemptId = ensured.attemptId;
+        session.runtime.officeHours.revision = snapshot.revision;
+        const wireDTO = deriveOfficeHoursWireDTO(snapshot.projection);
+        if (wireDTO) {
+          session.runtime.officeHours.nextAction = wireDTO.nextAction;
+          session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+        }
+      }
+      return null;
+    }
+    const card = cardDefinition(action.cardType);
+    ladderSignalOverride = card?.legacySignalId || "";
+    attemptToken = {
+      attemptId: ensured.attemptId,
+      expectedRevision: snapshot.revision,
+      cardType: action.cardType,
+      transition: card?.transition || "",
+      signalId: ladderSignalOverride,
+    };
   }
   const payload = buildOfficeHoursInlineStructuredPromptPayload({
     sessionId: session.id,
@@ -9072,6 +9599,18 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
     ladderSignalOverride,
   });
   if (!payload) return null;
+  // ★ Stamp the CAS token onto generation BEFORE createUserInputRequest so the
+  // user-input validator (passthrough), workspace-memory persist/restore, and the
+  // submit handler all read the exact revision the user's card is bound to (GO-7).
+  if (attemptToken) {
+    payload.generation = {
+      ...(payload.generation || {}),
+      attemptId: attemptToken.attemptId,
+      expectedRevision: attemptToken.expectedRevision,
+      cardType: attemptToken.cardType,
+      transition: attemptToken.transition,
+    };
+  }
 
   const request = await createUserInputRequest(
     appSupportPath,
@@ -9330,10 +9869,13 @@ async function runOfficeHours(session, {
       if (completedExpectedCount > 0) {
         completedRuntime.expectedQuestionCount = completedExpectedCount;
       }
-      completedRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
-        completedSnapshotTurns,
-        session.id,
-      );
+      const completedIsGetUsers = isLockedDay1GetUsersContext(completedRuntime.context);
+      if (!completedIsGetUsers) {
+        completedRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
+          completedSnapshotTurns,
+          session.id,
+        );
+      }
       completedRuntime.promptSnapshots = buildOfficeHoursRuntimePromptSnapshots(
         session,
         completedSnapshotTurns,
@@ -9342,37 +9884,57 @@ async function runOfficeHours(session, {
       const completedSnapshotTerminal = hasOfficeHoursTerminalResumeTurn(completedSnapshotTurns);
       const completedSnapshotCapReached = completedExpectedCount > 0
         && completedSnapshotTurns.length >= completedExpectedCount;
-      if (completedSnapshotTerminal) {
+      if (!completedIsGetUsers && completedSnapshotTerminal) {
         completedRuntime.terminalAnswered = true;
       }
       session.runtime = attachOfficeHoursRuntime(session.runtime, completedRuntime);
       if (!session.title || session.title === "New Session") {
         session.title = "Office Hours";
       }
-      if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: completedSnapshotCapReached })) {
-        const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
-          writeDebtReport: true,
+      if (completedIsGetUsers) {
+        // R1.b: get_users carries the ValidationAttempt pointer + derived display.
+        // No count/terminal/doc-readiness authority.
+        const ensured = await ensureOfficeHoursAttemptForSession(session, {
+          day: runtimeDay,
+          source,
         });
-        const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
-        if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
-          session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
-          await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
-            previousRequestId: completedRuntime.promptSnapshots?.at(-1)?.requestId || "",
-          });
-          await persistSessions();
-          broadcast({ type: "session_updated", session });
-          const completedRun = state.activeRuns.get(session.id);
-          if (completedRun?.runKey === runKey) {
-            state.activeRuns.delete(session.id);
+        const snapshot = await projectAttempt({ workspaceRoot, attemptId: ensured.attemptId });
+        if (snapshot && session.runtime?.officeHours) {
+          session.runtime.officeHours.attemptId = ensured.attemptId;
+          session.runtime.officeHours.revision = snapshot.revision;
+          const wireDTO = deriveOfficeHoursWireDTO(snapshot.projection);
+          if (wireDTO) {
+            session.runtime.officeHours.nextAction = wireDTO.nextAction;
+            session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
           }
-          return;
         }
-        completedRuntime.documentReadiness = session.runtime.officeHours.documentReadiness;
-      }
-      if (completedSnapshotCapReached) {
-        session.runtime.officeHours.completedByExpectedCount = true;
-        session.runtime.officeHours.completedQuestionCount = completedSnapshotTurns.length;
-        session.runtime.officeHours.expectedQuestionCount = completedExpectedCount;
+      } else {
+        // Non-get_users lanes keep the count + Day-1 doc-readiness behavior.
+        if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: completedSnapshotCapReached })) {
+          const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
+            writeDebtReport: true,
+          });
+          const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
+          if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
+            session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
+            await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
+              previousRequestId: completedRuntime.promptSnapshots?.at(-1)?.requestId || "",
+            });
+            await persistSessions();
+            broadcast({ type: "session_updated", session });
+            const followupRun = state.activeRuns.get(session.id);
+            if (followupRun?.runKey === runKey) {
+              state.activeRuns.delete(session.id);
+            }
+            return;
+          }
+          completedRuntime.documentReadiness = session.runtime.officeHours.documentReadiness;
+        }
+        if (completedSnapshotCapReached) {
+          session.runtime.officeHours.completedByExpectedCount = true;
+          session.runtime.officeHours.completedQuestionCount = completedSnapshotTurns.length;
+          session.runtime.officeHours.expectedQuestionCount = completedExpectedCount;
+        }
       }
       session.status = "idle";
       session.error = null;
@@ -9546,12 +10108,9 @@ async function runOfficeHours(session, {
       // with the prior session. Skipped when the session already carries real
       // answer rows (same-daemon retry) so turns are never duplicated.
       const officeHoursResumeSeeded = seedOfficeHoursTranscriptFromTurns(session, officeHoursResumeTurns);
-      // Carried on the session runtime so detectIncompleteOfficeHoursInterview
-      // (run end + chat continuations) counts prior-session answers too. Only
-      // turns from OTHER sessions: the Mac retry path re-enters runOfficeHours
-      // on the SAME failed session, whose own turns the detector already counts
-      // via countOfficeHoursTurnsForSession — including them here would
-      // double-count and let an incomplete interview read as completed.
+      // Non-get_users lanes: the resume-turn counter feeds the count-based
+      // completion detector. The locked Day-1 get_users lane ignores it (the
+      // ValidationAttempt projection is authority).
       officeHoursRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
         officeHoursResumeTurns,
         session.id,
@@ -9572,53 +10131,68 @@ async function runOfficeHours(session, {
         terminal: officeHoursResumeTerminal,
       });
       if (officeHoursResumeWrapUp) {
-        // Skip the provider run: a wrap-up prompt would re-bill on every
-        // relaunch until the interview step closes, and its summary is already
-        // covered by the client-side doc-ready block. Settle the session idle
-        // with the seeded transcript; the commitment bar (gated on the
-        // day-progress step + answered count) carries the close from here.
-        // No visiblePrompt/assistant rows are pushed — the auto-start policy
-        // marks this session started for the launch, so it will not refire.
-	        const officeHoursResumeCapReached = officeHoursExpectedQuestionCount > 0
-	          && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount;
-	        if (officeHoursResumeTerminal) {
-	          // The prior session's live terminalAnswered stamp died with the
-	          // daemon; restore it from the durable turn flag so the Mac client's
-	          // interview-complete gate (commitment bar + N/M counter) and
-	          // detectIncompleteOfficeHoursInterview on later continuations treat
-	          // a smart-skip conclusion (fewer answers than expected) as done.
-	          officeHoursRuntime.terminalAnswered = true;
-	        }
-	        session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
-	        if (!session.title || session.title === "New Session") {
-	          session.title = "Office Hours";
-	        }
-	        if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: officeHoursResumeCapReached })) {
-	          const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
-	            writeDebtReport: true,
-	          });
-	          const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
-	          if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
-	            session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
-	            await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
-	              previousRequestId: officeHoursRuntime.promptSnapshots?.at(-1)?.requestId || "",
-	            });
-	            await persistSessions();
-	            broadcast({ type: "session_updated", session });
-	            const wrapUpRun = state.activeRuns.get(session.id);
-	            if (wrapUpRun?.runKey === runKey) {
-	              state.activeRuns.delete(session.id);
-	            }
-	            return;
-	          }
-	        }
-	        if (officeHoursResumeCapReached) {
-	          session.runtime.officeHours.completedByExpectedCount = true;
-	          session.runtime.officeHours.completedQuestionCount = officeHoursResumeTurns.length;
-	          session.runtime.officeHours.expectedQuestionCount = officeHoursExpectedQuestionCount;
-	        }
-	        session.status = "idle";
-	        session.error = null;
+        // Skip the provider run: a wrap-up prompt would re-bill on every relaunch
+        // until the interview step closes. Settle the session idle with the seeded
+        // transcript; the commitment bar carries the close from here.
+        const wrapUpIsGetUsers = isLockedDay1GetUsersContext(officeHoursRuntime.context);
+        const officeHoursResumeCapReached = officeHoursExpectedQuestionCount > 0
+          && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount;
+        if (!wrapUpIsGetUsers && officeHoursResumeTerminal) {
+          // Non-get_users lane: restore the prior session's terminal stamp from
+          // the durable turn flag so the count-based completion gate treats a
+          // smart-skip conclusion (fewer answers than expected) as done.
+          officeHoursRuntime.terminalAnswered = true;
+        }
+        session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
+        if (!session.title || session.title === "New Session") {
+          session.title = "Office Hours";
+        }
+        if (wrapUpIsGetUsers) {
+          // R1.b: completion authority is the ValidationAttempt projection — not
+          // the turn count or any doc-readiness gate (both removed for get_users).
+          const ensured = await ensureOfficeHoursAttemptForSession(session, {
+            day: runtimeDay,
+            source,
+          });
+          const snapshot = await projectAttempt({ workspaceRoot, attemptId: ensured.attemptId });
+          if (snapshot && session.runtime?.officeHours) {
+            session.runtime.officeHours.attemptId = ensured.attemptId;
+            session.runtime.officeHours.revision = snapshot.revision;
+            const wireDTO = deriveOfficeHoursWireDTO(snapshot.projection);
+            if (wireDTO) {
+              session.runtime.officeHours.nextAction = wireDTO.nextAction;
+              session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+            }
+          }
+        } else {
+          // Non-get_users lanes keep the count + Day-1 doc-readiness behavior.
+          if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: officeHoursResumeCapReached })) {
+            const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
+              writeDebtReport: true,
+            });
+            const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
+            if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
+              session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
+              await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
+                previousRequestId: officeHoursRuntime.promptSnapshots?.at(-1)?.requestId || "",
+              });
+              await persistSessions();
+              broadcast({ type: "session_updated", session });
+              const followupRun = state.activeRuns.get(session.id);
+              if (followupRun?.runKey === runKey) {
+                state.activeRuns.delete(session.id);
+              }
+              return;
+            }
+          }
+          if (officeHoursResumeCapReached) {
+            session.runtime.officeHours.completedByExpectedCount = true;
+            session.runtime.officeHours.completedQuestionCount = officeHoursResumeTurns.length;
+            session.runtime.officeHours.expectedQuestionCount = officeHoursExpectedQuestionCount;
+          }
+        }
+        session.status = "idle";
+        session.error = null;
         session.pendingUserInput = null;
         touch(session);
         await persistSessions();
@@ -9700,6 +10274,25 @@ async function runOfficeHours(session, {
     );
     officeHoursRuntime.dayClosePolicy = dayClosePolicy;
     session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
+    // R1.b: seed (or recover) the ValidationAttempt for the locked Day-1 get_users
+    // flow BEFORE the provider run so promotion stamps the correct CAS token and
+    // the runtime carries the authority pointer + projection-derived display.
+    if (isLockedDay1GetUsersContext(officeHoursRuntime.context)) {
+      const ensured = await ensureOfficeHoursAttemptForSession(session, {
+        day: runtimeDay,
+        source,
+      });
+      const startSnapshot = await projectAttempt({ workspaceRoot, attemptId: ensured.attemptId });
+      if (startSnapshot && session.runtime?.officeHours) {
+        session.runtime.officeHours.attemptId = ensured.attemptId;
+        session.runtime.officeHours.revision = startSnapshot.revision;
+        const wireDTO = deriveOfficeHoursWireDTO(startSnapshot.projection);
+        if (wireDTO) {
+          session.runtime.officeHours.nextAction = wireDTO.nextAction;
+          session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+        }
+      }
+    }
     touch(session);
     await persistSessions();
     broadcast({ type: "session_updated", session });
@@ -9967,7 +10560,7 @@ async function runOfficeHours(session, {
       session.status = "idle";
       session.error = null;
       emitOfficeHoursStatus(session, {
-        stage: session.runtime?.officeHours?.completedByExpectedCount === true
+        stage: officeHoursRuntimeGatherComplete(session)
           ? "completed"
           : "aborted",
         messageId: assistantMessage.id,
@@ -10518,6 +11111,17 @@ function mergeProviderRuntime(currentRuntime = {}, providerRuntime = {}) {
     if (Object.prototype.hasOwnProperty.call(currentRuntime || {}, key)) {
       merged[key] = currentRuntime[key];
     }
+  }
+  // R1.b: the host owns the ValidationAttempt pointer ({attemptId, revision}). A
+  // provider runtime must never clobber it — carry it forward when the provider's
+  // officeHours object (if any) omits the pointer the host already holds.
+  const priorPointer = currentRuntime?.officeHours?.attemptId;
+  if (priorPointer && merged.officeHours && !merged.officeHours.attemptId) {
+    merged.officeHours = {
+      ...merged.officeHours,
+      attemptId: priorPointer,
+      revision: currentRuntime.officeHours.revision,
+    };
   }
   return merged;
 }
@@ -17905,11 +18509,22 @@ async function suppressOfficeHoursRequestAfterQuestionCap(session, request, acti
   if (isDay1DocHandoffJudgeRequest(request)) {
     return false;
   }
-  if (isDay1DocumentReadinessFollowupRequest(request)) {
-    return false;
+  // R1.b: the locked Day-1 get_users flow uses the ValidationAttempt projection
+  // (a stray card after gather-complete is suppressed). Non-get_users lanes keep
+  // the count-based cap + the Day-1 doc-readiness follow-up exemption.
+  const isGetUsers = isLockedDay1GetUsersContext(
+    String(session?.runtime?.officeHours?.context || ""),
+  );
+  let countProgress = null;
+  if (isGetUsers) {
+    if (!officeHoursRuntimeGatherComplete(session)) return false;
+  } else {
+    if (isDay1DocumentReadinessFollowupRequest(request)) {
+      return false;
+    }
+    countProgress = await getOfficeHoursQuestionProgress(session);
+    if (!countProgress.capReached) return false;
   }
-  const progress = await getOfficeHoursQuestionProgress(session);
-  if (!progress.capReached) return false;
 
   await deleteUserInputArtifacts(appSupportPath, request.sessionId || session.id, request.requestId);
   state.resolvedUserInputIds.add(request.requestId);
@@ -17922,10 +18537,16 @@ async function suppressOfficeHoursRequestAfterQuestionCap(session, request, acti
   session.pendingUserInput = null;
   session.status = "idle";
   session.error = null;
-  stampOfficeHoursExpectedCountCompletion(session, progress);
+  if (countProgress) {
+    stampOfficeHoursExpectedCountCompletion(session, countProgress);
+  }
   await abortActiveOfficeHoursRunAtQuestionCap(session);
   touch(session);
-  emitOfficeHoursQuestionCapCompleted(session, progress, request.requestId);
+  if (countProgress) {
+    emitOfficeHoursQuestionCapCompleted(session, countProgress, request.requestId);
+  } else {
+    emitOfficeHoursStatus(session, { stage: "completed", requestId: request.requestId });
+  }
   return true;
 }
 

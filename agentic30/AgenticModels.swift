@@ -509,23 +509,44 @@ struct OfficeHoursRuntime: Codable, Hashable {
     var calendarDay: Int?
     var workedDayReason: String?
     var promptSnapshots: [OfficeHoursStoredPromptSnapshot]?
-    /// 사이드카가 인터뷰 종결 카드(대안 비교) 답변 제출 시점에 스탬프하는
-    /// 완료 신호. 프롬프트가 이미 답이 분명한 질문을 건너뛰므로(smart-skip)
-    /// 모드 정원(questionCount)보다 적은 답변으로도 인터뷰가 정상 종결될 수
-    /// 있다 — 카운트 게이트만 보면 종결된 인터뷰가 미완으로 읽힌다.
-    var terminalAnswered: Bool?
-    var documentReadiness: OfficeHoursDocumentReadiness? = nil
+    /// R1.b ValidationAttempt 권위 포인터. 사이드카(office-hours-attempt-store)가
+    /// locked Day-1 get_users 인터뷰를 이벤트 스토어로 진행시키고, 그 식별자/리비전을
+    /// 여기로 carry-forward 한다. Mac은 완료를 카운트가 아니라 nextAction.kind로 판정.
+    var attemptId: String? = nil
+    var revision: Int? = nil
+    /// 호스트가 projection에서 파생한, READ-ONLY 표시용 다음 액션(nextAttemptAction 미러).
+    /// kind != "card" 이면 게더(6슬롯) 인터뷰가 끝난 것 = 완료 신호.
+    var nextAction: OfficeHoursNextAction? = nil
+    /// answered / total(=6) 게더 진행도.
+    var gatherProgress: OfficeHoursGatherProgress? = nil
 }
 
-struct OfficeHoursDocumentReadiness: Codable, Hashable {
-    var status: String?
-    var ambiguityScore: Double?
-    var ambiguityThreshold: Double?
-    var judgeScore: Double?
-    var judgeThreshold: Double?
-    var evidenceDebt: [String]?
-    var nextQuestion: String?
-    var updatedAt: String?
+struct OfficeHoursNextAction: Codable, Hashable {
+    var kind: String? = nil
+    var cardType: String? = nil
+    var waitReason: String? = nil
+    var outcome: String? = nil
+    var blocker: OfficeHoursNextActionBlocker? = nil
+    var carry: OfficeHoursNextActionCarry? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, cardType, outcome, blocker, carry
+        case waitReason = "reason"
+    }
+}
+
+struct OfficeHoursNextActionBlocker: Codable, Hashable {
+    var blockerReason: String? = nil
+    var nextUnblockAction: String? = nil
+}
+
+struct OfficeHoursNextActionCarry: Codable, Hashable {
+    var carryReason: String? = nil
+}
+
+struct OfficeHoursGatherProgress: Codable, Hashable {
+    var answered: Int? = nil
+    var total: Int? = nil
 }
 
 struct OfficeHoursStoredPromptSnapshot: Identifiable, Codable, Hashable {

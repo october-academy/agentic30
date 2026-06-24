@@ -338,6 +338,35 @@ test("office hours pending question memory round-trips by day and clears by requ
   }
 });
 
+// R1.b regression: the ValidationAttempt CAS token (attemptId/expectedRevision/
+// cardType/transition) stamped on a pending card's generation MUST survive the
+// persist→restore round-trip. If the normalizer drops it, a card restored after a
+// crash submits with a NaN/stale expectedRevision and corrupts the attempt.
+test("office hours pending question preserves the ValidationAttempt CAS token across restore", async () => {
+  const root = await tempWorkspace();
+  try {
+    const request = makePromptSnapshot({ requestId: "pending-cas", sessionId: "session-cas", question: "후보는?" });
+    request.generation = {
+      ...request.generation,
+      attemptId: "att-xyz",
+      expectedRevision: 4,
+      cardType: "candidate_selection",
+      transition: "select_candidate",
+    };
+    await saveOfficeHoursPendingQuestion({
+      workspaceRoot: root, day: 2, source: "office_hours_day_2", request,
+      now: new Date("2026-06-25T00:00:00.000Z"),
+    });
+    const loaded = await loadOfficeHoursPendingQuestion({ workspaceRoot: root, day: 2 });
+    assert.equal(loaded.request.generation.attemptId, "att-xyz");
+    assert.equal(loaded.request.generation.expectedRevision, 4);
+    assert.equal(loaded.request.generation.cardType, "candidate_selection");
+    assert.equal(loaded.request.generation.transition, "select_candidate");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("office hours pending memory ignores malformed entries and fingerprints stale turns", async () => {
   const root = await tempWorkspace();
   try {

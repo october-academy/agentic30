@@ -196,11 +196,19 @@ export async function writeUserInputResponse(
     submittedAt: new Date().toISOString(),
     ...response,
   };
-  await fs.writeFile(
-    responseFilePath(appSupportPath, sessionId, requestId),
-    JSON.stringify(payload, null, 2),
-    "utf8",
-  );
+  // R1.b: atomic temp-write + rename so the 250ms waitForUserInputResponse poller
+  // never observes a partially-written response file. A torn read would let a
+  // blocked provider run race ahead on incomplete JSON; the rename is atomic on
+  // POSIX so the reader sees either the old absence or the full payload.
+  const finalPath = responseFilePath(appSupportPath, sessionId, requestId);
+  const tempPath = `${finalPath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tempPath, JSON.stringify(payload, null, 2), "utf8");
+    await fs.rename(tempPath, finalPath);
+  } catch (error) {
+    await fs.unlink(tempPath).catch(() => {});
+    throw error;
+  }
   return payload;
 }
 

@@ -874,6 +874,13 @@ function normalizeStructuredPromptGeneration(value) {
     ...(nullableCleanString(source.previousAnswerLabel ?? source.previous_answer_label, 240) ? { previousAnswerLabel: nullableCleanString(source.previousAnswerLabel ?? source.previous_answer_label, 240) } : {}),
     ...(clampInt(source.dimensionStepIndex ?? source.dimension_step_index, 1, 100, null) ? { dimensionStepIndex: clampInt(source.dimensionStepIndex ?? source.dimension_step_index, 1, 100, null) } : {}),
     ...(clampInt(source.dimensionTotal ?? source.dimension_total, 1, 100, null) ? { dimensionTotal: clampInt(source.dimensionTotal ?? source.dimension_total, 1, 100, null) } : {}),
+    // R1.b ValidationAttempt CAS token — MUST survive persist/restore. If these are
+    // dropped, a pending card restored after a crash loses its expectedRevision and
+    // the submit commits with a NaN/stale CAS token (corruption). Preserve verbatim.
+    ...(nullableCleanString(source.attemptId ?? source.attempt_id, 200) ? { attemptId: nullableCleanString(source.attemptId ?? source.attempt_id, 200) } : {}),
+    ...(Number.isFinite(source.expectedRevision ?? source.expected_revision) ? { expectedRevision: source.expectedRevision ?? source.expected_revision } : {}),
+    ...(nullableCleanString(source.cardType ?? source.card_type, 160) ? { cardType: nullableCleanString(source.cardType ?? source.card_type, 160) } : {}),
+    ...(nullableCleanString(source.transition, 160) ? { transition: nullableCleanString(source.transition, 160) } : {}),
   };
   return Object.keys(generation).length ? generation : null;
 }

@@ -78,7 +78,10 @@ struct SidecarEventDecodingTests {
                 "officeHours": {
                   "active": true,
                   "day": 2,
-                  "terminalAnswered": true
+                  "attemptId": "attempt-1",
+                  "revision": 6,
+                  "nextAction": { "kind": "wait", "reason": "action" },
+                  "gatherProgress": { "answered": 6, "total": 6 }
                 }
               }
             }
@@ -156,9 +159,14 @@ struct SidecarEventDecodingTests {
         #expect(event.sessions?.first?.messages.first?.content == "OK")
         #expect(event.sessions?.first?.pendingUserInput?.requestId == "request-1")
         #expect(event.sessions?.first?.pendingUserInput?.questions.first?.allowFreeText == true)
-        // 사이드카가 대안 비교(종결 카드) 답변 시 스탬프하는 인터뷰 완료 신호 —
-        // commitment 바와 doc-ready 게이트가 답변 수 대신 이 신호로도 열린다.
-        #expect(event.sessions?.first?.runtime?.officeHours?.terminalAnswered == true)
+        // R1.b: 인터뷰 완료는 사이드카 ValidationAttempt projection에서 파생된
+        // nextAction.kind 로 판정한다(게더 카드가 더 없으면 wait/terminal). 권위
+        // 포인터({attemptId, revision})와 게더 진행도도 같이 실린다.
+        #expect(event.sessions?.first?.runtime?.officeHours?.attemptId == "attempt-1")
+        #expect(event.sessions?.first?.runtime?.officeHours?.revision == 6)
+        #expect(event.sessions?.first?.runtime?.officeHours?.nextAction?.kind == "wait")
+        #expect(event.sessions?.first?.runtime?.officeHours?.nextAction?.waitReason == "action")
+        #expect(event.sessions?.first?.runtime?.officeHours?.gatherProgress?.answered == 6)
     }
 
     @MainActor @Test func decodesStreamingStateOnMessageReplacedEvent() throws {
@@ -244,16 +252,10 @@ struct SidecarEventDecodingTests {
                 "startedAt": "2026-06-11T00:00:00.000Z",
                 "context": "Expected question count: 6",
                 "day": 1,
-                "documentReadiness": {
-                  "status": "needs_followup",
-                  "ambiguityScore": 47,
-                  "ambiguityThreshold": 20,
-                  "judgeScore": 5,
-                  "judgeThreshold": 8,
-                  "evidenceDebt": ["실명 고객 행동 증거가 아직 약합니다."],
-                  "nextQuestion": "정식 문서 저장 전 가장 강한 고객 행동 증거는 무엇인가요?",
-                  "updatedAt": "2026-06-11T00:02:00.000Z"
-                },
+                "attemptId": "attempt-abc",
+                "revision": 3,
+                "nextAction": { "kind": "card", "cardType": "candidate_selection" },
+                "gatherProgress": { "answered": 1, "total": 6 },
                 "promptSnapshots": [
                   {
                     "sessionId": "session-1",
@@ -312,10 +314,55 @@ struct SidecarEventDecodingTests {
         #expect(snapshot.submissions.first?.freeText == "macOS 앱 개발자")
         #expect(snapshot.editable == true)
         #expect(snapshot.turnSessionId == "old-session")
-        #expect(event.session?.runtime?.officeHours?.documentReadiness?.status == "needs_followup")
-        #expect(event.session?.runtime?.officeHours?.documentReadiness?.ambiguityScore == 47)
-        #expect(event.session?.runtime?.officeHours?.documentReadiness?.judgeThreshold == 8)
-        #expect(event.session?.runtime?.officeHours?.documentReadiness?.evidenceDebt?.first == "실명 고객 행동 증거가 아직 약합니다.")
+        // R1.b: the ValidationAttempt authority pointer + derived display fields.
+        #expect(event.session?.runtime?.officeHours?.attemptId == "attempt-abc")
+        #expect(event.session?.runtime?.officeHours?.revision == 3)
+        #expect(event.session?.runtime?.officeHours?.nextAction?.kind == "card")
+        #expect(event.session?.runtime?.officeHours?.nextAction?.cardType == "candidate_selection")
+        #expect(event.session?.runtime?.officeHours?.gatherProgress?.answered == 1)
+        #expect(event.session?.runtime?.officeHours?.gatherProgress?.total == 6)
+    }
+
+    @MainActor @Test func decodesOfficeHoursNextActionVariants() throws {
+        func runtime(_ nextActionJSON: String) throws -> OfficeHoursRuntime? {
+            let payload = """
+            {
+              "type": "session_updated",
+              "session": {
+                "id": "session-1",
+                "title": "Office Hours",
+                "provider": "codex",
+                "model": "",
+                "status": "idle",
+                "createdAt": "2026-06-11T00:00:00.000Z",
+                "updatedAt": "2026-06-11T00:03:00.000Z",
+                "error": null,
+                "messages": [],
+                "pendingUserInput": null,
+                "runtime": { "officeHours": { "active": true, "nextAction": \(nextActionJSON) } }
+              }
+            }
+            """
+            let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+            return event.session?.runtime?.officeHours
+        }
+
+        let wait = try runtime("{ \"kind\": \"wait\", \"reason\": \"action\" }")
+        #expect(wait?.nextAction?.kind == "wait")
+        #expect(wait?.nextAction?.waitReason == "action")
+
+        let terminal = try runtime("{ \"kind\": \"terminal\", \"outcome\": \"succeeded\" }")
+        #expect(terminal?.nextAction?.kind == "terminal")
+        #expect(terminal?.nextAction?.outcome == "succeeded")
+
+        let blocked = try runtime("{ \"kind\": \"blocked\", \"blocker\": { \"blockerReason\": \"needs auth\", \"nextUnblockAction\": \"connect\" } }")
+        #expect(blocked?.nextAction?.kind == "blocked")
+        #expect(blocked?.nextAction?.blocker?.blockerReason == "needs auth")
+        #expect(blocked?.nextAction?.blocker?.nextUnblockAction == "connect")
+
+        let carried = try runtime("{ \"kind\": \"carried\", \"carry\": { \"carryReason\": \"out of time\" } }")
+        #expect(carried?.nextAction?.kind == "carried")
+        #expect(carried?.nextAction?.carry?.carryReason == "out of time")
     }
 
     @MainActor @Test func decodesConnectionErrorPayload() throws {

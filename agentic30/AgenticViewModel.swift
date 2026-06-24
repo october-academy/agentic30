@@ -11144,19 +11144,6 @@ final class AgenticViewModel: ObservableObject {
                 providerAuthActions: nil
             )
         }
-        let readiness = OfficeHoursDocumentReadiness(
-            status: "needs_followup",
-            ambiguityScore: 47,
-            ambiguityThreshold: 20,
-            judgeScore: 5,
-            judgeThreshold: 8,
-            evidenceDebt: [
-                "실명 고객 행동 증거가 아직 약합니다.",
-                "유료 진입점의 가격, 날짜, 결제 조건이 부족합니다."
-            ],
-            nextQuestion: "정식 문서 저장 전 가장 강한 고객 행동 증거는 무엇인가요?",
-            updatedAt: ISO8601DateFormatter().string(from: now)
-        )
         let session = ChatSession(
             id: sessionID,
             title: "Office Hours",
@@ -11186,9 +11173,10 @@ final class AgenticViewModel: ObservableObject {
                     active: true,
                     source: "ui_testing_day1_readiness_followup",
                     startedAt: ISO8601DateFormatter().string(from: now),
-                    context: "UI test Day 1 Office Hours needs document readiness follow-up",
+                    context: "UI test Day 1 Office Hours interview still gathering",
                     day: 1,
-                    documentReadiness: readiness
+                    nextAction: OfficeHoursNextAction(kind: "card", cardType: "evidence_contract"),
+                    gatherProgress: OfficeHoursGatherProgress(answered: 4, total: 6)
                 )
             )
         )
@@ -11364,16 +11352,8 @@ final class AgenticViewModel: ObservableObject {
                     startedAt: ISO8601DateFormatter().string(from: now),
                     context: "UI test completed Day 1 Office Hours",
                     day: 1,
-                    documentReadiness: OfficeHoursDocumentReadiness(
-                        status: "ready",
-                        ambiguityScore: 12,
-                        ambiguityThreshold: 20,
-                        judgeScore: 8,
-                        judgeThreshold: 8,
-                        evidenceDebt: [],
-                        nextQuestion: "",
-                        updatedAt: ISO8601DateFormatter().string(from: now)
-                    )
+                    nextAction: OfficeHoursNextAction(kind: "wait", waitReason: "action"),
+                    gatherProgress: OfficeHoursGatherProgress(answered: 6, total: 6)
                 )
             )
         )

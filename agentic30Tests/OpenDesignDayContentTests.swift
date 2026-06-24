@@ -879,8 +879,7 @@ struct OpenDesignDayContentTests {
                 startedAt: nil,
                 context: nil,
                 day: day,
-                promptSnapshots: nil,
-                terminalAnswered: nil
+                promptSnapshots: nil
             )
         )
     }

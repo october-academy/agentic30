@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-export const SESSION_STORE_SCHEMA_VERSION = 1;
+export const SESSION_STORE_SCHEMA_VERSION = 2;
 export const LEGACY_DEFAULT_CODEX_MODEL = "gpt-5.4";
 export const PREVIOUS_DEFAULT_CODEX_MODEL = "gpt-5.2-codex";
 export const CURRENT_DEFAULT_CODEX_MODEL = "gpt-5.5";
@@ -44,6 +44,7 @@ export function normalizeSessionForStartup(session) {
     };
   }
   next.pendingUserInput = null;
+  next.runtime = normalizeOfficeHoursRuntimeShapeForStartup(next.runtime);
   if (Array.isArray(next.messages)) {
     next.messages = next.messages
       .filter((message) => !isDiscardableRuntimeFailureMessage(message))
@@ -53,6 +54,26 @@ export function normalizeSessionForStartup(session) {
     }
   }
   return next;
+}
+
+// SCHEMA v2 (R1.b): the locked Day-1 get_users office-hours runtime is authored
+// by the ValidationAttempt event store. Strip the dead count/doc-readiness
+// authority fields a v1 persisted session may carry; preserve the {attemptId,
+// revision} store pointer (and all other runtime keys) so a daemon restart
+// recovers the attempt. No migration of legacy turn logs — the store is authority.
+function normalizeOfficeHoursRuntimeShapeForStartup(runtime) {
+  if (!runtime || typeof runtime !== "object") return runtime;
+  const officeHours = runtime.officeHours;
+  if (!officeHours || typeof officeHours !== "object") return runtime;
+  const {
+    completedByExpectedCount,
+    completedQuestionCount,
+    documentReadinessFollowupCount,
+    terminalAnswered,
+    documentReadiness,
+    ...rest
+  } = officeHours;
+  return { ...runtime, officeHours: rest };
 }
 
 function normalizeMessageForStartup(message) {

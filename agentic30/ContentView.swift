@@ -6671,14 +6671,23 @@ struct ContentView: View {
         officeHoursCompletedAnswerSummaries(session: session).count
     }
 
-    // 인터뷰 완료 판정. 답변 수가 모드 정원에 닿았거나, 사이드카가 종결 카드
-    // (대안 비교) 답변 시점에 runtime.officeHours.terminalAnswered를 스탬프한
-    // 경우. 시스템 프롬프트는 이미 답이 분명한 질문을 건너뛰므로(smart-skip)
-    // 정원보다 적은 답변으로도 인터뷰가 정상 종결된다 — 카운트만 보면 종결된
-    // 인터뷰가 영구 미완(5/6 blocked)으로 읽힌다.
+    // R1.b 인터뷰 완료 판정. 권위는 사이드카 ValidationAttempt projection에서
+    // 파생된 runtime.officeHours.nextAction.kind 다 — kind != "card" 이면 게더
+    // (6슬롯) 인터뷰가 끝난 것. nextAction이 아직 없으면(레거시/초기) 답변 수
+    // 폴백. smart-skip으로 정원보다 적은 답변으로도 정상 종결될 수 있어, 카운트만
+    // 보면 종결된 인터뷰가 영구 미완(5/6 blocked)으로 읽힌다.
+    private func officeHoursInterviewGatherComplete(session: ChatSession?) -> Bool {
+        guard let session else { return false }
+        if let kind = session.runtime?.officeHours?.nextAction?.kind?
+            .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            return kind != "card"
+        }
+        return false
+    }
+
     private func officeHoursInterviewComplete(session: ChatSession?) -> Bool {
         guard let session else { return false }
-        if session.runtime?.officeHours?.terminalAnswered == true { return true }
+        if officeHoursInterviewGatherComplete(session: session) { return true }
         return officeHoursCompletedQuestionCount(session: session) >= selectedOfficeHoursMode.questionCount
     }
 
@@ -6687,7 +6696,7 @@ struct ContentView: View {
     private func officeHoursQuestionTotal(session: ChatSession?) -> Int {
         let total = selectedOfficeHoursMode.questionCount
         guard let session,
-              session.runtime?.officeHours?.terminalAnswered == true else { return total }
+              officeHoursInterviewGatherComplete(session: session) else { return total }
         let completed = officeHoursCompletedQuestionCount(session: session)
         return completed > 0 ? min(total, completed) : total
     }
@@ -6803,16 +6812,12 @@ struct ContentView: View {
             && interviewComplete
     }
 
-    private func officeHoursDocumentReadinessIsReady(session: ChatSession) -> Bool {
-        let status = session.runtime?.officeHours?.documentReadiness?.status?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return status == "ready"
-    }
-
+    // R1.b: doc-readiness 게이트는 폐기됐다. Day-1 닫힘 권위는 사이드카 projection의
+    // 게더 완료(nextAction.kind != "card") + 닫을 준비 상태다. 별도 문서품질 점수
+    // 게이트는 없다(OVERRIDE 3).
     private func officeHoursIsDocReady(session: ChatSession, activeDay: Int) -> Bool {
         activeDay == 1
-            && officeHoursDocumentReadinessIsReady(session: session)
+            && officeHoursInterviewGatherComplete(session: session)
             && officeHoursIsReadyToClose(session: session)
     }
 
