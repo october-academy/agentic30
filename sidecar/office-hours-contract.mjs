@@ -129,7 +129,11 @@ const TRANSITIONS = Object.freeze({
   },
   select_candidate: {
     from: ["needs_candidate"], to: "needs_alternative",
-    requires: ["candidate"], allowedFields: ["candidate", "candidateId"],
+    // candidateHintId is ADDITIVE (Step 2): when a grounded `## Verified Candidate
+    // Hints` option is picked, the host threads its exact hint id here so cards 4-6
+    // and Day-2 carry a stable candidate ref. Harmless no-op while hints are empty.
+    // `requires`/`to` are UNCHANGED — only the allowlist grows.
+    requires: ["candidate"], allowedFields: ["candidate", "candidateId", "candidateHintId"],
   },
   record_alternative: {
     from: ["needs_alternative"], to: "needs_action_contract",

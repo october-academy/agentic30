@@ -507,6 +507,11 @@ import {
   gradeEvidence,
   requiredGradeForTransition,
 } from "./office-hours-contract.mjs";
+import {
+  shouldValidateFirstCandidatePayload,
+  classifyFirstCandidatePayload,
+  buildCanonicalFirstCandidateCard,
+} from "./office-hours-first-candidate-host.mjs";
 import { describeVendor as describeGstackVendor } from "./vendor-skill-loader.mjs";
 import {
   buildFirstPromptForDay,
@@ -7028,6 +7033,17 @@ async function prepareDailyOfficeHoursDigest(session, {
   return digest;
 }
 
+// DEFERRED EXTRACTION POINT (Step 2, Deliverable D): a `## Verified Candidate
+// Hints` section would be injected HERE — alongside the project-context brief — to
+// feed the locked Day-1 get_users first_candidate card grounded option ids (the
+// prompt's hints-present branch + the contract's candidateHintId field are already
+// wired and dormant-but-ready). It is intentionally NOT built yet: agent-work-history
+// events are the founder's OWN dev activity (prompt|command|file_edit) with no
+// person/handle/counterparty field, so there is no honest customer-contact source to
+// extract names from. The eventual source is the gated BIP Research Radar web-search
+// flow, not a name-extractor over dev prompts (that surfaces coworkers/vendors and
+// lowers icp_fit). Until then the host forces an honest named free-text capture
+// (office-hours-first-candidate-host.mjs). No extractor module exists by design.
 async function buildOfficeHoursProjectContextBrief(workspaceRoot) {
   if (!workspaceRoot) return "";
   const projectContext = await loadProjectContextCache({ workspaceRoot }).catch(() => null);
@@ -8249,6 +8265,36 @@ function officeHoursCardTypeForSignal(signalId = "") {
 // `schedule_execution` (the commitment slot) needs a parseable FUTURE dueAt; the
 // commitment is a same-day timebox, so we derive dueAt = end of the commit day and
 // keep the user's words in commitmentNote. Returns null for non-gather signals.
+// Resolve the candidateHintId for an answered candidate_selection card: find the
+// pending card's selected option (by label) and read its grounded hint id. Returns
+// "" when the answer was free-text or the picked option carried no hint id (the
+// empty-hints reality). Pure; tolerant of missing shapes.
+function resolveCandidateHintIdFromCard(pendingUserInput, response) {
+  const question = Array.isArray(pendingUserInput?.questions) ? pendingUserInput.questions[0] : null;
+  const options = Array.isArray(question?.options) ? question.options : [];
+  if (!options.length) return "";
+  const responses = Array.isArray(response?.responses) ? response.responses : [];
+  const selectedLabels = new Set(
+    responses.flatMap((entry) =>
+      Array.isArray(entry?.selectedOptions) ? entry.selectedOptions.map((label) => String(label || "").trim()) : [],
+    ).filter(Boolean),
+  );
+  if (!selectedLabels.size) return "";
+  for (const option of options) {
+    const label = String(option?.label || "").trim();
+    if (!label || !selectedLabels.has(label)) continue;
+    const hintId = String(
+      option?.candidateHintId
+        || option?.candidate_hint_id
+        || option?.candidateId
+        || option?.candidate_id
+        || "",
+    ).trim();
+    if (hintId) return hintId;
+  }
+  return "";
+}
+
 function buildAttemptCommandFromCard(pendingUserInput, response, answeredSignalId, {
   responseText = "",
   responseDescription = "",
@@ -8273,6 +8319,16 @@ function buildAttemptCommandFromCard(pendingUserInput, response, answeredSignalI
     for (const key of required) {
       fields[key] = answer;
     }
+  }
+  // Step 2 (additive): thread a grounded candidate hint id through select_candidate
+  // when the answered candidate_selection card carried one (a `## Verified Candidate
+  // Hints` grounded option). Harmless no-op while hints are empty — the field is
+  // allowlisted on the transition but never required, so cards 4-6 + Day-2 gain a
+  // stable candidate ref only when extraction exists. select_candidate allowedFields
+  // already includes candidateHintId (office-hours-contract.mjs).
+  if (card.transition === "select_candidate") {
+    const candidateHintId = resolveCandidateHintIdFromCard(pendingUserInput, response);
+    if (candidateHintId) fields.candidateHintId = candidateHintId;
   }
   const audit = {
     questionText: String(questionText || ""),
@@ -9874,7 +9930,7 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
       signalId: ladderSignalOverride,
     };
   }
-  const payload = buildOfficeHoursInlineStructuredPromptPayload({
+  let payload = buildOfficeHoursInlineStructuredPromptPayload({
     sessionId: session.id,
     provider: session.provider,
     assistantMessage,
@@ -9893,6 +9949,40 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
       cardType: attemptToken.cardType,
       transition: attemptToken.transition,
     };
+  }
+
+  // ── Host-enforced honest first_candidate (Deliverable B) ────────────────────
+  // GPT-5.5 Pro: prompt wording alone is insufficient — the model can still emit a
+  // generic-category sourcing card. With NO `## Verified Candidate Hints` injected
+  // (today's reality), the host validates the first_candidate card with the SAME
+  // deterministic matcher the grounding harness uses, rejects a generic-only card,
+  // and substitutes the canonical free-text + single-blocker card. Fail-closed, no
+  // silent accept. A card that already forces a named free-text capture (or carries
+  // grounded hint options) is never false-rejected.
+  if (shouldValidateFirstCandidatePayload(payload, context)) {
+    const classification = classifyFirstCandidatePayload(payload);
+    if (!classification || classification.genericOnly) {
+      const fallback = buildCanonicalFirstCandidateCard({
+        sessionId: session.id,
+        provider: session.provider,
+        toolName: payload.toolName,
+        attemptToken: attemptToken
+          ? {
+              attemptId: attemptToken.attemptId,
+              expectedRevision: attemptToken.expectedRevision,
+              cardType: attemptToken.cardType,
+              transition: attemptToken.transition,
+            }
+          : null,
+      });
+      telemetry.captureEvent("mac_sidecar_office_hours_first_candidate_rejected", {
+        session_id: session.id,
+        provider: session.provider,
+        reason: classification ? "generic_only" : "no_question",
+        source,
+      });
+      payload = fallback;
+    }
   }
 
   const request = await createUserInputRequest(

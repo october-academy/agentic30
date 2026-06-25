@@ -519,7 +519,12 @@ export async function runRealProjectArc(projectPath, {
   let stderr = "";
   child.stderr.on("data", (c) => { stderr += String(c); });
 
-  const captured = { runId, mode, label, projectPath: path.resolve(projectPath), days: [], onboardingAnswered: 0, errors: [], attemptEvidenceSubmissions: [], attemptEvidenceEnabled: attemptEvidence === true, hasGoal: Boolean(seed.day1Goal), hasProjectContext: Boolean(seed.projectContext) };
+  // Step 2: this harness never injects a `## Verified Candidate Hints` section
+  // (buildDay1LockedGoalContext does not, matching the substrate reality), so the
+  // grounding invariants treat the run as thin-context (no fabricated names allowed,
+  // first_candidate must force a named free-text capture). Stamp it explicitly so
+  // computeGroundingInvariants reads the real injection state rather than guessing.
+  const captured = { runId, mode, label, projectPath: path.resolve(projectPath), days: [], onboardingAnswered: 0, errors: [], attemptEvidenceSubmissions: [], attemptEvidenceEnabled: attemptEvidence === true, hasGoal: Boolean(seed.day1Goal), hasProjectContext: Boolean(seed.projectContext), verifiedCandidateHintsInjected: false };
   const events = [];
   let ws;
   try {

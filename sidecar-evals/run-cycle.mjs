@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { runRealProjectArc } from "./real-project-arc.mjs";
 import { judgeCapture } from "./judge-real-arc.mjs";
 import { loadReferenceDocs, SCORE_KEYS } from "./dogfood-judge.mjs";
+import { computeGroundingInvariants, summarizeGroundingInvariants } from "./grounding-invariants.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scratch = path.resolve(packageRoot, "..", "..");
@@ -78,6 +79,10 @@ async function main() {
       continue;
     }
     const v = judged.verdict;
+    // Deterministic grounding invariants (primary low-noise signal). Computed from
+    // the captured cards alone — no LLM — so a <0.5 first_candidate grounding change
+    // the judge cannot resolve (σ~1.0) shows up here as a hard boolean flip.
+    const invariants = computeGroundingInvariants(captured);
     results.push({
       label: proj.label,
       elapsedSec: Math.round((Date.now() - t0) / 1000),
@@ -89,6 +94,7 @@ async function main() {
       judge_summary: v.judge_summary,
       regressions: v.regressions,
       judge_status: v.judge_status,
+      groundingInvariants: invariants,
     });
   }
 
@@ -105,6 +111,14 @@ async function main() {
     .filter(([, v]) => typeof v === "number")
     .sort((a, b) => a[1] - b[1])[0] || null;
 
+  // Cycle-level grounding rollup: ALL-projects booleans + mean rate. This is the
+  // acceptance signal for the first_candidate fix (judge score may not move).
+  const groundingInvariants = summarizeGroundingInvariants(
+    results
+      .filter((r) => r.groundingInvariants)
+      .map((r) => ({ label: r.label, invariants: r.groundingInvariants })),
+  );
+
   const report = {
     cycle: opts.cycle,
     at: new Date().toISOString(),
@@ -113,6 +127,7 @@ async function main() {
     cycleOverall,
     dimMeans,
     weakestDimension: weakest ? { key: weakest[0], mean: weakest[1] } : null,
+    groundingInvariants,
     target: 9.5,
     reached: typeof cycleOverall === "number" && cycleOverall >= 9.5,
     projects: results,
@@ -127,7 +142,26 @@ async function main() {
   console.log(`weakest: ${weakest ? `${weakest[0]} (${weakest[1]})` : "n/a"}`);
   for (const r of results) {
     console.log(`  [${r.label}] overall=${r.overall ?? r.error} cards=${r.cardCount ?? "-"} outcomes=${(r.dayOutcomes || []).join(",")}`);
+    const gi = r.groundingInvariants;
+    if (gi) {
+      console.log(
+        `    grounding: first_candidate_present=${gi.first_candidate_present}`
+        + ` generic_only=${gi.first_candidate_generic_only}`
+        + ` forces_specificity=${gi.first_candidate_forces_specificity}`
+        + ` has_blocker=${gi.first_candidate_has_blocker}`
+        + ` no_fabricated_names=${gi.thin_context_no_fabricated_names}`
+        + ` ref_consistency_4_6=${gi.candidate_ref_consistency_4_6}`,
+      );
+      console.log(`    first_candidate options: ${JSON.stringify(gi._detail?.firstCandidateOptions || [])}`);
+    }
   }
+  console.log(
+    `groundingInvariants(cycle): generic_only_any=${groundingInvariants.first_candidate_generic_only_any}`
+    + ` forces_specificity_all=${groundingInvariants.first_candidate_forces_specificity_all}`
+    + ` has_blocker_all=${groundingInvariants.first_candidate_has_blocker_all}`
+    + ` no_fabricated_names_all=${groundingInvariants.thin_context_no_fabricated_names_all}`
+    + ` ref_consistency_4_6_mean=${groundingInvariants.candidate_ref_consistency_4_6_mean}`,
+  );
   console.log(`report → ${out}`);
 }
 

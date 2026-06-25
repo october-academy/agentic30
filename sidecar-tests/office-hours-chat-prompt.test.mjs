@@ -192,7 +192,14 @@ test("office-hours locked Day 1 get_users prompt forces active-user definition f
   assert.match(prompt, /adaptive locked Day 1 get_users question ladder/);
   assert.match(prompt, /signalId\/semantic slot is fixed/);
   assert.match(prompt, /get_users_first_candidate/);
-  assert.match(prompt, /named people, handles, segments, channels, or evidence-backed sources/);
+  // Step 2: the first_candidate slot now host-enforces an honest named capture in
+  // the EMPTY-hints reality (no generic sourcing categories), with a dormant
+  // `## Verified Candidate Hints` grounded-option branch.
+  assert.match(prompt, /NOT offer generic sourcing-category options/);
+  assert.match(prompt, /NAME an exact reachable person\/handle\/thread\/source in free text/);
+  assert.match(prompt, /EXACTLY ONE explicit `아직 후보 없음` blocker/);
+  assert.match(prompt, /NEVER fabricate a name/);
+  assert.match(prompt, /## Verified Candidate Hints/);
   assert.match(prompt, /get_users_current_alternative/);
   assert.match(prompt, /product domain's likely current alternatives/);
   assert.match(prompt, /get_users_today_request/);
@@ -201,7 +208,8 @@ test("office-hours locked Day 1 get_users prompt forces active-user definition f
   assert.match(prompt, /available surfaces in the project context/);
   assert.match(prompt, /get_users_day1_commitment/);
   assert.match(prompt, /candidate, request, deadline, and evidence format/);
-  assert.ok(prompt.includes("MUST NOT ask `고객 후보 1명은 어디에서 찾을 건가요?` as a standalone sourcing question"));
+  assert.ok(prompt.includes("MUST NOT ask `고객 후보 1명은 어디에서 찾을 건가요?`"));
+  assert.match(prompt, /MUST NOT offer generic sourcing-category options/);
   assert.match(prompt, /candidate, request, and evidence format/);
   assert.doesNotMatch(prompt, /Options exactly: `바로 연락할 사람`/);
   assert.doesNotMatch(prompt, /The card question MUST be: `가입이나 조회가 아니라/);

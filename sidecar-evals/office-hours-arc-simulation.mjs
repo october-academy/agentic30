@@ -69,6 +69,10 @@ export const OFFICE_HOURS_ARC_PERSONAS = Object.freeze({
       "네, 그걸로 오늘 마무리할게요.",
       "네, 그걸로 오늘 마무리할게요.",
     ]),
+    // Named reachable first candidate for the free-text-forcing first_candidate card.
+    // Carries a concrete identity (실명 + @핸들) + channel + today's request so the
+    // host's honest first_candidate card is answerable with specificity, not a bucket.
+    firstCandidate: "조은성 (@joeunseong), macOS 1인 개발자. 오늘 카톡으로 이 검증 문제 30분 통화 요청 보낼게요.",
     commitment: Object.freeze({
       customer: "조은성",
       channel: "kakao",
@@ -89,6 +93,7 @@ export const OFFICE_HOURS_ARC_PERSONAS = Object.freeze({
       "Threads에 데모 1개 올리고 링크를 남길게요.",
       "네, 그걸로 마무리할게요.",
     ]),
+    firstCandidate: "Threads @indiehacker_kr 박지원 — 데모 링크 DM으로 보내고 반응 물어볼게요.",
     commitment: Object.freeze({
       customer: "공개 채널 관찰자",
       channel: "threads",
@@ -123,6 +128,7 @@ export const OFFICE_HOURS_ARC_PERSONAS = Object.freeze({
       "네, 그걸로 오늘 마무리할게요.",
       "네, 그걸로 오늘 마무리할게요.",
     ]),
+    firstCandidate: "이서연 (@seoyeon_mind), 마음챙김에 관심 있는 30대 직장인 친구. 오늘 카톡으로 베타 명상 1회 요청 보낼게요.",
     commitment: Object.freeze({
       customer: "마음챙김에 관심 있는 30대 직장인 지인",
       channel: "kakao",
@@ -256,6 +262,22 @@ export function selectStructuredResponse({ question, persona, turnIndex }) {
   if (/demand_evidence/i.test(signalId) && options.length) {
     const honest = options.find((o) => /관심만|증거가 없|no evidence|아직/i.test(o.label || o.description || ""));
     return { selectedOptions: honest ? [honest.label] : [], freeText };
+  }
+  // get_users_first_candidate now forces a NAMED free-text capture (Step 2 host
+  // enforcement): the card no longer offers a generic sourcing bucket to pick, so a
+  // persona that only selects options would stall the flow. Answer with the persona's
+  // exact reachable candidate in free text (a real name/handle + channel + request),
+  // and pick the named-capture option (never the 아직 후보 없음 blocker) when present
+  // so the candidate is concrete and the ladder advances to gather-complete.
+  if (/get_users_first_candidate|first_candidate/i.test(signalId)) {
+    const namedCandidate = String(persona?.firstCandidate || persona?.commitment?.candidateFreeText || "").trim()
+      || freeText;
+    const blockerRe = /후보 없음|후보 이름 없음|no candidate/i;
+    const namedOption = options.find((o) => !blockerRe.test(o.label || ""));
+    return {
+      selectedOptions: namedOption ? [namedOption.label] : [],
+      freeText: namedCandidate,
+    };
   }
   return { selectedOptions: [], freeText };
 }
