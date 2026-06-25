@@ -3402,6 +3402,27 @@ struct SidecarEventDecodingTests {
         #expect(event.error == "Agent finished but the file was not found at .agentic30/docs/SPEC.md")
     }
 
+    @MainActor @Test func decodesRecoverableDocCreationResultWithProvider() throws {
+        let payload = """
+        {
+          "type": "doc_creation_result",
+          "docType": "icp",
+          "provider": "claude",
+          "error": "Claude Code process aborted by user",
+          "errorKind": "provider_aborted",
+          "recoverable": true
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "doc_creation_result")
+        #expect(event.docType == "icp")
+        #expect(event.provider == "claude")
+        #expect(event.error == "Claude Code process aborted by user")
+        #expect(event.errorKind == "provider_aborted")
+    }
+
     @MainActor @Test func decodesDiagnosticsSnapshot() throws {
         let payload = """
         {

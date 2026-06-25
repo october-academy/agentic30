@@ -18045,6 +18045,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
     broadcast({
       type: "doc_creation_result",
       docType,
+      provider,
       error: formatError(error),
       ...providerRecoverableErrorEnvelope(errorKind),
     });

@@ -814,6 +814,7 @@ test("create_doc reports provider aborts as recoverable doc creation results", a
         && event.errorKind === "provider_aborted",
     );
     assert.equal(result.recoverable, true);
+    assert.equal(result.provider, "claude");
     assert.match(result.error, /aborted by user/);
 
     await waitForEventSettle();

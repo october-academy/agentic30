@@ -72,6 +72,36 @@ final class SidecarErrorTelemetryClassificationTests: XCTestCase {
         XCTAssertTrue(captures.allSatisfy { !$0.isException })
     }
 
+    func testRecoverableDocCreationResultCapturesTelemetryEventInsteadOfException() throws {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
+        var captures: [PostHogTelemetryCapture] = []
+        PostHogTelemetry.captureSink = { captures.append($0) }
+        defer { PostHogTelemetry.resetTestingHooks() }
+
+        let payload = """
+        {
+          "type": "doc_creation_result",
+          "docType": "icp",
+          "provider": "claude",
+          "error": "Claude Code process aborted by user",
+          "errorKind": "provider_aborted",
+          "recoverable": true
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        viewModel.applySidecarEventForTesting(event)
+
+        let capture = try XCTUnwrap(captures.last)
+        XCTAssertEqual(capture.event, "mac_provider_aborted")
+        XCTAssertFalse(capture.isException)
+        XCTAssertEqual(capture.properties["operation"] as? String, "document_creation")
+        XCTAssertEqual(capture.properties["doc_type"] as? String, "icp")
+        XCTAssertEqual(capture.properties["error_kind"] as? String, "provider_aborted")
+        XCTAssertEqual(capture.properties["provider"] as? String, "claude")
+        XCTAssertTrue(captures.allSatisfy { !$0.isException })
+    }
+
     func testUnknownSidecarErrorStillCapturesException() throws {
         let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true)
         var captures: [PostHogTelemetryCapture] = []
