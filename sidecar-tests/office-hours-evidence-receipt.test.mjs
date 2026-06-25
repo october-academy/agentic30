@@ -25,6 +25,7 @@ const CTX = Object.freeze({
 
 function fields(over = {}) {
   return {
+    evidenceIdentity: `upload:actor_1:${"a".repeat(64)}`,
     artifactId: "art_1", projectId: "proj_1", attemptId: "att_1", actorId: "actor_1", evidenceContractId: "ec_1",
     sha256: "a".repeat(64), byteLength: 1234,
     declaredMediaType: "image/png", detectedMediaType: "image/png", contentValidation: "image_decode_succeeded",
@@ -47,6 +48,8 @@ test("protocol is v3 and round-trips: opaque token sign → verify (Buffer key)"
   assert.equal(v.maxGrade, "action_proof");
   assert.deepEqual(v.verifiedClaims, ["message.sent"]);
   assert.equal(v.evidence.sha256, "a".repeat(64));
+  // the signed evidenceIdentity (the registry's durable replay key) survives verification.
+  assert.equal(v.evidence.evidenceIdentity, `upload:actor_1:${"a".repeat(64)}`);
   // the verified evidence NEVER carries a client sourceType/strength/kind.
   assert.equal(v.evidence.sourceType, undefined);
   assert.equal(v.evidence.strength, undefined);
@@ -146,6 +149,7 @@ test("signing fails closed on bad ids / sha256 / byteLength / origin / missing k
   assert.throws(() => sign({ byteLength: 1.5 }), /byteLength/);
   assert.throws(() => sign({ origin: "evil_origin" }), /origin/);
   assert.throws(() => sign({ attemptId: "" }), /attemptId/);
+  assert.throws(() => sign({ evidenceIdentity: "" }), /evidenceIdentity/);
 });
 
 test("malformed tokens rejected (not thrown): bad protocol, shape, oversized", () => {

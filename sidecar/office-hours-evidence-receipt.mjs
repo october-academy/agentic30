@@ -88,6 +88,7 @@ export function isRejectedRefScheme(ref = "") {
 const GRADE_RANK = Object.freeze({ action_proof: 1, customer_outcome: 2, goal_proof: 3 });
 const HEX64 = /^[0-9a-f]{64}$/;
 const ID_RE = /^[A-Za-z0-9._:-]{1,200}$/;
+const EVIDENCE_ID_RE = /^[A-Za-z0-9._:-]{1,512}$/;
 const MAX_TOKEN_BYTES = 8192; // DoS bound on token size.
 
 function b64urlEncode(str) {
@@ -110,6 +111,12 @@ function canonicalPayload(p) {
   return JSON.stringify({
     protocol: EVIDENCE_RECEIPT_PROTOCOL,
     keyId: p.keyId,
+    // The opaque durable replay key the ingress assigned (office-hours-artifact-registry
+    // deriveEvidenceIdentity). Signed so the verified receipt carries the SAME identity
+    // the registry consumes — closing the verifier↔registry seam for every origin
+    // (provider_event / recipient_callback identities are not reconstructable from
+    // artifactId/sha256 alone).
+    evidenceIdentity: p.evidenceIdentity,
     artifactId: p.artifactId,
     projectId: p.projectId,
     attemptId: p.attemptId,
@@ -161,6 +168,11 @@ export function signEvidenceReceipt(fields = {}, { secret, keyId } = {}) {
   for (const f of ["artifactId", "projectId", "attemptId", "actorId", "evidenceContractId"]) {
     if (!ID_RE.test(String(fields[f] ?? "").trim())) throw new Error(`signEvidenceReceipt: invalid id field "${f}".`);
   }
+  // evidenceIdentity is the registry's durable replay key (e.g. upload:<actorId>:<sha256>)
+  // — allow a longer composite than a plain id.
+  if (!EVIDENCE_ID_RE.test(String(fields.evidenceIdentity ?? "").trim())) {
+    throw new Error("signEvidenceReceipt: invalid evidenceIdentity.");
+  }
   if (!HEX64.test(String(fields.sha256 ?? "").trim())) throw new Error("signEvidenceReceipt: sha256 must be 64 lowercase hex.");
   if (!(isFiniteInt(fields.byteLength) && fields.byteLength > 0)) throw new Error("signEvidenceReceipt: byteLength must be a positive integer.");
   if (!trustTierForOrigin(String(fields.origin ?? "").trim())) throw new Error(`signEvidenceReceipt: origin "${fields.origin}" not allowlisted.`);
@@ -173,6 +185,7 @@ export function signEvidenceReceipt(fields = {}, { secret, keyId } = {}) {
   if (!claims) throw new Error("signEvidenceReceipt: verifiedClaims must be a non-empty subset of the closed claim enum allowed for this origin.");
   const payload = {
     keyId: kid,
+    evidenceIdentity: String(fields.evidenceIdentity).trim(),
     artifactId: String(fields.artifactId).trim(),
     projectId: String(fields.projectId).trim(),
     attemptId: String(fields.attemptId).trim(),
@@ -276,6 +289,7 @@ export function verifyEvidenceReceipt(token, {
     evidence: {
       origin: payload.origin,
       trustTier,
+      evidenceIdentity: String(payload.evidenceIdentity),
       artifactId: String(payload.artifactId),
       sha256: String(payload.sha256),
       detectedMediaType: String(payload.detectedMediaType || ""),
