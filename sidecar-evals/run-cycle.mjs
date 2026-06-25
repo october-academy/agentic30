@@ -119,17 +119,53 @@ async function main() {
       .map((r) => ({ label: r.label, invariants: r.groundingInvariants })),
   );
 
+  // ── Lexicographic 3-stage gate (GPT-5.5 Pro architecture verdict, 2026-06-25) ──
+  // The retired `target:9.5 / reached` objective is GONE. The 6-dim LLM judge mean is
+  // a DIAGNOSTIC PROXY, not a release gate: chasing 9.5 on a sibling-model judge that
+  // reads the product's OWN docs is structurally proxy-polishing — a 9.5 card and a
+  // 6.0 card produce identical real-world results if no real customer is contacted.
+  // Real quality = recorded external non-founder behavior (N), captured by the
+  // outcome/Action-Receipt rail (A′), currently N=0. The three stages are
+  // LEXICOGRAPHIC (each necessary, none compensable by another):
+  //   1. mechanically_valid   — deterministic integrity/grounding invariants (HARD veto)
+  //   2. proxy_preferred      — the synthetic 6-dim mean RANKS candidates (gradient only)
+  //   3. externally_validated — real action/outcome data; in this synthetic harness = INSUFFICIENT
+  const stage1Failures = [];
+  if (groundingInvariants.first_candidate_generic_only_any === true) stage1Failures.push("first_candidate_generic_only_any=true");
+  if (groundingInvariants.first_candidate_forces_specificity_all === false) stage1Failures.push("first_candidate_forces_specificity_all=false");
+  if (groundingInvariants.first_candidate_has_blocker_all === false) stage1Failures.push("first_candidate_has_blocker_all=false");
+  if (groundingInvariants.thin_context_no_fabricated_names_all === false) stage1Failures.push("thin_context_no_fabricated_names_all=false");
+  const mechanicallyValid = stage1Failures.length === 0;
+  // Stage 3 requires REAL external-outcome data. This synthetic harness (scripted
+  // persona + sim/registered-fixture evidence) cannot produce it by construction →
+  // N=0 here always. Only the in-product A′ outcome rail can move this off INSUFFICIENT.
+  const externallyValidated = "INSUFFICIENT_EXTERNAL_EVIDENCE";
+
   const report = {
     cycle: opts.cycle,
     at: new Date().toISOString(),
     days: opts.days,
     maxTurns: opts.maxTurns,
+    // The honest gate (replaces the retired target:9.5/reached).
+    gate: {
+      stage1_mechanically_valid: mechanicallyValid,
+      stage1_failures: stage1Failures,
+      stage2_proxy_preferred: {
+        cycleOverall,
+        dimMeans,
+        weakestDimension: weakest ? { key: weakest[0], mean: weakest[1] } : null,
+      },
+      stage3_externally_validated: externallyValidated,
+      verdict: mechanicallyValid
+        ? "PROXY_PREFERRED — synthetic-proxy only; external validation INSUFFICIENT (N=0). NOT a real-quality claim."
+        : "MECHANICALLY_INVALID — deterministic integrity gate failed; fix before reading the proxy.",
+      note: "The 6-dim LLM judge mean is a DIAGNOSTIC PROXY, not a release objective. 9.5-chasing is RETIRED (GPT-5.5 Pro verdict): real quality = recorded external behavior N, captured by the A′ outcome rail. A cycle where the proxy falls but a real customer is contacted is progress; a 9.5 with N=0 is not.",
+    },
+    // Diagnostic proxy (kept for variance/ranking; NOT the gate).
     cycleOverall,
     dimMeans,
     weakestDimension: weakest ? { key: weakest[0], mean: weakest[1] } : null,
     groundingInvariants,
-    target: 9.5,
-    reached: typeof cycleOverall === "number" && cycleOverall >= 9.5,
     projects: results,
   };
   const out = opts.out || path.join(packageRoot, "sidecar-evals", ".artifacts", `cycle-${opts.cycle}.json`);
@@ -137,9 +173,11 @@ async function main() {
   await fs.writeFile(out, JSON.stringify(report, null, 2) + "\n");
 
   console.log(`\n=== CYCLE ${opts.cycle} ===`);
-  console.log(`cycleOverall: ${cycleOverall} (target 9.5, reached=${report.reached})`);
-  console.log(`dimMeans: ${SCORE_KEYS.map((k) => `${k}=${dimMeans[k]}`).join(" ")}`);
-  console.log(`weakest: ${weakest ? `${weakest[0]} (${weakest[1]})` : "n/a"}`);
+  console.log(`GATE: ${report.gate.verdict}`);
+  console.log(`  stage1 mechanically_valid=${mechanicallyValid}${stage1Failures.length ? ` (failures: ${stage1Failures.join(", ")})` : ""}`);
+  console.log(`  stage2 proxy(DIAGNOSTIC only, NOT a gate): cycleOverall=${cycleOverall} weakest=${weakest ? `${weakest[0]}(${weakest[1]})` : "n/a"}`);
+  console.log(`  stage3 externally_validated=${externallyValidated} — real N is moved only by the in-product A′ outcome rail`);
+  console.log(`dimMeans(diagnostic): ${SCORE_KEYS.map((k) => `${k}=${dimMeans[k]}`).join(" ")}`);
   for (const r of results) {
     console.log(`  [${r.label}] overall=${r.overall ?? r.error} cards=${r.cardCount ?? "-"} outcomes=${(r.dayOutcomes || []).join(",")}`);
     const gi = r.groundingInvariants;
