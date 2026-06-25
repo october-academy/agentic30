@@ -18048,14 +18048,17 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
     });
     }
   } catch (error) {
-  telemetry.captureException(error, {
+    const errorKind = reportProviderRunError(error, {
       operation: "runCreateDoc",
-    doc_type: docType,
+      doc_type: docType,
+      provider,
     });
-  broadcast({
+    broadcast({
       type: "doc_creation_result",
       docType,
+      provider,
       error: formatError(error),
+      ...providerRecoverableErrorEnvelope(errorKind),
     });
   }
 }

@@ -9356,15 +9356,29 @@ final class AgenticViewModel: ObservableObject {
             }
             if let error = event.error {
                 lastError = error
-                PostHogTelemetry.captureException(
-                    NSError(domain: "DocumentCreation", code: -1, userInfo: [NSLocalizedDescriptionKey: error]),
-                    properties: [
-                        "component": "agentic_view_model",
-                        "operation": "document_creation",
-                        "doc_type": event.docType ?? "",
-                    ],
-                    authSession: macAuthSession
-                )
+                if let telemetryEvent = Self.nonExceptionSidecarErrorTelemetryEvent(forErrorKind: event.errorKind) {
+                    PostHogTelemetry.capture(
+                        telemetryEvent,
+                        properties: [
+                            "component": "agentic_view_model",
+                            "operation": "document_creation",
+                            "doc_type": event.docType ?? "",
+                            "error_kind": event.errorKind ?? "",
+                            "provider": event.provider ?? "",
+                        ],
+                        authSession: macAuthSession
+                    )
+                } else {
+                    PostHogTelemetry.captureException(
+                        NSError(domain: "DocumentCreation", code: -1, userInfo: [NSLocalizedDescriptionKey: error]),
+                        properties: [
+                            "component": "agentic_view_model",
+                            "operation": "document_creation",
+                            "doc_type": event.docType ?? "",
+                        ],
+                        authSession: macAuthSession
+                    )
+                }
             }
             if let error = event.error {
                 completeLongRunningCompletionAttempt(
