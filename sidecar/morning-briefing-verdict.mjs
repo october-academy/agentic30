@@ -133,6 +133,13 @@ function sourceClassFor(sourceId = "") {
   return SOURCE_CLASSES[sourceId] || "aggregate_source";
 }
 
+function sourceLabelFor(sourceId = "") {
+  if (sourceId === "cloudflare") return "Cloudflare";
+  if (sourceId === "github") return "GitHub";
+  if (sourceId === "posthog") return "PostHog";
+  return safeText(sourceId, 80);
+}
+
 function classifyFreshness(checkedAt, now = new Date()) {
   const timestamp = Date.parse(String(checkedAt || ""));
   if (!Number.isFinite(timestamp)) return "missing";
@@ -237,7 +244,7 @@ function buildGroupedSourceEvidence({ groupId, digest = {}, briefing = {} }) {
   const drilldown = drilldowns?.[groupId] || null;
   const label = groupId === "github"
     ? "GitHub"
-    : safeText(representative.label || card?.label || groupId, 80);
+    : safeText(representative.label || card?.label, 80) || sourceLabelFor(groupId);
   const counts = rawSources.reduce((acc, source) => ({
     ...acc,
     ...numericCounts(source?.counts || {}),
@@ -358,6 +365,43 @@ function addExternalSourceClaims(claims, sources = []) {
       customerEvidence: false,
       supportsHealthy: false,
       refs: source.facts,
+    });
+  }
+}
+
+function sourceMissingReason(source = {}) {
+  const collection = objectOrEmpty(source.collectionStatus);
+  return safeText(
+    collection.summary
+      || collection.detail
+      || source.summary
+      || collection.state
+      || source.state
+      || "missing_source_evidence",
+    180,
+  );
+}
+
+function addRequiredSourceGapClaims(claims, sources = []) {
+  for (const sourceId of REQUIRED_SOURCE_REFS) {
+    const source = toArray(sources).find((candidate) => candidate?.id === sourceId);
+    if (hasSourceEvidence(source)) continue;
+    const label = safeText(source?.label, 80) || sourceLabelFor(sourceId);
+    const missingReason = sourceMissingReason(source);
+    addClaim(claims, {
+      id: `source_${sourceId}_gap`,
+      sourceId,
+      sourceClass: sourceClassFor(sourceId),
+      tier: "instrumentation_gap",
+      summary: `${label} aggregate source missing or unavailable: ${missingReason}`,
+      counts: {},
+      window: sourceWindowLabel(source || {}),
+      freshness: "missing",
+      confidence: "high",
+      customerEvidence: false,
+      supportsHealthy: false,
+      missingReason,
+      refs: toArray(source?.facts).length ? source.facts : [`${label} collection state ${safeText(source?.state || "missing", 40)}`],
     });
   }
 }
@@ -662,6 +706,7 @@ export function buildMorningBriefingVerdictEvidenceBundle({
 } = {}) {
   const claims = [];
   addExternalSourceClaims(claims, sources);
+  addRequiredSourceGapClaims(claims, sources);
   addProofLedgerClaims(claims, proofLedger);
   const day = normalizeDay(currentDay);
   const activeUsersRequired = Boolean(day && day >= ACTIVE_USERS_REQUIRED_FROM_DAY);
@@ -692,6 +737,9 @@ export function buildMorningBriefingVerdictEvidenceBundle({
       activeUsersPresent,
       activeUsersSatisfied: !activeUsersRequired || activeUsersStatus.satisfied === true,
       hasCompletedCustomerEvidence,
+      requiredSourceGapCount: REQUIRED_SOURCE_REFS
+        .filter((sourceId) => claims.some((claim) => claim.id === `source_${sourceId}_gap`))
+        .length,
       gateBlocked: gateStatus.blocked === true,
       overdueProofDebtCount: evidenceOsStatus.overdueDebtCount || 0,
     },
@@ -862,16 +910,6 @@ export function buildMorningBriefingVerdictContext({
     .filter((id) => id && !sourceGroups.includes(id));
   const sources = [...sourceGroups, ...Array.from(new Set(additionalIds))]
     .map((groupId) => buildGroupedSourceEvidence({ groupId, digest, briefing }));
-  for (const required of REQUIRED_SOURCE_REFS) {
-    const source = sources.find((candidate) => candidate.id === required);
-    if (!hasSourceEvidence(source)) {
-      throw new MorningBriefingVerdictError(
-        "missing_source_evidence",
-        `Morning briefing verdict requires aggregate ${required} evidence.`,
-        { source: required },
-      );
-    }
-  }
 
   const actionIds = toArray(briefing.actions).map((action) => safeText(action?.id, 80)).filter(Boolean);
   if (!actionIds.length) {
@@ -894,6 +932,7 @@ export function buildMorningBriefingVerdictContext({
     "onboarding",
     "day1_goal",
     "office_hours",
+    ...REQUIRED_SOURCE_REFS,
     ...sources.filter(hasSourceEvidence).map((source) => source.id),
     ...toArray(evidenceBundle.claims).map((claim) => claim.sourceId),
   ];
@@ -969,6 +1008,7 @@ function renderRequirements(requirements = {}) {
     `activeUsersPresent=${requirements.activeUsersPresent === true}`,
     `activeUsersSatisfied=${requirements.activeUsersSatisfied === true}`,
     `hasCompletedCustomerEvidence=${requirements.hasCompletedCustomerEvidence === true}`,
+    `requiredSourceGapCount=${finiteNumber(requirements.requiredSourceGapCount) ?? 0}`,
     `gateBlocked=${requirements.gateBlocked === true}`,
     `overdueProofDebtCount=${finiteNumber(requirements.overdueProofDebtCount) ?? 0}`,
   ];
@@ -1133,6 +1173,10 @@ function validateHealthyVerdictAllowed(context = {}) {
   }
   if (requirements.gateBlocked === true) {
     failures.push("gate_blocked");
+  }
+  const requiredSourceGapCount = finiteNumber(requirements.requiredSourceGapCount) ?? 0;
+  if (requiredSourceGapCount > 0) {
+    failures.push("required_source_gap");
   }
   const overdueProofDebtCount = finiteNumber(requirements.overdueProofDebtCount) ?? 0;
   if (overdueProofDebtCount > 0) {

@@ -257,7 +257,7 @@ function buildContext(overrides = {}) {
   });
 }
 
-test("buildMorningBriefingVerdictContext fails without required context or source evidence", () => {
+test("buildMorningBriefingVerdictContext fails without required user context", () => {
   assert.throws(
     () => buildContext({ onboardingMemory: null }),
     (error) => error instanceof MorningBriefingVerdictError && error.code === "missing_onboarding",
@@ -270,14 +270,35 @@ test("buildMorningBriefingVerdictContext fails without required context or sourc
     () => buildContext({ officeHoursHistory: {}, officeHoursMemorySummary: {} }),
     (error) => error instanceof MorningBriefingVerdictError && error.code === "missing_office_hours",
   );
+});
+
+test("buildMorningBriefingVerdictContext converts missing required source evidence to a gap claim", () => {
   const digest = digestFixture();
   digest.sources = digest.sources.filter((source) => source.id !== "posthog");
-  assert.throws(
-    () => buildContext({ digest }),
-    (error) => error instanceof MorningBriefingVerdictError
-      && error.code === "missing_source_evidence"
-      && error.source === "posthog",
-  );
+  const briefing = briefingFixture();
+  briefing.cards = briefing.cards.filter((card) => card.id !== "posthog");
+  briefing.drilldowns = {};
+  briefing.evidenceFunnel.steps = briefing.evidenceFunnel.steps.filter((step) => step.source !== "PostHog");
+  const context = buildContext({ digest, briefing });
+  assert.equal(context.evidenceBundle.requirements.requiredSourceGapCount, 1);
+  const sourceGap = context.evidenceBundle.claims.find((claim) => claim.id === "source_posthog_gap");
+  assert.equal(sourceGap.sourceId, "posthog");
+  assert.equal(sourceGap.tier, "instrumentation_gap");
+  assert.equal(sourceGap.customerEvidence, false);
+  assert.equal(sourceGap.supportsHealthy, false);
+  assert.match(sourceGap.summary, /PostHog aggregate source missing or unavailable/);
+  assert.ok(context.contextRefs.includes("posthog"));
+  const verdict = normalizeMorningBriefingLlmVerdict({
+    state: "instrumentation_gap",
+    title: "PostHog 집계 근거가 비어 있어요.",
+    body: "고객 행동 판단 전에 PostHog 수집 상태부터 복구해야 합니다.",
+    primaryActionId: "task",
+    evidence: [
+      "posthog PostHog aggregate source missing or unavailable missing 집계가 있습니다.",
+      "GitHub commits 7 집계가 있습니다.",
+    ],
+  }, { context, provider: "codex", generatedAt: "2026-06-16T00:00:00.000Z" });
+  assert.equal(verdict.state, "instrumentation_gap");
 });
 
 test("buildMorningBriefingVerdictPrompt includes aggregate context and redacts raw identifiers", () => {
@@ -439,6 +460,33 @@ test("normalizeMorningBriefingLlmVerdict enforces healthy proof and due-tracking
     (error) => error instanceof MorningBriefingVerdictError
       && error.code === "invalid_healthy"
       && error.reasons.includes("gate_blocked"),
+  );
+
+  const digest = digestFixture();
+  digest.sources = digest.sources.filter((source) => source.id !== "cloudflare");
+  assert.throws(
+    () => normalizeMorningBriefingLlmVerdict({
+      state: "healthy",
+      title: "고객 증거와 핵심 행동 측정이 함께 확인됐어요.",
+      body: "오늘은 같은 고객군에서 다음 검증 행동으로 넓혀도 됩니다.",
+      primaryActionId: "experiment",
+      evidence: [
+        "proof_ledger Proof Ledger completed medium+ customer evidence count 1",
+        "active_users Active Users first_value unique users 1",
+      ],
+    }, {
+      context: buildContext({
+        digest,
+        currentDay: 14,
+        proofLedger: customerProofLedgerFixture(),
+        activeUsers: activeUsersFixture({ rowCount: 1 }),
+        evidenceOS: evidenceOsFixture(),
+      }),
+      provider: "codex",
+    }),
+    (error) => error instanceof MorningBriefingVerdictError
+      && error.code === "invalid_healthy"
+      && error.reasons.includes("required_source_gap"),
   );
 });
 
