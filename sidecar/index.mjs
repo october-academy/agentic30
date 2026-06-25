@@ -10450,11 +10450,22 @@ async function runOfficeHours(session, {
       }
       officeHoursResumeTurns = [];
     }
-    const officeHoursExpectedQuestionCount = parseExpectedOfficeHoursQuestionCount(officeHoursRuntime.context);
+    // Durable-stamp FIRST, then parse the base context. A locked-Day1 retry
+    // (source day1_interview_goal_locked_retry) can arrive with a regenerated
+    // context whose "Expected question count" line was dropped; reading the
+    // count from the context alone then returns 0, officeHoursResumeWrapUp goes
+    // FALSE even though every answer is in, and the provider is re-run on an
+    // exhausted interview — producing no card and tripping the locked-Day1
+    // hard-fail ("Day 1 인터뷰 질문을 만들지 못했습니다"). The runtime stamp set on the
+    // prior run survives the regeneration, so prefer it (same resolver the
+    // question-progress gate already uses).
+    const officeHoursExpectedQuestionCount = resolveOfficeHoursExpectedQuestionCount(
+      session,
+      officeHoursRuntime.context,
+    );
     if (officeHoursExpectedQuestionCount > 0) {
-      // Parsed from the BASE context before any preamble prepend, then stamped
-      // on the runtime so detectIncompleteOfficeHoursInterview never depends on
-      // the "Expected question count" line surviving the head-keeping 16k clamp
+      // Re-stamp so detectIncompleteOfficeHoursInterview never depends on the
+      // "Expected question count" line surviving the head-keeping 16k clamp
       // after the cycle/resume preambles are prepended.
       officeHoursRuntime.expectedQuestionCount = officeHoursExpectedQuestionCount;
     }

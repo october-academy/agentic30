@@ -5174,3 +5174,170 @@ function assertNoGenericErrorEnvelope(events, sessionId) {
     "recoverable sidecar failures must not also emit generic error envelopes",
   );
 }
+
+// Regression (dongdong Day-1): a locked-Day1 retry whose REGENERATED context
+// dropped the "Expected question count" line must still wrap up a complete
+// interview from the durable runtime stamp instead of re-running the provider
+// on an exhausted interview and hard-failing with "Day 1 인터뷰 질문을 만들지
+// 못했습니다". Before the fix the resume block parsed the count from the context
+// alone (-> 0), officeHoursResumeWrapUp went FALSE, and the no-next-question
+// provider tripped the locked-Day1 hard-fail. The stamp set on the prior run is
+// the durable authority and survives the regeneration.
+test("office_hours_start retry wraps up a complete locked Day 1 interview when the regenerated context dropped the question count", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-oh-retry-count-drop-"));
+  const workspacePath = path.join(tempRoot, "workspace");
+  const appSupportPath = path.join(tempRoot, "app-support");
+  const sessionId = "locked-day1-retry-count-drop-session";
+  let harness;
+  let ws;
+  try {
+    await fs.mkdir(workspacePath, { recursive: true });
+    await fs.mkdir(appSupportPath, { recursive: true });
+    await initGitRepo(workspacePath);
+    await seedDay1ActiveProgress(workspacePath);
+    for (let index = 1; index <= 6; index += 1) {
+      await appendOfficeHoursTurn({
+        workspaceRoot: workspacePath,
+        turn: makeCompletedOfficeHoursTurn(index),
+      });
+    }
+
+    // Force the provider to yield no question card so a wrap-up MISS reaches the
+    // locked-Day1 hard-fail instead of silently producing a stub card.
+    const loaderPath = path.join(tempRoot, "office-hours-no-next-question-loader.mjs");
+    const registerPath = path.join(tempRoot, "register-office-hours-loader.mjs");
+    await fs.writeFile(
+      loaderPath,
+      `
+export async function load(url, context, nextLoad) {
+  const result = await nextLoad(url, context);
+  if (
+    process.env.AGENTIC30_TEST_STUB_OFFICE_HOURS_NO_NEXT_QUESTION === "1"
+    && url.endsWith("/sidecar/provider-runner.mjs")
+  ) {
+    const source = typeof result.source === "string"
+      ? result.source
+      : new TextDecoder().decode(result.source);
+    return {
+      ...result,
+      source: source.replace(
+        "if (/Agentic30 Day 1 STEP Office Hours|Office Hours를 시작한다/i.test(value)) {",
+        "if (false && /Agentic30 Day 1 STEP Office Hours|Office Hours를 시작한다/i.test(value)) {",
+      ),
+    };
+  }
+  return result;
+}
+`,
+      "utf8",
+    );
+    await fs.writeFile(
+      registerPath,
+      `import { register } from "node:module";\nregister(${JSON.stringify(pathToFileURL(loaderPath).href)}, import.meta.url);\n`,
+      "utf8",
+    );
+
+    // Restore a session whose runtime still carries the durable expectedQuestionCount
+    // stamp from the prior run — the value that survives a same-daemon retry.
+    await fs.writeFile(
+      path.join(appSupportPath, "sessions.json"),
+      JSON.stringify({
+        sessions: [
+          {
+            id: sessionId,
+            title: "Office Hours · Day 1",
+            provider: "codex",
+            model: "gpt-5.1-codex-mini",
+            status: "idle",
+            error: null,
+            createdAt: "2026-06-25T00:41:50.000Z",
+            updatedAt: "2026-06-25T00:49:31.000Z",
+            messages: [],
+            pendingUserInput: null,
+            runtime: {
+              officeHours: {
+                active: true,
+                source: "day1_interview_goal_locked",
+                day: 1,
+                startedAt: "2026-06-25T00:41:50.000Z",
+                expectedQuestionCount: 6,
+                context: [
+                  "DAY1_LOCKED_GOAL",
+                  "Goal lane: get_users / 활성 사용자 100명 모으기",
+                  "Expected question count: 6",
+                ].join("\n"),
+              },
+            },
+          },
+        ],
+      }, null, 2),
+      "utf8",
+    );
+
+    harness = await spawnSidecar({
+      tempRoot,
+      workspacePath,
+      appSupportPath,
+      cleanupOnClose: false,
+      extraEnv: {
+        AGENTIC30_RESTORE_SESSIONS_ON_BOOT: "1",
+        AGENTIC30_TEST_STUB_OFFICE_HOURS_NO_NEXT_QUESTION: "1",
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ? `${process.env.NODE_OPTIONS} ` : ""}--import=${pathToFileURL(registerPath).href}`,
+      },
+    });
+    ws = await connectAndCollect(harness);
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId,
+      // The dongdong failure trigger: the retry context was regenerated WITHOUT
+      // the "Expected question count" line that the first run carried.
+      context: [
+        "DAY1_LOCKED_GOAL",
+        "Flow contract: locked Day 1 goal interview.",
+        "Goal lane: get_users / 활성 사용자 100명 모으기",
+        "Goal text: 30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+        "Customer: 고객 지원/CS 담당자",
+      ].join("\n"),
+      visiblePrompt: "Retry locked Day 1 interview",
+      source: "day1_interview_goal_locked_retry",
+      day: 1,
+    }));
+
+    const completedStatus = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "office_hours_status"
+        && event.sessionId === sessionId
+        && event.stage === "completed"
+    );
+    assert.equal(completedStatus.stage, "completed");
+
+    await waitForEventSettle();
+    const after = ws.events.slice(marker);
+    assert.equal(
+      after.some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === sessionId
+          && event.stage === "failed"
+      ),
+      false,
+      "wrap-up must not also emit a failed office-hours status",
+    );
+    assert.equal(
+      after.some((event) => event.type === "error" && event.sessionId === sessionId),
+      false,
+      "a complete locked Day 1 retry must not hard-fail with a no-next-question error",
+    );
+    const settled = [...after].reverse().find((event) =>
+      event.type === "session_updated" && event.session?.id === sessionId
+    );
+    assert.equal(settled.session.status, "idle");
+    assert.equal(settled.session.error, null);
+    assert.equal(settled.session.pendingUserInput, null);
+  } finally {
+    ws?.close();
+    await harness?.close({ cleanup: false });
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
