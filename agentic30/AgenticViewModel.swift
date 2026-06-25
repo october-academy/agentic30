@@ -5758,37 +5758,31 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private func makeDay1GoalDrafts() -> [Day1GoalDraft] {
-        guard scanResult?.day1AlignmentPlan != nil
-            || scanResult?.day1IcpPlan != nil
-            || scanResult?.day1SituationSummary != nil
-            || onboardingContext != nil else {
+        guard let alignmentPlan = scanResult?.day1AlignmentPlan,
+              alignmentPlan.readiness?.isReady == true,
+              alignmentPlan.qualityGate.passed else {
             return []
         }
 
-        let customer = firstNonEmpty([
-            day1GoalCustomerValue(from: scanResult?.day1AlignmentPlan),
-            scanResult?.day1SituationSummary?.project.customer,
-            scanResult?.day1IcpPlan?.signals.currentIcpGuess,
-            scanResult?.onboardingHypothesis?.targetUser,
-            onboardingContext?.businessDescription,
-        ], fallback: "첫 고객 후보")
-        let problem = firstNonEmpty([
-            scanResult?.day1AlignmentPlan?.components.painPoint.statement,
-            scanResult?.day1AlignmentPlan?.alignmentStatement.painPoint,
-            scanResult?.day1SituationSummary?.project.problem,
-            scanResult?.day1IcpPlan?.signals.problem,
-            scanResult?.onboardingHypothesis?.problem,
-            onboardingContext?.currentStage,
-        ], fallback: "검증할 문제")
-        let validationAction = firstNonEmpty([
-            scanResult?.day1AlignmentPlan?.components.outcome.statement,
-            scanResult?.day1AlignmentPlan?.alignmentStatement.outcome,
-            scanResult?.day1SituationSummary?.actions.first?.label,
-            scanResult?.onboardingHypothesis?.purpose,
-            scanResult?.onboardingHypothesis?.goal,
-            onboardingContext?.goal,
-        ], fallback: "이번 주 확인할 행동")
-        let evidenceRefs = day1GoalEvidenceRefs()
+        guard let customer = firstNonEmptyCandidate([
+            day1GoalCustomerValue(from: alignmentPlan),
+            alignmentPlan.signals.currentIcpGuess,
+            alignmentPlan.signals.likelyUsers.first,
+            alignmentPlan.components.icp.statement,
+        ]),
+              let problem = firstNonEmptyCandidate([
+                alignmentPlan.signals.problem,
+                alignmentPlan.components.painPoint.statement,
+                alignmentPlan.alignmentStatement.painPoint,
+              ]),
+              let validationAction = firstNonEmptyCandidate([
+                cleanDay1ValidationAction(alignmentPlan.components.outcome.statement),
+                cleanDay1ValidationAction(alignmentPlan.alignmentStatement.outcome),
+              ]) else {
+            return []
+        }
+        let evidenceRefs = day1GoalEvidenceRefs(from: alignmentPlan)
+        guard !evidenceRefs.isEmpty else { return [] }
         let proofSink: Day1ProofSink = isDay1BipProofSinkAvailable ? .bipOptional : .local
         let recommended = recommendedDay1GoalType(
             customer: customer,
@@ -5853,27 +5847,13 @@ final class AgenticViewModel: ObservableObject {
         return emphasis
     }
 
-    private func day1GoalEvidenceRefs() -> [String] {
+    private func day1GoalEvidenceRefs(from plan: Day1AlignmentPlan) -> [String] {
         var refs: [String] = []
-        if let plan = scanResult?.day1AlignmentPlan {
-            refs.append(contentsOf: plan.signals.evidenceRefs.map(\.path))
-            refs.append(contentsOf: plan.components.icp.evidence)
-            refs.append(contentsOf: plan.components.painPoint.evidence)
-            refs.append(contentsOf: plan.components.outcome.evidence)
-        }
-        if let plan = scanResult?.day1IcpPlan {
-            refs.append(contentsOf: plan.signals.evidenceRefs.map(\.path))
-        }
-        if let summary = scanResult?.day1SituationSummary {
-            refs.append(contentsOf: summary.project.evidenceRefs)
-            refs.append(contentsOf: summary.diagnosis.evidenceRefs)
-            refs.append(contentsOf: summary.actions.flatMap(\.evidenceRefs))
-        }
-        if let hypothesis = scanResult?.onboardingHypothesis {
-            refs.append(contentsOf: hypothesis.evidence ?? [])
-        }
-        let artifactRefs = scanResult?.foundArtifactPaths ?? []
-        refs.append(contentsOf: artifactRefs)
+        refs.append(contentsOf: plan.readiness?.fieldEvidence.values.flatMap { $0.map(\.path) } ?? [])
+        refs.append(contentsOf: plan.signals.evidenceRefs.map(\.path))
+        refs.append(contentsOf: plan.components.icp.evidence)
+        refs.append(contentsOf: plan.components.painPoint.evidence)
+        refs.append(contentsOf: plan.components.outcome.evidence)
 
         var seen = Set<String>()
         let uniqueRefs: [String] = refs
@@ -5886,6 +5866,18 @@ final class AgenticViewModel: ObservableObject {
                 return true
             }
         return Array(uniqueRefs.prefix(12))
+    }
+
+    private func cleanDay1ValidationAction(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let cleaned = trimmed.replacingOccurrences(
+            of: #"^\s*(?:활성\s*행동|활성\s*신호|검증\s*행동|확인할\s*행동)\s*[:：]\s*"#,
+            with: "",
+            options: .regularExpression
+        )
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
     }
 
     private func recommendedDay1GoalType(
@@ -9053,8 +9045,28 @@ final class AgenticViewModel: ObservableObject {
         case "workspace_scan_blocked":
             finishWorkspaceScanTiming()
             isScanning = false
-            scanResult = nil
-            clearWorkspaceScanResultCache(root: event.scanRoot)
+            if event.reason == "insufficient_evidence" || event.day1AlignmentPlan != nil {
+                scanResult = WorkspaceScanResult(
+                    icp: event.icp,
+                    spec: event.spec,
+                    values: event.values,
+                    designSystem: event.designSystem,
+                    adr: event.adr,
+                    goal: event.goal,
+                    docs: event.docs,
+                    sheet: event.sheet,
+                    onboardingHypothesis: event.onboardingHypothesis,
+                    day1AlignmentPlan: event.day1AlignmentPlan,
+                    day1IcpPlan: event.day1IcpPlan,
+                    day1SituationSummary: event.day1SituationSummary,
+                    day1GoalSelection: event.day1GoalSelection,
+                    agentic30Gitignore: event.agentic30Gitignore,
+                    error: event.error
+                )
+            } else {
+                scanResult = nil
+                clearWorkspaceScanResultCache(root: event.scanRoot)
+            }
             scanProviderLimitNotice = nil
             scanDegradedNotice = nil
             pendingAgentic30GitignoreConsent = nil

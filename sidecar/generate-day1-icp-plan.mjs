@@ -62,8 +62,12 @@ const OPTION_HIGHLIGHT_MAX_CHARS = 18;
 const OPTION_HIGHLIGHT_FULL_LABEL_MAX_CHARS = 14;
 const OPTION_HIGHLIGHT_MAX_LABEL_RATIO = 0.78;
 const USER_FACING_GENERIC_PROJECT_NAME = "이 프로젝트";
-const USER_FACING_GENERIC_PAIN_POINT = "핵심 문제 확인 필요";
-const USER_FACING_GENERIC_PROBLEM = "핵심 문제 확인 필요";
+const BLOCKED_GOAL_DIAGNOSTIC = "목표 카드 생성 차단";
+const MISSING_TARGET_USER_DIAGNOSTIC = "고객 quote 근거 부족";
+const MISSING_PROBLEM_DIAGNOSTIC = "문제 quote 근거 부족";
+const MISSING_ACTION_DIAGNOSTIC = "활성/검증 행동 quote 근거 부족";
+const USER_FACING_GENERIC_PAIN_POINT = MISSING_PROBLEM_DIAGNOSTIC;
+const USER_FACING_GENERIC_PROBLEM = MISSING_PROBLEM_DIAGNOSTIC;
 
 const SOURCE_EVIDENCE_EXTENSIONS = new Set([
   ".swift",
@@ -95,7 +99,7 @@ const SOURCE_SIGNAL_PATTERN = /(customer|user|problem|mission|goal|value|pricing
 const GOAL_SIGNAL_PATTERN = /(goal|mission|purpose|success|north\s*star|proof\s*target|objective|목표|미션|목적|성공\s*기준|검증\s*목표)/i;
 const ICP_SIGNAL_PATTERN = /(customer|user|persona|audience|target|icp|고객|사용자|페르소나|타깃|대상)/i;
 const PAIN_SIGNAL_PATTERN = /(problem|pain|friction|stuck|blocked|struggle|문제|통증|막힘|불편|어려움)/i;
-const OUTCOME_SIGNAL_PATTERN = /(outcome|success|result|activation|validation|signal|proof|행동|결과|성공|검증|확인|신호|대화|시장)/i;
+const OUTCOME_SIGNAL_PATTERN = /(outcome|success|result|activation|validation|signal|proof|행동|결과|성공|검증|확인|신호|대화|시장|완료|반복|사용\s*의사)/i;
 
 const HighlightPhrasesSchema = z.array(
   z.string().trim().min(1).max(HIGHLIGHT_PHRASE_MAX_CHARS)
@@ -285,6 +289,11 @@ export async function generateDay1AlignmentPlan({
     components,
     evidence,
   });
+  const readiness = buildAlignmentReadiness({
+    signals,
+    components,
+    qualityGate,
+  });
   const plan = {
     schemaVersion: DAY1_ALIGNMENT_PLAN_SCHEMA_VERSION,
     source: "deterministic",
@@ -297,6 +306,7 @@ export async function generateDay1AlignmentPlan({
     components,
     alignmentStatement,
     qualityGate,
+    readiness,
     firstInterviewMessage: buildFirstInterviewMessage(
       signals,
       alignmentComponentsAsQuestions(components),
@@ -698,7 +708,11 @@ function looksLikeContaminatedAlignmentChoice(value, dimension, plan) {
   ) {
     return true;
   }
-  if (dimension === "outcome" && outcomeContainsKnownCustomerSegment(label, plan)) {
+  if (
+    dimension === "outcome"
+    && outcomeContainsKnownCustomerSegment(label, plan)
+    && !hasConcreteOutcomeAction(label)
+  ) {
     return true;
   }
   const comparableLabel = comparableOptionText(label);
@@ -755,6 +769,11 @@ export function normalizeDay1AlignmentPlan(value) {
   const qualityGate = normalizeAlignmentQualityGate(
     value.qualityGate || value.quality_gate,
   );
+  const readiness = normalizeAlignmentReadiness(value.readiness || value.readiness_state, {
+    signals,
+    components,
+    qualityGate,
+  });
   const firstInterviewMessage = normalizeFirstInterviewMessage(
     value.firstInterviewMessage || value.first_interview_message,
   );
@@ -775,6 +794,7 @@ export function normalizeDay1AlignmentPlan(value) {
     components,
     alignmentStatement,
     qualityGate,
+    readiness,
     firstInterviewMessage,
     day2Handoff,
   };
@@ -847,11 +867,12 @@ function alignmentOutcomeOptionPassesQualityAudit(label, optionValue, plan) {
   const comparablePain = comparableOptionText(plan?.alignmentStatement?.painPoint);
   if (comparableGoal && comparableLabel === comparableGoal) return false;
   if (comparablePain && comparableLabel === comparablePain) return false;
-  if (outcomeContainsKnownCustomerSegment(label, plan)) return false;
+  if (outcomeContainsKnownCustomerSegment(label, plan) && !hasConcreteOutcomeAction(label)) return false;
   if (/부트캠프|사용자\s*\d+명.*첫\s*매출|첫\s*매출\s*달성.*목표|제품\s*기능|기능\s*추가|feature/i.test(label)) {
     return false;
   }
-  return /(검증|확인|판단|행동|시장|신호|인터뷰|대화|증거|대안|지불|의향|도입|결정|정한다|반응|비용|리스크|risk|signal|interview|customer|market)/i.test(label);
+  return hasConcreteOutcomeAction(label)
+    || /(검증|확인|판단|행동|시장|신호|인터뷰|대화|증거|대안|지불|의향|도입|결정|정한다|반응|비용|리스크|risk|signal|interview|customer|market)/i.test(label);
 }
 
 function comparableOptionText(value) {
@@ -999,12 +1020,17 @@ async function collectDay1IcpEvidence({ workspaceRoot, scanResult, fsImpl }) {
   const sourceRefs = await collectSourceEvidenceRefs({ root, fsImpl, existing: refs });
   refs.push(...sourceRefs.slice(0, Math.max(0, MAX_EVIDENCE_REFS - refs.length)));
 
-  return uniqueBy(refs, (item) => item.path).slice(0, MAX_EVIDENCE_REFS);
+  return uniqueBy(
+    refs,
+    (item) => `${cleanText(item.path).toLowerCase()}::${cleanToken(item.field)}::${cleanText(item.reason).toLowerCase()}::${cleanText(item.quote).toLowerCase()}`,
+  ).slice(0, MAX_EVIDENCE_REFS);
 }
 
 function workspaceEvidenceRefToDay1Ref(ref = {}) {
   return {
     path: cleanText(ref.path),
+    field: cleanText(ref.field),
+    role: cleanText(ref.role),
     reason: cleanText(ref.reason || `${ref.role || "workspace"} signal`),
     quote: cleanText(ref.quote),
   };
@@ -1512,16 +1538,18 @@ function extractEvidenceSignals(refs = []) {
     const normalizedRef = normalizeEvidenceRef(ref);
     if (!normalizedRef) continue;
     const role = evidenceRole(normalizedRef);
+    const field = cleanToken(normalizedRef.field);
     for (const fragment of evidenceSignalFragments(normalizedRef.quote)) {
       const explicitGoal = labeledSignalValue(fragment, GOAL_SIGNAL_PATTERN);
-      const explicitTarget = labeledSignalValue(fragment, ICP_SIGNAL_PATTERN);
+      const explicitTarget = field === "targetuser" || role === "icp"
+        ? labeledSignalValue(fragment, ICP_SIGNAL_PATTERN, { requireLabel: true })
+        : "";
       const explicitPain = labeledSignalValue(fragment, PAIN_SIGNAL_PATTERN);
       const explicitOutcome = labeledSignalValue(fragment, OUTCOME_SIGNAL_PATTERN);
 
       const goalValue = explicitGoal || (goalLikeSignal(fragment) ? fragment : "");
       const targetValue = explicitTarget
-        || (ICP_SIGNAL_PATTERN.test(fragment) && looksLikeCustomerSegment(fragment) ? fragment : "")
-        || (role === "icp" && looksLikeCustomerSegment(fragment) ? fragment : "");
+        || (field === "targetuser" && role === "icp" && looksLikeCustomerSegment(fragment) ? fragment : "");
       const painValue = explicitPain || (painLikeSignal(fragment) ? fragment : "");
       const outcomeValue = outcomeCandidateValue({
         fragment,
@@ -1571,11 +1599,12 @@ function evidenceSignalFragments(value) {
   ).slice(0, 16);
 }
 
-function labeledSignalValue(fragment, pattern) {
+function labeledSignalValue(fragment, pattern, { requireLabel = false } = {}) {
   const text = cleanSignalText(fragment);
   if (!pattern.test(text)) return "";
-  const labelMatch = text.match(/(?:goal|mission|purpose|success|north\s*star|proof\s*target|objective|customer|user|persona|audience|target|icp|problem|pain|friction|stuck|outcome|result|activation|validation|signal|목표|미션|목적|성공\s*기준|검증\s*목표|고객|사용자|페르소나|타깃|대상|문제|통증|막힘|결과|성공|검증|확인|신호)\s*(?:=|:|：|-|은|는)\s*["'“”]?([^"'“”\n]{6,180})/i);
-  return cleanCandidateText(labelMatch?.[1] || text);
+  const labelMatch = text.match(/(?:goal|mission|purpose|success|north\s*star|proof\s*target|objective|customer|user|persona|audience|target|icp|problem|pain|friction|stuck|outcome|result|activation|validation|signal|목표|미션|목적|성공\s*기준|검증\s*목표|고객|사용자|페르소나|타깃|대상|문제|통증|막힘|결과|성공|검증|확인|활성\s*행동|활성\s*신호|행동|신호)\s*(?:=|:|：|-|은|는)\s*["'“”]?([^"'“”\n]{6,180})/i);
+  if (labelMatch?.[1]) return cleanCandidateText(labelMatch[1]);
+  return requireLabel ? "" : cleanCandidateText(text);
 }
 
 function outcomeCandidateValue({ fragment, explicitOutcome, role } = {}) {
@@ -1598,7 +1627,7 @@ function outcomeLikeSignal(value) {
   const text = cleanText(value);
   if (!isUsableOutcomeSignal(text)) return false;
   return OUTCOME_SIGNAL_PATTERN.test(text)
-    && /(검증|확인|신호|대화|시장|인터뷰|반응|피드백|지불|의향|의사|대안|도입|결정|소개|최근\s*사건|validate|confirm|signal|activation|interview|conversation|feedback|alternative|willingness)/i.test(text)
+    && /(검증|확인|신호|대화|시장|인터뷰|반응|피드백|지불|의향|의사|대안|도입|결정|소개|최근\s*사건|완료|반복|사용\s*의사|validate|confirm|signal|activation|interview|conversation|feedback|alternative|willingness|ask|record|complete|repeat|paid\s*pilot|workflow|use\s*intent)/i.test(text)
     && !looksLikeDocumentPointer(text);
 }
 
@@ -1617,7 +1646,7 @@ function isUsableOutcomeSignal(value, { fragment = value, role = "" } = {}) {
 }
 
 function hasConcreteOutcomeAction(value) {
-  return /(검증|확인|신호|대화|시장|인터뷰|반응|피드백|지불|의향|의사|대안|도입|결정|소개|최근\s*사건|validate|confirm|signal|activation|interview|conversation|feedback|alternative|willingness)/i.test(cleanSignalText(value));
+  return /(검증|확인|신호|대화|시장|인터뷰|반응|피드백|지불|의향|의사|대안|도입|결정|소개|최근\s*사건|완료|반복|사용\s*의사|validate|confirm|signal|activation|interview|conversation|feedback|alternative|willingness|ask|record|complete|repeat|paid\s*pilot|workflow|use\s*intent)/i.test(cleanSignalText(value));
 }
 
 function looksLikePersonaSummaryText(value) {
@@ -1707,7 +1736,7 @@ function looksLikeDocumentPointer(value) {
 function looksLikeCustomerSegment(value) {
   const text = cleanText(value);
   if (!text || looksLikeDocumentPointer(text)) return false;
-  return /(고객|사용자|사람|팀|개발자|창업자|운영자|담당자|대표|리드|lead|manager|founder|developer|customer|user|team|persona|operator|owner)/i.test(text);
+  return /(고객|사용자|사람|팀|개발자|창업자|운영자|담당자|대표|리드|수요층|관심층|비신자|입문자|세대|층|lead|manager|founder|developer|customer|user|team|persona|operator|owner)/i.test(text);
 }
 
 function problemCandidatesFromText(value, evidenceRef) {
@@ -1894,13 +1923,13 @@ function buildProjectGoal({ signals, onboardingHypothesis, evidence }) {
   const hasSpecificTarget = Boolean(signals.currentIcpGuess || signals.likelyUsers?.[0]);
   const hasSpecificProblem = Boolean(signals.problem);
   if (!hasSpecificTarget && !hasSpecificProblem) {
-    return "목표 확인 필요";
+    return BLOCKED_GOAL_DIAGNOSTIC;
   }
   const problem = signals.problem || "현재 가장 큰 고객 문제";
   const target = signals.currentIcpGuess || signals.likelyUsers?.[0] || "첫 고객 후보";
   const hasUserFacingEvidence = (evidence || []).some(isUserFacingEvidenceRef);
   if (!hasUserFacingEvidence) {
-    return "목표 확인 필요";
+    return BLOCKED_GOAL_DIAGNOSTIC;
   }
   return `${product}가 ${target}의 "${problem}" 해결을 검증할 첫 고객 증거를 만든다.`;
 }
@@ -1910,7 +1939,8 @@ function buildAlignmentMission() {
 }
 
 function buildAlignmentComponents({ signals, projectGoal }) {
-  const target = signals.currentIcpGuess || signals.likelyUsers?.[0] || "아직 좁히는 중인 첫 고객 후보";
+  const hasSpecificTarget = Boolean(signals.currentIcpGuess || signals.likelyUsers?.[0]);
+  const target = signals.currentIcpGuess || signals.likelyUsers?.[0] || MISSING_TARGET_USER_DIAGNOSTIC;
   const hasSpecificProblem = Boolean(signals.problem);
   const problem = signals.problem || USER_FACING_GENERIC_PAIN_POINT;
   const outcome = buildOutcomeStatement({ signals, projectGoal });
@@ -1924,9 +1954,9 @@ function buildAlignmentComponents({ signals, projectGoal }) {
       prompt: "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객 후보는 누구인가요?",
       highlightPhrases: alignmentComponentHighlightPhrases("icp"),
       helperText: "직함보다 지금 같은 문제를 겪고 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
-      statement: hasSpecificProblem
+      statement: hasSpecificTarget && hasSpecificProblem
         ? `${target} 중 "${problem}" 상황을 지금 해결하려는 고객.`
-        : `${target} 중 이번 주 가장 먼저 확인할 고객.`,
+        : target,
       evidence,
       missingAssumptions: signals.currentIcpGuess ? [] : ["current_icp"],
       options: buildAlignmentIcpOptions(bank),
@@ -1957,6 +1987,8 @@ function buildAlignmentComponents({ signals, projectGoal }) {
 }
 
 function buildOutcomeStatement({ signals, projectGoal }) {
+  const hasOutcomeQuote = readinessEvidenceForField(signals?.evidenceRefs, "validationAction").length > 0;
+  if (!hasOutcomeQuote) return MISSING_ACTION_DIAGNOSTIC;
   const evidenceOutcome = firstCleanCandidate([
     ...(signals?.evidenceBank?.successSignals || [])
       .filter((candidate) => candidate?.source === "evidence_outcome")
@@ -1971,7 +2003,7 @@ function buildOutcomeStatement({ signals, projectGoal }) {
     return `"${problem}" 상황을 이번 주 고객 대화와 시장 신호로 확인한다.`;
   }
   if (!signals.currentIcpGuess && !(signals.likelyUsers?.length)) {
-    return "다음 시장 신호 확인에서 검증할 고객 행동을 정한다.";
+    return MISSING_ACTION_DIAGNOSTIC;
   }
   const goalFocus = outcomeGoalFragment(projectGoal);
   if (goalFocus) {
@@ -2056,6 +2088,146 @@ function buildAlignmentQualityGate({ projectGoal, signals, components, evidence 
   };
 }
 
+function normalizeAlignmentReadiness(value, context = {}) {
+  const computed = buildAlignmentReadiness(context);
+  if (!value || typeof value !== "object") return computed;
+  const rawStatus = cleanToken(value.status);
+  const status = ["ready", "blocked", "rework_required"].includes(rawStatus) ? rawStatus : computed.status;
+  const missingFields = normalizeStringArray(value.missingFields || value.missing_fields);
+  const fieldEvidence = normalizeReadinessFieldEvidence(value.fieldEvidence || value.field_evidence);
+  return {
+    status,
+    missingFields: uniqueBy([...missingFields, ...(status === "ready" ? [] : computed.missingFields)], (item) => item),
+    fieldEvidence: Object.keys(fieldEvidence).length ? fieldEvidence : computed.fieldEvidence,
+    rootCause: cleanText(value.rootCause || value.root_cause) || computed.rootCause,
+  };
+}
+
+function buildAlignmentReadiness({ signals = {}, components = {}, qualityGate = null } = {}) {
+  const normalizedSignals = signals || {};
+  const normalizedComponents = components || {};
+  const fieldEvidence = {
+    targetUser: readinessEvidenceForField(normalizedSignals.evidenceRefs, "targetUser"),
+    problem: readinessEvidenceForField(normalizedSignals.evidenceRefs, "problem"),
+    validationAction: readinessEvidenceForField(normalizedSignals.evidenceRefs, "validationAction"),
+  };
+  const checks = [
+    {
+      field: "targetUser",
+      value: normalizedSignals.currentIcpGuess || normalizedSignals.likelyUsers?.[0] || normalizedComponents.icp?.statement,
+      evidence: fieldEvidence.targetUser,
+    },
+    {
+      field: "problem",
+      value: normalizedSignals.problem || normalizedComponents.painPoint?.statement,
+      evidence: fieldEvidence.problem,
+    },
+    {
+      field: "validationAction",
+      value: normalizedComponents.outcome?.statement,
+      evidence: fieldEvidence.validationAction,
+    },
+  ];
+  const missingFields = checks
+    .filter((check) => !readinessFieldIsVerified(check.field, check.value, check.evidence))
+    .map((check) => check.field);
+  const status = missingFields.length
+    ? "blocked"
+    : qualityGate?.passed === false
+      ? "rework_required"
+      : "ready";
+  return {
+    status,
+    missingFields,
+    fieldEvidence,
+    rootCause: readinessRootCause({ status, missingFields, qualityGate }),
+  };
+}
+
+function normalizeReadinessFieldEvidence(value = {}) {
+  if (!value || typeof value !== "object") return {};
+  const output = {};
+  for (const [rawField, refs] of Object.entries(value)) {
+    const field = normalizeReadinessField(rawField);
+    if (!field || !Array.isArray(refs)) continue;
+    output[field] = refs
+      .map((ref) => ({
+        path: cleanText(ref?.path),
+        quote: cleanText(ref?.quote),
+        reason: cleanText(ref?.reason),
+      }))
+      .filter((ref) => ref.path && ref.quote)
+      .slice(0, 4);
+  }
+  return output;
+}
+
+function readinessEvidenceForField(evidenceRefs = [], field) {
+  return normalizeEvidenceRefs(evidenceRefs)
+    .filter((ref) => evidenceRefMatchesReadinessField(ref, field))
+    .map((ref) => ({
+      path: ref.path,
+      quote: ref.quote,
+      reason: ref.reason,
+    }))
+    .filter((ref) => ref.path && ref.quote)
+    .slice(0, 4);
+}
+
+function evidenceRefMatchesReadinessField(ref = {}, field) {
+  const refField = cleanToken(ref.field);
+  const reason = cleanText(ref.reason).toLowerCase();
+  if (field === "targetUser") return refField === "targetuser" || /customer|user|audience|icp|고객|사용자/.test(reason);
+  if (field === "problem") return refField === "problem" || /problem|pain|문제/.test(reason);
+  if (field === "validationAction") return ["outcome", "validationaction", "activationaction"].includes(refField)
+    || /outcome|activation|validation|활성|검증|행동/.test(reason);
+  return false;
+}
+
+function readinessFieldIsVerified(field, value, evidence) {
+  const text = cleanSignalText(value);
+  if (!text || isGenericAlignmentText(text)) return false;
+  if (field === "problem" && looksLikeOcrContaminatedReadinessText(text)) return false;
+  if (!Array.isArray(evidence) || evidence.length === 0) return false;
+  return evidence.some((ref) => cleanSignalText(ref.quote));
+}
+
+function looksLikeOcrContaminatedReadinessText(value) {
+  const text = cleanSignalText(value);
+  if (!text) return true;
+  if (/(시장\s*기회\s*\d|00\d{2}|과제\s*\d|[가-힣][0-9]{2,}[가-힣])/u.test(text)) return true;
+  const digitCount = (text.match(/\d/g) || []).length;
+  if (digitCount >= 5 && digitCount / Math.max(text.length, 1) > 0.08) return true;
+  const sectionMarkers = text.match(/(?:시장\s*기회|프로젝트\s*소개|주요\s*기능|목적\s*및\s*필요성|활용처)/g) || [];
+  return sectionMarkers.length >= 2;
+}
+
+function readinessRootCause({ status, missingFields, qualityGate }) {
+  if (status === "ready") return "";
+  if (status === "rework_required") {
+    return qualityGate?.failGate || "근거는 확인됐지만 Day 1 목표 계약 품질 기준을 통과하지 못했습니다.";
+  }
+  const labels = missingFields.map(readinessFieldLabel).join(", ");
+  return labels
+    ? `${labels} quote 근거가 부족해 목표 카드 생성을 차단했습니다.`
+    : "필수 근거가 부족해 목표 카드 생성을 차단했습니다.";
+}
+
+function readinessFieldLabel(field) {
+  if (field === "targetUser") return "고객";
+  if (field === "problem") return "문제";
+  if (field === "validationAction") return "활성/검증 행동";
+  return field;
+}
+
+function normalizeReadinessField(field) {
+  const token = cleanToken(field);
+  if (["targetuser", "customer", "icp"].includes(token)) return "targetUser";
+  if (["problem", "pain"].includes(token)) return "problem";
+  if (["validationaction", "outcome", "activation", "activationaction"].includes(token)) return "validationAction";
+  return "";
+}
+
 function qualityCriterion({ id, label, score, maxScore, detail }) {
   const normalizedScore = roundNumber(clampNumber(score, 0, maxScore, 0), 1);
   const normalizedMax = roundNumber(maxScore, 1);
@@ -2089,22 +2261,22 @@ function buildConciseSignalDigest(plan) {
   const goal = firstUsableSignalDigestValue("goal", [
     firstSentence(plan?.projectGoal),
     plan?.projectGoal,
-    "목표 확인 필요",
+    BLOCKED_GOAL_DIAGNOSTIC,
   ], plan);
   const icp = firstUsableSignalDigestValue("icp", [
     plan?.signals?.currentIcpGuess,
     plan?.alignmentStatement?.icp,
     plan?.signals?.likelyUsers?.[0],
-    "첫 고객 후보 확인 필요",
+    MISSING_TARGET_USER_DIAGNOSTIC,
   ], plan);
   const pain = firstUsableSignalDigestValue("pain", [
     plan?.signals?.problem,
     plan?.alignmentStatement?.painPoint,
-    "핵심 문제 확인 필요",
+    MISSING_PROBLEM_DIAGNOSTIC,
   ], plan);
   const outcome = firstUsableSignalDigestValue("outcome", [
     conciseOutcome({ signals: plan?.signals, alignmentStatement: plan?.alignmentStatement }),
-    "첫 검증 행동",
+    MISSING_ACTION_DIAGNOSTIC,
   ], plan);
   const evidence = conciseText(
     preferredEvidenceRefs(plan?.signals?.evidenceRefs).map((item) => item.path).join(", ") || "evidence 없음",
@@ -2176,21 +2348,21 @@ function fallbackSignalDigestValue(key, plan = null) {
     case "project":
       return firstUsableSignalDigestValue("project", [plan?.signals?.productName, "이 프로젝트"], plan);
     case "goal":
-      return firstUsableSignalDigestValue("goal", [firstSentence(plan?.projectGoal), plan?.projectGoal, "목표 확인 필요"], plan);
+      return firstUsableSignalDigestValue("goal", [firstSentence(plan?.projectGoal), plan?.projectGoal, BLOCKED_GOAL_DIAGNOSTIC], plan);
     case "icp":
       return firstUsableSignalDigestValue("icp", [
         plan?.signals?.currentIcpGuess,
         plan?.alignmentStatement?.icp,
         plan?.signals?.likelyUsers?.[0],
-        "첫 고객 후보 확인 필요",
+        MISSING_TARGET_USER_DIAGNOSTIC,
       ], plan);
     case "pain":
-      return firstUsableSignalDigestValue("pain", [plan?.signals?.problem, plan?.alignmentStatement?.painPoint, "핵심 문제 확인 필요"], plan);
+      return firstUsableSignalDigestValue("pain", [plan?.signals?.problem, plan?.alignmentStatement?.painPoint, MISSING_PROBLEM_DIAGNOSTIC], plan);
     case "outcome":
       return firstUsableSignalDigestValue("outcome", [
         plan?.alignmentStatement?.outcome,
         conciseOutcome({ signals: plan?.signals, alignmentStatement: plan?.alignmentStatement }),
-        "첫 검증 행동",
+        MISSING_ACTION_DIAGNOSTIC,
       ], plan);
     default:
       return "확인 필요";
@@ -2203,7 +2375,7 @@ function firstUsableSignalDigestValue(key, candidates = [], plan = null) {
       ? sanitizeOutcomeActionText(cleanDigestDisplayText(candidate), plan)
       : cleanDigestDisplayText(candidate);
     if (!cleaned || looksLikeSignalDigestDocumentReference(candidate, cleaned)) continue;
-    if (key === "outcome" && outcomeContainsKnownCustomerSegment(cleaned, plan)) continue;
+    if (key === "outcome" && outcomeContainsKnownCustomerSegment(cleaned, plan) && !hasConcreteOutcomeAction(cleaned)) continue;
     if (!isHighQualityAlignmentText(key, cleaned)) continue;
     const normalized = conciseSignalDigestValue(key, cleaned);
     if (normalized) return normalized;
@@ -2216,13 +2388,13 @@ function placeholderSignalDigestValue(key) {
   case "project":
     return "이 프로젝트";
   case "goal":
-    return "목표 확인 필요";
+    return BLOCKED_GOAL_DIAGNOSTIC;
   case "icp":
-    return "첫 고객 후보 확인 필요";
+    return MISSING_TARGET_USER_DIAGNOSTIC;
   case "pain":
-    return "핵심 문제 확인 필요";
+    return MISSING_PROBLEM_DIAGNOSTIC;
   case "outcome":
-    return "첫 검증 행동";
+    return MISSING_ACTION_DIAGNOSTIC;
   default:
     return "확인 필요";
   }
@@ -2264,7 +2436,7 @@ function conciseOutcome({ signals, alignmentStatement } = {}) {
     return raw;
   }
   const pain = twoClauseFragment(signals?.problem || alignmentStatement?.painPoint || "핵심 문제", 64);
-  return `${pain} 확인 → 첫 검증 행동`;
+  return `${pain} 확인 → ${MISSING_ACTION_DIAGNOSTIC}`;
 }
 
 function preferredEvidenceRefs(evidenceRefs = []) {
@@ -3066,6 +3238,11 @@ function fallbackDay1AlignmentPlan({ workspaceRoot, now = new Date() } = {}) {
     components,
     evidence: [],
   });
+  const readiness = buildAlignmentReadiness({
+    signals: legacyPlan.signals,
+    components,
+    qualityGate,
+  });
   const plan = {
     schemaVersion: DAY1_ALIGNMENT_PLAN_SCHEMA_VERSION,
     source: "deterministic",
@@ -3081,6 +3258,7 @@ function fallbackDay1AlignmentPlan({ workspaceRoot, now = new Date() } = {}) {
     components,
     alignmentStatement,
     qualityGate,
+    readiness,
     firstInterviewMessage: buildFirstInterviewMessage(
       legacyPlan.signals,
       alignmentComponentsAsQuestions(components),
@@ -3170,18 +3348,18 @@ function sanitizeNormalizedAlignmentComponents(components, { signals, projectGoa
   const icp = sanitizeAlignmentFragment("icp", components.icp.statement, [
     signals?.currentIcpGuess,
     signals?.likelyUsers?.[0],
-    "첫 고객 후보 확인 필요",
+    MISSING_TARGET_USER_DIAGNOSTIC,
   ]);
   const painPoint = sanitizeAlignmentFragment("pain", components.painPoint.statement, [
     signals?.problem,
-    "핵심 문제 확인 필요",
+    MISSING_PROBLEM_DIAGNOSTIC,
   ]);
   const painOptions = components.painPoint.options
     .filter((optionValue) => !looksLikeProductInputArtifactPain(optionValue.label));
   const outcomeContext = { signals, components, alignmentStatement: { icp } };
   const outcome = sanitizeAlignmentFragment("outcome", components.outcome.statement, [
     buildOutcomeStatement({ signals: signals || {}, projectGoal }),
-    "첫 검증 행동",
+    MISSING_ACTION_DIAGNOSTIC,
   ], outcomeContext);
   const outcomeOptions = components.outcome.options
     .map((optionValue) => sanitizeAlignmentOutcomeOption(optionValue, outcomeContext))
@@ -3281,6 +3459,7 @@ function sanitizeAlignmentOutcomeOption(optionValue, context = {}) {
 function sanitizeOutcomeActionText(value, context = {}) {
   let text = cleanSignalText(value)
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .replace(/^(?:활성\s*행동|활성\s*신호|검증\s*행동|확인할\s*행동|validation\s*action|activation\s*action|outcome|success\s*signal)\s*[:：=-]\s*/iu, "")
     .trim();
   text = removeDanglingOpeningDelimiter(text) || text;
   if (!text) return "";
@@ -3576,6 +3755,8 @@ function normalizeEvidenceRef(value) {
   if (!refPath) return null;
   return {
     path: refPath,
+    field: cleanText(value.field),
+    role: cleanText(value.role),
     reason: cleanText(value.reason),
     quote: cleanText(value.quote),
   };

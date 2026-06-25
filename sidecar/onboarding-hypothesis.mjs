@@ -163,7 +163,6 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(
   );
   const likelyUsers = uniqueCompact([
     ...(Array.isArray(extractedSignals.likelyUsers) ? extractedSignals.likelyUsers : []),
-    ...inferLikelyUsers(context, packageJson),
   ]);
   const stage = extractedSignals.stage && extractedSignals.stage !== "unknown"
     ? extractedSignals.stage
@@ -314,7 +313,7 @@ function fallbackHypothesis() {
     evidence: [],
     confidence: "low",
     founderIcpSignals: normalizeFounderIcpSignals(null),
-    suggestedFirstQuestion: "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?",
+    suggestedFirstQuestion: "",
   };
 }
 
@@ -328,7 +327,7 @@ function suggestedFirstQuestion({ confidence, productName, targetUser, problem, 
   if (confidence === "medium" && (product || currentIcp)) {
     return `이번 주 먼저 만날 ${targetSegmentFragment(currentIcp || "잠재 고객")} 유형은 누구인가요?`;
   }
-  return "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?";
+  return "";
 }
 
 function problemFocusFragment(value) {

@@ -5657,7 +5657,12 @@ struct ContentView: View {
                         VStack(spacing: 1) {
                             officeHoursGoalDetailRow("고객", activeDraft.customer, emphasis: activeDraft.customerEmphasis)
                             officeHoursGoalDetailRow("문제", activeDraft.problem, emphasis: activeDraft.problemEmphasis)
-                            officeHoursGoalDetailRow("목표", activeDraft.goalText, strong: true)
+                            officeHoursGoalDetailRow("활성/검증 행동", activeDraft.validationAction, strong: true)
+                            officeHoursGoalDetailRow(
+                                "근거",
+                                activeDraft.evidenceRefs.prefix(3).joined(separator: ", "),
+                                strong: false
+                            )
                         }
                         .background(OpenDesignOfficeHoursColor.borderSoft)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -5732,17 +5737,49 @@ struct ContentView: View {
 
     private func officeHoursGoalEmptyState() -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("스캔 또는 온보딩 컨텍스트를 기다리는 중입니다.")
+            if let readiness = viewModel.scanResult?.day1AlignmentPlan?.readiness,
+               readiness.isReady == false {
+                Text("목표 카드 생성이 차단되었습니다.")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Text(officeHoursReadinessBlockedCopy(readiness))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("검증된 고객·문제·행동 근거를 기다리는 중입니다.")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-            Text("컨텍스트가 들어오면 첫 매출 달성, 활성 사용자 100명 모으기, 작동하는 첫 버전 출시 중 30일 목표를 바로 고를 수 있습니다.")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                Text("고객, 문제, 활성/검증 행동 각각에 원문 quote가 있어야 Day 1 목표를 만들 수 있습니다.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(openDesignOfficeHoursBackground(cornerRadius: 10, fill: OpenDesignOfficeHoursColor.surface2))
+    }
+
+    private func officeHoursReadinessBlockedCopy(_ readiness: Day1AlignmentReadiness) -> String {
+        let fields = readiness.missingFields
+            .map(officeHoursReadinessFieldLabel)
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        let rootCause = readiness.rootCause?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !rootCause.isEmpty { return rootCause }
+        return fields.isEmpty
+            ? "필수 근거가 부족해 Day 1 목표를 만들 수 없습니다."
+            : "\(fields) 근거가 부족해 Day 1 목표를 만들 수 없습니다."
+    }
+
+    private func officeHoursReadinessFieldLabel(_ field: String) -> String {
+        switch field {
+        case "targetUser": return "고객"
+        case "problem": return "문제"
+        case "validationAction": return "활성/검증 행동"
+        default: return field
+        }
     }
 
     private func officeHoursActiveGoalDraft(drafts: [Day1GoalDraft]) -> Day1GoalDraft? {
@@ -10640,15 +10677,36 @@ struct ContentView: View {
                 lines.append(day == 1 ? "Diagnosis: \(summary.diagnosis.bottleneck) / missing signal: \(summary.diagnosis.missingSignal)" : "Baseline diagnosis: \(summary.diagnosis.bottleneck) / missing signal: \(summary.diagnosis.missingSignal)")
             }
             if let plan = scanResult.day1AlignmentPlan {
-                lines.append("Project goal: \(plan.projectGoal)")
-                lines.append("Alignment statement: \(plan.alignmentStatement.statement)")
-                lines.append("Customer candidate: \(plan.alignmentStatement.icp)")
-                lines.append(day == 1 ? "Pain: \(plan.alignmentStatement.painPoint)" : "Baseline pain: \(plan.alignmentStatement.painPoint)")
-                lines.append("Outcome: \(plan.alignmentStatement.outcome)")
-                let gateScore = String(format: "%.1f/%.1f", plan.qualityGate.score, plan.qualityGate.threshold)
-                lines.append("Quality gate: \(gateScore) \(plan.qualityGate.passed ? "passed" : "failed")")
-                if let digest = plan.signalDigest?.summary.trimmingCharacters(in: .whitespacesAndNewlines), !digest.isEmpty {
-                    lines.append("Signal digest: \(digest)")
+                if day == 1, viewModel.day1GoalSelection == nil {
+                    if plan.readiness?.isReady == true, plan.qualityGate.passed {
+                        lines.append("Verified project goal: \(plan.projectGoal)")
+                        lines.append("Verified customer: \(plan.signals.currentIcpGuess ?? plan.alignmentStatement.icp)")
+                        lines.append("Verified problem: \(plan.signals.problem ?? plan.alignmentStatement.painPoint)")
+                        lines.append("Verified validation action: \(plan.alignmentStatement.outcome)")
+                        let evidenceRefs = plan.readiness?.fieldEvidence.values.flatMap { $0.map(\.path) } ?? []
+                        if !evidenceRefs.isEmpty {
+                            lines.append("Verified evidence refs: \(Array(Set(evidenceRefs)).joined(separator: ", "))")
+                        }
+                    } else if let readiness = plan.readiness {
+                        lines.append("Alignment readiness: \(readiness.status)")
+                        if !readiness.missingFields.isEmpty {
+                            lines.append("Missing verified fields: \(readiness.missingFields.joined(separator: ", "))")
+                        }
+                        if let rootCause = readiness.rootCause?.trimmingCharacters(in: .whitespacesAndNewlines), !rootCause.isEmpty {
+                            lines.append("Readiness diagnostic: \(rootCause)")
+                        }
+                    }
+                } else {
+                    lines.append("Project goal: \(plan.projectGoal)")
+                    lines.append("Alignment statement: \(plan.alignmentStatement.statement)")
+                    lines.append("Customer candidate: \(plan.alignmentStatement.icp)")
+                    lines.append(day == 1 ? "Pain: \(plan.alignmentStatement.painPoint)" : "Baseline pain: \(plan.alignmentStatement.painPoint)")
+                    lines.append("Outcome: \(plan.alignmentStatement.outcome)")
+                    let gateScore = String(format: "%.1f/%.1f", plan.qualityGate.score, plan.qualityGate.threshold)
+                    lines.append("Quality gate: \(gateScore) \(plan.qualityGate.passed ? "passed" : "failed")")
+                    if let digest = plan.signalDigest?.summary.trimmingCharacters(in: .whitespacesAndNewlines), !digest.isEmpty {
+                        lines.append("Signal digest: \(digest)")
+                    }
                 }
             } else if let plan = scanResult.day1IcpPlan {
                 lines.append("Product: \(plan.signals.productName ?? "unknown")")

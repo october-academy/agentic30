@@ -97,7 +97,7 @@ function buildToUnicodeMap(cmapSources) {
   for (const s of cmapSources) {
     for (const blk of s.match(/beginbfchar([\s\S]*?)endbfchar/g) || []) {
       for (const m of blk.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
-        map.set(m[1].toLowerCase(), hexToUnicode(m[2]));
+        setCMapValueIfAbsent(map, m[1].toLowerCase(), hexToUnicode(m[2]));
       }
     }
     for (const blk of s.match(/beginbfrange([\s\S]*?)endbfrange/g) || []) {
@@ -110,18 +110,23 @@ function buildToUnicodeMap(cmapSources) {
         if (m[3].startsWith("[")) {
           const dsts = m[3].match(/<([0-9A-Fa-f]+)>/g) || [];
           for (let i = 0; i <= hi - lo && i < dsts.length; i++) {
-            map.set((lo + i).toString(16).padStart(width, "0"), hexToUnicode(dsts[i].slice(1, -1)));
+            setCMapValueIfAbsent(map, (lo + i).toString(16).padStart(width, "0"), hexToUnicode(dsts[i].slice(1, -1)));
           }
         } else {
           const dstLo = parseInt(m[3].slice(1, -1), 16);
           for (let i = 0; i <= hi - lo; i++) {
-            map.set((lo + i).toString(16).padStart(width, "0"), String.fromCodePoint(dstLo + i));
+            setCMapValueIfAbsent(map, (lo + i).toString(16).padStart(width, "0"), String.fromCodePoint(dstLo + i));
           }
         }
       }
     }
   }
   return map;
+}
+
+function setCMapValueIfAbsent(map, key, value) {
+  if (!key || !value || map.has(key)) return;
+  map.set(key, value);
 }
 
 // Pull the text-showing operators from one decoded content stream. Handles both

@@ -56,8 +56,8 @@ test("deriveWorkspaceOnboardingHypothesisLocally infers project context from REA
     assert.match(hypothesis.goal, /첫 고객 인터뷰/);
     assert.match(hypothesis.values, /사용자 결정 증거/);
     assert.equal(hypothesis.stage, "first_users");
-    assert.ok(hypothesis.likelyUsers.includes("AI 코딩 도구를 쓰는 개발자"));
-    assert.match(hypothesis.suggestedFirstQuestion, /가장 먼저 인터뷰할 .*1인 개발자.*유형/);
+    assert.ok(hypothesis.likelyUsers.includes("전업 1인 개발자, 수익 0원, macOS 사용자"));
+    assert.match(hypothesis.suggestedFirstQuestion, /가장 먼저 인터뷰할 .*전업 1인 개발자.*유형/);
     assert.ok(hypothesis.evidence.some((item) => item.includes("README")));
   });
 });
@@ -285,7 +285,7 @@ test("normalizeWorkspaceOnboardingHypothesis keeps malformed provider output saf
         agent_tool: { status: "unconfirmed", note: "" },
         records_intent: { status: "unconfirmed", note: "" },
       },
-      suggestedFirstQuestion: "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?",
+      suggestedFirstQuestion: "",
     },
   );
 });

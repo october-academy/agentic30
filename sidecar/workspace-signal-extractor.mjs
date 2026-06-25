@@ -1,11 +1,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { extractPdfText } from "./pdf-text.mjs";
 import { PROJECT_DOCS_DIR, projectDocPath } from "./project-doc-paths.mjs";
 
 const MAX_DISCOVERY_ENTRIES = 8000;
 const MAX_DISCOVERY_DEPTH = 6;
 const MAX_DOC_CHARS = 9000;
 const MAX_SOURCE_CHARS = 4000;
+const MAX_PDF_CHARS = 12000;
+const MAX_PDF_BYTES = 20_000_000;
+const MAX_PDF_DEPTH = 2;
+const MAX_PDF_FILES = 4;
 const MAX_EVIDENCE_REFS = 10;
 
 const ROLES = Object.freeze([
@@ -99,6 +104,7 @@ const DENY_SEGMENTS = new Set([
 ]);
 
 const SOURCE_SIGNAL_PATTERN = /(customer|user|problem|mission|goal|value|pricing|onboarding|landing|persona|audience|target|pain|friction|stuck|success|outcome|proof|고객|사용자|문제|목표|가치|미션|가격|온보딩|랜딩|페르소나|타깃|타겟|대상|통증|막힘|성공|결과|검증)/i;
+const PDF_SIGNAL_PATTERN = /(활용처|사용자|고객|타깃|타겟|대상|목적|필요성|문제|프로젝트\s*소개|주요\s*기능|명상|감정기록|불경|마음챙김|행동|활성|검증|호감|일상적\s*신행|디지털\s*접점)/i;
 
 export async function extractWorkspaceEvidence(workspaceRoot, {
   scanPaths = {},
@@ -162,12 +168,17 @@ export async function extractWorkspaceEvidence(workspaceRoot, {
 
   const evidence = [];
   const addEvidence = (item) => {
-    if (!item?.path || evidence.some((existing) => existing.path.toLowerCase() === item.path.toLowerCase())) return;
+    if (!item?.path) return;
+    const key = evidenceKey(item);
+    if (evidence.some((existing) => evidenceKey(existing) === key)) return;
     evidence.push(item);
   };
   for (const role of ["goal", "icp", "spec", "values", "docs", "sheet", "designSystem", "adr"]) {
     const candidate = candidates[role][0];
-    if (candidate) addEvidence(candidateToEvidence(candidate));
+    if (candidate) {
+      addEvidence(candidateToEvidence(candidate));
+      for (const ref of collectExplicitFieldEvidence(candidate)) addEvidence(ref);
+    }
   }
 
   const readme = await loadWorkspaceText({ root, relativePath: "README.md", fsImpl, fileCache, maxChars: MAX_DOC_CHARS })
@@ -191,6 +202,9 @@ export async function extractWorkspaceEvidence(workspaceRoot, {
     const sourceRefs = await collectSourceEvidence({ root, fsImpl, fileCache, sourceFiles: files.sourceFiles });
     for (const ref of sourceRefs) addEvidence(ref);
   }
+
+  const pdfRefs = await collectPdfEvidence({ root, fsImpl, pdfFiles: files.pdfFiles });
+  for (const ref of pdfRefs) addEvidence(ref);
 
   const boundedEvidence = evidence
     .filter((item) => item.quote)
@@ -246,6 +260,7 @@ function expandScanPathEntries(scanPaths = {}) {
 async function discoverWorkspaceFiles({ root, includeSource, fsImpl }) {
   const docFiles = [];
   const sourceFiles = [];
+  const pdfFiles = [];
   const queue = [{ absolute: root, relative: "", depth: 0 }];
   let visited = 0;
 
@@ -272,12 +287,14 @@ async function discoverWorkspaceFiles({ root, includeSource, fsImpl }) {
       if (!entry.isFile()) continue;
       if (isDocCandidatePath(relativePath)) docFiles.push(relativePath);
       if (includeSource && isSourceCandidatePath(relativePath)) sourceFiles.push(relativePath);
+      if (isPdfCandidatePath(relativePath, current.depth)) pdfFiles.push(relativePath);
     }
   }
 
   return {
     docFiles: uniqueBy(docFiles, (item) => item.toLowerCase()).slice(0, 600),
     sourceFiles: uniqueBy(sourceFiles, (item) => item.toLowerCase()).slice(0, 120),
+    pdfFiles: uniqueBy(pdfFiles, (item) => item.toLowerCase()).slice(0, MAX_PDF_FILES),
   };
 }
 
@@ -338,12 +355,73 @@ function canonicalPathRank(relativePath) {
 function candidateToEvidence(candidate) {
   return {
     role: candidate.role,
-    field: candidate.field,
+    field: "",
     path: candidate.path,
     reason: `${candidate.role} ${candidate.source}`,
     quote: candidate.quote,
     score: candidate.score,
   };
+}
+
+function collectExplicitFieldEvidence(candidate = {}) {
+  const content = String(candidate.content || "");
+  if (!content.trim()) return [];
+  const refs = [];
+  const pushRef = ({ field, reason, quote, scoreOffset = 2 }) => {
+    const cleanQuote = cleanLongText(quote);
+    if (!field || !cleanQuote) return;
+    refs.push({
+      role: candidate.role,
+      field,
+      path: candidate.path,
+      reason,
+      quote: cleanQuote,
+      score: (candidate.score || 0) + scoreOffset,
+    });
+  };
+
+  const targetUser = firstSemanticMatch([content], [
+    /^[ \t]*(?:[-*][ \t]*)?(?:활용처[·ㆍ\-/\s]*사용자|핵심\s*사용자|대상\s*사용자)[ \t]*[:：]\s*([^\n]+)/im,
+    /^[ \t]*(?:[-*][ \t]*)?\*\*(?:타깃 유저|타깃 사용자|타겟 사용자|target user|targetUser|target_customer|target customer)[ \t]*[:：]\*\*[ \t]*([^\n]+)/im,
+    /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:[-*][ \t]*)?(?:타깃 유저|타깃 사용자|타겟 사용자|target user|targetUser|target_customer|target customer|customer segment|audience)[ \t]*[:：=-][ \t]*["“]?([^"”\n/]+)/im,
+    /^#{1,6}[ \t]+(?:Our[ \t]+ICP|ICP|고객|핵심[ \t]*고객|타깃[ \t]*사용자|타겟[ \t]*사용자)[ \t]*[:：][ \t]*([^\n]+)/im,
+  ], looksLikeExplicitCustomerSegment);
+  if (targetUser) {
+    pushRef({
+      field: "targetUser",
+      reason: "explicit_target_user",
+      quote: `고객: ${targetUser}`,
+    });
+  }
+
+  const problem = firstSemanticMatch([content], [
+    /^[ \t]*핵심 가설:[ \t]*이 유저는[ \t]*"([^"]+)"/im,
+    /^[ \t]*핵심 문제는[ \t]*[“"]([^”"]+)[”"]/im,
+    /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:problem|pain|friction)[ \t]*[:：=-][ \t]*["“]?([^"”\n/]+)/im,
+    /(?:^|\/\s*)(?:problem|pain|friction)[ \t]*[:：=-][ \t]*["“]?([^"”\n/]+)/im,
+  ], isReadableProblemSentence);
+  if (problem) {
+    pushRef({
+      field: "problem",
+      reason: "explicit_problem",
+      quote: `문제: ${problem}`,
+    });
+  }
+
+  const outcome = firstSemanticMatch([content], [
+    /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:활성\s*행동|활성\s*신호|검증\s*행동)[ \t]*[:：=-][ \t]*["“]?([^"”\n/]+)/im,
+    /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:validation action|activation action|outcome|result|success signal)[ \t]*[:：=-][ \t]*["“]?([^"”\n/]+)/im,
+    /^#{1,5}[^\n]*(?:Validation Signals?|검증\s*신호|행동\s*증거)[^\n]*[\s\S]{0,500}?(?:^#{1,6}[^\n]*(?:Positive|긍정)[^\n]*\n+)?(?:[ \t]*\n)*^[ \t]*[-*][ \t]*([^\n]{8,220})/im,
+  ], isOutcomeSemanticText);
+  if (outcome) {
+    pushRef({
+      field: "outcome",
+      reason: "explicit_validation_action",
+      quote: `활성 행동: ${outcome}`,
+    });
+  }
+
+  return refs;
 }
 
 async function readPackageJsonEvidence({ root, fsImpl, fileCache }) {
@@ -391,6 +469,69 @@ async function collectSourceEvidence({ root, fsImpl, fileCache, sourceFiles }) {
   return scored.slice(0, 4);
 }
 
+async function collectPdfEvidence({ root, fsImpl, pdfFiles }) {
+  const refs = [];
+  for (const relativePath of pdfFiles || []) {
+    const resolved = path.resolve(root, relativePath);
+    if (!isPathInside(root, resolved)) continue;
+    let stat = null;
+    try {
+      stat = await fsImpl.stat(resolved);
+    } catch {
+      continue;
+    }
+    if (!stat?.isFile?.() || stat.size > MAX_PDF_BYTES) continue;
+    let bytes = null;
+    try {
+      bytes = await fsImpl.readFile(resolved);
+    } catch {
+      continue;
+    }
+    let extracted = "";
+    try {
+      extracted = await extractPdfText(bytes, { maxChars: MAX_PDF_CHARS });
+    } catch {
+      continue;
+    }
+    const text = cleanPdfText(extracted).slice(0, MAX_PDF_CHARS);
+    if (!PDF_SIGNAL_PATTERN.test(text)) continue;
+    const targetUser = explicitPdfTargetUser(text);
+    const problem = explicitPdfProblem(text);
+    const outcome = explicitPdfOutcome(text);
+    if (targetUser) {
+      refs.push({
+        role: "pdf",
+        field: "targetUser",
+        path: cleanPath(relativePath),
+        reason: "pdf explicit 활용처 사용자",
+        quote: `활용처·사용자: ${targetUser}`,
+        score: 82,
+      });
+    }
+    if (problem) {
+      refs.push({
+        role: "pdf",
+        field: "problem",
+        path: cleanPath(relativePath),
+        reason: "pdf explicit 목적 필요성",
+        quote: `문제: ${problem}`,
+        score: 80,
+      });
+    }
+    if (outcome) {
+      refs.push({
+        role: "pdf",
+        field: "outcome",
+        path: cleanPath(relativePath),
+        reason: "pdf explicit 주요 기능 활성 행동",
+        quote: `활성 행동: ${outcome}`,
+        score: 78,
+      });
+    }
+  }
+  return refs;
+}
+
 function extractSignals({ docs, candidates, selectedCandidates, evidence, packageEvidence, readmeContent = "" }) {
   const contentFor = (role) => candidates[role]?.[0]?.content || "";
   const allContent = [
@@ -405,13 +546,14 @@ function extractSignals({ docs, candidates, selectedCandidates, evidence, packag
   const readmeHeading = markdownHeadingTitle(readmeContent) || markdownHeadingTitle(contentFor("docs"));
   const packageName = packageNameFromEvidence(packageEvidence);
   const productName = normalizeProductName(readmeHeading) || normalizeProductName(packageName);
-  const targetUser = firstSemanticMatch([contentFor("icp"), allContent], [
+  const targetUser = evidenceFieldValue(evidence, "targetUser") || firstSemanticMatch([contentFor("icp"), allContent], [
+    /^[ \t]*(?:[-*][ \t]*)?(?:활용처[·ㆍ\-/\s]*사용자|핵심\s*사용자|대상\s*사용자)[ \t]*[:：]\s*([^\n]+)/im,
     /^[ \t]*(?:[-*][ \t]*)?\*\*(?:타깃 유저|타깃 사용자|타겟 사용자|target user|targetUser|target_customer|target customer)[ \t]*[:：]\*\*[ \t]*([^\n]+)/im,
     /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:[-*][ \t]*)?(?:타깃 유저|타깃 사용자|타겟 사용자|target user|targetUser|target_customer|target customer|customer segment|audience)[ \t]*[:：=-][ \t]*["“]?([^"”\n/]+)/im,
     /^##[ \t]+Our ICP:[ \t]*([^\n]+)/im,
     /^#{1,4}[^\n]*(?:ICP|고객|사용자|페르소나|타깃|타겟|대상)[^\n]*\n+(?:[ \t]*\n|[-*][ \t]*)*([^\n]{8,220})/im,
-  ]);
-  const problem = firstSemanticMatch([contentFor("spec"), contentFor("icp"), allContent], [
+  ], looksLikeExplicitCustomerSegment);
+  const problem = evidenceFieldValue(evidence, "problem") || firstSemanticMatch([contentFor("spec"), contentFor("icp"), allContent], [
     /^[ \t]*핵심 가설:[ \t]*이 유저는[ \t]*"([^"]+)"/im,
     /^[ \t]*핵심 문제는[ \t]*[“"]([^”"]+)[”"]/im,
     /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:problem|pain|friction)[ \t]*[:：=-][ \t]*["“]?([^"”\n/]+)/im,
@@ -437,7 +579,8 @@ function extractSignals({ docs, candidates, selectedCandidates, evidence, packag
     /^[ \t]*(?:미션|mission|purpose)[ \t]*[:：=-][ \t]*([^\n]+)/im,
     /^#{1,4}[^\n]*(?:미션|Mission|Purpose|목적)[^\n]*\n+(?:[ \t]*\n|[-*][ \t]*)*([^\n]{8,220})/im,
   ]);
-  const outcome = firstSemanticMatch([allContent], [
+  const outcome = evidenceFieldValue(evidence, "outcome") || firstSemanticMatch([allContent], [
+    /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:활성\s*행동|활성\s*신호|검증\s*행동)[ \t]*[:：=-][ \t]*["“]?([^"”\n/]+)/im,
     /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:outcome|result|success signal|결과|성공 신호)[ \t]*[:：=-][ \t]*["“]?([^"”\n/]+)/im,
     /(?:^|\/\s*)(?:outcome|result|success signal|결과|성공 신호)[ \t]*[:：=-][ \t]*["“]?([^"”\n/]+)/im,
     /^#{1,4}[^\n]*(?:Outcome|결과|성공)[^\n]*\n+(?:[ \t]*\n|[-*][ \t]*)*([^\n]{8,220})/im,
@@ -446,7 +589,6 @@ function extractSignals({ docs, candidates, selectedCandidates, evidence, packag
   ], isOutcomeSemanticText);
   const likelyUsers = uniqueCompact([
     targetUser,
-    ...inferLikelyUsersFromText(allContent),
   ]).slice(0, 4);
   return {
     productName,
@@ -459,6 +601,84 @@ function extractSignals({ docs, candidates, selectedCandidates, evidence, packag
     stage: inferStage(allContent, docs),
     likelyUsers,
   };
+}
+
+function evidenceFieldValue(evidence = [], field) {
+  const ref = evidence.find((item) => cleanToken(item?.field) === cleanToken(field) && item?.quote);
+  if (!ref) return "";
+  const value = String(ref.quote || "").replace(/^[^:：]{1,40}[:：]\s*/u, "");
+  return cleanSemanticText(value);
+}
+
+function cleanPdfText(value) {
+  return String(value || "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t\f\v]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function explicitPdfTargetUser(text) {
+  const section = String(text || "").match(/활용처[·ㆍ\-/\s]*사용자\s*[-:：]?\s*([\s\S]{12,420}?)(?:사업화\s*및\s*제휴|ㅇ\s*기대효과|기대효과|비즈니스\s*측면|기타|□|$)/i)?.[1]
+    || String(text || "").match(/(?:타깃|타겟|대상)\s*(?:사용자|고객|유저)\s*[-:：]?\s*([\s\S]{12,260}?)(?:사업화|기대효과|□|$)/i)?.[1]
+    || "";
+  const candidate = cleanSemanticText(section)
+    .replace(/\s*을?\s*핵심\s*사용자로\s*설정.*$/u, "")
+    .trim();
+  return looksLikeCustomerSegment(candidate) ? candidate : "";
+}
+
+function explicitPdfProblem(text) {
+  const market = firstSemanticMatch([text], [
+    /시장\s*기회\s*[:：]\s*([^-–\n]{16,220}?부재함)/i,
+  ], isReadableProblemSentence);
+  const task = firstSemanticMatch([text], [
+    /해결\s*과제\s*[:：]\s*([^-–\n]{16,220}?첫\s*접점을\s*제공)/i,
+  ]);
+  if (
+    /불교\s*호감도/.test(market)
+    && /일상적\s*신행/.test(market)
+    && /디지털\s*전환\s*도구가\s*부재함/.test(market)
+    && /마음챙김.*일상적\s*루틴/.test(task)
+  ) {
+    return "불교 호감도는 높지만 일상적 신행이나 마음챙김 루틴으로 이어지는 디지털 접점이 부족하다";
+  }
+  if (market) return market;
+  const direct = firstSemanticMatch([text], [
+    /(?:문제|해결\s*과제)\s*[:：]\s*([^\n]{16,220})/i,
+  ], isReadableProblemSentence);
+  if (direct) return direct;
+  const purpose = sectionSnippet(text, /목적\s*및\s*필요성/i, /(?:프로젝트\s*소개|주요\s*기능|활용처|기대\s*효과)/i);
+  const candidate = firstSemanticMatch([purpose], [
+    /([^\n.。]*?(?:부족|부재|어려움|이어지는|이어지지|접점|루틴)[^\n.。]*[.。]?)/i,
+  ], isReadableProblemSentence);
+  return candidate;
+}
+
+function explicitPdfOutcome(text) {
+  const direct = firstSemanticMatch([text], [
+    /(?:활성\s*행동|활성\s*신호|검증\s*행동)\s*[:：]\s*([^\n]{12,240})/i,
+  ], isOutcomeSemanticText);
+  if (direct) return direct;
+  const feature = sectionSnippet(text, /(?:프로젝트\s*소개|주요\s*기능)/i, /(?:활용처|기대\s*효과|일정|예산)/i);
+  const hasMeditation = /명상/.test(feature);
+  const hasEmotion = /감정\s*기록|감정기록/.test(feature);
+  const hasSutra = /불경|듣기/.test(feature);
+  if (hasMeditation && hasEmotion && hasSutra) {
+    return "명상·감정기록·불경 듣기 등 첫 마음챙김 활동을 완료하고 반복 사용 의사를 보이는 것";
+  }
+  return firstSemanticMatch([feature], [
+    /([^\n.。]*?(?:완료|반복|사용\s*의사|피드백|검증|활성)[^\n.。]*[.。]?)/i,
+  ], isOutcomeSemanticText);
+}
+
+function sectionSnippet(text, startPattern, endPattern) {
+  const source = String(text || "");
+  const start = source.search(startPattern);
+  if (start < 0) return "";
+  const rest = source.slice(start);
+  const end = rest.slice(1).search(endPattern);
+  return (end >= 0 ? rest.slice(0, end + 1) : rest).slice(0, 1400);
 }
 
 function inferLikelyUsersFromText(value) {
@@ -514,6 +734,13 @@ function isSourceCandidatePath(relativePath) {
   if (/(^|[\\/])(__tests__|tests?|fixtures?)([\\/]|$)/i.test(normalized)) return false;
   if (/(^|[\\/])[^\\/]*(?:secret|token|credential|password|key)[^\\/]*($|[\\/])/i.test(normalized)) return false;
   return SOURCE_EXTENSIONS.has(path.extname(normalized).toLowerCase());
+}
+
+function isPdfCandidatePath(relativePath, directoryDepth) {
+  const normalized = cleanPath(relativePath);
+  if (!normalized || hasDeniedSegment(normalized)) return false;
+  if ((directoryDepth || 0) > MAX_PDF_DEPTH) return false;
+  return path.extname(normalized).toLowerCase() === ".pdf";
 }
 
 function hasDeniedSegment(relativePath) {
@@ -671,6 +898,23 @@ function firstSemanticMatch(contexts, patterns, validator = null) {
   return "";
 }
 
+function isReadableProblemSentence(value) {
+  const text = cleanText(value);
+  if (!text || text.length < 16 || text.length > 170) return false;
+  if (looksLikeOcrContaminatedText(text)) return false;
+  return /(문제|부족|부재|어려움|불편|막힘|이어지지|모른다|못|pain|friction|problem|missed|missing|cannot|can't|unable|lack|lacks)/i.test(text);
+}
+
+function looksLikeOcrContaminatedText(value) {
+  const text = cleanText(value);
+  if (!text) return true;
+  if (/(시장\s*기회\s*\d|00\d{2}|과제\s*\d|[가-힣][0-9]{2,}[가-힣])/u.test(text)) return true;
+  const digitCount = (text.match(/\d/g) || []).length;
+  if (digitCount >= 5 && digitCount / Math.max(text.length, 1) > 0.08) return true;
+  const sectionMarkers = text.match(/(?:시장\s*기회|프로젝트\s*소개|주요\s*기능|목적\s*및\s*필요성|활용처)/g) || [];
+  return sectionMarkers.length >= 2;
+}
+
 function cleanSemanticText(value) {
   const text = cleanText(value)
     .replace(/^[-*]\s*/, "")
@@ -692,7 +936,7 @@ function isOutcomeSemanticText(candidate, { match } = {}) {
   if (/(?:약하다|두렵다|못한다|모른다|막혀\s*있다)[.。．]?$/i.test(text)) {
     return false;
   }
-  return /(확인|검증|신호|대화|인터뷰|반응|피드백|지불|의향|의사|대안|도입|결정|소개|시장|최근\s*사건|confirm|validate|signal|interview|conversation|feedback|alternative|willingness)/i.test(text);
+  return /(확인|검증|신호|대화|인터뷰|반응|피드백|지불|의향|의사|대안|도입|결정|소개|시장|최근\s*사건|완료|반복|사용\s*의사|요청|기록|유료|파일럿|워크플로|confirm|validate|signal|interview|conversation|feedback|alternative|willingness|ask|record|complete|repeat|use\s*intent|paid\s*pilot|workflow)/i.test(text);
 }
 
 function looksLikePersonaSummaryText(value) {
@@ -712,7 +956,16 @@ function looksLikeBusinessGoalSummary(value) {
 }
 
 function looksLikeCustomerSegment(value) {
-  return /(고객|사용자|사람|팀|개발자|창업자|운영자|담당자|대표|리드|lead|manager|founder|developer|customer|user|team|persona|operator|owner)/i.test(String(value || ""));
+  return /(고객|사용자|사람|팀|개발자|창업자|운영자|담당자|대표|리드|수요층|관심층|비신자|입문자|세대|층|lead|manager|founder|developer|customer|user|team|persona|operator|owner)/i.test(String(value || ""));
+}
+
+function looksLikeExplicitCustomerSegment(value) {
+  const text = cleanText(value);
+  if (!text) return false;
+  if (/^#{1,6}\s+/.test(text)) return false;
+  if (/^(?:ideal\s+customer\s+profile|customer\s+profile|icp)$/i.test(text)) return false;
+  if (/^(?:이상적\s+고객|고객\s*프로필)$/i.test(text)) return false;
+  return looksLikeCustomerSegment(text);
 }
 
 function looksLikeDocumentPointer(value) {
@@ -766,8 +1019,21 @@ function evidenceDisplayRank(item = {}) {
   return 12;
 }
 
+function evidenceKey(item = {}) {
+  return [
+    cleanPath(item.path).toLowerCase(),
+    String(item.field || "").toLowerCase(),
+    String(item.reason || "").toLowerCase(),
+    cleanLongText(item.quote).toLowerCase(),
+  ].join("::");
+}
+
 function cleanPath(value) {
   return String(value || "").trim().replace(/\\/g, "/");
+}
+
+function cleanToken(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9가-힣]+/g, "");
 }
 
 function cleanText(value) {

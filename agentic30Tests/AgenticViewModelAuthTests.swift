@@ -2836,6 +2836,42 @@ final class AgenticViewModelAuthTests {
         #expect(draft.goalText.contains("방법:") == false)
     }
 
+    @Test @MainActor func blockedDay1AlignmentReadinessDoesNotCreateGoalDrafts() async throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        let alignmentData = try JSONEncoder().encode(Self.makeReadyDay1AlignmentPlan(
+            includeValidationActionEvidence: false,
+            readinessStatus: "blocked",
+            readinessMissingFields: ["validationAction"],
+            readinessRootCause: "활성/검증 행동 quote 근거가 부족해 목표 카드 생성을 차단했습니다.",
+            qualityGatePassed: false
+        ))
+        let alignmentJSON = try #require(String(data: alignmentData, encoding: .utf8))
+
+        try sidecar.emit("""
+        {
+          "type": "workspace_scan_blocked",
+          "scanRoot": "\(workspace.path)",
+          "provider": "codex",
+          "reason": "insufficient_evidence",
+          "message": "활성/검증 행동 quote 근거가 부족해 목표 카드 생성을 차단했습니다.",
+          "stage": "blocked",
+          "day1AlignmentPlan": \(alignmentJSON)
+        }
+        """)
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        #expect(viewModel.scanResult?.day1AlignmentPlan?.readiness?.status == "blocked")
+        #expect(viewModel.day1GoalDrafts.isEmpty)
+        #expect(viewModel.scanBlockedNotice?.message.contains("quote 근거가 부족") == true)
+    }
+
     @Test func day1GoalSelectionOfficeHoursContextCopyIsConcise() {
         let selection = Day1GoalSelection(
             goalType: .getUsers,
@@ -3344,6 +3380,8 @@ final class AgenticViewModelAuthTests {
         let encoder = JSONEncoder()
         let planData = try encoder.encode(makeDay1IcpPlan())
         let planJSON = try #require(String(data: planData, encoding: .utf8))
+        let alignmentData = try encoder.encode(makeReadyDay1AlignmentPlan())
+        let alignmentJSON = try #require(String(data: alignmentData, encoding: .utf8))
         return """
         {
           "type": "workspace_scan_result",
@@ -3365,6 +3403,7 @@ final class AgenticViewModelAuthTests {
             "evidence": ["README.md"],
             "confidence": "high"
           },
+          "day1AlignmentPlan": \(alignmentJSON),
           "day1IcpPlan": \(planJSON)
         }
         """
@@ -3374,6 +3413,8 @@ final class AgenticViewModelAuthTests {
         let encoder = JSONEncoder()
         let planData = try encoder.encode(makeDay1IcpPlan())
         let planJSON = try #require(String(data: planData, encoding: .utf8))
+        let alignmentData = try encoder.encode(makeReadyDay1AlignmentPlan())
+        let alignmentJSON = try #require(String(data: alignmentData, encoding: .utf8))
         return """
         {
           "type": "workspace_scan_result",
@@ -3393,6 +3434,7 @@ final class AgenticViewModelAuthTests {
             "evidence": ["README.md"],
             "confidence": "high"
           },
+          "day1AlignmentPlan": \(alignmentJSON),
           "day1IcpPlan": \(planJSON),
           "agentic30Gitignore": {
             "scanRoot": "\(workspaceRoot)",
@@ -3405,120 +3447,217 @@ final class AgenticViewModelAuthTests {
         """
     }
 
-    private static func workspaceScanResultWithLongAlignmentCustomerPayload(workspaceRoot: String) -> String {
-        """
+    private static func workspaceScanResultWithLongAlignmentCustomerPayload(workspaceRoot: String) throws -> String {
+        let encoder = JSONEncoder()
+        let alignmentData = try encoder.encode(makeReadyDay1AlignmentPlan(
+            productName: "Agentic30",
+            projectGoal: "Agentic30은 전업 1인 개발자의 첫 매출 가능성을 검증한다.",
+            currentIcpGuess: "전업 1인 개발자 (수익 0원, macOS)",
+            likelyUsers: ["AI 코딩 도구를 쓰는 개발자"],
+            problem: "만들 줄은 알지만 무엇을 팔아야 하는지 모른다",
+            validationAction: "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.",
+            customerStatement: "전업 1인 개발자 (수익 0원, macOS) 중 \"만들 줄은 알지만 무엇을 팔아야 하는지 모른다\" 상황을 지금 해결하려는 고객."
+        ))
+        let alignmentJSON = try #require(String(data: alignmentData, encoding: .utf8))
+        return """
         {
           "type": "workspace_scan_result",
           "scanRoot": "\(workspaceRoot)",
           "icp": ".agentic30/docs/ICP.md",
           "spec": ".agentic30/docs/SPEC.md",
           "goal": ".agentic30/docs/GOAL.md",
-          "day1AlignmentPlan": {
-            "schemaVersion": 1,
-            "source": "deterministic",
-            "generatedAt": "2026-06-07T00:00:00.000Z",
-            "confidence": 0.88,
-            "fellBackToDeterministic": false,
-            "projectGoal": "Agentic30은 전업 1인 개발자의 첫 매출 가능성을 검증한다.",
-            "mission": "Day 1 goal test",
-            "signals": {
-              "productName": "Agentic30",
-              "currentIcpGuess": "전업 1인 개발자 (수익 0원, macOS)",
-              "likelyUsers": ["AI 코딩 도구를 쓰는 개발자"],
-              "problem": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다",
-              "currentAlternatives": ["수동 노트"],
-              "evidenceRefs": [
-                { "path": ".agentic30/docs/ICP.md", "reason": "icp", "quote": "전업 1인 개발자 (수익 0원, macOS)" },
-                { "path": ".agentic30/docs/SPEC.md", "reason": "spec", "quote": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다" }
-              ],
-              "missingAssumptions": [],
-              "confidence": "high"
-            },
-            "components": {
-              "icp": {
-                "id": "icp",
-                "title": "고객",
-                "prompt": "고객 후보는 누구인가요?",
-                "helperText": "고객 조건을 고릅니다.",
-                "statement": "전업 1인 개발자 (수익 0원, macOS) 중 \\"만들 줄은 알지만 무엇을 팔아야 하는지 모른다\\" 상황을 지금 해결하려는 고객.",
-                "evidence": [".agentic30/docs/ICP.md"],
-                "missingAssumptions": [],
-                "options": [
-                  { "id": "solo", "label": "전업 1인 개발자 (수익 0원, macOS)", "description": "첫 고객 후보입니다.", "preview": "고객", "antiSignal": false }
-                ]
-              },
-              "painPoint": {
-                "id": "pain_point",
-                "title": "문제",
-                "prompt": "문제는 무엇인가요?",
-                "helperText": "핵심 문제를 고릅니다.",
-                "statement": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다",
-                "evidence": [".agentic30/docs/SPEC.md"],
-                "missingAssumptions": [],
-                "options": [
-                  { "id": "pain", "label": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다", "description": "핵심 문제입니다.", "preview": "문제", "antiSignal": false }
-                ]
-              },
-              "outcome": {
-                "id": "outcome",
-                "title": "확인할 행동",
-                "prompt": "확인할 행동은 무엇인가요?",
-                "helperText": "관찰 가능한 행동을 고릅니다.",
-                "statement": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.",
-                "evidence": [".agentic30/docs/GOAL.md"],
-                "missingAssumptions": [],
-                "options": [
-                  { "id": "outcome", "label": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.", "description": "행동 신호입니다.", "preview": "확인", "antiSignal": false }
-                ]
-              }
-            },
-            "alignmentStatement": {
-              "statement": "목표: Agentic30은 전업 1인 개발자의 첫 매출 가능성을 검증한다. / 고객: 전업 1인 개발자 (수익 0원, macOS) 중 \\"만들 줄은 알지만 무엇을 팔아야 하는지 모른다\\" 상황을 지금 해결하려는 고객. / 문제: 만들 줄은 알지만 무엇을 팔아야 하는지 모른다 / 확인할 행동: 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.",
-              "projectGoal": "Agentic30은 전업 1인 개발자의 첫 매출 가능성을 검증한다.",
-              "icp": "전업 1인 개발자 (수익 0원, macOS) 중 \\"만들 줄은 알지만 무엇을 팔아야 하는지 모른다\\" 상황을 지금 해결하려는 고객.",
-              "painPoint": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다",
-              "outcome": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다."
-            },
-            "qualityGate": {
-              "score": 8.8,
-              "threshold": 7.0,
-              "passed": true,
-              "label": "PASS",
-              "passGate": "specific",
-              "failGate": "missing",
-              "criteria": [
-                { "id": "icp", "label": "고객", "score": 2.0, "maxScore": 2.0, "passed": true, "detail": "specific" }
-              ]
-            },
-            "firstInterviewMessage": {
-              "channel": "DM",
-              "recipientPlaceholder": "{name}",
-              "subject": "Day 1",
-              "bodyTemplate": "최근 무엇을 팔아야 할지 막힌 적이 있나요?",
-              "questions": ["최근 사건은?", "현재 대안은?"]
-            },
-            "day2Handoff": {
-              "title": "Day 2",
-              "body": "시장 신호 확인",
-              "focus": "첫 고객",
-              "nextDayPrompt": "지불 의향 확인",
-              "qualityGateLabel": "PASS 8.8/10"
-            },
-            "signalDigest": {
-              "schemaVersion": 1,
-              "rows": [
-                { "key": "project", "label": "프로젝트", "value": "Agentic30", "tone": "strong" },
-                { "key": "goal", "label": "목표", "value": "첫 매출 가능성 검증", "tone": "body" },
-                { "key": "icp", "label": "고객", "value": "전업 1인 개발자 (수익 0원, macOS)", "tone": "body" },
-                { "key": "pain", "label": "문제", "value": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다", "tone": "mark" },
-                { "key": "outcome", "label": "확인할 행동", "value": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.", "tone": "strong" },
-                { "key": "evidence", "label": "근거", "value": ".agentic30/docs/ICP.md, .agentic30/docs/SPEC.md", "tone": "code" }
-              ],
-              "summary": "Day 1 고객 신호"
-            }
-          }
+          "day1AlignmentPlan": \(alignmentJSON)
         }
         """
+    }
+
+    private static func makeReadyDay1AlignmentPlan(
+        productName: String = "SupportLens",
+        projectGoal: String = "SupportLens가 B2B SaaS support lead의 Slack escalation 누락 문제를 검증한다.",
+        currentIcpGuess: String = "B2B SaaS support lead",
+        likelyUsers: [String] = ["B2B SaaS support lead"],
+        problem: String = "Slack escalation을 놓침",
+        validationAction: String = "Ask three support leads for a paid pilot.",
+        customerStatement: String? = nil,
+        includeValidationActionEvidence: Bool = true,
+        readinessStatus: String = "ready",
+        readinessMissingFields: [String] = [],
+        readinessRootCause: String? = nil,
+        qualityGatePassed: Bool = true
+    ) -> Day1AlignmentPlan {
+        let customerQuote = "고객: \(currentIcpGuess)"
+        let problemQuote = "문제: \(problem)"
+        let actionQuote = "활성 행동: \(validationAction)"
+        let targetEvidence = Day1IcpEvidenceRef(
+            path: "README.md",
+            field: "targetUser",
+            role: "docs",
+            reason: "explicit_target_user",
+            quote: customerQuote
+        )
+        let problemEvidence = Day1IcpEvidenceRef(
+            path: ".agentic30/docs/SPEC.md",
+            field: "problem",
+            role: "spec",
+            reason: "explicit_problem",
+            quote: problemQuote
+        )
+        let actionEvidence = Day1IcpEvidenceRef(
+            path: ".agentic30/docs/GOAL.md",
+            field: "validationAction",
+            role: "goal",
+            reason: "explicit_validation_action",
+            quote: actionQuote
+        )
+        var evidenceRefs = [targetEvidence, problemEvidence]
+        if includeValidationActionEvidence {
+            evidenceRefs.append(actionEvidence)
+        }
+        var fieldEvidence: [String: [Day1AlignmentFieldEvidence]] = [
+            "targetUser": [
+                Day1AlignmentFieldEvidence(path: "README.md", quote: customerQuote, reason: "explicit_target_user"),
+            ],
+            "problem": [
+                Day1AlignmentFieldEvidence(path: ".agentic30/docs/SPEC.md", quote: problemQuote, reason: "explicit_problem"),
+            ],
+        ]
+        if includeValidationActionEvidence {
+            fieldEvidence["validationAction"] = [
+                Day1AlignmentFieldEvidence(path: ".agentic30/docs/GOAL.md", quote: actionQuote, reason: "explicit_validation_action"),
+            ]
+        }
+        let icpStatement = customerStatement ?? currentIcpGuess
+        let icpOption = Day1IcpQuestionOption(
+            id: "icp",
+            label: currentIcpGuess,
+            description: "명시된 고객 근거입니다.",
+            preview: "고객",
+            antiSignal: false
+        )
+        let problemOption = Day1IcpQuestionOption(
+            id: "problem",
+            label: problem,
+            description: "명시된 문제 근거입니다.",
+            preview: "문제",
+            antiSignal: false
+        )
+        let actionOption = Day1IcpQuestionOption(
+            id: "validation-action",
+            label: validationAction,
+            description: "명시된 활성 행동 근거입니다.",
+            preview: "행동",
+            antiSignal: false
+        )
+        return Day1AlignmentPlan(
+            schemaVersion: 1,
+            source: "test",
+            generatedAt: "2026-06-07T00:00:00.000Z",
+            confidence: 0.88,
+            fellBackToDeterministic: false,
+            projectGoal: projectGoal,
+            mission: "Day 1 strict evidence fixture",
+            signals: Day1IcpSignals(
+                productName: productName,
+                currentIcpGuess: currentIcpGuess,
+                likelyUsers: likelyUsers,
+                problem: problem,
+                currentAlternatives: ["manual check"],
+                evidenceRefs: evidenceRefs,
+                missingAssumptions: [],
+                confidence: "high"
+            ),
+            components: Day1AlignmentComponents(
+                icp: Day1AlignmentComponent(
+                    id: "icp",
+                    title: "고객",
+                    prompt: "고객 후보는 누구인가요?",
+                    helperText: "고객 조건을 고릅니다.",
+                    statement: icpStatement,
+                    evidence: ["README.md"],
+                    missingAssumptions: [],
+                    options: [icpOption]
+                ),
+                painPoint: Day1AlignmentComponent(
+                    id: "pain_point",
+                    title: "문제",
+                    prompt: "문제는 무엇인가요?",
+                    helperText: "핵심 문제를 고릅니다.",
+                    statement: problem,
+                    evidence: [".agentic30/docs/SPEC.md"],
+                    missingAssumptions: [],
+                    options: [problemOption]
+                ),
+                outcome: Day1AlignmentComponent(
+                    id: "outcome",
+                    title: "확인할 행동",
+                    prompt: "확인할 행동은 무엇인가요?",
+                    helperText: "관찰 가능한 행동을 고릅니다.",
+                    statement: validationAction,
+                    evidence: includeValidationActionEvidence ? [".agentic30/docs/GOAL.md"] : [],
+                    missingAssumptions: [],
+                    options: [actionOption]
+                )
+            ),
+            alignmentStatement: Day1AlignmentStatement(
+                statement: "목표: \(projectGoal) / 고객: \(icpStatement) / 문제: \(problem) / 확인할 행동: \(validationAction)",
+                projectGoal: projectGoal,
+                icp: icpStatement,
+                painPoint: problem,
+                outcome: validationAction
+            ),
+            qualityGate: Day1AlignmentQualityGate(
+                score: 8.8,
+                threshold: 7.0,
+                passed: qualityGatePassed,
+                label: qualityGatePassed ? "PASS" : "BLOCKED",
+                passGate: "specific evidence",
+                failGate: "missing evidence",
+                criteria: [
+                    Day1AlignmentQualityCriterion(id: "targetUser", label: "고객", score: 2.0, maxScore: 2.0, passed: true, detail: "quote present"),
+                    Day1AlignmentQualityCriterion(id: "problem", label: "문제", score: 2.0, maxScore: 2.0, passed: true, detail: "quote present"),
+                    Day1AlignmentQualityCriterion(
+                        id: "validationAction",
+                        label: "행동",
+                        score: includeValidationActionEvidence ? 2.0 : 0.0,
+                        maxScore: 2.0,
+                        passed: includeValidationActionEvidence,
+                        detail: includeValidationActionEvidence ? "quote present" : "quote missing"
+                    ),
+                ]
+            ),
+            readiness: Day1AlignmentReadiness(
+                status: readinessStatus,
+                missingFields: readinessMissingFields,
+                fieldEvidence: fieldEvidence,
+                rootCause: readinessRootCause
+            ),
+            firstInterviewMessage: FirstInterviewMessage(
+                channel: "DM",
+                recipientPlaceholder: "{name}",
+                subject: "Day 1",
+                bodyTemplate: "최근 \(problem) 상황이 있었나요?",
+                questions: ["최근 사건은?", "현재 대안은?"]
+            ),
+            day2Handoff: Day1Day2Handoff(
+                title: "Day 2",
+                body: "시장 신호 확인",
+                focus: "첫 고객",
+                nextDayPrompt: "반복 사용 의사 확인",
+                qualityGateLabel: "PASS 8.8/10"
+            ),
+            signalDigest: Day1SignalDigest(
+                schemaVersion: 1,
+                rows: [
+                    Day1SignalDigestRow(key: "project", label: "프로젝트", value: productName, tone: "strong"),
+                    Day1SignalDigestRow(key: "goal", label: "목표", value: projectGoal, tone: "body"),
+                    Day1SignalDigestRow(key: "icp", label: "고객", value: currentIcpGuess, tone: "body"),
+                    Day1SignalDigestRow(key: "pain", label: "문제", value: problem, tone: "mark"),
+                    Day1SignalDigestRow(key: "outcome", label: "확인할 행동", value: validationAction, tone: "strong"),
+                    Day1SignalDigestRow(key: "evidence", label: "근거", value: "README.md, .agentic30/docs/SPEC.md, .agentic30/docs/GOAL.md", tone: "code"),
+                ],
+                summary: "Day 1 strict evidence fixture"
+            )
+        )
     }
 
     private static func makeDay1IcpPlan() -> Day1IcpPlan {

@@ -75,6 +75,15 @@ export function classifyFirstCandidatePayload(payload = {}) {
   return classifyFirstCandidateCard(question);
 }
 
+export function hasRequiredFirstCandidatePrimaryTextInput(question = {}) {
+  if (!question || typeof question !== "object" || Array.isArray(question)) return false;
+  const input = question.primaryTextInput || question.primary_text_input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  const label = String(input.label || "").trim();
+  const placeholder = String(input.placeholder || input.freeTextPlaceholder || input.free_text_placeholder || "").trim();
+  return Boolean(label && placeholder && input.required === true);
+}
+
 // Canonical host-authored first_candidate card (EMPTY-hints path). Forces a named
 // free-text capture of an exact reachable person/handle/thread/source, plus EXACTLY
 // one explicit "아직 후보 없음" blocker that routes to an acquisition branch. Never
@@ -125,6 +134,13 @@ export function buildCanonicalFirstCandidateCard({
     multiSelect: false,
     allowFreeText: true,
     requiresFreeText: false,
+    primaryTextInput: {
+      label: "실명·핸들 또는 구체적 스레드",
+      placeholder: "예: 김OO 또는 @handle — 오늘 DM·카톡으로 보낼 검증 요청 한 줄",
+      required: true,
+      submitLabel: "첫 후보 확정",
+      validationMessage: "실명·핸들 또는 구체적 스레드와 오늘 보낼 요청을 입력해야 합니다.",
+    },
     textMode: "short",
   };
   const payload = {

@@ -2173,8 +2173,24 @@ nonisolated struct Day1IcpSignals: Codable, Hashable {
 
 nonisolated struct Day1IcpEvidenceRef: Codable, Hashable {
     let path: String
+    let field: String?
+    let role: String?
     let reason: String?
     let quote: String?
+
+    nonisolated init(
+        path: String,
+        field: String? = nil,
+        role: String? = nil,
+        reason: String? = nil,
+        quote: String? = nil
+    ) {
+        self.path = path
+        self.field = field
+        self.role = role
+        self.reason = reason
+        self.quote = quote
+    }
 }
 
 nonisolated struct Day1IcpQuestion: Codable, Hashable {
@@ -2337,6 +2353,7 @@ struct Day1AlignmentPlan: Codable, Hashable {
     let components: Day1AlignmentComponents
     let alignmentStatement: Day1AlignmentStatement
     let qualityGate: Day1AlignmentQualityGate
+    let readiness: Day1AlignmentReadiness?
     let firstInterviewMessage: FirstInterviewMessage
     let day2Handoff: Day1Day2Handoff
     let signalDigest: Day1SignalDigest?
@@ -2353,6 +2370,7 @@ struct Day1AlignmentPlan: Codable, Hashable {
         components: Day1AlignmentComponents,
         alignmentStatement: Day1AlignmentStatement,
         qualityGate: Day1AlignmentQualityGate,
+        readiness: Day1AlignmentReadiness? = nil,
         firstInterviewMessage: FirstInterviewMessage,
         day2Handoff: Day1Day2Handoff,
         signalDigest: Day1SignalDigest? = nil
@@ -2368,6 +2386,7 @@ struct Day1AlignmentPlan: Codable, Hashable {
         self.components = components
         self.alignmentStatement = alignmentStatement
         self.qualityGate = qualityGate
+        self.readiness = readiness
         self.firstInterviewMessage = firstInterviewMessage
         self.day2Handoff = day2Handoff
         self.signalDigest = signalDigest
@@ -2685,6 +2704,23 @@ struct Day1AlignmentQualityCriterion: Codable, Hashable {
     let maxScore: Double
     let passed: Bool
     let detail: String
+}
+
+struct Day1AlignmentFieldEvidence: Codable, Hashable {
+    let path: String
+    let quote: String
+    let reason: String?
+}
+
+struct Day1AlignmentReadiness: Codable, Hashable {
+    let status: String
+    let missingFields: [String]
+    let fieldEvidence: [String: [Day1AlignmentFieldEvidence]]
+    let rootCause: String?
+
+    var isReady: Bool {
+        status == "ready"
+    }
 }
 
 struct Day1Day2Handoff: Codable, Hashable {

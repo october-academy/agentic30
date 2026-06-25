@@ -392,8 +392,8 @@ test("Day 1 alignment fails quality gate when only tech stack evidence exists", 
 
     assertConciseSignalDigest(plan.signalDigest);
     assert.equal(plan.qualityGate.passed, false);
-    assert.match(plan.signalDigest.rows.find((row) => row.key === "goal").value, /목표 확인 필요/);
-    assert.match(plan.signalDigest.rows.find((row) => row.key === "pain").value, /핵심 문제 확인 필요/);
+    assert.match(plan.signalDigest.rows.find((row) => row.key === "goal").value, /목표 카드 생성 차단/);
+    assert.match(plan.signalDigest.rows.find((row) => row.key === "pain").value, /문제 quote 근거 부족/);
     assert.doesNotMatch(JSON.stringify(plan.signalDigest), /react|vite|GitHub\/IDE\/CLI/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -905,7 +905,7 @@ test("Day 1 alignment digest hides ephemeral workspace basename when evidence is
     assertConciseSignalDigest(plan.signalDigest);
     const rows = Object.fromEntries(plan.signalDigest.rows.map((row) => [row.key, row.value]));
     assert.equal(rows.project, "이 프로젝트");
-    assert.equal(rows.pain, "핵심 문제 확인 필요");
+    assert.equal(rows.pain, "문제 quote 근거 부족");
     assert.doesNotMatch(JSON.stringify(plan.signalDigest), /agentic30-ui-opendesign-day-handoff/i);
     assert.doesNotMatch(JSON.stringify(plan.signalDigest), /scan에서 확인한 핵심 문제/);
   } finally {

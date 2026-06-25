@@ -130,8 +130,9 @@ export function normalizeWorkspaceScanSemanticOutput(input = {}, evidenceBundle 
     };
   }
 
+  const filteredHypothesis = filterUnsupportedOnboardingClaims(rawHypothesis, evidencePathsUsed, evidenceBundle);
   const onboardingHypothesis = normalizeWorkspaceOnboardingHypothesis({
-    ...rawHypothesis,
+    ...filteredHypothesis,
     evidence: evidencePathsUsed,
     confidence: confidenceWithBundleSupport(requestedConfidence, evidencePathsUsed, evidenceBundle),
   });
@@ -195,7 +196,12 @@ function uniqueEvidenceRefs(values = []) {
     const pathValue = cleanPath(value?.path);
     const quote = cleanString(value?.quote, MAX_QUOTE_CHARS);
     if (!pathValue || !quote) continue;
-    const key = pathValue.toLowerCase();
+    const key = [
+      pathValue.toLowerCase(),
+      cleanToken(value?.field),
+      cleanString(value?.reason, 120).toLowerCase(),
+      quote.toLowerCase(),
+    ].join("::");
     if (seen.has(key)) continue;
     seen.add(key);
     output.push({
@@ -207,6 +213,86 @@ function uniqueEvidenceRefs(values = []) {
     });
   }
   return output;
+}
+
+function filterUnsupportedOnboardingClaims(rawHypothesis = {}, evidencePathsUsed = [], evidenceBundle = {}) {
+  const fields = ["productName", "targetUser", "problem", "purpose", "goal", "values", "stage", "projectKind", "suggestedFirstQuestion"];
+  const output = {};
+  for (const field of fields) output[field] = rawHypothesis?.[field] ?? rawHypothesis?.[snakeCase(field)] ?? "";
+  for (const field of ["targetUser", "problem", "purpose", "goal", "values"]) {
+    if (!claimSupportedByEvidence(field, output[field], evidencePathsUsed, evidenceBundle)) {
+      output[field] = "";
+    }
+  }
+  const likelyUsers = Array.isArray(rawHypothesis?.likelyUsers || rawHypothesis?.likely_users)
+    ? rawHypothesis.likelyUsers || rawHypothesis.likely_users
+    : [];
+  output.likelyUsers = likelyUsers
+    .map((item) => cleanString(item, 180))
+    .filter((item) => claimSupportedByEvidence("targetUser", item, evidencePathsUsed, evidenceBundle))
+    .slice(0, 6);
+  output.confidence = rawHypothesis?.confidence;
+  return output;
+}
+
+function claimSupportedByEvidence(field, claim, evidencePathsUsed = [], evidenceBundle = {}) {
+  const text = cleanString(claim, 260);
+  if (!text) return false;
+  if (field === "problem" && looksLikeOcrContaminatedSemanticClaim(text)) return false;
+  const refs = evidenceRefsForClaim(field, evidencePathsUsed, evidenceBundle);
+  if (!refs.length) return false;
+  const claimNorm = normalizeSemanticComparisonText(text);
+  const claimTokens = semanticClaimTokens(text);
+  for (const ref of refs) {
+    const quote = cleanString(ref.quote, MAX_QUOTE_CHARS);
+    if (!quote) continue;
+    const quoteNorm = normalizeSemanticComparisonText(quote);
+    if (quoteNorm.includes(claimNorm) || claimNorm.includes(quoteNorm)) return true;
+    const quoteTokens = new Set(semanticClaimTokens(quote));
+    const overlap = claimTokens.filter((token) => quoteTokens.has(token));
+    if (overlap.length >= Math.min(3, claimTokens.length)) return true;
+  }
+  return false;
+}
+
+function evidenceRefsForClaim(field, evidencePathsUsed = [], evidenceBundle = {}) {
+  const used = new Set(evidencePathsUsed.map((item) => cleanPath(item).toLowerCase()).filter(Boolean));
+  const refs = (Array.isArray(evidenceBundle?.evidenceRefs) ? evidenceBundle.evidenceRefs : [])
+    .filter((ref) => used.has(cleanPath(ref?.path).toLowerCase()));
+  const expectedField = field === "targetUser" ? "targetuser" : cleanToken(field);
+  const fieldRefs = refs.filter((ref) => cleanToken(ref?.field) === expectedField);
+  return fieldRefs.length ? fieldRefs : refs;
+}
+
+function looksLikeOcrContaminatedSemanticClaim(value) {
+  const text = cleanString(value, 260);
+  if (!text) return true;
+  if (/(시장\s*기회\s*\d|00\d{2}|과제\s*\d|[가-힣][0-9]{2,}[가-힣])/u.test(text)) return true;
+  const digitCount = (text.match(/\d/g) || []).length;
+  if (digitCount >= 5 && digitCount / Math.max(text.length, 1) > 0.08) return true;
+  const sectionMarkers = text.match(/(?:시장\s*기회|프로젝트\s*소개|주요\s*기능|목적\s*및\s*필요성|활용처)/g) || [];
+  return sectionMarkers.length >= 2;
+}
+
+function normalizeSemanticComparisonText(value) {
+  return cleanString(value, 420)
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function semanticClaimTokens(value) {
+  const stop = new Set(["고객", "사용자", "문제", "목표", "프로젝트", "시장", "기회", "기능", "서비스", "the", "and", "for", "with"]);
+  return cleanString(value, 420)
+    .toLowerCase()
+    .split(/[^0-9a-z가-힣]+/i)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2 && !stop.has(item))
+    .slice(0, 24);
+}
+
+function snakeCase(value) {
+  return String(value || "").replace(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`);
 }
 
 function sanitizeSignals(signals = {}) {

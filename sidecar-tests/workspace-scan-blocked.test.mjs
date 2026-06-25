@@ -1,16 +1,10 @@
-// Pins the workspace-scan gate. The founder explicitly approved flipping the
-// prior strict fail-closed rule to FAIL-OPEN *when local signals exist*:
+// Pins the workspace-scan gate. Goal selection must fail closed when the scan
+// cannot prove every required Day 1 field with explicit evidence:
 //
-//   - No usable provider AND no local canonical doc  → still BLOCKED
-//     (Agentic30 genuinely cannot proceed). These tests seed only README.md
-//     (not a canonical project doc) so localFoundCount is 0 and the scan must
-//     broadcast workspace_scan_blocked, recommending the next provider in the
-//     codex → claude → gemini → cursor consent chain.
-//   - No usable provider BUT a local canonical doc exists → DEGRADED
-//     workspace_scan_result (additive degraded/degradedReason/degradedProvider
-//     fields) so onboarding advances to Day 1 on local signals instead of
-//     stalling. The degraded test at the bottom pins this intentional
-//     inversion: the result is non-error and carries an advisory notice.
+//   - No usable provider AND no local canonical doc  -> provider BLOCKED
+//     (Agentic30 cannot proceed with no scan-ready provider and no evidence).
+//   - Local canonical docs that lack customer/problem/action quotes -> evidence
+//     BLOCKED. The host must show diagnostics instead of a degraded success.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -35,10 +29,9 @@ const PROVIDER_KEY_ENV_VARS = [
 async function spawnSidecarWithoutStub({
   seedClaudeLogin = false,
   seedGeminiLogin = false,
-  // When true, seeds a canonical .agentic30/docs/ICP.md so the local scan finds
-  // a real project doc (localFoundCount > 0). This flips the gate from
-  // fail-closed (blocked) to fail-open (degraded workspace_scan_result) when no
-  // provider can verify — see the degraded test below.
+  // When true, seeds a partial canonical .agentic30/docs/ICP.md. This is still
+  // insufficient for Day 1 because problem and activation-action quotes are
+  // missing, so strict readiness must remain blocked.
   seedCanonicalDoc = false,
   extraEnv = {},
   processCwd = packageRoot,
@@ -422,12 +415,7 @@ test("scan blocked on selected claude abort recommends the next scan-ready provi
   }
 });
 
-test("scan with no provider but a local canonical doc fails OPEN with a degraded result", async () => {
-  // Intentional design inversion (founder-approved): a workspace that has a
-  // canonical .agentic30/docs/ICP.md but no usable provider must NOT block. The
-  // scan completes on local signals and emits a degraded workspace_scan_result
-  // so onboarding advances to Day 1, with an advisory (non-blocking) notice the
-  // host renders as "local-only scan — reconnect for a precise scan".
+test("scan with no provider and partial local canonical docs fails closed with diagnostics", async () => {
   const harness = await spawnSidecarWithoutStub({ seedCanonicalDoc: true });
   let ws;
   try {
@@ -438,39 +426,27 @@ test("scan with no provider but a local canonical doc fails OPEN with a degraded
       prompt: "deep scan with local doc but no provider",
     }));
 
-    const result = await waitForEvent(ws.events, (event) =>
-      event.type === "workspace_scan_result"
-        && event.scanRoot === harness.workspacePath,
-    );
-    // Fail-open, not failed: no error, real local ICP path, and the additive
-    // degraded markers naming why precise verification was skipped.
-    assert.equal(result.error, undefined);
-    assert.equal(result.icp, ".agentic30/docs/ICP.md");
-    assert.equal(result.degraded, true);
-    // No provider was authenticated, so the failure reason is "unavailable"
-    // (no_auth) and the failed provider is the first in the consent chain.
-    assert.equal(result.degradedReason, "unavailable");
-    assert.equal(result.degradedProvider, "codex");
-    // Advisory recovery payload mirrors the blocked notice shape but is carried
-    // inside the (successful) result so the host can reuse its recovery UI.
-    assert.ok(result.scanBlockedNotice, "degraded result must carry an advisory notice");
-    assert.equal(result.scanBlockedNotice.reason, "unavailable");
-    assert.equal(result.scanBlockedNotice.provider, "codex");
-    assert.equal(result.scanBlockedNotice.localFoundCount, 1);
-    assert.equal(result.scanBlockedNotice.providerReadiness.length, 4);
-    assert.ok(
-      result.scanBlockedNotice.localFindings.evidencePaths.includes(".agentic30/docs/ICP.md")
-        || result.scanBlockedNotice.localFindings.canonicalDocs.icp?.found === true,
-      "notice findings should reflect the local canonical doc",
-    );
-
-    // The scan must NOT broadcast a blocked event when it fails open.
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    const blocked = ws.events.some((event) =>
+    const blocked = await waitForEvent(ws.events, (event) =>
       event.type === "workspace_scan_blocked"
         && event.scanRoot === harness.workspacePath,
     );
-    assert.equal(blocked, false);
+    assert.equal(blocked.reason, "insufficient_evidence");
+    assert.equal(blocked.errorKind, "workspace_scan_insufficient_evidence");
+    assert.deepEqual(blocked.missingFields, ["problem", "validationAction"]);
+    assert.equal(blocked.day1AlignmentReadiness?.status, "blocked");
+    assert.equal(blocked.localFindings.localFoundCount, 1);
+    assert.ok(
+      blocked.localFindings.evidencePaths.includes(".agentic30/docs/ICP.md")
+        || blocked.localFindings.canonicalDocs.icp?.found === true,
+      "blocked findings should reflect the local canonical doc",
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const passed = ws.events.some((event) =>
+      event.type === "workspace_scan_result"
+        && event.scanRoot === harness.workspacePath,
+    );
+    assert.equal(passed, false);
   } finally {
     ws?.close();
     await harness.close();

@@ -43,14 +43,42 @@ import {
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+async function writeStrictDay1EvidenceDocs(workspacePath) {
+  const docsDir = path.join(workspacePath, ".agentic30", "docs");
+  await fs.mkdir(docsDir, { recursive: true });
+  await fs.writeFile(
+    path.join(docsDir, "ICP.md"),
+    [
+      "# ICP",
+      "",
+      "target user: Slack 장애 대응을 책임지는 B2B SaaS 고객지원 리드",
+    ].join("\n"),
+  );
+  await fs.writeFile(
+    path.join(docsDir, "SPEC.md"),
+    [
+      "# SPEC",
+      "",
+      "problem: 인수인계 중 Slack escalation이 누락되어 고객지원 리드가 책임 소재와 해결 시간을 증명하지 못한다",
+    ].join("\n"),
+  );
+  await fs.writeFile(
+    path.join(docsDir, "GOAL.md"),
+    [
+      "# GOAL",
+      "",
+      "활성 행동: 고객지원 리드 3명에게 유료 파일럿을 요청하고 실제 escalation 워크플로를 기록한다.",
+      "목표: 누락된 Slack escalation을 줄이기 위해 고객지원 리드 1명이 유료 파일럿을 수락하는지 검증한다.",
+    ].join("\n"),
+  );
+}
+
 test("workspace setup request_emit envelopes are host-routed and completion waits for first input", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
     await fs.mkdir(path.join(harness.workspacePath, "docs"), { recursive: true });
-    await fs.mkdir(path.join(harness.workspacePath, ".agentic30", "docs"), { recursive: true });
-    await fs.writeFile(path.join(harness.workspacePath, ".agentic30", "docs", "ICP.md"), "# ICP\n");
-    await fs.writeFile(path.join(harness.workspacePath, ".agentic30", "docs", "SPEC.md"), "# SPEC\n");
+    await writeStrictDay1EvidenceDocs(harness.workspacePath);
 
     ws = await connectAndCollect(harness);
 
@@ -177,9 +205,7 @@ test("workspace gitignore consent gates .agentic30 ignore writes", async () => {
   let ws;
   try {
     await initGitRepo(harness.workspacePath);
-    await fs.mkdir(path.join(harness.workspacePath, ".agentic30", "docs"), { recursive: true });
-    await fs.writeFile(path.join(harness.workspacePath, ".agentic30", "docs", "ICP.md"), "# ICP\n");
-    await fs.writeFile(path.join(harness.workspacePath, ".agentic30", "docs", "SPEC.md"), "# SPEC\n");
+    await writeStrictDay1EvidenceDocs(harness.workspacePath);
 
     ws = await connectAndCollect(harness);
 
@@ -3712,6 +3738,7 @@ test("day1_goal_save/get persists goal state and hydrates scan/project context",
 
     ws.events.length = 0;
     await fs.writeFile(path.join(harness.workspacePath, "README.md"), "# SupportLens\n");
+    await writeStrictDay1EvidenceDocs(harness.workspacePath);
     ws.send(JSON.stringify({
       type: "scan_workspace",
       root: harness.workspacePath,

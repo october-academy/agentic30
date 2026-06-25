@@ -511,6 +511,7 @@ import {
   shouldValidateFirstCandidatePayload,
   classifyFirstCandidatePayload,
   buildCanonicalFirstCandidateCard,
+  hasRequiredFirstCandidatePrimaryTextInput,
 } from "./office-hours-first-candidate-host.mjs";
 import { describeVendor as describeGstackVendor } from "./vendor-skill-loader.mjs";
 import {
@@ -1616,6 +1617,14 @@ async function handleClientMessage(socket, payload) {
       cancelWarmSession(session.id);
 
       const response = normalizeUserInputResponse(promptRequest, payload);
+      const missingRequiredFreeText = findMissingRequiredFreeTextQuestion(response);
+      if (missingRequiredFreeText) {
+        const primaryTextInput = normalizeResponsePrimaryTextInput(missingRequiredFreeText);
+        throw new Error(
+          primaryTextInput?.validationMessage
+            || "Office Hours answer revision requires a non-empty free-text answer.",
+        );
+      }
       const userResponseText = formatStructuredPromptResponse(response);
       if (!userResponseText) {
         throw new Error("Office Hours answer revision requires a non-empty answer.");
@@ -1934,9 +1943,11 @@ async function handleClientMessage(socket, payload) {
       const response = normalizeUserInputResponse(pendingUserInput, payload);
       const missingRequiredFreeText = findMissingRequiredFreeTextQuestion(response);
       if (missingRequiredFreeText) {
+        const primaryTextInput = normalizeResponsePrimaryTextInput(missingRequiredFreeText);
         broadcastIddSubmitProgress(
           "validation_error",
-          "선택지를 고르거나 기타를 입력해야 다음 질문으로 넘어갑니다.",
+          primaryTextInput?.validationMessage
+            || "선택지를 고르거나 기타를 입력해야 다음 질문으로 넘어갑니다.",
         );
         session.status = "awaiting_input";
         session.error = null;
@@ -8305,11 +8316,21 @@ function buildAttemptCommandFromCard(pendingUserInput, response, answeredSignalI
   if (!cardType) return null;
   const card = cardDefinition(cardType);
   if (!card) return null;
-  const answer = String(responseText || "").trim();
-  if (!answer) return null;
+  const primaryTextAnswer = card.transition === "select_candidate"
+    ? primaryTextInputResponseText(pendingUserInput, response)
+    : "";
+  const isCandidateBlocker = card.transition === "select_candidate"
+    && hasNoCandidateBlockerResponse(pendingUserInput, response);
+  const answer = primaryTextAnswer || String(responseText || "").trim();
+  if (!answer && !isCandidateBlocker) return null;
   const required = Array.isArray(card.requiredFields) ? card.requiredFields : [];
   const fields = {};
-  if (card.transition === "schedule_execution") {
+  let transition = card.transition;
+  if (isCandidateBlocker) {
+    transition = "block";
+    fields.blockerReason = "아직 후보 없음";
+    fields.nextUnblockAction = "오늘 바로 연락할 수 있는 전업 1인 개발자 1명의 실명·핸들 또는 특정 스레드 URL을 찾는다.";
+  } else if (card.transition === "schedule_execution") {
     // dueAt must parse AND be strictly future relative to `at` (contract guard).
     const atMs = Date.parse(at);
     const baseMs = Number.isFinite(atMs) ? atMs : Date.now();
@@ -8332,12 +8353,12 @@ function buildAttemptCommandFromCard(pendingUserInput, response, answeredSignalI
   }
   const audit = {
     questionText: String(questionText || ""),
-    responseText: answer,
+    responseText: answer || "아직 후보 없음",
     responseDescription: String(responseDescription || ""),
     promptSnapshot: pendingUserInput ?? null,
     submissions: Array.isArray(response?.responses) ? response.responses : [],
   };
-  return { type: card.transition, fields, audit, cardType };
+  return { type: transition, fields, audit, cardType };
 }
 
 // Separation-of-concerns completion predicates (no count gate, no doc-readiness).
@@ -9867,6 +9888,120 @@ function isLockedDay1GetUsersContext(context = "") {
     && /Goal lane:\s*get_users\b/i.test(String(context || ""));
 }
 
+function officeHoursLockedGetUsersSignalLabel(signalId = "") {
+  switch (String(signalId || "").trim()) {
+    case "get_users_active_user_definition":
+      return "활성 사용자 기준";
+    case "get_users_first_candidate":
+      return "첫 후보 확정";
+    case "get_users_current_alternative":
+      return "현재 대안";
+    case "get_users_today_request":
+      return "오늘 요청";
+    case "get_users_evidence_format":
+      return "증거 형식";
+    case "get_users_day1_commitment":
+      return "오늘 약속";
+    default:
+      return "";
+  }
+}
+
+async function prepareOfficeHoursStructuredInputRequestForSession(session, request, {
+  source = "sync_pending_user_input_requests",
+} = {}) {
+  const context = activeOfficeHoursContext(session);
+  if (!isLockedDay1GetUsersContext(context)) {
+    return prepareOfficeHoursStructuredInputRequest(request);
+  }
+
+  const rawSignalId = String(request?.generation?.signalId || request?.generation?.signal_id || "").trim();
+  if (rawSignalId === "get_users_first_candidate_name" || rawSignalId === "office_hours_get_users_first_candidate_name") {
+    throw new Error(
+      "Office Hours structured input contract violation: get_users_first_candidate_name is not a valid locked get_users signal; use get_users_first_candidate.",
+    );
+  }
+
+  const ensured = await ensureOfficeHoursAttemptForSession(session, {
+    day: session.runtime?.officeHours?.day,
+    source: session.runtime?.officeHours?.source,
+  });
+  const snapshot = await projectAttempt({ workspaceRoot, attemptId: ensured.attemptId });
+  if (!snapshot) {
+    throw new Error(`locked get_users ${source} could not project attempt ${ensured.attemptId}`);
+  }
+  const action = nextAttemptAction(snapshot.projection);
+  if (action.kind !== "card") {
+    throw new Error(`locked get_users ${source} received a structured card while attempt action is ${action.kind}`);
+  }
+  const card = cardDefinition(action.cardType);
+  const canonicalSignalId = card?.legacySignalId || "";
+  if (!canonicalSignalId) {
+    throw new Error(`locked get_users ${source} could not resolve a canonical signal for card ${action.cardType}`);
+  }
+
+  const attemptToken = {
+    attemptId: ensured.attemptId,
+    expectedRevision: snapshot.revision,
+    cardType: action.cardType,
+    transition: card?.transition || "",
+  };
+  let prepared = {
+    ...request,
+    generation: {
+      ...(request.generation || {}),
+      mode: request.generation?.mode || "office_hours_tool",
+      docType: request.generation?.docType || "day1_step",
+      signalId: canonicalSignalId,
+      signalLabel: officeHoursLockedGetUsersSignalLabel(canonicalSignalId)
+        || request.generation?.signalLabel
+        || "",
+      ...attemptToken,
+    },
+    questions: (Array.isArray(request.questions) ? request.questions : []).map((question, index) => index === 0
+      ? {
+          ...question,
+          questionId: canonicalSignalId,
+          header: question.header || officeHoursLockedGetUsersSignalLabel(canonicalSignalId),
+        }
+      : question),
+  };
+
+  if (shouldValidateFirstCandidatePayload(prepared, context)) {
+    const firstQuestion = Array.isArray(prepared.questions) ? prepared.questions[0] : null;
+    const classification = classifyFirstCandidatePayload(prepared);
+    if (!classification || classification.genericOnly || !hasRequiredFirstCandidatePrimaryTextInput(firstQuestion)) {
+      telemetry.captureEvent("mac_sidecar_office_hours_first_candidate_rejected", {
+        session_id: session.id,
+        provider: session.provider,
+        reason: !classification ? "no_question" : classification.genericOnly ? "generic_only" : "not_text_first",
+        source,
+      });
+      prepared = buildCanonicalFirstCandidateCard({
+        sessionId: session.id,
+        provider: session.provider,
+        toolName: prepared.toolName,
+        attemptToken,
+      });
+      prepared = {
+        ...prepared,
+        requestId: request.requestId,
+        createdAt: request.createdAt,
+        generation: {
+          ...(prepared.generation || {}),
+          mode: request.generation?.mode || "office_hours_tool",
+          docType: request.generation?.docType || "day1_step",
+          signalId: canonicalSignalId,
+          signalLabel: officeHoursLockedGetUsersSignalLabel(canonicalSignalId),
+          ...attemptToken,
+        },
+      };
+    }
+  }
+
+  return prepareOfficeHoursStructuredInputRequest(prepared);
+}
+
 // HOST HARD-STAMP: compute the canonical next ladder signalId for the locked Day-1
 // get_users flow from the session's already-answered turns. The host — not the
 // model — owns slot identity/order, so this value is stamped onto the emitted card
@@ -9961,7 +10096,8 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
   // grounded hint options) is never false-rejected.
   if (shouldValidateFirstCandidatePayload(payload, context)) {
     const classification = classifyFirstCandidatePayload(payload);
-    if (!classification || classification.genericOnly) {
+    const firstQuestion = Array.isArray(payload.questions) ? payload.questions[0] : null;
+    if (!classification || classification.genericOnly || !hasRequiredFirstCandidatePrimaryTextInput(firstQuestion)) {
       const fallback = buildCanonicalFirstCandidateCard({
         sessionId: session.id,
         provider: session.provider,
@@ -9978,7 +10114,7 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
       telemetry.captureEvent("mac_sidecar_office_hours_first_candidate_rejected", {
         session_id: session.id,
         provider: session.provider,
-        reason: classification ? "generic_only" : "no_question",
+        reason: !classification ? "no_question" : classification.genericOnly ? "generic_only" : "not_text_first",
         source,
       });
       payload = fallback;
@@ -15058,6 +15194,14 @@ async function completeWorkspaceScanFromLocalSignals({
     agentHistory,
     localDiscovery,
   }).catch(() => null);
+  if (!day1AlignmentPlanReadyForWorkspaceScan(day1AlignmentPlan)) {
+    await broadcastWorkspaceScanInsufficientEvidence(scanRoot, {
+      day1AlignmentPlan,
+      scanResult: localResult,
+      foundCount: localFoundCount,
+    });
+    return;
+  }
   const day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot: scanRoot });
   if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
     state.day1GoalSelection = day1GoalSelection;
@@ -15319,6 +15463,15 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       agentSituationSignals,
       localDiscovery,
     }).catch(() => null);
+    if (!day1AlignmentPlanReadyForWorkspaceScan(day1AlignmentPlan)) {
+      await broadcastWorkspaceScanInsufficientEvidence(scanRoot, {
+        day1AlignmentPlan,
+        evidenceBundle: workspaceScanEvidenceBundle,
+        scanResult: merged,
+        foundCount,
+      });
+      return;
+    }
     const day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot: scanRoot });
     if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
       state.day1GoalSelection = day1GoalSelection;
@@ -15672,6 +15825,96 @@ function broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stag
     stage,
     errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND,
   });
+}
+
+function day1AlignmentPlanReadyForWorkspaceScan(plan) {
+  const readiness = plan?.readiness || {};
+  return readiness.status === "ready" && plan?.qualityGate?.passed === true;
+}
+
+async function broadcastWorkspaceScanInsufficientEvidence(scanRoot, {
+  day1AlignmentPlan = null,
+  evidenceBundle = null,
+  scanResult = {},
+  foundCount = 0,
+} = {}) {
+  const bundle = evidenceBundle || await buildWorkspaceScanEvidenceBundle({
+    workspaceRoot: scanRoot,
+    scanResult,
+  }).catch(() => null);
+  const readiness = day1AlignmentPlan?.readiness || {
+    status: "blocked",
+    missingFields: ["targetUser", "problem", "validationAction"],
+    fieldEvidence: {},
+    rootCause: "고객/문제/활성 행동 quote 근거가 부족해 Day 1 목표 카드 생성을 차단했습니다.",
+  };
+  const missingFields = Array.isArray(readiness.missingFields) ? readiness.missingFields : [];
+  const rootCause = String(readiness.rootCause || "필수 근거가 부족해 Day 1 목표 카드 생성을 차단했습니다.");
+  const localFindings = summarizeWorkspaceScanLocalFindings(bundle || {});
+  telemetry.captureEvent("mac_sidecar_workspace_scan_blocked", {
+    scan_root: scanRoot,
+    reason: "insufficient_evidence",
+    readiness_status: readiness.status || "blocked",
+    missing_fields: missingFields,
+    local_found_count: foundCount || localFindings.localFoundCount,
+  });
+  captureSidecarLog("workspace scan blocked: insufficient evidence", "warn", {
+    operation: "runWorkspaceScan",
+    scan_root: scanRoot,
+    reason: "insufficient_evidence",
+    readiness_status: readiness.status || "blocked",
+    missing_fields: missingFields,
+    root_cause: truncateTelemetryString(rootCause),
+    local_found_count: foundCount || localFindings.localFoundCount,
+  });
+  markWorkspaceSetupFailed(
+    scanRoot,
+    Object.assign(new Error(`workspace scan blocked: insufficient evidence: ${rootCause}`), {
+      code: "workspace_scan_blocked",
+    }),
+    {
+      scan_block_reason: "insufficient_evidence",
+      missing_fields: missingFields,
+      error_kind: "workspace_scan_insufficient_evidence",
+    },
+  );
+  broadcastWorkspaceScanProgress(
+    scanRoot,
+    missingFields.length
+      ? `scan.blocked · ${missingFields.map(workspaceScanMissingFieldLabel).join(", ")} 근거 부족으로 목표 카드 생성 차단`
+      : "scan.blocked · 근거 품질 재작업이 필요해 목표 카드 생성 차단",
+    {
+      stage: "blocked",
+      stepIndex: 3,
+      totalSteps: 3,
+      foundCount: foundCount || localFindings.localFoundCount,
+      missingFields,
+      rootCause,
+    },
+  );
+  broadcast({
+    type: "workspace_scan_blocked",
+    scanRoot,
+    reason: "insufficient_evidence",
+    message: rootCause,
+    stage: "blocked",
+    stepIndex: 3,
+    totalSteps: 3,
+    localFoundCount: foundCount || localFindings.localFoundCount,
+    localFindings,
+    missingFields,
+    rootCause,
+    day1AlignmentReadiness: readiness,
+    day1AlignmentPlan,
+    errorKind: "workspace_scan_insufficient_evidence",
+  });
+}
+
+function workspaceScanMissingFieldLabel(field) {
+  if (field === "targetUser") return "고객";
+  if (field === "problem") return "문제";
+  if (field === "validationAction") return "활성/검증 행동";
+  return String(field || "필수 필드");
 }
 
 /**
@@ -18970,12 +19213,23 @@ async function syncPendingUserInputRequests() {
       changedSessions.add(session.id);
       continue;
     }
-    if (session.pendingUserInput?.requestId === request.requestId) continue;
+    const pendingAlreadyAttached = session.pendingUserInput?.requestId === request.requestId;
 
     let nextRequest = request;
     if (session.runtime?.officeHours?.active === true) {
       try {
-        nextRequest = prepareOfficeHoursStructuredInputRequest(request);
+        if (isDay1DocHandoffJudgeRequest(request)) {
+          nextRequest = request;
+        } else {
+          nextRequest = await prepareOfficeHoursStructuredInputRequestForSession(
+            session,
+            request,
+            { source: "sync_pending_user_input_requests" },
+          );
+          if (JSON.stringify(nextRequest) !== JSON.stringify(request)) {
+            await writeUserInputRequest(appSupportPath, nextRequest);
+          }
+        }
       } catch (error) {
         const message = formatError(error);
         await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId).catch(() => {});
@@ -19006,6 +19260,14 @@ async function syncPendingUserInputRequests() {
         });
         continue;
       }
+    } else if (pendingAlreadyAttached) {
+      continue;
+    }
+    if (
+      pendingAlreadyAttached
+      && JSON.stringify(session.pendingUserInput || {}) === JSON.stringify(nextRequest || {})
+    ) {
+      continue;
     }
     session.pendingUserInput = attachIddAdaptiveContinuationToRequest(session, nextRequest);
     session.status = "awaiting_input";
@@ -19108,8 +19370,12 @@ function normalizeUserInputResponse(promptRequest, payload) {
       : selectedOptions.length > 0
       ? selectedOptions.join(", ")
       : freeText;
+    const primaryTextInput = normalizeResponsePrimaryTextInput(question);
+    const primaryAnswerValue = primaryTextInput && freeText && !selectedOptions.some(isNoCandidateBlockerSelectionLabel)
+      ? freeText
+      : answerValue;
 
-    answers[question.question] = answerValue;
+    answers[question.question] = primaryAnswerValue;
 
     if (freeText || match?.notes || match?.preview) {
       annotations[question.question] = {
@@ -19138,10 +19404,68 @@ function findMissingRequiredFreeTextQuestion(response) {
     (response.responses || []).map((entry) => [entry.question, entry]),
   );
   return (response.questions || []).find((question) => {
-    if (question?.requiresFreeText !== true) return false;
     const entry = responsesByQuestion.get(question.question);
+    if (normalizeResponsePrimaryTextInput(question)?.required === true) {
+      const freeText = String(entry?.freeText || "").trim();
+      const selectedOptions = Array.isArray(entry?.selectedOptions) ? entry.selectedOptions : [];
+      if (freeText) return false;
+      if (selectedOptions.some(isNoCandidateBlockerSelectionLabel)) return false;
+      return true;
+    }
+    if (question?.requiresFreeText !== true) return false;
     return !String(entry?.freeText || "").trim();
   }) || null;
+}
+
+function normalizeResponsePrimaryTextInput(question = {}) {
+  const input = question?.primaryTextInput || question?.primary_text_input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const label = String(input.label || "").trim();
+  const placeholder = String(input.placeholder || input.freeTextPlaceholder || input.free_text_placeholder || "").trim();
+  if (!label || !placeholder) return null;
+  return {
+    label,
+    placeholder,
+    required: input.required === true,
+    submitLabel: String(input.submitLabel || input.submit_label || "").trim(),
+    validationMessage: String(input.validationMessage || input.validation_message || "").trim(),
+  };
+}
+
+function responseEntryForFirstQuestion(pendingUserInput, response) {
+  const question = Array.isArray(pendingUserInput?.questions) ? pendingUserInput.questions[0] : null;
+  if (!question) return { question: null, entry: null };
+  const responses = Array.isArray(response?.responses) ? response.responses : [];
+  const entry = responses.find((candidate) => String(candidate?.question || "") === String(question.question || ""))
+    || responses[0]
+    || null;
+  return { question, entry };
+}
+
+function primaryTextInputResponseText(pendingUserInput, response) {
+  const { question, entry } = responseEntryForFirstQuestion(pendingUserInput, response);
+  if (!normalizeResponsePrimaryTextInput(question)) return "";
+  if (!entry || Array.isArray(entry?.selectedOptions) && entry.selectedOptions.some(isNoCandidateBlockerSelectionLabel)) {
+    return "";
+  }
+  return String(entry?.freeText || "").trim();
+}
+
+function hasNoCandidateBlockerResponse(pendingUserInput, response) {
+  const { entry } = responseEntryForFirstQuestion(pendingUserInput, response);
+  const selectedOptions = Array.isArray(entry?.selectedOptions) ? entry.selectedOptions : [];
+  return selectedOptions.some(isNoCandidateBlockerSelectionLabel);
+}
+
+function isNoCandidateBlockerSelectionLabel(label = "") {
+  const normalized = String(label || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+  return normalized.includes("아직 후보 없음")
+    || normalized.includes("후보 없음")
+    || normalized.includes("후보가 없")
+    || normalized.includes("no candidate");
 }
 
 function formatStructuredPromptResponse(response) {
