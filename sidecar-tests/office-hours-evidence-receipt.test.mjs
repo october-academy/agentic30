@@ -4,151 +4,180 @@ import {
   EVIDENCE_RECEIPT_PROTOCOL,
   EVIDENCE_RECEIPT_ORIGINS,
   MAX_GRADE_BY_TRUST_TIER,
-  REJECTED_REF_SCHEMES,
+  EVIDENCE_CLAIMS,
+  GRADE_BY_CLAIM,
+  isRejectedRefScheme,
   trustTierForOrigin,
   maxGradeForTrustTier,
-  isRejectedRefScheme,
   signEvidenceReceipt,
   verifyEvidenceReceipt,
-  receiptSupportsGrade,
+  receiptSatisfiesRequirement,
 } from "../sidecar/office-hours-evidence-receipt.mjs";
 
-const SECRET = "test-host-ingress-secret-0xABCDEF";
+const KEY_ID = "k1";
+const SECRET = Buffer.from("0123456789abcdef0123456789abcdef"); // 32-byte binary key
+const KEYRING = { k1: { secret: SECRET } };
 const NOW = "2026-06-25T11:00:00.000Z";
+const CTX = Object.freeze({
+  keyring: KEYRING, attemptId: "att_1", actorId: "actor_1", projectId: "proj_1",
+  evidenceContractId: "ec_1", now: NOW, maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+});
 
-function baseFields(overrides = {}) {
+function fields(over = {}) {
   return {
-    artifactId: "art_abc123",
-    attemptId: "att_xyz789",
-    actor: "session_oct_1",
-    sha256: "a".repeat(64),
-    byteLength: 18234,
-    mediaType: "image/png",
-    origin: "swift_upload",
-    ingestedAt: "2026-06-25T10:59:30.000Z",
-    verifiedClaims: ["bytes_hashed", "bound_to_attempt"],
-    ...overrides,
+    artifactId: "art_1", projectId: "proj_1", attemptId: "att_1", actorId: "actor_1", evidenceContractId: "ec_1",
+    sha256: "a".repeat(64), byteLength: 1234,
+    declaredMediaType: "image/png", detectedMediaType: "image/png", contentValidation: "image_decode_succeeded",
+    origin: "swift_upload", issuedAt: "2026-06-25T10:59:30.000Z", expiresAt: "2026-06-25T11:59:30.000Z",
+    verifiedClaims: ["message.sent"],
+    ...over,
   };
 }
+const sign = (over = {}, signOpts = {}) => signEvidenceReceipt(fields(over), { secret: SECRET, keyId: KEY_ID, ...signOpts });
+const verify = (token, over = {}) => verifyEvidenceReceipt(token, { ...CTX, ...over });
 
-test("origin → trust tier mapping is total over the allowlist; unknown origin = null", () => {
-  assert.equal(trustTierForOrigin("swift_upload"), "artifact_backed");
-  assert.equal(trustTierForOrigin("url_snapshot"), "artifact_backed");
-  assert.equal(trustTierForOrigin("recipient_callback"), "recipient_confirmed");
-  assert.equal(trustTierForOrigin("provider_event"), "provider_confirmed");
-  assert.equal(trustTierForOrigin("totally_made_up"), null);
-  assert.equal(trustTierForOrigin(""), null);
-});
-
-test("trust-tier grade ceilings: artifact<customer<goal; unknown tier = null", () => {
-  assert.equal(maxGradeForTrustTier("artifact_backed"), "action_proof");
-  assert.equal(maxGradeForTrustTier("recipient_confirmed"), "customer_outcome");
-  assert.equal(maxGradeForTrustTier("provider_confirmed"), "goal_proof");
-  assert.equal(maxGradeForTrustTier("nonsense"), null);
-});
-
-test("rejected ref schemes: sim:// file:// data:// blob:// (case-insensitive)", () => {
-  assert.equal(isRejectedRefScheme("sim://day1/payment.png"), true);
-  assert.equal(isRejectedRefScheme("FILE:///etc/passwd"), true);
-  assert.equal(isRejectedRefScheme("data:image/png;base64,AAAA"), true);
-  assert.equal(isRejectedRefScheme("https://example.com/a.png"), false);
-  assert.equal(isRejectedRefScheme(""), false);
-  // every documented scheme is covered
-  for (const scheme of REJECTED_REF_SCHEMES) {
-    assert.equal(isRejectedRefScheme(`${scheme}whatever`), true);
-  }
-});
-
-test("sign → verify round-trips and the receipt carries protocol 2 + verifier version", () => {
-  const receipt = signEvidenceReceipt(baseFields(), SECRET);
-  assert.equal(receipt.protocol, EVIDENCE_RECEIPT_PROTOCOL);
-  assert.equal(typeof receipt.signature, "string");
-  assert.ok(receipt.signature.length > 0);
-  const v = verifyEvidenceReceipt(receipt, { secret: SECRET, attemptId: "att_xyz789", actor: "session_oct_1", now: NOW });
+test("protocol is v3 and round-trips: opaque token sign → verify (Buffer key)", () => {
+  assert.equal(EVIDENCE_RECEIPT_PROTOCOL, 3);
+  const token = sign();
+  assert.ok(token.startsWith("v3."), "token is the opaque v3 envelope");
+  assert.equal(token.split(".").length, 3);
+  const v = verify(token);
   assert.equal(v.ok, true);
   assert.equal(v.trustTier, "artifact_backed");
   assert.equal(v.maxGrade, "action_proof");
+  assert.deepEqual(v.verifiedClaims, ["message.sent"]);
   assert.equal(v.evidence.sha256, "a".repeat(64));
+  // the verified evidence NEVER carries a client sourceType/strength/kind.
+  assert.equal(v.evidence.sourceType, undefined);
+  assert.equal(v.evidence.strength, undefined);
 });
 
-test("signing fails closed on missing secret / missing field / bad origin", () => {
-  assert.throws(() => signEvidenceReceipt(baseFields(), ""), /host ingress secret/);
-  assert.throws(() => signEvidenceReceipt(baseFields({ sha256: "" }), SECRET), /missing required field "sha256"/);
-  assert.throws(() => signEvidenceReceipt(baseFields({ origin: "evil_origin" }), SECRET), /not an allowlisted ingress origin/);
+test("mandatory verifier context throws (a wiring mistake must not disable a check)", () => {
+  const token = sign();
+  assert.throws(() => verifyEvidenceReceipt(token, { ...CTX, keyring: undefined }), /keyring/);
+  assert.throws(() => verifyEvidenceReceipt(token, { ...CTX, now: "" }), /valid `now`/);
+  assert.throws(() => verifyEvidenceReceipt(token, { ...CTX, now: "not-a-date" }), /valid `now`/);
+  assert.throws(() => verifyEvidenceReceipt(token, { ...CTX, maxAgeMs: NaN }), /maxAgeMs/);
+  assert.throws(() => verifyEvidenceReceipt(token, { ...CTX, maxAgeMs: Infinity }), /maxAgeMs/);
+  for (const ctxKey of ["attemptId", "actorId", "projectId", "evidenceContractId"]) {
+    assert.throws(() => verifyEvidenceReceipt(token, { ...CTX, [ctxKey]: "" }), new RegExp(ctxKey));
+  }
 });
 
-test("verify fails closed: tampered field breaks the signature", () => {
-  const receipt = signEvidenceReceipt(baseFields(), SECRET);
-  const tampered = { ...receipt, byteLength: 999999 }; // change a signed field
-  const v = verifyEvidenceReceipt(tampered, { secret: SECRET, now: NOW });
-  assert.equal(v.ok, false);
-  assert.equal(v.rejection, "bad_signature");
+test("P0 freshness is fail-CLOSED: expired / future / exceeds-host-lifetime", () => {
+  // expired: now past expiresAt
+  assert.equal(verify(sign({ issuedAt: "2026-06-25T09:00:00.000Z", expiresAt: "2026-06-25T10:00:00.000Z" })).rejection, "receipt_expired");
+  // issued in the future
+  assert.equal(verify(sign({ issuedAt: "2026-06-25T12:00:00.000Z", expiresAt: "2026-06-25T13:00:00.000Z" })).rejection, "issued_in_future");
+  // within signed window but beyond host max-lifetime
+  const longLived = sign({ issuedAt: "2026-06-25T10:59:00.000Z", expiresAt: "2026-12-31T00:00:00.000Z" });
+  // 60s elapsed (10:59:00 → now 11:00:00) exceeds a 30s host max-lifetime cap.
+  assert.equal(verify(longLived, { maxAgeMs: 30_000 }).rejection, "exceeds_host_max_lifetime");
+  // signing rejects a non-future expiresAt outright
+  assert.throws(() => sign({ issuedAt: "2026-06-25T10:00:00.000Z", expiresAt: "2026-06-25T10:00:00.000Z" }), /expiresAt/);
 });
 
-test("verify fails closed: wrong secret, wrong attempt, wrong actor", () => {
-  const receipt = signEvidenceReceipt(baseFields(), SECRET);
-  assert.equal(verifyEvidenceReceipt(receipt, { secret: "other-secret", now: NOW }).rejection, "bad_signature");
-  assert.equal(
-    verifyEvidenceReceipt(receipt, { secret: SECRET, attemptId: "att_DIFFERENT", now: NOW }).rejection,
-    "attempt_binding_mismatch",
-  );
-  assert.equal(
-    verifyEvidenceReceipt(receipt, { secret: SECRET, actor: "someone_else", now: NOW }).rejection,
-    "actor_binding_mismatch",
-  );
+test("P0 signature: suffix garbage / tampered payload / wrong key all fail closed", () => {
+  const token = sign();
+  const [p0, p1, p2] = token.split(".");
+  // append junk to the signature segment — must be rejected, not silently truncated.
+  assert.equal(verify(`${p0}.${p1}.${p2}AA`).rejection, "malformed_signature");
+  assert.equal(verify(`${p0}.${p1}.${p2}zz`).rejection, "malformed_signature");
+  // tamper the payload segment (re-encode a mutated payload) → MAC mismatch.
+  const mutated = JSON.parse(Buffer.from(p1, "base64url").toString("utf8"));
+  mutated.byteLength = 999999;
+  const tamperedPayload = Buffer.from(JSON.stringify(mutated), "utf8").toString("base64url");
+  assert.equal(verify(`${p0}.${tamperedPayload}.${p2}`).rejection, "bad_signature");
+  // wrong key in the keyring
+  assert.equal(verify(token, { keyring: { k1: { secret: Buffer.from("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") } } }).rejection, "bad_signature");
+  // unknown / revoked keyId
+  assert.equal(verify(token, { keyring: {} }).rejection, "unknown_or_revoked_key");
+  assert.equal(verify(token, { keyring: { k1: { secret: SECRET, revoked: true } } }).rejection, "unknown_or_revoked_key");
 });
 
-test("verify fails closed: expired receipt and future-dated receipt", () => {
-  const old = signEvidenceReceipt(baseFields({ ingestedAt: "2026-06-01T00:00:00.000Z" }), SECRET);
-  assert.equal(verifyEvidenceReceipt(old, { secret: SECRET, now: NOW }).rejection, "receipt_expired");
-  const future = signEvidenceReceipt(baseFields({ ingestedAt: "2026-06-25T12:00:00.000Z" }), SECRET);
-  assert.equal(verifyEvidenceReceipt(future, { secret: SECRET, now: NOW }).rejection, "ingested_in_future");
-});
-
-test("verify fails closed: empty artifact, unsupported protocol, malformed", () => {
-  const empty = signEvidenceReceipt(baseFields({ byteLength: 0 }), SECRET);
-  assert.equal(verifyEvidenceReceipt(empty, { secret: SECRET, now: NOW }).rejection, "empty_artifact");
-  const receipt = signEvidenceReceipt(baseFields(), SECRET);
-  // protocol is checked before the signature, so a downgraded protocol is rejected
-  // as unsupported_protocol (not bad_signature) even though it also breaks the sig.
-  assert.equal(verifyEvidenceReceipt({ ...receipt, protocol: 1 }, { secret: SECRET, now: NOW }).rejection, "unsupported_protocol");
-  assert.equal(verifyEvidenceReceipt(null, { secret: SECRET, now: NOW }).rejection, "malformed_receipt");
-  assert.equal(verifyEvidenceReceipt({ protocol: 2 }, { secret: SECRET, now: NOW }).rejection, "missing_signature");
-});
-
-test("client-declared kind is irrelevant — grade ceiling comes from the verified origin", () => {
-  // A founder labels a screenshot as a payment (goal-grade) — origin is still a
-  // founder upload, so the host caps it at action_proof. The label cannot escalate.
-  const receipt = signEvidenceReceipt(baseFields({ verifiedClaims: ["bytes_hashed"] }), SECRET);
-  const v = verifyEvidenceReceipt(receipt, { secret: SECRET, now: NOW });
+test("P0 no unsigned extension fields: an injected proof_ledger/strength can never ride along", () => {
+  // Attempt to sneak privileged fields in at signing — canonicalPayload drops them, so
+  // they are neither MACed nor returned.
+  const token = sign({ sourceType: "proof_ledger", strength: "strong", kind: "goal_proof" });
+  const v = verify(token);
   assert.equal(v.ok, true);
-  assert.equal(v.maxGrade, "action_proof");
-  // record_goal_proof needs goal_proof grade — an artifact_backed receipt cannot.
-  assert.equal(receiptSupportsGrade(v.trustTier, "goal_proof").ok, false);
-  assert.equal(receiptSupportsGrade(v.trustTier, "action_proof").ok, true);
+  assert.equal(JSON.stringify(v.evidence).includes("proof_ledger"), false);
+  assert.equal(JSON.stringify(v).includes("strong"), false);
+  assert.equal(v.maxGrade, "action_proof"); // origin still caps it
 });
 
-test("receiptSupportsGrade enforces the trust-tier ladder", () => {
-  assert.equal(receiptSupportsGrade("artifact_backed", "action_proof").ok, true);
-  assert.equal(receiptSupportsGrade("artifact_backed", "customer_outcome").ok, false);
-  assert.equal(receiptSupportsGrade("recipient_confirmed", "customer_outcome").ok, true);
-  assert.equal(receiptSupportsGrade("recipient_confirmed", "goal_proof").ok, false);
-  assert.equal(receiptSupportsGrade("provider_confirmed", "goal_proof").ok, true);
-  assert.equal(receiptSupportsGrade("artifact_backed", "made_up_grade").ok, false);
-  assert.equal(receiptSupportsGrade("made_up_tier", "action_proof").ok, false);
+test("P0 bindings: wrong attempt / actor / project / evidenceContract each rejected", () => {
+  const token = sign();
+  assert.equal(verify(token, { attemptId: "att_OTHER" }).rejection, "attempt_binding_mismatch");
+  assert.equal(verify(token, { actorId: "actor_OTHER" }).rejection, "actor_binding_mismatch");
+  assert.equal(verify(token, { projectId: "proj_OTHER" }).rejection, "project_binding_mismatch");
+  assert.equal(verify(token, { evidenceContractId: "ec_OTHER" }).rejection, "evidence_contract_binding_mismatch");
 });
 
-test("★INVARIANT: no trust tier can mint a payment/strong grade — that ladder is proof-ledger-only", () => {
-  // The grade ceilings only ever produce action_proof | customer_outcome | goal_proof.
-  // There is deliberately NO mapping to any payment/strong grade here, so an
-  // office_hours_attempt receipt can never satisfy the strong-payment gate.
-  const grades = Object.values(MAX_GRADE_BY_TRUST_TIER);
-  for (const g of grades) {
-    assert.ok(["action_proof", "customer_outcome", "goal_proof"].includes(g), `unexpected mintable grade: ${g}`);
+test("P0 tier ≠ claim: provenance alone is insufficient; the verified CLAIM gates the grade", () => {
+  // artifact_backed + message.sent supports action_proof (with the matching claim)…
+  const upload = verify(sign({ origin: "swift_upload", verifiedClaims: ["message.sent"] }));
+  assert.equal(receiptSatisfiesRequirement(upload, { requiredGrade: "action_proof", requiredClaim: "message.sent" }).ok, true);
+  // …but NOT customer_outcome or goal_proof (tier ceiling), nor a claim it didn't verify.
+  assert.equal(receiptSatisfiesRequirement(upload, { requiredGrade: "goal_proof", requiredClaim: "goal.metric_observed" }).ok, false);
+  assert.equal(receiptSatisfiesRequirement(upload, { requiredGrade: "customer_outcome", requiredClaim: "recipient.replied" }).ok, false);
+  // a provider event that only confirms delivery cannot satisfy a goal-metric requirement.
+  const delivered = verify(sign({ origin: "provider_event", verifiedClaims: ["message.delivered"] }));
+  assert.equal(receiptSatisfiesRequirement(delivered, { requiredGrade: "goal_proof", requiredClaim: "goal.metric_observed" }).ok, false);
+  // but a provider event that DID verify the goal metric does.
+  const converted = verify(sign({ origin: "provider_event", verifiedClaims: ["goal.metric_observed"] }));
+  assert.equal(receiptSatisfiesRequirement(converted, { requiredGrade: "goal_proof", requiredClaim: "goal.metric_observed" }).ok, true);
+});
+
+test("claims are a CLOSED enum, allowlisted per origin (no arbitrary ingress strings)", () => {
+  // claim not in the enum → signing throws
+  assert.throws(() => sign({ verifiedClaims: ["totally.made_up"] }), /verifiedClaims/);
+  // claim not allowed for this origin (swift_upload can't claim recipient.replied) → throws
+  assert.throws(() => sign({ origin: "swift_upload", verifiedClaims: ["recipient.replied"] }), /verifiedClaims/);
+  // empty claims → throws
+  assert.throws(() => sign({ verifiedClaims: [] }), /verifiedClaims/);
+});
+
+test("signing fails closed on bad ids / sha256 / byteLength / origin / missing key", () => {
+  assert.throws(() => signEvidenceReceipt(fields(), { secret: SECRET, keyId: "" }), /keyId/);
+  assert.throws(() => signEvidenceReceipt(fields(), { secret: "", keyId: KEY_ID }), /secret/);
+  assert.throws(() => sign({ sha256: "nothex" }), /sha256/);
+  assert.throws(() => sign({ byteLength: 0 }), /byteLength/);
+  assert.throws(() => sign({ byteLength: 1.5 }), /byteLength/);
+  assert.throws(() => sign({ origin: "evil_origin" }), /origin/);
+  assert.throws(() => sign({ attemptId: "" }), /attemptId/);
+});
+
+test("malformed tokens rejected (not thrown): bad protocol, shape, oversized", () => {
+  assert.equal(verify("v2.aaa.bbb").rejection, "unsupported_protocol");
+  assert.equal(verify("garbage").rejection, "unsupported_protocol");
+  assert.equal(verify("v3.@@@.bbb").rejection, "malformed_payload");
+  assert.equal(verifyEvidenceReceipt("", CTX).rejection, "malformed_token");
+  assert.equal(verify(`v3.${"a".repeat(9000)}.bbb`).rejection, "token_too_large");
+});
+
+test("origin/tier mapping + ingress ref-scheme helper", () => {
+  assert.equal(trustTierForOrigin("swift_upload"), "artifact_backed");
+  assert.equal(trustTierForOrigin("provider_event"), "provider_confirmed");
+  assert.equal(trustTierForOrigin("unknown"), null);
+  assert.equal(maxGradeForTrustTier("recipient_confirmed"), "customer_outcome");
+  assert.equal(isRejectedRefScheme("sim://x"), true);
+  assert.equal(isRejectedRefScheme("https://x"), false);
+});
+
+test("★INVARIANT: no origin / tier / claim maps to a payment or strong grade", () => {
+  for (const g of Object.values(MAX_GRADE_BY_TRUST_TIER)) {
+    assert.ok(["action_proof", "customer_outcome", "goal_proof"].includes(g));
     assert.doesNotMatch(g, /payment|strong/i);
   }
-  // Every allowlisted origin lands in a non-payment tier.
   for (const tier of Object.values(EVIDENCE_RECEIPT_ORIGINS)) {
     assert.doesNotMatch(String(maxGradeForTrustTier(tier)), /payment|strong/i);
   }
+  for (const c of EVIDENCE_CLAIMS) {
+    assert.doesNotMatch(c, /payment|strong/i);
+    assert.ok(["action_proof", "customer_outcome", "goal_proof"].includes(GRADE_BY_CLAIM[c]));
+  }
+  // receiptSatisfiesRequirement can never be asked for, nor yield, a strong/payment grade.
+  const v = verify(sign());
+  assert.equal(receiptSatisfiesRequirement(v, { requiredGrade: "strong_payment", requiredClaim: "message.sent" }).ok, false);
 });
