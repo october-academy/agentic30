@@ -791,6 +791,43 @@ test("office_hours_docs reports provider aborts as recoverable error envelopes",
   }
 });
 
+test("create_doc reports provider aborts as recoverable doc creation results", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_FORCE_PROVIDER_ABORT: "claude",
+    },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_doc",
+      docType: "icp",
+      root: harness.workspacePath,
+      preferredProvider: "claude",
+    }));
+
+    const result = await waitForEvent(ws.events, (event) =>
+      event.type === "doc_creation_result"
+        && event.docType === "icp"
+        && event.errorKind === "provider_aborted",
+    );
+    assert.equal(result.recoverable, true);
+    assert.match(result.error, /aborted by user/);
+
+    await waitForEventSettle();
+    assert.deepEqual(
+      ws.events.filter((event) => event.type === "error"),
+      [],
+      "create_doc provider aborts must stay on the doc_creation_result surface",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("foundation_chat reports provider aborts as recoverable error envelopes", async () => {
   const harness = await spawnSidecar({
     extraEnv: {
