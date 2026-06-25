@@ -2286,10 +2286,11 @@ async function handleClientMessage(socket, payload) {
         // doc-readiness on turns 6,7 (observed in the LIVE max-turns-8 arc), which
         // blocks the attempt from reaching WAIT + the evidence step. Discriminate by
         // the DURABLE persisted context (not attemptId presence — that pointer can be
-        // transiently absent), mirroring officeHoursRuntimeGatherComplete.
-        const submitIsLockedGetUsers = isLockedDay1GetUsersContext(
-          String(session.runtime?.officeHours?.context || ""),
-        );
+        // transiently absent), mirroring officeHoursRuntimeGatherComplete. Also honor a
+        // durable lane signal (open get_users attempt / day1-goal.json goalType) so a
+        // single clamp that evicted the `Goal lane: get_users` marker can never
+        // re-leak day1_document_readiness_followup onto the get_users ladder.
+        const submitIsLockedGetUsers = await isDurableLockedGetUsersLane(session);
         if (!isDay1DocHandoffJudgeResponse && !submitIsLockedGetUsers) {
           officeHoursProgressAfterAnswer = await getOfficeHoursQuestionProgress(session, {
             currentRequestId: requestId,
@@ -9886,6 +9887,24 @@ function assertOfficeHoursPendingUserInputAttached(session, toolState) {
 function isLockedDay1GetUsersContext(context = "") {
   return isOfficeHoursLockedDay1GoalContext(context)
     && /Goal lane:\s*get_users\b/i.test(String(context || ""));
+}
+
+// Defense-in-depth: the locked Day-1 get_users lane must be recognizable even if
+// a clamp lost the `Goal lane: get_users` / DAY1_LOCKED_GOAL markers from the
+// runtime context (the markers are clampable; the lane is not). A get_users lane
+// is durable when EITHER an open (non-terminal) get_users ValidationAttempt
+// exists for this workspace OR day1-goal.json records goalType==="get_users".
+// Fail-closed: a store/projection error from workspaceHasOpenGetUsersAttempt
+// propagates (callers must not swallow it into a false). Returns true so the
+// doc-readiness gate and the locked-get_users discrimination keep honoring the
+// lane after the context regex degrades.
+async function isDurableLockedGetUsersLane(session = null, { root = workspaceRoot } = {}) {
+  if (isLockedDay1GetUsersContext(String(session?.runtime?.officeHours?.context || ""))) {
+    return true;
+  }
+  if (await workspaceHasOpenGetUsersAttempt(root)) return true;
+  const day1Goal = await loadDay1GoalSelection({ workspaceRoot: root }).catch(() => null);
+  return String(day1Goal?.goalType || "") === "get_users";
 }
 
 function officeHoursLockedGetUsersSignalLabel(signalId = "") {

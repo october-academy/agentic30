@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {
   buildOfficeHoursChatPrompt,
   buildOfficeHoursChatSystemPrompt,
+  clampOfficeHoursContext,
   isOfficeHoursDay2GoalDrivenContext,
   isOfficeHoursLockedDay1GoalContext,
   isOfficeHoursProgramV2DailyCardsContext,
+  OFFICE_HOURS_CONTEXT_CLAMP_LIMIT,
 } from "../sidecar/office-hours-chat-prompt.mjs";
 
 test("office-hours chat prompt is scoped to the Day 1 STEP flow", () => {
@@ -391,4 +393,75 @@ test("office-hours chat system prompt routes Gemini forcing questions through th
   assert.match(prompt, /exactly four demand evidence choices/);
   assert.match(prompt, /현재 대안에 돈\/시간을 쓰고 있다/);
   assert.match(prompt, /target solo founder/);
+});
+
+// REGRESSION (user-facing): the continuation assembly PREPENDS growing cycle +
+// resume preambles ABOVE officeHoursRuntime.context and head-clamps each pass. A
+// naive head-keep clamp drops the load-bearing DAY1_LOCKED_GOAL + `Goal lane:
+// get_users` markers that sit at the TOP of the original context once the
+// prepended preambles push them past 16k — which silently strips the locked
+// get_users ladder rules from the system prompt and re-leaks doc-readiness.
+// clampOfficeHoursContext must preserve those markers through EVERY clamp.
+function buildLargeLockedGetUsersContext() {
+  const goalBlock = [
+    "DAY1_LOCKED_GOAL",
+    "Flow contract: locked Day 1 goal interview.",
+    "Expected question count: 6",
+    "Goal lane: get_users / 활성 사용자 100명 모으기",
+    "Goal text: 30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+    "Active user contract: 활성 사용자 1명은 선택한 ICP가 제품의 핵심 activation action을 완료한 고유 사람/계정입니다.",
+    "Customer: B2B founder",
+    "Problem: onboarding에서 이탈한다",
+    "Validation action: 랜딩에서 invite 요청",
+  ].join("\n");
+  // Source-derived context / digest / day-close policy in the real runtime push
+  // the original context well past the clamp limit. Simulate that bulk body.
+  const filler = Array.from(
+    { length: 600 },
+    (_, index) => `## Source-Derived Project Context line ${index}: 사용자 행동 기록과 증거 후보를 길게 채운다.`,
+  ).join("\n");
+  return `${goalBlock}\n\n${filler}`;
+}
+
+function buildLargeResumePreamble() {
+  // Many already-answered turns make the resume preamble large; the real
+  // continuation prepends this ABOVE the context (index.mjs:10759).
+  const lines = ["[Office Hours 인터뷰 이어하기 — RESUME]", "이 인터뷰는 진행 중이었다."];
+  for (let index = 0; index < 80; index += 1) {
+    lines.push(
+      `${index + 1}. Q: 이전 질문 ${index} ${"가".repeat(40)} / A: 이전 답변 ${index} ${"나".repeat(60)}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+test("clampOfficeHoursContext preserves locked get_users markers when prepended preambles overflow the clamp", () => {
+  const baseContext = buildLargeLockedGetUsersContext();
+  // The naive head-keep clamp drops the markers once a large preamble is prepended.
+  const cyclePreamble = `[Cycle#7] ${"이전 사이클 read-back ".repeat(80)}`;
+  const resumePreamble = buildLargeResumePreamble();
+  // Mirror index.mjs:10749 then :10759 — clamp after EACH prepend.
+  let context = clampOfficeHoursContext(`${cyclePreamble}\n\n${baseContext}`);
+  context = clampOfficeHoursContext(`${resumePreamble}\n\n${context}`);
+
+  assert.ok(context.length <= OFFICE_HOURS_CONTEXT_CLAMP_LIMIT, "clamp respects the 16k limit");
+  // Both load-bearing markers survive.
+  assert.equal(isOfficeHoursLockedDay1GoalContext(context), true);
+  assert.match(context, /Goal lane:\s*get_users\b/);
+
+  // And the system prompt built from the clamped context still emits the locked
+  // get_users ladder rules (gated on isGetUsersGoalFlow + isLockedDay1GoalFlow).
+  const prompt = buildOfficeHoursChatSystemPrompt("/workspace", { provider: "codex", context });
+  assert.match(prompt, /first structured input card MUST define the active-user counting rule/);
+  assert.match(prompt, /adaptive locked Day 1 get_users question ladder/);
+  assert.match(prompt, /get_users_active_user_definition/);
+  assert.match(prompt, /get_users_first_candidate/);
+  assert.match(prompt, /do not ask a mode gate, product-stage gate, or goal-selection question/);
+});
+
+test("clampOfficeHoursContext leaves a within-limit context untouched", () => {
+  const small = ["DAY1_LOCKED_GOAL", "Goal lane: get_users / 활성 사용자 100명 모으기"].join("\n");
+  assert.equal(clampOfficeHoursContext(small), small);
+  assert.equal(clampOfficeHoursContext(""), "");
+  assert.equal(clampOfficeHoursContext("   plain   "), "plain");
 });

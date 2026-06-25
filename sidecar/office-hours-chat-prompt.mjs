@@ -2,8 +2,49 @@ import { buildOfficeHoursUiCopyContractPrompt } from "./office-hours-copy-rules.
 import { officeHoursStructuredInputChannel } from "./office-hours-structured-input.mjs";
 import { projectDocPath } from "./project-doc-paths.mjs";
 
+export const OFFICE_HOURS_CONTEXT_CLAMP_LIMIT = 16_000;
+
+// Budget the hoisted goal block to a small slice of the clamp so a pathological
+// (very long) goal block can never starve the rest of the context.
+const OFFICE_HOURS_GOAL_BLOCK_BUDGET = 2_000;
+
+// The load-bearing locked-goal markers (DAY1_LOCKED_GOAL / Flow contract, and
+// `Goal lane: <lane>`) sit at the TOP of the original Office Hours context. The
+// continuation assembly PREPENDS growing cycle + resume preambles above that
+// block and head-clamps each pass, so on a large context the markers can fall
+// past the 16k cut and vanish — which silently strips the locked get_users
+// ladder rules from the system prompt and re-leaks doc-readiness. Extract the
+// contiguous goal block (markers through the immediately following goal lines,
+// bounded by a blank line and the budget) so the clamp can re-hoist it when a
+// naive head-clamp would have dropped it.
+function extractOfficeHoursGoalBlock(text = "") {
+  const source = String(text || "");
+  const markerMatch = /(?:^|\n)(DAY1_LOCKED_GOAL|Flow contract:\s*locked Day 1 goal interview)/i.exec(source);
+  if (!markerMatch) return "";
+  const blockStart = markerMatch.index + (markerMatch[0].startsWith("\n") ? 1 : 0);
+  // The goal block is a contiguous run of non-empty lines; a blank line ends it.
+  const blankAfter = source.indexOf("\n\n", blockStart);
+  const blockEnd = blankAfter >= 0 ? blankAfter : source.length;
+  return source.slice(blockStart, blockEnd).trim().slice(0, OFFICE_HOURS_GOAL_BLOCK_BUDGET);
+}
+
 export function clampOfficeHoursContext(context = "") {
-  return String(context || "").trim().slice(0, 16_000);
+  const trimmed = String(context || "").trim();
+  if (trimmed.length <= OFFICE_HOURS_CONTEXT_CLAMP_LIMIT) return trimmed;
+  const head = trimmed.slice(0, OFFICE_HOURS_CONTEXT_CLAMP_LIMIT);
+  // If the naive head-clamp already preserves both load-bearing markers, keep it.
+  if (isOfficeHoursLockedDay1GoalContext(head)
+    && (!/Goal lane:/i.test(trimmed) || /Goal lane:/i.test(head))) {
+    return head;
+  }
+  // Otherwise hoist the goal block to the front so isOfficeHoursLockedDay1GoalContext
+  // and the `Goal lane:` discriminators always see it, then fill the remaining
+  // budget with the head of the original context.
+  const goalBlock = extractOfficeHoursGoalBlock(trimmed);
+  if (!goalBlock) return head;
+  const remaining = OFFICE_HOURS_CONTEXT_CLAMP_LIMIT - goalBlock.length - 2;
+  if (remaining <= 0) return goalBlock.slice(0, OFFICE_HOURS_CONTEXT_CLAMP_LIMIT);
+  return `${goalBlock}\n\n${trimmed.slice(0, remaining)}`.slice(0, OFFICE_HOURS_CONTEXT_CLAMP_LIMIT);
 }
 
 export function isOfficeHoursWriteDesignDocContext(context = "") {
