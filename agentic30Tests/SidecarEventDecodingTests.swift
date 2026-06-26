@@ -233,6 +233,60 @@ struct SidecarEventDecodingTests {
         #expect(request?.notificationUserInfo["agentic30.program.notification.gateId"] as? String == "G4")
     }
 
+    // A′ receipt rail (step 1): the host echoes attemptId (not a requestId) on the ingest
+    // reply, so the VM resolves the pending continuation keyed by attempt. Success carries
+    // the receiptToken handed to office_hours_attempt_evidence as evidence.receipt.
+    @MainActor @Test func decodesOfficeHoursEvidenceIngestedSuccess() throws {
+        let payload = """
+        {
+          "type": "office_hours_evidence_ingested",
+          "workspaceRoot": "/repo",
+          "attemptId": "attempt-1",
+          "receiptToken": "rcpt_swift_upload_abc123",
+          "artifactId": "artifact-9",
+          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "detectedMediaType": "image/png",
+          "success": true
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "office_hours_evidence_ingested")
+        #expect(event.workspaceRoot == "/repo")
+        #expect(event.attemptId == "attempt-1")
+        #expect(event.receiptToken == "rcpt_swift_upload_abc123")
+        #expect(event.artifactId == "artifact-9")
+        #expect(event.sha256 == "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")
+        #expect(event.detectedMediaType == "image/png")
+        #expect(event.success == true)
+        #expect(event.error == nil)
+    }
+
+    // Failure shape: success: false + error, no receiptToken. The VM rejects the pending
+    // continuation with .ingestFailed(error) instead of silently dropping the upload.
+    @MainActor @Test func decodesOfficeHoursEvidenceIngestedFailure() throws {
+        let payload = """
+        {
+          "type": "office_hours_evidence_ingested",
+          "workspaceRoot": "/repo",
+          "attemptId": "attempt-1",
+          "success": false,
+          "error": "decoded artifact is empty."
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "office_hours_evidence_ingested")
+        #expect(event.workspaceRoot == "/repo")
+        #expect(event.attemptId == "attempt-1")
+        #expect(event.success == false)
+        #expect(event.error == "decoded artifact is empty.")
+        #expect(event.receiptToken == nil)
+        #expect(event.detectedMediaType == nil)
+    }
+
     @MainActor @Test func decodesOfficeHoursRuntimePromptSnapshots() throws {
         let payload = """
         {

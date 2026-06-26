@@ -7,6 +7,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private enum AssistantLiveStatusPanelTone {
     case floating
@@ -1710,8 +1711,10 @@ private struct OfficeHoursEvidenceDraft: Identifiable, Hashable {
 // R2: WAIT-state attempt-evidence draft. The ValidationAttempt (not the commitment
 // ledger) owns Day-1 get_users action/customer/goal proof; after gather completes
 // the attempt sits in a WAIT state and surfaces nextAction={kind:"wait", reason}.
-// The draft carries the attempt CAS pointer + the WAIT reason so the sheet can
-// scope its evidence-kind picker to the grade that reason demands.
+// The draft carries the attempt CAS pointer + the WAIT reason so the sheet can scope
+// to the grade that reason demands. A′ receipt rail: only the `action` reason is
+// reachable in production (swift_upload receipt → record_action_proof); customer_outcome
+// / goal show an honest disabled state until a recipient/provider adapter exists.
 private struct OfficeHoursAttemptEvidenceDraft: Identifiable, Hashable {
     let attemptId: String
     let revision: Int
@@ -1727,16 +1730,6 @@ private struct OfficeHoursAttemptEvidenceDraft: Identifiable, Hashable {
         case "customer_outcome": return "record_customer_outcome"
         case "goal": return "record_goal_proof"
         default: return ""
-        }
-    }
-
-    // Reason-scoped evidence kinds (the EVIDENCE_KIND_GRADE members for this grade).
-    var evidenceKinds: [String] {
-        switch waitReason {
-        case "action": return ["dm_sent_screenshot", "email_sent", "call_logged", "shared_url", "message_log"]
-        case "customer_outcome": return ["customer_reply", "refusal", "no_response_deadline_passed", "call_note", "drop_off_step"]
-        case "goal": return ["activation_event", "core_flow_completed", "payment", "contract", "repeat_use"]
-        default: return []
         }
     }
 
@@ -3131,16 +3124,21 @@ struct ContentView: View {
         .sheet(item: $officeHoursAttemptEvidenceDraft) { draft in
             OfficeHoursAttemptEvidenceSheet(
                 draft: draft,
-                onSubmit: { kind, locator, note in
-                    _ = viewModel.submitOfficeHoursAttemptEvidence(
-                        attemptId: draft.attemptId,
-                        expectedRevision: draft.revision,
-                        transition: draft.transition,
-                        kind: kind,
-                        ref: locator,
-                        note: note,
-                        sessionId: draft.sessionId
-                    )
+                onSubmit: { bytes, declaredMediaType in
+                    // A′ receipt rail: hand the picked artifact bytes to the async 2-step
+                    // submit (ingest → receipt → graded transition). The VM owns the ingest
+                    // continuation; we just fire-and-forget here (the day_progress_state
+                    // reply re-renders the affordance on success/failure).
+                    Task {
+                        _ = await viewModel.submitOfficeHoursAttemptEvidence(
+                            attemptId: draft.attemptId,
+                            expectedRevision: draft.revision,
+                            transition: draft.transition,
+                            bytes: bytes,
+                            declaredMediaType: declaredMediaType,
+                            sessionId: draft.sessionId
+                        )
+                    }
                     officeHoursAttemptEvidenceDraft = nil
                 },
                 onAbandon: {
@@ -15556,18 +15554,20 @@ private struct OfficeHoursEvidenceResolutionSheet: View {
 // goal) and it submits office_hours_attempt_evidence (NOT commitment evidence).
 private struct OfficeHoursAttemptEvidenceSheet: View {
     let draft: OfficeHoursAttemptEvidenceDraft
-    let onSubmit: (String, String, String) -> Void
+    /// A′ receipt rail: the sheet hands UP the picked artifact bytes + a declared media type.
+    /// The VM ingests them (host signs a `swift_upload` receipt) and submits the receipt.
+    /// There is NO kind/ref anymore — the claim is host-fixed to `message.sent`.
+    let onSubmit: (Data, String) -> Void
     let onAbandon: () -> Void
     let onCancel: () -> Void
 
-    @State private var evidenceKind: String
-    @State private var locator = ""
-    @State private var note = ""
+    @State private var pickedFileURL: URL?
     @State private var isPresentingFilePicker = false
+    @State private var pickError: String?
 
     init(
         draft: OfficeHoursAttemptEvidenceDraft,
-        onSubmit: @escaping (String, String, String) -> Void,
+        onSubmit: @escaping (Data, String) -> Void,
         onAbandon: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -15575,7 +15575,24 @@ private struct OfficeHoursAttemptEvidenceSheet: View {
         self.onSubmit = onSubmit
         self.onAbandon = onAbandon
         self.onCancel = onCancel
-        _evidenceKind = State(initialValue: draft.evidenceKinds.first ?? "")
+    }
+
+    /// Only the action grade is reachable in production: a `swift_upload` receipt can only
+    /// satisfy `record_action_proof` (claim `message.sent`). customer_outcome / goal need a
+    /// recipient/provider adapter that does not exist yet, so they show an honest disabled state.
+    private var isActionGrade: Bool { draft.waitReason == "action" }
+
+    /// image/pdf only — the host re-detects the real media type from the bytes, but we declare
+    /// a best-effort type from the extension and restrict the picker so users don't attach junk.
+    private static func declaredMediaType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "pdf": return "application/pdf"
+        default: return "application/octet-stream"
+        }
     }
 
     var body: some View {
@@ -15589,35 +15606,54 @@ private struct OfficeHoursAttemptEvidenceSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Picker("증거 종류", selection: $evidenceKind) {
-                ForEach(draft.evidenceKinds, id: \.self) { kind in
-                    Text(kind).tag(kind)
-                }
+            if isActionGrade {
+                actionEvidenceBody
+            } else {
+                unsupportedGradeBody
             }
-            .accessibilityIdentifier("opendesign.officeHours.attempt.kindPicker")
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
 
+    // MARK: Action grade — pick a file, hand bytes up.
+
+    @ViewBuilder
+    private var actionEvidenceBody: some View {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
-                TextField("URL, 파일 경로, 스크린샷 위치, 로그 위치", text: $locator)
-                    .textFieldStyle(.roundedBorder)
+                Text(pickedFileURL?.lastPathComponent ?? "선택된 파일 없음")
+                    .font(.system(size: 12))
+                    .foregroundStyle(pickedFileURL == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
                 Button("파일 선택…") {
                     guard !isPresentingFilePicker else { return }
                     isPresentingFilePicker = true
+                    pickError = nil
                     AgenticOpenPanelPresenter.present { panel in
                         panel.canChooseFiles = true
                         panel.canChooseDirectories = false
                         panel.allowsMultipleSelection = false
-                        panel.message = "증거 파일(스크린샷·녹취·캡처)을 선택해줘"
+                        panel.allowedContentTypes = [.png, .jpeg, .gif, .webP, .pdf]
+                        panel.message = "행동 증거(스크린샷·캡처·PDF)를 선택해줘"
                     } completion: { response, url in
                         isPresentingFilePicker = false
                         guard response == .OK, let url else { return }
-                        locator = url.path
+                        pickedFileURL = url
                     }
                 }
                 .disabled(isPresentingFilePicker)
                 .accessibilityIdentifier("opendesign.officeHours.attempt.filePicker")
             }
-            TextField("짧은 설명", text: $note)
-                .textFieldStyle(.roundedBorder)
+
+            if let pickError {
+                Text(pickError)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             HStack {
                 Button("포기 / 보류", action: onAbandon)
@@ -15625,15 +15661,45 @@ private struct OfficeHoursAttemptEvidenceSheet: View {
                 Spacer()
                 Button("취소", action: onCancel)
                 Button("증거 저장") {
-                    onSubmit(evidenceKind, locator, note)
+                    guard let url = pickedFileURL else { return }
+                    do {
+                        let bytes = try Data(contentsOf: url)
+                        guard !bytes.isEmpty else {
+                            pickError = "선택한 파일이 비어 있습니다."
+                            return
+                        }
+                        onSubmit(bytes, Self.declaredMediaType(for: url))
+                    } catch {
+                        pickError = "파일을 읽지 못했습니다: \(error.localizedDescription)"
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
-                // The host requires a non-empty ref for evidence-grade transitions.
-                .disabled(locator.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                // The 2-step submit requires real bytes — stay disabled until a file is picked.
+                .disabled(pickedFileURL == nil)
+                .accessibilityIdentifier("opendesign.officeHours.attempt.submit")
             }
         }
-        .padding(20)
-        .frame(width: 460)
+    }
+
+    // MARK: customer_outcome / goal — honest disabled state (no receipt minter yet).
+
+    @ViewBuilder
+    private var unsupportedGradeBody: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("고객 반응·목표 증거는 외부 연동(수신자 콜백/제공자 이벤트)이 필요해요. 지금은 행동 증거만 첨부할 수 있어요.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("opendesign.officeHours.attempt.unsupportedGrade")
+
+            HStack {
+                Button("포기 / 보류", action: onAbandon)
+                    .accessibilityIdentifier("opendesign.officeHours.attempt.sheetAbandon")
+                Spacer()
+                Button("취소", action: onCancel)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
     }
 }
 

@@ -3129,6 +3129,13 @@ final class AgenticViewModel: ObservableObject {
     /// Sessions with a candidate generation in flight (`status: "generating"`), so the
     /// close can show a "약속 준비 중" loader instead of a bare empty card.
     @Published private(set) var officeHoursCommitmentCandidatesGenerating: Set<String> = []
+    /// A′ receipt rail (step 1): in-flight `office_hours_ingest_evidence` requests keyed by
+    /// attemptId. The sidecar echoes `attemptId` (not a requestId) on the matching
+    /// `office_hours_evidence_ingested` reply, so we key the continuation by attempt and
+    /// guard against a concurrent second ingest for the same attempt (fail-closed: the new
+    /// caller gets an error rather than stomping the pending continuation). MainActor-isolated
+    /// — only touched from `handle(_:)` and the `async` ingest, both on the main actor.
+    private var officeHoursEvidenceIngestContinuations: [String: CheckedContinuation<String, Error>] = [:]
     /// Soft guidance from the interview gate: set when the sidecar withholds an interview
     /// close (needsCommitment) and asks for one next customer action; cleared on the next
     /// successful (non-blocked) day_progress_state so the nudge never lingers.
@@ -4953,37 +4960,111 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    /// A′ receipt rail: failure modes for the 2-step evidence submit (ingest → graded
+    /// transition). Surfaced to the sheet so a failed ingest does not silently no-op.
+    enum OfficeHoursEvidenceError: LocalizedError {
+        case notConnected
+        case invalidArguments
+        /// A second ingest for the SAME attempt is already in flight (fail-closed: the
+        /// store keys continuations by attemptId, so we refuse rather than stomp it).
+        case ingestAlreadyInFlight
+        /// The sidecar replied `office_hours_evidence_ingested` with `success: false`.
+        case ingestFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .notConnected: return "실행 보조 앱에 연결되어 있지 않습니다."
+            case .invalidArguments: return "증거 제출에 필요한 값이 비어 있습니다."
+            case .ingestAlreadyInFlight: return "이 시도의 증거 업로드가 이미 진행 중입니다."
+            case .ingestFailed(let detail): return detail.isEmpty ? "증거 업로드에 실패했습니다." : detail
+            }
+        }
+    }
+
+    /// A′ receipt rail (step 1): upload the picked artifact bytes so the SIDECAR persists
+    /// them and signs a host-owned `swift_upload` receipt (claim host-fixed to
+    /// `message.sent`). Returns the receipt token to hand to `office_hours_attempt_evidence`
+    /// as `evidence.receipt`. The sidecar echoes `attemptId` (not a requestId) on the
+    /// matching `office_hours_evidence_ingested` reply, so we await keyed by attempt and
+    /// refuse a concurrent second ingest for the same attempt. Never logs the bytes.
+    func ingestOfficeHoursEvidence(
+        attemptId: String,
+        bytes: Data,
+        declaredMediaType: String,
+        workspaceRoot explicitRoot: String? = nil
+    ) async -> Result<String, Error> {
+        guard isConnected else { return .failure(OfficeHoursEvidenceError.notConnected) }
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = attemptId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty, !id.isEmpty, !bytes.isEmpty else {
+            return .failure(OfficeHoursEvidenceError.invalidArguments)
+        }
+        guard officeHoursEvidenceIngestContinuations[id] == nil else {
+            return .failure(OfficeHoursEvidenceError.ingestAlreadyInFlight)
+        }
+        let payload: [String: Any] = [
+            "type": "office_hours_ingest_evidence",
+            "workspaceRoot": root,
+            "attemptId": id,
+            "evidence": [
+                "bytesBase64": bytes.base64EncodedString(),
+                "declaredMediaType": declaredMediaType.trimmingCharacters(in: .whitespacesAndNewlines),
+            ],
+        ]
+        do {
+            let token = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+                officeHoursEvidenceIngestContinuations[id] = continuation
+                if !sidecar.send(payload: payload) {
+                    officeHoursEvidenceIngestContinuations.removeValue(forKey: id)
+                    continuation.resume(throwing: OfficeHoursEvidenceError.notConnected)
+                }
+            }
+            return .success(token)
+        } catch {
+            return .failure(error)
+        }
+    }
+
     /// R2: the ValidationAttempt is the SINGLE writer for Day-1 get_users action/
     /// customer/goal proof. After gather completes the attempt sits in a WAIT state
     /// (runtime.officeHours.nextAction.kind == "wait"); this routes a graded proof
-    /// through the new `office_hours_attempt_evidence` command with the attempt CAS
-    /// token (expectedRevision) + provenance. The sidecar reducer is the grading
-    /// authority — a rejected kind / wrong grade / missing ref fails closed there.
+    /// through the `office_hours_attempt_evidence` command with the attempt CAS token
+    /// (expectedRevision). A′ CUTOVER (no compat): a graded transition is gated by a
+    /// host-SIGNED `swift_upload` receipt, NOT a self-attested {kind,ref}. So this is a
+    /// 2-step send: (1) ingest the picked bytes → receipt token, (2) submit with
+    /// `evidence: { receipt: token }`. The sidecar reducer is the grading authority —
+    /// a missing/rejected receipt fails closed there. Returns the ingest result so the
+    /// sheet can surface an upload failure instead of silently no-op'ing.
     @discardableResult
     func submitOfficeHoursAttemptEvidence(
         attemptId: String,
         expectedRevision: Int,
         transition: String,
-        kind: String,
-        ref: String,
-        note: String = "",
+        bytes: Data,
+        declaredMediaType: String,
         sessionId: String? = nil,
         workspaceRoot explicitRoot: String? = nil
-    ) -> Bool {
-        guard isConnected else { return false }
+    ) async -> Result<Void, Error> {
+        guard isConnected else { return .failure(OfficeHoursEvidenceError.notConnected) }
         let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
         let id = attemptId.trimmingCharacters(in: .whitespacesAndNewlines)
         let tx = transition.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedRef = ref.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !root.isEmpty, !id.isEmpty, !tx.isEmpty else { return false }
-        // Mirror the host ref-presence requirement: an evidence-grade transition must
-        // carry a real artifact locator. abandon_attempt / expire_no_response do not.
-        let evidenceTransition = tx == "record_action_proof"
-            || tx == "record_customer_outcome"
-            || tx == "record_goal_proof"
-            || tx == "record_negative_outcome"
-        if evidenceTransition && (trimmedRef.isEmpty || trimmedKind.isEmpty) { return false }
+        guard !root.isEmpty, !id.isEmpty, !tx.isEmpty else {
+            return .failure(OfficeHoursEvidenceError.invalidArguments)
+        }
+        // Step 1: ingest bytes → host-signed receipt token.
+        let ingest = await ingestOfficeHoursEvidence(
+            attemptId: id,
+            bytes: bytes,
+            declaredMediaType: declaredMediaType,
+            workspaceRoot: root
+        )
+        let receiptToken: String
+        switch ingest {
+        case .success(let token): receiptToken = token
+        case .failure(let error): return .failure(error)
+        }
+        // Step 2: submit the receipt (NO kind/ref — the legacy self-attested payload is gone).
         var payload: [String: Any] = [
             "type": "office_hours_attempt_evidence",
             "workspaceRoot": root,
@@ -4991,20 +5072,17 @@ final class AgenticViewModel: ObservableObject {
             "expectedRevision": expectedRevision,
             "transition": tx,
             "requestId": UUID().uuidString,
+            "evidence": [
+                "receipt": receiptToken,
+            ],
         ]
         if let sid = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines), !sid.isEmpty {
             payload["sessionId"] = sid
         }
-        if evidenceTransition {
-            payload["evidence"] = [
-                "kind": trimmedKind,
-                "ref": trimmedRef,
-                "capturedAt": ISO8601DateFormatter().string(from: Date()),
-                "source": "mac_user",
-                "note": note.trimmingCharacters(in: .whitespacesAndNewlines),
-            ]
+        guard sidecar.send(payload: payload) else {
+            return .failure(OfficeHoursEvidenceError.notConnected)
         }
-        return sidecar.send(payload: payload)
+        return .success(())
     }
 
     /// R2 WAIT escape: abandon the open attempt (the only free-text fail path). Lets a
@@ -9293,6 +9371,21 @@ final class AgenticViewModel: ObservableObject {
             )
             scanResult = updated
             persistWorkspaceScanResultCache(updated, root: gitignore.scanRoot ?? event.scanRoot)
+        case "office_hours_evidence_ingested":
+            // A′ receipt rail (step 1) reply: resolve the pending ingest continuation keyed
+            // by the echoed attemptId. success → receipt token; failure → surfaced error.
+            if let attemptId = event.attemptId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !attemptId.isEmpty,
+               let continuation = officeHoursEvidenceIngestContinuations.removeValue(forKey: attemptId) {
+                if event.success == true,
+                   let token = event.receiptToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !token.isEmpty {
+                    continuation.resume(returning: token)
+                } else {
+                    let detail = event.error ?? event.message ?? ""
+                    continuation.resume(throwing: OfficeHoursEvidenceError.ingestFailed(detail))
+                }
+            }
         case "day_progress_state":
             if event.success == false { return }
             if let dp = event.dayProgress { dayProgress = dp }
@@ -16132,6 +16225,18 @@ struct SidecarEvent: Decodable {
     // commitment is always the founder's resolved text (user-origin gate).
     let commitmentCandidates: [String]?
 
+    // office_hours_evidence_ingested (A′ receipt rail step 1): the sidecar persisted
+    // the uploaded bytes and signed a host-owned `swift_upload` receipt (claim fixed to
+    // `message.sent`). The host echoes `attemptId` (NOT a requestId) so the VM keys the
+    // pending-ingest continuation by attempt. `receiptToken` is then handed straight to
+    // `office_hours_attempt_evidence` as `evidence.receipt`. `success == false` carries
+    // `error` (shared field below) instead. attemptId/workspaceRoot are shared above.
+    let receiptToken: String?
+    let artifactId: String?
+    let sha256: String?
+    let detectedMediaType: String?
+    let attemptId: String?
+
     init(
         type: String,
         title: String? = nil,
@@ -16253,7 +16358,12 @@ struct SidecarEvent: Decodable {
         integrationStatus: IntegrationStatusSnapshot? = nil,
         exaMcpConnect: ExaMcpConnectResult? = nil,
         mcpOauthConnect: McpOauthConnectResult? = nil,
-        commitmentCandidates: [String]? = nil
+        commitmentCandidates: [String]? = nil,
+        receiptToken: String? = nil,
+        artifactId: String? = nil,
+        sha256: String? = nil,
+        detectedMediaType: String? = nil,
+        attemptId: String? = nil
     ) {
         self.type = type
         self.title = title
@@ -16376,6 +16486,11 @@ struct SidecarEvent: Decodable {
         self.exaMcpConnect = exaMcpConnect
         self.mcpOauthConnect = mcpOauthConnect
         self.commitmentCandidates = commitmentCandidates
+        self.receiptToken = receiptToken
+        self.artifactId = artifactId
+        self.sha256 = sha256
+        self.detectedMediaType = detectedMediaType
+        self.attemptId = attemptId
     }
 
     var bipMissionProgress: BipMissionProgress? {
@@ -16792,6 +16907,12 @@ extension SidecarEvent {
         case integrationStatus
         case exaMcpConnect
         case mcpOauthConnect
+        // A′ receipt rail (office_hours_evidence_ingested).
+        case attemptId
+        case receiptToken
+        case artifactId
+        case sha256
+        case detectedMediaType
     }
 
     init(from decoder: Decoder) throws {
@@ -16939,6 +17060,13 @@ extension SidecarEvent {
         integrationStatus = Self.decodeIfPresent(IntegrationStatusSnapshot.self, from: container, forKey: .integrationStatus)
         exaMcpConnect = Self.decodeIfPresent(ExaMcpConnectResult.self, from: container, forKey: .exaMcpConnect)
         mcpOauthConnect = Self.decodeIfPresent(McpOauthConnectResult.self, from: container, forKey: .mcpOauthConnect)
+        // A′ receipt rail (office_hours_evidence_ingested): success → receiptToken etc.;
+        // failure → success:false + error (shared field decoded above).
+        attemptId = Self.decodeIfPresent(String.self, from: container, forKey: .attemptId)
+        receiptToken = Self.decodeIfPresent(String.self, from: container, forKey: .receiptToken)
+        artifactId = Self.decodeIfPresent(String.self, from: container, forKey: .artifactId)
+        sha256 = Self.decodeIfPresent(String.self, from: container, forKey: .sha256)
+        detectedMediaType = Self.decodeIfPresent(String.self, from: container, forKey: .detectedMediaType)
 
         if type == "workspace_gitignore_result" {
             agentic30Gitignore = Agentic30GitignoreState(
