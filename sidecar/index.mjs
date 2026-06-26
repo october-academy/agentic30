@@ -503,6 +503,9 @@ import { ingestSwiftUpload } from "./office-hours-evidence-ingress.mjs";
 import { deriveEvidenceContractId } from "./office-hours-evidence-binding.mjs";
 import { GRADED_ATTEMPT_EVIDENCE_TRANSITIONS } from "./office-hours-evidence-policy.mjs";
 import { consumeArtifact } from "./office-hours-artifact-registry.mjs";
+// A′ step 4: the authoritative outcome-capture funnel — versioned domain events (NO raw
+// data) with metric_epoch separation so synthetic eval runs never pollute real N.
+import { emitOfficeHoursFunnelEvent, TRANSITION_TO_FUNNEL_STAGE } from "./office-hours-funnel.mjs";
 import {
   nextAttemptAction,
   cardDefinition,
@@ -2181,6 +2184,12 @@ async function handleClientMessage(socket, payload) {
               attempt_id: answeredGenerationAttemptId,
               revision: result.revision,
               source: session.runtime?.officeHours?.source || "",
+            });
+            // Funnel denominator: a completed gather = an eligible Day-1 commitment exists.
+            emitOfficeHoursFunnelEvent(telemetry, "commitment_scheduled", {
+              attemptId: answeredGenerationAttemptId,
+              transition: "schedule_execution",
+              occurredAt: new Date().toISOString(),
             });
             broadcast({ type: "session_updated", session });
             return;
@@ -4513,6 +4522,12 @@ async function handleOfficeHoursIngestEvidence(socket, payload = {}) {
       media_type: result.detectedMediaType,
       byte_length: result.byteLength,
     });
+    // Funnel: a capture was acquired (host-signed receipt minted). No bytes/token leave here.
+    emitOfficeHoursFunnelEvent(telemetry, "evidence_ingested", {
+      attemptId,
+      detectedMediaType: result.detectedMediaType,
+      occurredAt: at,
+    });
     send(socket, {
       type: "office_hours_evidence_ingested",
       workspaceRoot: root,
@@ -4708,6 +4723,27 @@ async function handleOfficeHoursAttemptEvidence(socket, payload = {}) {
       revision: result.revision,
       evidence_kind: fields.evidence?.kind || "",
     });
+    // Funnel: a proof actually LANDED (applied), with the host-derived grade/trust-tier
+    // read from the committed projection slot. No raw data leaves here. Idempotent retries
+    // (applied:false) do NOT re-emit.
+    const funnelStage = TRANSITION_TO_FUNNEL_STAGE[transition];
+    if (funnelStage && result.applied === true) {
+      const slotByTransition = {
+        record_action_proof: "actionProof",
+        record_customer_outcome: "customerOutcome",
+        record_negative_outcome: "negativeOutcome",
+        record_goal_proof: "goalProof",
+      };
+      const slot = result.projection?.[slotByTransition[transition]] || {};
+      emitOfficeHoursFunnelEvent(telemetry, funnelStage, {
+        attemptId,
+        transition,
+        trustTier: slot.trustTier || "",
+        grade: slot.grade || "",
+        evidenceClass: slot.origin || "",
+        occurredAt: at,
+      });
+    }
     // Project the now-updated attempt evidence into the Evidence OS read model.
     await sendOfficeHoursEvidenceState(socket, root);
   } catch (error) {

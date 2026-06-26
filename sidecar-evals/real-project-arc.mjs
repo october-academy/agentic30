@@ -577,6 +577,9 @@ export async function runRealProjectArc(projectPath, {
     env: {
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      // ★metric_epoch: every funnel event this arc's daemon emits is stamped "eval" so
+      // synthetic arc runs can NEVER pollute the real production N (A′ step 4 integrity).
+      AGENTIC30_METRIC_EPOCH: "eval",
       AGENTIC30_CODEX_MODEL: process.env.AGENTIC30_CODEX_MODEL || "gpt-5.4-mini",
       ...(mode === "stub" ? { AGENTIC30_TEST_STUB_PROVIDER: "1", AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1" } : {}),
     },
