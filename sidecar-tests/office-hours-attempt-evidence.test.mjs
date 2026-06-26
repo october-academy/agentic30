@@ -14,6 +14,78 @@ import {
   loadAttemptLog,
 } from "../sidecar/office-hours-attempt-store.mjs";
 import { canStartNewAttempt } from "../sidecar/office-hours-contract.mjs";
+import { signEvidenceReceipt } from "../sidecar/office-hours-evidence-receipt.mjs";
+import { resolveHostIdentity, resolveEvidenceSigningKey } from "../sidecar/office-hours-host-identity.mjs";
+import { deriveEvidenceContractId } from "../sidecar/office-hours-evidence-binding.mjs";
+import { deriveEvidenceIdentity, registerArtifact } from "../sidecar/office-hours-artifact-registry.mjs";
+
+// A 1px-ish PNG (magic bytes + filler) used as a real "screenshot" artifact for the
+// swift-upload ingress path.
+const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("day1-capture-bytes")]);
+
+// Ingest founder bytes through the daemon and return the host-signed receipt token (the
+// production action-proof path: bytes → sha → register → sign).
+async function ingestActionReceipt(ws, { workspaceRoot, attemptId, bytes = PNG_BYTES }) {
+  ws.send(JSON.stringify({
+    type: "office_hours_ingest_evidence",
+    workspaceRoot,
+    attemptId,
+    evidence: { bytesBase64: Buffer.from(bytes).toString("base64"), declaredMediaType: "image/png" },
+  }));
+  const ev = await waitForEvent(ws.events, (e) => e.type === "office_hours_evidence_ingested" && e.attemptId === attemptId);
+  if (!ev.success) throw new Error(`ingest failed: ${ev.error || ""}`);
+  return ev.receiptToken;
+}
+
+// Sign a SYNTHETIC higher-tier receipt (provider_event / recipient_callback) for tests
+// that exercise the customer_outcome / goal_proof handler path, which production cannot
+// mint yet (no provider adapter). Uses the SAME host store the daemon verifies against
+// (shared via AGENTIC30_HOST_STORE_DIR) and the contract id derived from durable state.
+async function signSyntheticReceipt({ storeDir, workspaceRoot, attemptId, origin, verifiedClaims }) {
+  // Anchor freshness to the daemon's real clock (it verifies with `new Date()`); a fixed
+  // past timestamp would be rejected as expired.
+  const issuedAt = new Date(Date.now() - 60_000).toISOString();
+  const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+  const prev = process.env.AGENTIC30_HOST_STORE_DIR;
+  process.env.AGENTIC30_HOST_STORE_DIR = storeDir;
+  try {
+    const { installActorId, projectId } = await resolveHostIdentity({ workspaceRoot });
+    const { keyId, secret } = await resolveEvidenceSigningKey({ workspaceRoot });
+    const snapshot = await projectAttempt({ workspaceRoot, attemptId });
+    const evidenceContractId = deriveEvidenceContractId(snapshot.projection);
+    const sha = "c".repeat(64);
+    const account = origin === "provider_event" ? "stripe_acct_test" : undefined;
+    const eventId = origin === "provider_event" ? `evt_${attemptId}` : undefined;
+    const nonce = origin === "recipient_callback" ? `nonce_${attemptId}` : undefined;
+    const evidenceIdentity = deriveEvidenceIdentity({ origin, providerAccount: account, providerEventId: eventId, callbackNonce: nonce, actorId: installActorId, sha256: sha });
+    const artifactId = `art_${attemptId}`;
+    // The registry lives in the workspace (shared with the daemon); the synthetic
+    // identity must be registered so the handler's consume succeeds.
+    await registerArtifact({ workspaceRoot }, {
+      evidenceIdentity, artifactId, sha256: sha, origin, mediaType: "application/json", byteLength: 321,
+    });
+    return signEvidenceReceipt({
+      evidenceIdentity,
+      artifactId,
+      projectId,
+      attemptId,
+      actorId: installActorId,
+      evidenceContractId,
+      sha256: sha,
+      byteLength: 321,
+      declaredMediaType: "application/json",
+      detectedMediaType: "application/json",
+      contentValidation: "provider_event_verified",
+      origin,
+      issuedAt,
+      expiresAt,
+      verifiedClaims,
+    }, { secret, keyId });
+  } finally {
+    if (prev === undefined) delete process.env.AGENTIC30_HOST_STORE_DIR;
+    else process.env.AGENTIC30_HOST_STORE_DIR = prev;
+  }
+}
 
 // R2 cut: the `office_hours_attempt_evidence` WS command routes the six evidence
 // transitions through commitAttemptEvent (the SINGLE store writer). These tests
@@ -51,13 +123,15 @@ async function seedScheduledAttempt(workspacePath, attemptId = "attempt-wait-1")
   return { attemptId, revision };
 }
 
-test("office_hours_attempt_evidence: record_action_proof advances the attempt (happy path)", async () => {
+test("office_hours_attempt_evidence: record_action_proof via a host-signed swift-upload receipt (happy path)", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
     const { attemptId, revision } = await seedScheduledAttempt(harness.workspacePath);
     ws = await connectAndCollect(harness);
 
+    // Production rail: ingest founder bytes → host-signed receipt token → submit the token.
+    const receiptToken = await ingestActionReceipt(ws, { workspaceRoot: harness.workspacePath, attemptId });
     ws.send(JSON.stringify({
       type: "office_hours_attempt_evidence",
       workspaceRoot: harness.workspacePath,
@@ -65,26 +139,30 @@ test("office_hours_attempt_evidence: record_action_proof advances the attempt (h
       expectedRevision: revision,
       transition: "record_action_proof",
       requestId: "evt-action-1",
-      evidence: { kind: "dm_sent_screenshot", ref: "sim://day1/dm-cap.png", capturedAt: ATTEMPT_ISO, source: "test" },
+      evidence: { receipt: receiptToken },
     }));
 
     const state = await waitForEvent(ws.events, (event) =>
       event.type === "day_progress_state" && event.workspaceRoot === harness.workspacePath);
     assert.notEqual(state.success, false, `handler must not fail: ${state.error || ""}`);
 
-    // The attempt advanced on disk and carries the graded action proof.
+    // The attempt advanced and carries the HOST-MINTED action proof: the kind is derived
+    // from the verified claim (message.sent → message_log), the ref points at the durable
+    // content-addressed artifact, and the receipt provenance is preserved.
     const snapshot = await projectAttempt({ workspaceRoot: harness.workspacePath, attemptId });
     assert.equal(snapshot.projection.status, "awaiting_customer_outcome");
     assert.equal(snapshot.projection.actionProof?.grade, "action_proof");
-    assert.equal(snapshot.projection.actionProof?.kind, "dm_sent_screenshot");
-    assert.equal(snapshot.projection.actionProof?.ref, "sim://day1/dm-cap.png");
+    assert.equal(snapshot.projection.actionProof?.kind, "message_log");
+    assert.match(String(snapshot.projection.actionProof?.ref || ""), /^artifact:\/\/[0-9a-f]{64}$/);
+    assert.equal(snapshot.projection.actionProof?.verifiedClaim, "message.sent");
+    assert.equal(snapshot.projection.actionProof?.source, "host_receipt_v3");
   } finally {
     ws?.close();
     await harness.close();
   }
 });
 
-test("office_hours_attempt_evidence: rejected evidence kind fails closed (no soften)", async () => {
+test("office_hours_attempt_evidence: a raw {kind,ref} payload is refused (receipt_required, no compat)", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
@@ -97,14 +175,16 @@ test("office_hours_attempt_evidence: rejected evidence kind fails closed (no sof
       attemptId,
       expectedRevision: revision,
       transition: "record_action_proof",
-      requestId: "evt-rejected-1",
-      // "self_report" is in REJECTED_EVIDENCE_KINDS — never proves anything.
-      evidence: { kind: "self_report", ref: "sim://day1/i-said-so.txt" },
+      requestId: "evt-raw-1",
+      // The legacy self-attested path: a kind + a sim:// ref, but NO host-signed receipt.
+      // The A′ cutover refuses this with receipt_required (no backward compatibility).
+      evidence: { kind: "dm_sent_screenshot", ref: "sim://day1/i-said-so.png" },
     }));
 
     const state = await waitForEvent(ws.events, (event) =>
       event.type === "day_progress_state" && event.workspaceRoot === harness.workspacePath);
-    assert.equal(state.success, false, "rejected evidence kind must fail closed");
+    assert.equal(state.success, false, "a raw {kind,ref} payload must fail closed");
+    assert.match(String(state.error || ""), /receipt_required/);
 
     // The attempt did NOT advance — it is still scheduled, no actionProof.
     const snapshot = await projectAttempt({ workspaceRoot: harness.workspacePath, attemptId });
@@ -117,7 +197,7 @@ test("office_hours_attempt_evidence: rejected evidence kind fails closed (no sof
   }
 });
 
-test("office_hours_attempt_evidence: wrong-grade evidence for the WAIT reason fails closed", async () => {
+test("office_hours_attempt_evidence: a forged/garbage receipt is rejected (no valid MAC)", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
@@ -129,16 +209,16 @@ test("office_hours_attempt_evidence: wrong-grade evidence for the WAIT reason fa
       workspaceRoot: harness.workspacePath,
       attemptId,
       expectedRevision: revision,
-      // In execution_scheduled (WAIT reason "action") a customer_outcome kind is the
-      // wrong grade for record_action_proof.
       transition: "record_action_proof",
-      requestId: "evt-wrong-grade-1",
-      evidence: { kind: "customer_reply", ref: "sim://day1/reply.png" },
+      requestId: "evt-forged-1",
+      // A well-formed v3 token shape whose MAC was not produced by the host key.
+      evidence: { receipt: "v3.eyJmb3JnZWQiOnRydWV9.Zm9yZ2VkbWFj" },
     }));
 
     const state = await waitForEvent(ws.events, (event) =>
       event.type === "day_progress_state" && event.workspaceRoot === harness.workspacePath);
-    assert.equal(state.success, false, "wrong-grade evidence must fail closed");
+    assert.equal(state.success, false, "a forged receipt must fail closed");
+    assert.match(String(state.error || ""), /receipt_rejected/);
 
     const snapshot = await projectAttempt({ workspaceRoot: harness.workspacePath, attemptId });
     assert.equal(snapshot.projection.status, "execution_scheduled");
@@ -149,30 +229,35 @@ test("office_hours_attempt_evidence: wrong-grade evidence for the WAIT reason fa
   }
 });
 
-test("office_hours_attempt_evidence: missing evidence.ref fails closed (artifact locator required)", async () => {
+test("office_hours_attempt_evidence: an identical submit (same requestId) is idempotent (applied once)", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
-    const { attemptId, revision } = await seedScheduledAttempt(harness.workspacePath);
+    const { attemptId, revision } = await seedScheduledAttempt(harness.workspacePath, "attempt-idem");
     ws = await connectAndCollect(harness);
 
-    ws.send(JSON.stringify({
-      type: "office_hours_attempt_evidence",
-      workspaceRoot: harness.workspacePath,
-      attemptId,
-      expectedRevision: revision,
-      transition: "record_action_proof",
-      requestId: "evt-no-ref-1",
-      evidence: { kind: "dm_sent_screenshot" }, // no ref → "kind only, no artifact"
+    const receiptToken = await ingestActionReceipt(ws, { workspaceRoot: harness.workspacePath, attemptId });
+    const submit = () => ws.send(JSON.stringify({
+      type: "office_hours_attempt_evidence", workspaceRoot: harness.workspacePath, attemptId,
+      expectedRevision: revision, transition: "record_action_proof", requestId: "evt-idem-1", evidence: { receipt: receiptToken },
     }));
 
-    const state = await waitForEvent(ws.events, (event) =>
-      event.type === "day_progress_state" && event.workspaceRoot === harness.workspacePath);
-    assert.equal(state.success, false, "missing evidence.ref must fail closed before commit");
+    submit();
+    const first = await waitForEvent(ws.events, (e) => e.type === "day_progress_state" && e.workspaceRoot === harness.workspacePath);
+    assert.notEqual(first.success, false, `first submit must succeed: ${first.error || ""}`);
+    const afterFirst = await projectAttempt({ workspaceRoot: harness.workspacePath, attemptId });
+    assert.equal(afterFirst.projection.status, "awaiting_customer_outcome");
+    const revAfterFirst = afterFirst.revision;
 
-    const snapshot = await projectAttempt({ workspaceRoot: harness.workspacePath, attemptId });
-    assert.equal(snapshot.projection.status, "execution_scheduled");
-    assert.equal(snapshot.revision, revision);
+    // Re-send the EXACT same submit (network-retry). The idempotency guard must skip the
+    // dry-run + re-consume, and commit dedupes → no double-apply, revision unchanged.
+    submit();
+    await new Promise((r) => setTimeout(r, 400));
+    const afterRetry = await projectAttempt({ workspaceRoot: harness.workspacePath, attemptId });
+    assert.equal(afterRetry.projection.status, "awaiting_customer_outcome", "retry must not advance further");
+    assert.equal(afterRetry.revision, revAfterFirst, "retry must not bump the revision (single apply)");
+    // Exactly one action proof recorded.
+    assert.equal(afterRetry.projection.actionProof?.kind, "message_log");
   } finally {
     ws?.close();
     await harness.close();
@@ -225,13 +310,21 @@ async function seedOutcomeObservedAttempt(workspacePath, attemptId = "attempt-go
   return { attemptId, revision };
 }
 
-test("office_hours_attempt_evidence: record_goal_proof accepts a goal_proof kind (happy path)", async () => {
-  const harness = await spawnSidecar();
+test("office_hours_attempt_evidence: record_goal_proof via a verified provider receipt (synthetic provider, eval-only)", async () => {
+  // Production has no goal-proof adapter yet; a verified first-party provider event
+  // (Stripe-style conversion) is what legitimately advances goal proof. We sign one
+  // against the SAME host store the daemon verifies against to exercise the plumbing.
+  const storeDir = await fs.mkdtemp(path.join(os.tmpdir(), "a30-attempt-goalstore-"));
+  const harness = await spawnSidecar({ extraEnv: { AGENTIC30_HOST_STORE_DIR: storeDir } });
   let ws;
   try {
     const { attemptId, revision } = await seedOutcomeObservedAttempt(harness.workspacePath);
     ws = await connectAndCollect(harness);
 
+    const receiptToken = await signSyntheticReceipt({
+      storeDir, workspaceRoot: harness.workspacePath, attemptId,
+      origin: "provider_event", verifiedClaims: ["goal.metric_observed"],
+    });
     ws.send(JSON.stringify({
       type: "office_hours_attempt_evidence",
       workspaceRoot: harness.workspacePath,
@@ -239,30 +332,34 @@ test("office_hours_attempt_evidence: record_goal_proof accepts a goal_proof kind
       expectedRevision: revision,
       transition: "record_goal_proof",
       requestId: "evt-goal-ok-1",
-      // activation_event grades to goal_proof — the grade record_goal_proof requires.
-      evidence: { kind: "activation_event", ref: "sim://day1/activation.png", source: "test" },
+      evidence: { receipt: receiptToken },
     }));
 
     const state = await waitForEvent(ws.events, (event) =>
       event.type === "day_progress_state" && event.workspaceRoot === harness.workspacePath);
-    assert.notEqual(state.success, false, `goal_proof happy path must not fail: ${state.error || ""}`);
+    assert.notEqual(state.success, false, `goal_proof via provider receipt must succeed: ${state.error || ""}`);
 
     const snapshot = await projectAttempt({ workspaceRoot: harness.workspacePath, attemptId });
     assert.equal(snapshot.projection.status, "succeeded");
     assert.equal(snapshot.projection.goalProof?.grade, "goal_proof");
+    assert.equal(snapshot.projection.goalProof?.kind, "activation_event");
   } finally {
     ws?.close();
     await harness.close();
+    await fs.rm(storeDir, { recursive: true, force: true });
   }
 });
 
-test("office_hours_attempt_evidence: record_goal_proof rejects a non-goal grade (FIX 2 — no exemption)", async () => {
+test("office_hours_attempt_evidence: an action receipt presented for record_goal_proof is insufficient", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
     const { attemptId, revision } = await seedOutcomeObservedAttempt(harness.workspacePath, "attempt-goal-2");
     ws = await connectAndCollect(harness);
 
+    // An uploaded screenshot can only ever be action_proof; presenting it for a goal proof
+    // must be refused (the honest ceiling — a founder capture can't prove the goal happened).
+    const receiptToken = await ingestActionReceipt(ws, { workspaceRoot: harness.workspacePath, attemptId });
     ws.send(JSON.stringify({
       type: "office_hours_attempt_evidence",
       workspaceRoot: harness.workspacePath,
@@ -270,16 +367,13 @@ test("office_hours_attempt_evidence: record_goal_proof rejects a non-goal grade 
       expectedRevision: revision,
       transition: "record_goal_proof",
       requestId: "evt-goal-bad-1",
-      // dm_sent_screenshot grades to action_proof — NOT goal_proof. The handler
-      // previously EXEMPTED record_goal_proof from grade validation; FIX 2 makes it
-      // fail closed consistently (the transition→grade map covers goal_proof).
-      evidence: { kind: "dm_sent_screenshot", ref: "sim://day1/dm.png" },
+      evidence: { receipt: receiptToken },
     }));
 
     const state = await waitForEvent(ws.events, (event) =>
       event.type === "day_progress_state" && event.workspaceRoot === harness.workspacePath);
-    assert.equal(state.success, false, "an action-grade kind for record_goal_proof must fail closed");
-    assert.match(String(state.error || ""), /goal_proof/);
+    assert.equal(state.success, false, "an action receipt for record_goal_proof must fail closed");
+    assert.match(String(state.error || ""), /receipt_insufficient_for_record_goal_proof/);
 
     // The attempt did NOT advance to succeeded.
     const snapshot = await projectAttempt({ workspaceRoot: harness.workspacePath, attemptId });

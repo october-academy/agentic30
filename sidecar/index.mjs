@@ -489,10 +489,20 @@ import {
   commitAttemptEvent,
   supersedeAnswer,
   projectAttempt,
+  projectAttemptFromEvents,
   loadAttemptLog,
   markPosted,
   pendingDeliveries,
 } from "./office-hours-attempt-store.mjs";
+// A′ evidence receipt cutover (host-owned authorities): the graded attempt-evidence
+// transitions are gated by a host-SIGNED receipt, not a self-attested {kind,ref}. The
+// coordinator verifies + derives the reducer evidence record; the ingress mints a
+// receipt from real bytes; the registry enforces single-use.
+import { prepareReceiptEvidence } from "./office-hours-evidence-coordinator.mjs";
+import { ingestSwiftUpload } from "./office-hours-evidence-ingress.mjs";
+import { deriveEvidenceContractId } from "./office-hours-evidence-binding.mjs";
+import { GRADED_ATTEMPT_EVIDENCE_TRANSITIONS } from "./office-hours-evidence-policy.mjs";
+import { consumeArtifact } from "./office-hours-artifact-registry.mjs";
 import {
   nextAttemptAction,
   cardDefinition,
@@ -500,12 +510,10 @@ import {
   isAcceptableDay1Close,
   payloadHashOf as officeHoursPayloadHashOf,
   VALIDATION_ATTEMPT_ACTIVE_STATES,
-  // R2: ValidationAttempt now owns Day-1 action/customer/goal proof. The host
-  // routes the six evidence transitions through commitAttemptEvent and does ONLY
-  // a pre-commit ref-presence + transition→grade sanity check (the reducer is the
-  // authority — gradeEvidence/requiredGradeForTransition are the single source).
-  gradeEvidence,
-  requiredGradeForTransition,
+  // R2/A′: ValidationAttempt owns Day-1 action/customer/goal proof. The host routes the
+  // graded transitions through commitAttemptEvent; grading is the reducer's authority and
+  // the receipt coordinator derives the host-minted kind, so the handler no longer calls
+  // gradeEvidence/requiredGradeForTransition directly.
 } from "./office-hours-contract.mjs";
 import {
   shouldValidateFirstCandidatePayload,
@@ -2892,6 +2900,10 @@ async function handleClientMessage(socket, payload) {
       await handleDayProgressPatch(socket, payload);
       return;
     }
+    case "office_hours_ingest_evidence": {
+      await handleOfficeHoursIngestEvidence(socket, payload);
+      return;
+    }
     case "office_hours_attempt_evidence": {
       await handleOfficeHoursAttemptEvidence(socket, payload);
       return;
@@ -4454,16 +4466,74 @@ const OFFICE_HOURS_ATTEMPT_EVIDENCE_TRANSITIONS = Object.freeze(new Set([
   "expire_no_response",
   "abandon_attempt",
 ]));
-// Transitions whose grade is enforced by the reducer AND that demand a real evidence
-// locator (host-side ref-presence pre-check). expire_no_response carries a deadline
-// (responseDueAt), abandon_attempt carries a free-text reason — neither bears an
-// evidence record, so they are NOT in this set.
-const OFFICE_HOURS_ATTEMPT_EVIDENCE_GRADED_TRANSITIONS = Object.freeze(new Set([
-  "record_action_proof",
-  "record_customer_outcome",
-  "record_goal_proof",
-  "record_negative_outcome",
-]));
+// The four GRADED transitions (which require a host-signed receipt) come from the
+// single acceptance policy (GRADED_ATTEMPT_EVIDENCE_TRANSITIONS) — no duplicated set
+// here. expire_no_response / abandon_attempt carry no evidence record.
+
+// Host artifact INGRESS (A′ step 6 public surface). Accept founder-provided bytes for a
+// graded attempt transition, persist + sign a receipt HOST-side, and return the receipt
+// token the founder then submits via office_hours_attempt_evidence. The claim/origin/kind
+// are host-fixed inside the adapter; the client supplies ONLY bytes (+ an advisory media
+// type). Minimal-scope: the sole adapter is swift_upload (founder action proof) — uploaded
+// bytes back a `message.sent` receipt and nothing higher.
+async function handleOfficeHoursIngestEvidence(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  const attemptId = String(payload.attemptId ?? payload.attempt_id ?? "").trim();
+  const at = new Date().toISOString();
+  try {
+    if (!attemptId) throw new Error("attemptId is required.");
+    const evidence = payload.evidence && typeof payload.evidence === "object" && !Array.isArray(payload.evidence)
+      ? payload.evidence
+      : payload;
+    const base64 = String(evidence.bytesBase64 ?? evidence.artifactBase64 ?? payload.bytesBase64 ?? "").trim();
+    if (!base64) throw new Error("ingest requires evidence bytes (bytesBase64).");
+    const declaredMediaType = String(evidence.declaredMediaType ?? evidence.mediaType ?? "").trim();
+    let bytes;
+    try {
+      bytes = Buffer.from(base64, "base64");
+    } catch {
+      throw new Error("bytesBase64 is not valid base64.");
+    }
+    if (!bytes || bytes.length === 0) throw new Error("decoded artifact is empty.");
+    // Derive the evidence contract id from DURABLE attempt state (must be defined).
+    const snapshot = await projectAttempt({ workspaceRoot: root, attemptId });
+    if (!snapshot) throw new Error(`attempt ${attemptId} not found.`);
+    const evidenceContractId = deriveEvidenceContractId(snapshot.projection);
+    const result = await ingestSwiftUpload({ workspaceRoot: root }, {
+      bytes,
+      declaredMediaType,
+      attemptId,
+      evidenceContractId,
+      now: at,
+    });
+    // Telemetry carries only metadata — never the bytes (P1 #20 redaction).
+    telemetry.captureEvent("mac_sidecar_office_hours_evidence_ingest", {
+      workspace_basename: path.basename(root),
+      attempt_id: attemptId,
+      media_type: result.detectedMediaType,
+      byte_length: result.byteLength,
+    });
+    send(socket, {
+      type: "office_hours_evidence_ingested",
+      workspaceRoot: root,
+      attemptId,
+      receiptToken: result.receiptToken,
+      artifactId: result.artifactId,
+      sha256: result.sha256,
+      detectedMediaType: result.detectedMediaType,
+      success: true,
+    });
+  } catch (error) {
+    telemetry.captureException(error, { operation: "office_hours_ingest_evidence" });
+    send(socket, {
+      type: "office_hours_evidence_ingested",
+      workspaceRoot: root,
+      attemptId,
+      success: false,
+      error: formatError(error),
+    });
+  }
+}
 
 async function handleOfficeHoursAttemptEvidence(socket, payload = {}) {
   const root = resolveDay1GoalWorkspaceRoot(payload);
@@ -4507,50 +4577,74 @@ async function handleOfficeHoursAttemptEvidence(socket, payload = {}) {
     // (c) Build the reducer fields per transition + host-side ref-presence/grade
     // pre-check for evidence-grade transitions.
     const fields = {};
-    if (OFFICE_HOURS_ATTEMPT_EVIDENCE_GRADED_TRANSITIONS.has(transition)) {
+    if (GRADED_ATTEMPT_EVIDENCE_TRANSITIONS.has(transition)) {
+      // A′ CUTOVER (NO COMPAT): a graded transition is gated by a host-SIGNED evidence
+      // receipt, not a self-attested {kind,ref}. The coordinator verifies the receipt
+      // against DURABLE binding authority (host identity + projection-derived
+      // evidenceContractId) and derives the host-minted reducer evidence record; the
+      // registry enforces single-use. The legacy gradeEvidence({kind}) path is GONE —
+      // a raw {kind,ref} payload now fails with receipt_required.
       const evidence = payload.evidence && typeof payload.evidence === "object" && !Array.isArray(payload.evidence)
         ? payload.evidence
         : null;
-      if (!evidence) throw new Error(`transition ${transition} requires an evidence record.`);
-      const kind = String(evidence.kind ?? "").trim();
-      const ref = String(evidence.ref ?? "").trim();
-      if (!ref) {
-        // Mirror the legacy normalizeEvidence locator requirement: a graded proof
-        // must point at a real artifact (screenshot path / URL / log locator).
-        throw new Error(`transition ${transition} requires a non-empty evidence.ref (artifact locator).`);
+      const receiptToken = String(
+        evidence?.receipt ?? evidence?.receiptToken ?? payload.receipt ?? payload.receiptToken ?? "",
+      ).trim();
+      // Throws AttemptEvidenceError("receipt_required") when no token is present, and
+      // receipt_rejected / receipt_insufficient_for_<transition> on a bad/insufficient
+      // receipt (e.g. a swift_upload action receipt presented for record_goal_proof).
+      const prepared = await prepareReceiptEvidence({
+        workspaceRoot: root,
+        attemptId,
+        transition,
+        projection: snapshot.projection,
+        receiptToken,
+        now: at,
+      });
+      fields.evidence = prepared.fields.evidence;
+
+      // Single-use consume must happen BEFORE commit, but a VALID receipt must never be
+      // burned for an event that could not commit. So: (1) skip when this requestId
+      // already landed (idempotent retry — commit dedupes below), (2) otherwise run an
+      // EXACT-transition dry-run, and only consume if it would apply cleanly.
+      const priorLog = await loadAttemptLog({ workspaceRoot: root });
+      const priorRecord = priorLog.attempts[attemptId];
+      if (!priorRecord) throw new Error(`attempt ${attemptId} not found.`);
+      const priorEvents = Array.isArray(priorRecord.events) ? priorRecord.events : [];
+      const alreadyCommitted = priorEvents.some((e) => e && e.eventId === requestId);
+      if (!alreadyCommitted) {
+        const candidateEvent = {
+          eventId: requestId,
+          type: transition,
+          fields,
+          at,
+          requestId,
+          sessionId: sessionId || priorRecord.createdSessionId || "",
+          audit: { source: "office_hours_attempt_evidence", transition, evidenceKind: fields.evidence?.kind || "" },
+        };
+        try {
+          // Dry-run the WHOLE candidate log through the pure projector (same path commit
+          // takes); an illegal from-state throws HERE, before any consume — no burn.
+          projectAttemptFromEvents([...priorEvents, candidateEvent], {
+            id: priorRecord.attemptId,
+            goalLane: priorRecord.goalLane,
+            createdAt: priorRecord.createdAt,
+          });
+        } catch (dryErr) {
+          throw new Error(`transition ${transition} would not apply cleanly: ${dryErr?.message || dryErr}`);
+        }
+        // Consume the single-use artifact (requestId == the registry eventId). A replay
+        // across attempts/contracts is rejected here; the identical tuple is idempotent.
+        const consumed = await consumeArtifact({ workspaceRoot: root }, {
+          evidenceIdentity: prepared.evidenceIdentity,
+          attemptId,
+          evidenceContractId: prepared.evidenceContractId,
+          eventId: requestId,
+          sha256: fields.evidence.sha256,
+          origin: fields.evidence.origin,
+        });
+        if (!consumed.ok) throw new Error(`evidence artifact rejected: ${consumed.rejection}`);
       }
-      // Fast fail-closed grade check (the reducer re-grades and is the authority).
-      // FIX 2: validate the grade for EVERY graded transition CONSISTENTLY against the
-      // grade the TRANSITION declares (record_action_proof→action_proof,
-      // record_customer_outcome→customer_outcome, record_goal_proof→goal_proof,
-      // record_negative_outcome→customer_outcome) — not against the WAIT reason. A
-      // goal_proof jump is legal from three WAIT states, so the wait-reason map could
-      // not cover record_goal_proof and the handler previously EXEMPTED it; the
-      // transition→grade map covers all of them. The reducer re-validates and the
-      // sourceType guard protects the strong-payment gate, but the handler must be
-      // fail-closed consistently here too (no soften, no exemption).
-      const graded = gradeEvidence({ kind });
-      if (graded.rejected) {
-        throw new Error(`evidence kind "${kind || "(none)"}" is rejected and never proves anything.`);
-      }
-      const requiredGrade = requiredGradeForTransition(transition);
-      if (!requiredGrade) {
-        // A graded transition with no declared evidenceGrade is a contract break, not
-        // a soft-pass: fail-closed rather than committing an ungraded proof.
-        throw new Error(`transition ${transition} declares no evidence grade; refusing to commit ungraded proof.`);
-      }
-      if (graded.grade !== requiredGrade) {
-        throw new Error(
-          `transition ${transition} requires ${requiredGrade}-grade evidence, got ${graded.grade || "(none)"}.`,
-        );
-      }
-      fields.evidence = {
-        kind,
-        ref,
-        capturedAt: String(evidence.capturedAt ?? evidence.captured_at ?? at).trim() || at,
-        source: String(evidence.source ?? "").trim(),
-        note: String(evidence.note ?? "").trim(),
-      };
     } else if (transition === "expire_no_response") {
       const responseDueAt = String(payload.responseDueAt ?? payload.response_due_at ?? snapshot.projection?.responseDueAt ?? "").trim();
       if (!responseDueAt) throw new Error("expire_no_response requires responseDueAt.");
