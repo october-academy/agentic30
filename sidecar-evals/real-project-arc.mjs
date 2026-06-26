@@ -26,6 +26,20 @@ import { WebSocket } from "ws";
 import { projectDocPath } from "../sidecar/project-doc-paths.mjs";
 import { refreshProjectContextCache } from "../sidecar/project-context-cache.mjs";
 import { selectStructuredResponse, OFFICE_HOURS_ARC_PERSONAS } from "./office-hours-arc-simulation.mjs";
+// A′ receipt cutover: the graded attempt-evidence transitions now require a host-SIGNED
+// receipt. The arc mints them the same way production/eval would — swift_upload bytes for
+// action proof (via the daemon's ingest command) and SYNTHETIC provider/recipient receipts
+// for customer/goal (production has no such adapter yet; the arc signs against the shared
+// host store to exercise the full verify→consume→commit plumbing end to end). This is
+// eval-epoch evidence — it never pollutes a real funnel.
+import { projectAttempt } from "../sidecar/office-hours-attempt-store.mjs";
+import { signEvidenceReceipt } from "../sidecar/office-hours-evidence-receipt.mjs";
+import { resolveHostIdentity, resolveEvidenceSigningKey } from "../sidecar/office-hours-host-identity.mjs";
+import { deriveEvidenceContractId } from "../sidecar/office-hours-evidence-binding.mjs";
+import { deriveEvidenceIdentity, registerArtifact } from "../sidecar/office-hours-artifact-registry.mjs";
+
+// A real PNG header + filler — a "screenshot" artifact for the swift-upload action rail.
+const ARC_PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("arc-day1-capture")]);
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LIVE_DEFAULT = process.env.AGENTIC30_RUN_LIVE_PROVIDER_EVAL === "1";
@@ -317,11 +331,55 @@ export function buildDay1LockedGoalContext({ day, goal, onboarding, projectConte
 // real action→outcome→goal chain across days. No-op (records a skip) if the session
 // is not in a WAIT state (e.g. still gathering, or already resolved).
 const ATTEMPT_EVIDENCE_STEP_BY_REASON = Object.freeze({
-  action: { transition: "record_action_proof", kind: "dm_sent_screenshot" },
-  customer_outcome: { transition: "record_customer_outcome", kind: "customer_reply" },
-  // goal proof: activation, NOT payment (keeps the strong-payment gate honest).
-  goal: { transition: "record_goal_proof", kind: "activation_event" },
+  // action proof: a founder-uploaded screenshot via the real swift_upload ingress.
+  action: { transition: "record_action_proof", origin: "swift_upload" },
+  // customer outcome: a verified recipient reply (synthetic recipient_callback in eval).
+  customer_outcome: { transition: "record_customer_outcome", origin: "recipient_callback", verifiedClaims: ["recipient.replied"] },
+  // goal proof: a verified provider metric/conversion (synthetic provider_event in eval),
+  // NOT a payment kind — keeps the strong-payment gate honest.
+  goal: { transition: "record_goal_proof", origin: "provider_event", verifiedClaims: ["goal.metric_observed"] },
 });
+
+// Ingest founder bytes through the daemon → host-signed swift_upload action receipt token.
+async function arcIngestActionReceipt({ ws, events, workspaceRoot, attemptId }) {
+  const offset = events.length;
+  ws.send(JSON.stringify({
+    type: "office_hours_ingest_evidence",
+    workspaceRoot,
+    attemptId,
+    evidence: { bytesBase64: ARC_PNG_BYTES.toString("base64"), declaredMediaType: "image/png" },
+  }));
+  const ev = await waitForEventAfter(events, offset, (e) => e.type === "office_hours_evidence_ingested" && e.attemptId === attemptId, 30_000).catch(() => null);
+  if (!ev || ev.success === false) throw new Error(`ingest failed: ${ev?.error || "timeout"}`);
+  return ev.receiptToken;
+}
+
+// Sign a SYNTHETIC higher-tier receipt against the SHARED host store the daemon verifies
+// with (eval-epoch only — production has no recipient/provider adapter yet, so the arc
+// stands in for a verified inbound/provider confirmation to drive the customer/goal
+// plumbing end to end). It registers the artifact so the handler's single-use consume
+// succeeds, and derives the evidenceContractId from durable attempt state.
+async function arcSignSyntheticReceipt({ workspaceRoot, attemptId, origin, verifiedClaims }) {
+  const { installActorId, projectId } = await resolveHostIdentity({ workspaceRoot });
+  const { keyId, secret } = await resolveEvidenceSigningKey({ workspaceRoot });
+  const snapshot = await projectAttempt({ workspaceRoot, attemptId });
+  const evidenceContractId = deriveEvidenceContractId(snapshot.projection);
+  const sha = "d".repeat(64);
+  const account = origin === "provider_event" ? "arc_provider_acct" : undefined;
+  const providerEventId = origin === "provider_event" ? `arc_evt_${attemptId}` : undefined;
+  const callbackNonce = origin === "recipient_callback" ? `arc_nonce_${attemptId}` : undefined;
+  const evidenceIdentity = deriveEvidenceIdentity({ origin, providerAccount: account, providerEventId, callbackNonce, actorId: installActorId, sha256: sha });
+  const artifactId = `arc_art_${attemptId}_${origin}`;
+  await registerArtifact({ workspaceRoot }, { evidenceIdentity, artifactId, sha256: sha, origin, mediaType: "application/json", byteLength: 256 });
+  return signEvidenceReceipt({
+    evidenceIdentity, artifactId, projectId, attemptId, actorId: installActorId, evidenceContractId,
+    sha256: sha, byteLength: 256, declaredMediaType: "application/json", detectedMediaType: "application/json",
+    contentValidation: "arc_synthetic_provider", origin,
+    issuedAt: new Date(Date.now() - 60_000).toISOString(),
+    expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+    verifiedClaims,
+  }, { secret, keyId });
+}
 
 async function maybeSubmitAttemptEvidence({ ws, events, sessionId, day, captured, workspaceRoot }) {
   const session = latestSession(events, sessionId);
@@ -339,33 +397,36 @@ async function maybeSubmitAttemptEvidence({ ws, events, sessionId, day, captured
     return;
   }
   const requestId = `arc-attempt-evidence-${day}-${step.transition}`;
+  // Mint the host-signed receipt the cutover now requires (no more sim:// self-attest).
+  let receiptToken;
+  try {
+    receiptToken = step.origin === "swift_upload"
+      ? await arcIngestActionReceipt({ ws, events, workspaceRoot, attemptId })
+      : await arcSignSyntheticReceipt({ workspaceRoot, attemptId, origin: step.origin, verifiedClaims: step.verifiedClaims });
+  } catch (err) {
+    captured.attemptEvidenceSubmissions.push({ day, waitReason: nextAction.reason, transition: step.transition, success: false, error: `receipt: ${err?.message || err}` });
+    return;
+  }
   const offset = events.length;
   ws.send(JSON.stringify({
     type: "office_hours_attempt_evidence",
-    // The attempt lives in the throwaway SANDBOX workspace (seed.root), NOT the
-    // source project: every other arc command (day_progress_patch) already targets
-    // seed.root. Sending captured.projectPath here made the sidecar
-    // resolveDay1GoalWorkspaceRoot() point at the source repo, where the attempt
-    // does not exist → "attempt not found" → the evidence step never landed.
+    // The attempt lives in the throwaway SANDBOX workspace (seed.root) — every arc
+    // command targets it (sending the source project path would resolve to a workspace
+    // where the attempt does not exist).
     workspaceRoot,
     sessionId,
     attemptId,
     expectedRevision,
     transition: step.transition,
     requestId,
-    evidence: {
-      kind: step.kind,
-      ref: `sim://day${day}/${step.transition}.png`,
-      capturedAt: new Date().toISOString(),
-      source: "arc_sim",
-    },
+    evidence: { receipt: receiptToken },
   }));
   const result = await waitForEventAfter(events, offset, (e) => e.type === "day_progress_state", 30_000).catch(() => null);
   captured.attemptEvidenceSubmissions.push({
     day,
     waitReason: nextAction.reason,
     transition: step.transition,
-    kind: step.kind,
+    origin: step.origin,
     success: result ? result.success !== false : false,
     error: result?.error || (result ? "" : "timeout"),
   });
@@ -505,6 +566,11 @@ export async function runRealProjectArc(projectPath, {
   const seed = await seedRealProjectWorkspace(projectPath, { goalOverride, projectContextOverride });
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "a30-real-arc-app-"));
   await writeBipConfig(appSupportPath, seed.root);
+
+  // Share a host identity/key store between this arc process (it signs synthetic
+  // customer/goal receipts) and the spawned daemon (it verifies them). The daemon
+  // inherits AGENTIC30_HOST_STORE_DIR via the `...process.env` spread below.
+  process.env.AGENTIC30_HOST_STORE_DIR = path.join(appSupportPath, "host-store");
 
   const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", seed.root], {
     cwd: packageRoot,
