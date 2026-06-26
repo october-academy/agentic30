@@ -12,7 +12,7 @@ import {
   GRADED_ATTEMPT_EVIDENCE_TRANSITIONS,
   policyForTransition,
 } from "../sidecar/office-hours-evidence-policy.mjs";
-import { EVIDENCE_KIND_GRADE, NEGATIVE_OUTCOME_KINDS } from "../sidecar/office-hours-contract.mjs";
+import { EVIDENCE_KIND_GRADE, NEGATIVE_OUTCOME_KINDS, VALIDATION_ATTEMPT_TRANSITIONS, requiredGradeForTransition } from "../sidecar/office-hours-contract.mjs";
 import { EVIDENCE_CLAIMS, GRADE_BY_CLAIM } from "../sidecar/office-hours-evidence-receipt.mjs";
 
 test("policy covers exactly the four graded transitions", () => {
@@ -56,6 +56,15 @@ test("policyForTransition returns null for non-graded / unknown transitions", ()
   assert.equal(policyForTransition("schedule_execution"), null);
   assert.equal(policyForTransition(""), null);
   assert.equal(policyForTransition("nonsense"), null);
+});
+
+test("★parity: the policy's graded set EXACTLY equals the reducer's evidenceGrade-bearing transitions", () => {
+  // Future-regression guard (GPT-5.5 Pro review): if someone adds a new reducer transition
+  // with an evidenceGrade but forgets to add it to ATTEMPT_EVIDENCE_POLICY, it would bypass
+  // the receipt gate (the handler only requires a receipt for GRADED_ATTEMPT_EVIDENCE_
+  // TRANSITIONS). This pins the two sets equal so the omission fails the suite, not prod.
+  const reducerGraded = VALIDATION_ATTEMPT_TRANSITIONS.filter((t) => requiredGradeForTransition(t) != null);
+  assert.deepEqual([...GRADED_ATTEMPT_EVIDENCE_TRANSITIONS].sort(), reducerGraded.sort());
 });
 
 test("policyForTransition returns the frozen policy for a graded transition", () => {

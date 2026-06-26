@@ -72,6 +72,26 @@ function keyringFilePath() {
   return path.join(resolveHostStoreDir(), "office-hours-evidence-keyring.json");
 }
 
+// Deployment footgun guard (GPT-5.5 Pro review): if AGENTIC30_HOST_STORE_DIR is mis-set to
+// a path INSIDE the workspace, the whole boundary collapses (the key becomes readable by
+// the model's workspace-scoped tool surface). Fail closed before touching the store.
+async function assertHostStoreOutsideWorkspace(workspaceRoot) {
+  if (!workspaceRoot) return;
+  const storeDir = resolveHostStoreDir();
+  let ws;
+  try { ws = await fs.realpath(path.resolve(String(workspaceRoot))); } catch { ws = path.resolve(String(workspaceRoot)); }
+  let store;
+  try { store = await fs.realpath(storeDir); } catch { store = path.resolve(storeDir); }
+  const rel = path.relative(ws, store);
+  const inside = rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  if (inside) {
+    throw new HostIdentityError(
+      `host store dir (${store}) must be OUTSIDE the workspace (${ws}); a key inside the workspace is readable by the model tool surface`,
+      "ERR_HOST_STORE_IN_WORKSPACE",
+    );
+  }
+}
+
 // Canonical, symlink-resolved workspace key. The verifier binds projectId, so the
 // workspace→projectId map must be keyed on a stable canonical path (P1 #15: never
 // trust a client-chosen path verbatim). realpath falls back to resolve() when the
@@ -236,6 +256,28 @@ async function loadKeyringStore() {
   if (!parsed.keysByProject || typeof parsed.keysByProject !== "object" || Array.isArray(parsed.keysByProject)) {
     throw new HostIdentityError(`evidence keyring "keysByProject" must be an object at ${filePath}`, "ERR_KEYRING_PARSE");
   }
+  // Strict per-project validation (fail-closed, not "degrade to empty keyring"): a corrupt
+  // project entry THROWS rather than silently producing a verify-time "missing active
+  // secret" — a corrupt keyring must never be treated as a clean re-mint opportunity.
+  for (const [projectId, project] of Object.entries(parsed.keysByProject)) {
+    if (!project || typeof project !== "object" || Array.isArray(project)) {
+      throw new HostIdentityError(`evidence keyring project ${projectId} must be an object at ${filePath}`, "ERR_KEYRING_SCHEMA");
+    }
+    if (!ID_RE.test(String(project.activeKeyId || ""))) {
+      throw new HostIdentityError(`evidence keyring project ${projectId} has an invalid activeKeyId at ${filePath}`, "ERR_KEYRING_SCHEMA");
+    }
+    if (!project.keys || typeof project.keys !== "object" || Array.isArray(project.keys)) {
+      throw new HostIdentityError(`evidence keyring project ${projectId} "keys" must be an object at ${filePath}`, "ERR_KEYRING_SCHEMA");
+    }
+    for (const [keyId, entry] of Object.entries(project.keys)) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.secret !== "string" || !entry.secret) {
+        throw new HostIdentityError(`evidence keyring project ${projectId} key ${keyId} is invalid at ${filePath}`, "ERR_KEYRING_SCHEMA");
+      }
+    }
+    if (!project.keys[project.activeKeyId]) {
+      throw new HostIdentityError(`evidence keyring project ${projectId} activeKeyId ${project.activeKeyId} has no key entry at ${filePath}`, "ERR_KEYRING_SCHEMA");
+    }
+  }
   return parsed;
 }
 
@@ -246,6 +288,7 @@ async function loadKeyringStore() {
  */
 export async function resolveHostIdentity({ workspaceRoot } = {}) {
   const projectKey = await canonicalWorkspaceKey(workspaceRoot);
+  await assertHostStoreOutsideWorkspace(workspaceRoot);
   const filePath = identityFilePath();
   return withHostStoreLock(filePath, async () => {
     const store = (await loadIdentityStore()) || {

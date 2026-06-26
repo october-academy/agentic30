@@ -264,6 +264,45 @@ test("office_hours_attempt_evidence: an identical submit (same requestId) is ide
   }
 });
 
+test("office_hours_attempt_evidence: concurrent same-attempt submits advance EXACTLY once (TOCTOU-safe)", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    const { attemptId, revision } = await seedScheduledAttempt(harness.workspacePath, "attempt-race");
+    ws = await connectAndCollect(harness);
+
+    // Two DISTINCT action receipts (different bytes → different artifacts/identities).
+    const tokenA = await ingestActionReceipt(ws, { workspaceRoot: harness.workspacePath, attemptId, bytes: Buffer.concat([PNG_BYTES, Buffer.from("A")]) });
+    const tokenB = await ingestActionReceipt(ws, { workspaceRoot: harness.workspacePath, attemptId, bytes: Buffer.concat([PNG_BYTES, Buffer.from("B")]) });
+
+    const offset = ws.events.length;
+    // Fire BOTH with the SAME expectedRevision — they race on the attempt-store lock. The
+    // verify+consume+append run inside that lock (preAppend), so the loser CAS-conflicts
+    // BEFORE its receipt is verified/consumed: exactly one advance, no double-apply, no burn.
+    ws.send(JSON.stringify({ type: "office_hours_attempt_evidence", workspaceRoot: harness.workspacePath, attemptId, expectedRevision: revision, transition: "record_action_proof", requestId: "evt-race-A", evidence: { receipt: tokenA } }));
+    ws.send(JSON.stringify({ type: "office_hours_attempt_evidence", workspaceRoot: harness.workspacePath, attemptId, expectedRevision: revision, transition: "record_action_proof", requestId: "evt-race-B", evidence: { receipt: tokenB } }));
+
+    const startedAt = Date.now();
+    let responses = [];
+    while (Date.now() - startedAt < 15_000) {
+      responses = ws.events.slice(offset).filter((e) => e.type === "day_progress_state" && e.workspaceRoot === harness.workspacePath);
+      if (responses.length >= 2) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.equal(responses.length, 2, "both submits must respond");
+    const successes = responses.filter((r) => r.success !== false).length;
+    assert.equal(successes, 1, "exactly one concurrent submit may advance the attempt");
+
+    const snapshot = await projectAttempt({ workspaceRoot: harness.workspacePath, attemptId });
+    assert.equal(snapshot.projection.status, "awaiting_customer_outcome");
+    assert.equal(snapshot.revision, revision + 1, "exactly one event applied (no double-apply)");
+    assert.equal(snapshot.projection.actionProof?.kind, "message_log");
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("office_hours_commitment_evidence rejects an attempt-scoped payload (two-writer fix)", async () => {
   const harness = await spawnSidecar();
   let ws;

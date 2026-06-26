@@ -4577,74 +4577,62 @@ async function handleOfficeHoursAttemptEvidence(socket, payload = {}) {
     // (c) Build the reducer fields per transition + host-side ref-presence/grade
     // pre-check for evidence-grade transitions.
     const fields = {};
+    let preAppend;
     if (GRADED_ATTEMPT_EVIDENCE_TRANSITIONS.has(transition)) {
       // A′ CUTOVER (NO COMPAT): a graded transition is gated by a host-SIGNED evidence
-      // receipt, not a self-attested {kind,ref}. The coordinator verifies the receipt
-      // against DURABLE binding authority (host identity + projection-derived
-      // evidenceContractId) and derives the host-minted reducer evidence record; the
-      // registry enforces single-use. The legacy gradeEvidence({kind}) path is GONE —
-      // a raw {kind,ref} payload now fails with receipt_required.
+      // receipt, not a self-attested {kind,ref}. The verify → exact-transition dry-run →
+      // single-use consume → append all run INSIDE the attempt-store lock via `preAppend`,
+      // against the SAME projection the commit appends to — so a concurrent same-attempt
+      // event cannot land between verification and append (which would burn a valid
+      // receipt, or let a stale receipt advance a superseded contract). The legacy
+      // gradeEvidence({kind}) path is GONE; a raw {kind,ref} payload fails receipt_required.
       const evidence = payload.evidence && typeof payload.evidence === "object" && !Array.isArray(payload.evidence)
         ? payload.evidence
         : null;
       const receiptToken = String(
         evidence?.receipt ?? evidence?.receiptToken ?? payload.receipt ?? payload.receiptToken ?? "",
       ).trim();
-      // Throws AttemptEvidenceError("receipt_required") when no token is present, and
-      // receipt_rejected / receipt_insufficient_for_<transition> on a bad/insufficient
-      // receipt (e.g. a swift_upload action receipt presented for record_goal_proof).
-      const prepared = await prepareReceiptEvidence({
-        workspaceRoot: root,
-        attemptId,
-        transition,
-        projection: snapshot.projection,
-        receiptToken,
-        now: at,
-      });
-      fields.evidence = prepared.fields.evidence;
-
-      // Single-use consume must happen BEFORE commit, but a VALID receipt must never be
-      // burned for an event that could not commit. So: (1) skip when this requestId
-      // already landed (idempotent retry — commit dedupes below), (2) otherwise run an
-      // EXACT-transition dry-run, and only consume if it would apply cleanly.
-      const priorLog = await loadAttemptLog({ workspaceRoot: root });
-      const priorRecord = priorLog.attempts[attemptId];
-      if (!priorRecord) throw new Error(`attempt ${attemptId} not found.`);
-      const priorEvents = Array.isArray(priorRecord.events) ? priorRecord.events : [];
-      const alreadyCommitted = priorEvents.some((e) => e && e.eventId === requestId);
-      if (!alreadyCommitted) {
+      preAppend = async ({ events, meta, projection }) => {
+        // Verify against the CURRENT (locked) projection — derives evidenceContractId from
+        // the exact contract state this commit will append to. Throws receipt_required (no
+        // token) / receipt_rejected / receipt_insufficient_for_<transition> fail-closed.
+        const prepared = await prepareReceiptEvidence({
+          workspaceRoot: root,
+          attemptId,
+          transition,
+          projection,
+          receiptToken,
+          now: at,
+        });
         const candidateEvent = {
           eventId: requestId,
           type: transition,
-          fields,
+          fields: prepared.fields,
           at,
           requestId,
-          sessionId: sessionId || priorRecord.createdSessionId || "",
-          audit: { source: "office_hours_attempt_evidence", transition, evidenceKind: fields.evidence?.kind || "" },
+          sessionId: sessionId || "",
+          audit: { source: "office_hours_attempt_evidence", transition, evidenceKind: prepared.fields.evidence?.kind || "" },
         };
         try {
-          // Dry-run the WHOLE candidate log through the pure projector (same path commit
-          // takes); an illegal from-state throws HERE, before any consume — no burn.
-          projectAttemptFromEvents([...priorEvents, candidateEvent], {
-            id: priorRecord.attemptId,
-            goalLane: priorRecord.goalLane,
-            createdAt: priorRecord.createdAt,
-          });
+          // Exact-transition dry-run through the pure projector — an illegal from-state
+          // throws HERE, before the single-use consume, so a valid receipt is never burned.
+          projectAttemptFromEvents([...events, candidateEvent], meta);
         } catch (dryErr) {
           throw new Error(`transition ${transition} would not apply cleanly: ${dryErr?.message || dryErr}`);
         }
-        // Consume the single-use artifact (requestId == the registry eventId). A replay
-        // across attempts/contracts is rejected here; the identical tuple is idempotent.
+        // Single-use consume, still inside the attempt-store lock (requestId == registry
+        // eventId): an exact retry is idempotent, a cross-attempt replay is artifact_reuse.
         const consumed = await consumeArtifact({ workspaceRoot: root }, {
           evidenceIdentity: prepared.evidenceIdentity,
           attemptId,
           evidenceContractId: prepared.evidenceContractId,
           eventId: requestId,
-          sha256: fields.evidence.sha256,
-          origin: fields.evidence.origin,
+          sha256: prepared.fields.evidence.sha256,
+          origin: prepared.fields.evidence.origin,
         });
         if (!consumed.ok) throw new Error(`evidence artifact rejected: ${consumed.rejection}`);
-      }
+        return prepared.fields;
+      };
     } else if (transition === "expire_no_response") {
       const responseDueAt = String(payload.responseDueAt ?? payload.response_due_at ?? snapshot.projection?.responseDueAt ?? "").trim();
       if (!responseDueAt) throw new Error("expire_no_response requires responseDueAt.");
@@ -4676,6 +4664,9 @@ async function handleOfficeHoursAttemptEvidence(socket, payload = {}) {
         },
       },
       responsePayload: { sessionId, requestId, transition },
+      // Graded transitions verify+consume INSIDE the lock (closes the dry-run↔commit
+      // TOCTOU); expire/abandon carry no receipt and pass plain fields.
+      ...(preAppend ? { preAppend } : {}),
     });
 
     // Refresh the session runtime DTO if this attempt is the active session pointer.

@@ -557,6 +557,18 @@ export async function startAttempt({
 //      illegal transition / supersede violation throws here = fail-closed.
 //   6. durable-write the candidate log ONLY on success, revision++, queue delivery.
 //   7. durable atomic write.
+//
+// `preAppend` (A′ receipt cutover) — optional async hook run INSIDE the lock, AFTER the
+// idempotency + CAS checks and BEFORE the event is built, with the CURRENT
+// `{ events, record, meta, projection }`. It returns the event `fields` to append (or
+// throws to abort, writing nothing). This closes the TOCTOU the receipt rail would
+// otherwise have: a caller that verifies a receipt + consumes a single-use artifact must
+// do so against the EXACT attempt state the commit appends against, so a concurrent
+// same-attempt event cannot land between verification and append (which would burn a
+// valid receipt or let a stale receipt advance a superseded contract). When preAppend is
+// present the idempotent-retry branch skips the payload-equality check (the host-derived
+// fields are not known without re-running preAppend, which a retry must NOT do — the
+// single-use artifact was already consumed on the first landing).
 export async function commitAttemptEvent({
   workspaceRoot,
   attemptId,
@@ -564,6 +576,7 @@ export async function commitAttemptEvent({
   event,
   responsePayload,
   now = new Date(),
+  preAppend,
 } = {}) {
   if (!attemptId) {
     throw new AttemptStoreError("attemptId is required", "ERR_NO_ATTEMPT_ID");
@@ -613,7 +626,12 @@ export async function commitAttemptEvent({
     // 3. IDEMPOTENCY BEFORE CAS (GPT#1).
     const prior = events.find((e) => e && e.eventId === eventId);
     if (prior) {
-      assertSameCommandPayload(prior, event); // throws ERR_EVENT_ID_CONFLICT on real divergence
+      // preAppend path: the fields are host-derived from a single-use receipt and are not
+      // known on a retry (preAppend must NOT re-run — the artifact was already consumed).
+      // The (eventId, type) identity is sufficient; skip the fields-equality check.
+      if (typeof preAppend !== "function") {
+        assertSameCommandPayload(prior, event); // throws ERR_EVENT_ID_CONFLICT on real divergence
+      }
       const projection = projectAttemptFromEvents(events, {
         id: record.attemptId,
         goalLane: record.goalLane,
@@ -662,10 +680,21 @@ export async function commitAttemptEvent({
     // resolves control events (answer_superseded); an illegal transition or an
     // invalid supersede throws here, so nothing is written = fail-closed.
     const meta = { id: record.attemptId, goalLane: record.goalLane, createdAt: record.createdAt };
+    // preAppend runs HERE — inside the lock, after CAS, against the current projection —
+    // so the receipt verification + single-use consume it performs are bound to the exact
+    // state this commit appends against (closes the dry-run↔commit TOCTOU).
+    let resolvedFields = event.fields && typeof event.fields === "object" ? event.fields : {};
+    if (typeof preAppend === "function") {
+      const currentProjection = projectAttemptFromEvents(events, meta);
+      resolvedFields = await preAppend({ events, record, meta, projection: currentProjection });
+      if (!resolvedFields || typeof resolvedFields !== "object" || Array.isArray(resolvedFields)) {
+        throw new AttemptStoreError("preAppend must return an event fields object", "ERR_PREAPPEND_FIELDS");
+      }
+    }
     const rawEvent = {
       eventId,
       type: String(event.type || ""),
-      fields: event.fields && typeof event.fields === "object" ? event.fields : {},
+      fields: resolvedFields,
       at: event.at != null ? String(event.at) : toIso(now),
       requestId,
       sessionId: event.sessionId || record.createdSessionId || "",

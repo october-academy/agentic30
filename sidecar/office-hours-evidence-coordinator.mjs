@@ -17,6 +17,7 @@ import { policyForTransition } from "./office-hours-evidence-policy.mjs";
 import { deriveEvidenceContractId, sha256Hex } from "./office-hours-evidence-binding.mjs";
 import { verifyEvidenceReceipt, receiptSatisfiesRequirement } from "./office-hours-evidence-receipt.mjs";
 import { resolveHostIdentity, resolveEvidenceKeyring } from "./office-hours-host-identity.mjs";
+import { getArtifactBlob } from "./office-hours-artifact-blob-store.mjs";
 
 // Host max lifetime for a receipt at verify time. Matches the ingress TTL ceiling: the
 // minimal rail ingests + verifies inside one logical flow, so a receipt is minutes old.
@@ -79,6 +80,25 @@ export async function prepareReceiptEvidence({
   });
   if (!verified.ok) {
     throw new AttemptEvidenceError(`receipt_rejected:${verified.rejection}`, "ERR_RECEIPT_REJECTED");
+  }
+
+  // An artifact_backed receipt (founder upload / URL snapshot) must point at durable bytes
+  // that STILL exist and still hash to the signed sha256 — a valid receipt is worthless if
+  // the screenshot was deleted or swapped. recipient_confirmed / provider_confirmed tiers
+  // have no blob (their "artifact" is an event/callback record), so this gate is skipped.
+  if (verified.trustTier === "artifact_backed") {
+    let blob;
+    try {
+      blob = await getArtifactBlob({ workspaceRoot }, { artifactId: verified.evidence.artifactId });
+    } catch (err) {
+      throw new AttemptEvidenceError(`artifact_unavailable:${err?.code || err?.message || "error"}`, "ERR_ARTIFACT_UNAVAILABLE");
+    }
+    if (!blob) {
+      throw new AttemptEvidenceError("artifact_missing", "ERR_ARTIFACT_MISSING");
+    }
+    if (blob.sha256 !== verified.evidence.sha256) {
+      throw new AttemptEvidenceError("artifact_sha_mismatch", "ERR_ARTIFACT_SHA_MISMATCH");
+    }
   }
 
   // ANY-OF claim sufficiency: the transition is satisfied by any one of its policy

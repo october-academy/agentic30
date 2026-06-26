@@ -122,11 +122,17 @@ export async function putArtifactBlob({ workspaceRoot } = {}, { bytes, declaredM
   const { detectedMediaType, contentValidation } = sniffMediaType(bytes);
   const dir = resolveArtifactBlobDir({ workspaceRoot });
   const blobPath = path.join(dir, sha256);
-  // Idempotent: if a blob with this exact content already exists, do not rewrite.
+  // Idempotent: if a blob with this EXACT content already exists, do not rewrite. A
+  // same-size-but-different-content file at the content-addressed path is corruption (or
+  // an astronomically unlikely collision) — re-verify the hash, never trust size alone,
+  // and overwrite with the correct bytes so the content address always holds true bytes.
   let exists = false;
   try {
     const st = await fs.stat(blobPath);
-    exists = st.isFile() && st.size === bytes.length;
+    if (st.isFile() && st.size === bytes.length) {
+      const onDisk = await fs.readFile(blobPath);
+      exists = createHash("sha256").update(onDisk).digest("hex") === sha256;
+    }
   } catch { exists = false; }
   if (!exists) {
     await durableWriteBytes(blobPath, bytes);
