@@ -193,6 +193,25 @@ test("same requestId + DIFFERENT fields throws ERR_EVENT_ID_CONFLICT", async () 
   );
 });
 
+test("preAppend path: reusing an eventId with a DIFFERENT type still conflicts (type check, not skipped)", async () => {
+  const ws = await makeWorkspace();
+  await startAttempt({ workspaceRoot: ws, attemptId: "a1", now: new Date(ISO) });
+  await commitAttemptEvent({ workspaceRoot: ws, attemptId: "a1", expectedRevision: 0, event: activationEvent("r1") });
+  // The preAppend idempotency branch skips the full fields-equality check (host-derived
+  // fields aren't known on retry), but a reused eventId with a DIFFERENT transition type
+  // must still conflict — and preAppend must NOT run (no re-consume of a single-use artifact).
+  let preAppendRan = false;
+  await assert.rejects(
+    () => commitAttemptEvent({
+      workspaceRoot: ws, attemptId: "a1", expectedRevision: 1,
+      event: { type: "record_action_proof", requestId: "r1", at: ISO },
+      preAppend: async () => { preAppendRan = true; return { evidence: { kind: "message_log" } }; },
+    }),
+    (err) => err instanceof AttemptStoreError && err.code === "ERR_EVENT_ID_CONFLICT",
+  );
+  assert.equal(preAppendRan, false, "preAppend must NOT run when the eventId already conflicts");
+});
+
 // ── E: idempotency hash includes audit ─────────────────────────────────────────
 test("idempotency-hash-includes-audit: same requestId + same fields but DIFFERENT audit → ERR_EVENT_ID_CONFLICT", async () => {
   const ws = await makeWorkspace();

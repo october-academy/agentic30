@@ -568,7 +568,21 @@ export async function startAttempt({
 // valid receipt or let a stale receipt advance a superseded contract). When preAppend is
 // present the idempotent-retry branch skips the payload-equality check (the host-derived
 // fields are not known without re-running preAppend, which a retry must NOT do — the
-// single-use artifact was already consumed on the first landing).
+// single-use artifact was already consumed on the first landing). A reused eventId with a
+// DIFFERENT transition type is still rejected (type check above the skip).
+//
+// KNOWN LIMITATIONS (GPT-5.5 Pro fix re-review; deferred to the full reservation machine,
+// acceptable at N=0 single-user where there is no contention):
+//   - Crash-consistency: if the durable attempt-log write throws AFTER preAppend's consume
+//     durably landed, an exact retry converges only while the receipt (1h TTL), blob,
+//     registration availability, and projection are unchanged; a >1h-delayed retry could
+//     orphan the consumed artifact. The window is a microsecond crash between two same-lock
+//     writes — negligible at N=0. A durable reservation (persist prepared evidence with the
+//     consumption for replay) is the proper fix.
+//   - Lease steal: the attempt lease (30s) is not renewed while preAppend performs nested
+//     registry/blob/key I/O; under pathological contention (another writer holding the
+//     registry lease ~30s) the attempt lock could be stolen mid-critical-section. At N=0
+//     single-user there is no contention; a heartbeat/renew is the proper fix.
 export async function commitAttemptEvent({
   workspaceRoot,
   attemptId,
@@ -626,9 +640,19 @@ export async function commitAttemptEvent({
     // 3. IDEMPOTENCY BEFORE CAS (GPT#1).
     const prior = events.find((e) => e && e.eventId === eventId);
     if (prior) {
+      // A reused eventId with a DIFFERENT transition type is ALWAYS a conflict — including
+      // on the preAppend path, where the host-derived fields are not comparable on a retry.
+      // Without this, a different graded transition under the same requestId would silently
+      // dedupe into a false no-op success (GPT-5.5 Pro fix re-review #1).
+      if (String(prior.type || "") !== String(event.type || "")) {
+        throw new AttemptStoreError(
+          `event ${String(event.type || "") || "(none)"} conflicts with prior ${String(prior.type || "") || "(none)"} for the same eventId`,
+          "ERR_EVENT_ID_CONFLICT",
+        );
+      }
       // preAppend path: the fields are host-derived from a single-use receipt and are not
       // known on a retry (preAppend must NOT re-run — the artifact was already consumed).
-      // The (eventId, type) identity is sufficient; skip the fields-equality check.
+      // The (eventId, type) identity above is sufficient; skip only the full fields check.
       if (typeof preAppend !== "function") {
         assertSameCommandPayload(prior, event); // throws ERR_EVENT_ID_CONFLICT on real divergence
       }
