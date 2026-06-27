@@ -1745,6 +1745,11 @@ struct IntakeV2ReadyAnalyzeView: View {
                         day1ReadySummaryCard(presentation)
                             .transition(readySummaryTransition)
 
+                        if scanBlockedNotice != nil {
+                            scanBlockedNoticeBanner
+                                .transition(.opacity)
+                        }
+
                         if store.folderURL != nil {
                             completedBootLogDetails
                                 .transition(.opacity)
@@ -1797,7 +1802,7 @@ struct IntakeV2ReadyAnalyzeView: View {
             return "실행 보조 앱이 연결되면 폴더 신호를 읽습니다."
         }
         if presentation.isBlocked {
-            return "로컬 신호만으로는 Day 1을 시작하지 않습니다. AI 연결을 확인한 뒤 다시 검증하세요."
+            return "Day 1 질문을 만들지 못했습니다. 위 원인을 확인한 뒤 다시 시도하세요."
         }
         return "완료되면 바로 질문을 시작할 수 있습니다."
     }
@@ -2202,13 +2207,15 @@ struct IntakeV2ReadyAnalyzeView: View {
     }
 
     private var scanBlockedBody: String {
-        scanBlockedRecovery?.body ?? "로컬 신호만으로는 Day 1을 시작하지 않습니다."
+        scanBlockedRecovery?.body ?? "근거 검증을 완료하지 못했습니다. 위 원인을 확인한 뒤 다시 시도하세요."
     }
 
     @ViewBuilder
     private var scanBlockedActions: some View {
         if let recovery = scanBlockedRecovery {
             switch recovery.primaryAction {
+            case .reviewEvidence:
+                EmptyView()
             case .retry(let provider):
                 if let onScanBlockedRescan {
                     VStack(alignment: .trailing, spacing: 6) {

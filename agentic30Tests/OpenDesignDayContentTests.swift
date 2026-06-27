@@ -611,6 +611,131 @@ struct OpenDesignDayContentTests {
         }
     }
 
+    @Test func officeHoursSubmittedPromptPolicyHidesStaleLocalRetryWhenPromptIsReissued() {
+        let question = "아직 후보가 없다면 오늘 30분 안에 누구를 찾고 어떤 요청을 보낼 건가요?"
+        let firstPrompt = makeOfficeHoursPrompt(
+            sessionID: "session",
+            requestId: "request-1",
+            question: question,
+            docType: "day1_candidate_unblock",
+            signalId: "get_users_first_candidate_unblock"
+        )
+        let retryPrompt = makeOfficeHoursPrompt(
+            sessionID: "session",
+            requestId: "request-2",
+            question: question,
+            docType: "day1_candidate_unblock",
+            signalId: "get_users_first_candidate_unblock"
+        )
+        let snapshot = OfficeHoursSubmittedPromptSnapshot(
+            sessionId: "session",
+            requestId: firstPrompt.requestId,
+            prompt: firstPrompt,
+            submissions: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: firstPrompt.questions[0].question,
+                    selectedOptions: ["스레드/커뮤니티에서 찾기"],
+                    freeText: ""
+                ),
+            ],
+            submittedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let visible = OfficeHoursSubmittedPromptSnapshotPolicy.visibleSnapshots(
+            [snapshot],
+            pendingPrompt: retryPrompt,
+            authoritativeRequestIDs: []
+        )
+
+        #expect(visible.isEmpty)
+    }
+
+    @Test func officeHoursSubmittedPromptPolicyKeepsLatestLocalRetryAfterResubmission() {
+        let question = "아직 후보가 없다면 오늘 30분 안에 누구를 찾고 어떤 요청을 보낼 건가요?"
+        let firstPrompt = makeOfficeHoursPrompt(
+            sessionID: "session",
+            requestId: "request-1",
+            question: question,
+            docType: "day1_candidate_unblock",
+            signalId: "get_users_first_candidate_unblock"
+        )
+        let retryPrompt = makeOfficeHoursPrompt(
+            sessionID: "session",
+            requestId: "request-2",
+            question: question,
+            docType: "day1_candidate_unblock",
+            signalId: "get_users_first_candidate_unblock"
+        )
+        let staleSnapshot = OfficeHoursSubmittedPromptSnapshot(
+            sessionId: "session",
+            requestId: firstPrompt.requestId,
+            prompt: firstPrompt,
+            submissions: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: firstPrompt.questions[0].question,
+                    selectedOptions: ["스레드/커뮤니티에서 찾기"],
+                    freeText: ""
+                ),
+            ],
+            submittedAt: Date(timeIntervalSince1970: 1)
+        )
+        let retrySnapshot = OfficeHoursSubmittedPromptSnapshot(
+            sessionId: "session",
+            requestId: retryPrompt.requestId,
+            prompt: retryPrompt,
+            submissions: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: retryPrompt.questions[0].question,
+                    selectedOptions: ["스레드/커뮤니티에서 찾기"],
+                    freeText: "오늘 18:00까지 Threads에서 solo founder mac app으로 검색"
+                ),
+            ],
+            submittedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let visible = OfficeHoursSubmittedPromptSnapshotPolicy.visibleSnapshots(
+            [staleSnapshot, retrySnapshot],
+            pendingPrompt: nil,
+            authoritativeRequestIDs: []
+        )
+
+        #expect(visible.map(\.requestId) == ["request-2"])
+    }
+
+    @Test func officeHoursSubmittedPromptPolicyKeepsDifferentSignalWhenNextPromptArrives() {
+        let firstPrompt = makeOfficeHoursPrompt(
+            sessionID: "session",
+            requestId: "request-1",
+            signalId: "signal-1"
+        )
+        let nextPrompt = makeOfficeHoursPrompt(
+            sessionID: "session",
+            requestId: "request-2",
+            signalId: "signal-2"
+        )
+        let snapshot = OfficeHoursSubmittedPromptSnapshot(
+            sessionId: "session",
+            requestId: firstPrompt.requestId,
+            prompt: firstPrompt,
+            submissions: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: firstPrompt.questions[0].question,
+                    selectedOptions: ["돈을 내겠다고 했다"],
+                    freeText: ""
+                ),
+            ],
+            submittedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let visible = OfficeHoursSubmittedPromptSnapshotPolicy.visibleSnapshots(
+            [snapshot],
+            pendingPrompt: nextPrompt,
+            authoritativeRequestIDs: []
+        )
+
+        #expect(visible.map(\.requestId) == ["request-1"])
+    }
+
     @Test func officeHoursInitialSyntheticLoaderIsSingleTimelineItemForRunningEmptyTranscript() {
         let session = makeChatSession(
             status: .running,
@@ -886,7 +1011,10 @@ struct OpenDesignDayContentTests {
 
     private func makeOfficeHoursPrompt(
         sessionID: String,
-        requestId: String = "office-hours-prompt"
+        requestId: String = "office-hours-prompt",
+        question: String = "가장 먼저 검증할 고객 신호는 무엇인가요?",
+        docType: String = "day1_step",
+        signalId: String? = nil
     ) -> StructuredPromptRequest {
         StructuredPromptRequest(
             requestId: requestId,
@@ -898,7 +1026,7 @@ struct OpenDesignDayContentTests {
                 StructuredPromptQuestion(
                     questionId: "office_hours_forcing_question",
                     header: "질문",
-                    question: "가장 먼저 검증할 고객 신호는 무엇인가요?",
+                    question: question,
                     helperText: nil,
                     options: nil,
                     multiSelect: false,
@@ -908,7 +1036,7 @@ struct OpenDesignDayContentTests {
                     textMode: .short
                 ),
             ],
-            generation: StructuredPromptGeneration(mode: "office_hours", docType: "day1_step")
+            generation: StructuredPromptGeneration(mode: "office_hours", docType: docType, signalId: signalId)
         )
     }
 

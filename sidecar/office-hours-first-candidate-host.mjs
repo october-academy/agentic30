@@ -41,6 +41,7 @@ export function hasVerifiedCandidateHints(context = "") {
 
 /** The single canonical signalId / questionId for the first_candidate slot. */
 export const FIRST_CANDIDATE_SIGNAL_ID = "get_users_first_candidate";
+export const FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID = "get_users_first_candidate_unblock";
 
 export function isFirstCandidateSignal(signalId = "") {
   const id = String(signalId || "").trim();
@@ -157,4 +158,73 @@ export function buildCanonicalFirstCandidateCard({
     },
   };
   return payload;
+}
+
+export function buildNoCandidateUnblockCard({
+  sessionId = "",
+  provider = "codex",
+  toolName = "agentic30_request_user_input",
+} = {}) {
+  const question = {
+    questionId: FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID,
+    header: "후보 확보",
+    question:
+      "아직 후보가 없다면 오늘 30분 안에 어느 채널에서 어떤 검색어·게시글·소개 요청으로 실명·핸들 1명을 찾고, 찾은 뒤 어떤 한 줄 요청을 보낼 건가요?",
+    helperText:
+      "범주가 아니라 시간, 채널, 검색어 또는 게시 위치, 후보 조건, 보낼 요청까지 적습니다.",
+    freeTextPlaceholder:
+      "예: 오늘 18:00까지 Threads에서 \"solo founder mac app\"으로 검색해 @handle 1명을 찾고, '이번 주 15분만 실제 프로젝트 연결을 봐달라'고 DM 보낸다",
+    options: [
+      {
+        label: "스레드/커뮤니티에서 찾기",
+        description: "검색어, 게시 위치, 후보 조건, 보낼 요청을 한 줄로 적습니다.",
+        nextIntent: "find_candidate_in_thread_or_community",
+        recommended: true,
+        evidenceTarget: "채널, 검색어/게시 위치, 후보 조건, 보낼 요청",
+        mapsTo: FIRST_CANDIDATE_SIGNAL_ID,
+        failureMode: "채널만 적으면 실행 가능한 후보 확보 행동이 아닙니다.",
+      },
+      {
+        label: "기존 네트워크에서 소개 요청",
+        description: "누구에게 어떤 소개 문장을 보낼지 적습니다.",
+        nextIntent: "ask_network_for_intro",
+        evidenceTarget: "소개 요청 대상, 소개받을 후보 조건, 보낼 문장",
+        mapsTo: FIRST_CANDIDATE_SIGNAL_ID,
+        failureMode: "소개 요청 대상이 없으면 오늘 실행할 행동이 비어 있습니다.",
+      },
+      {
+        label: "사용자 흔적에서 찾기",
+        description: "GitHub, PostHog, Discord, 이메일 등 실제 흔적에서 누구를 찾을지 적습니다.",
+        nextIntent: "find_candidate_from_usage_signal",
+        evidenceTarget: "사용자 흔적 위치, 후보 조건, 보낼 요청",
+        mapsTo: FIRST_CANDIDATE_SIGNAL_ID,
+        failureMode: "흔적 위치가 없으면 후보 찾기가 추상적입니다.",
+      },
+    ],
+    multiSelect: false,
+    allowFreeText: true,
+    requiresFreeText: false,
+    primaryTextInput: {
+      label: "후보 확보 행동",
+      placeholder: "시간 + 채널 + 검색어/게시 위치 + 보낼 요청",
+      required: true,
+      submitLabel: "후보 찾기 행동 확정",
+      validationMessage: "시간, 채널, 찾는 방법, 보낼 요청을 적어야 합니다.",
+    },
+    textMode: "short",
+  };
+
+  return {
+    sessionId: String(sessionId || ""),
+    toolName,
+    title: "Office Hours",
+    questions: [question],
+    generation: {
+      mode: "office_hours",
+      docType: "day1_candidate_unblock",
+      signalId: FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID,
+      signalLabel: "후보 확보",
+      previousSignalId: FIRST_CANDIDATE_SIGNAL_ID,
+    },
+  };
 }

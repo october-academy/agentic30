@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeDay1GoalSelection } from "../sidecar/day1-goal-state.mjs";
+import {
+  buildDay1GoalProjectContext,
+  normalizeDay1GoalSelection,
+} from "../sidecar/day1-goal-state.mjs";
 
 test("Day 1 goal normalization strips duplicated problem text from customer and goal", () => {
   const selection = normalizeDay1GoalSelection({
@@ -32,6 +35,32 @@ test("Day 1 get_users goal normalization upgrades old signup-count target to act
   });
 
   assert.equal(selection.goalText, "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.");
+});
+
+test("Day 1 goal normalization accepts a selected goal lane with pending details", () => {
+  const selection = normalizeDay1GoalSelection({
+    goalType: "build_product",
+    goalText: "",
+    customer: "",
+    problem: "",
+    validationAction: "",
+    proofSink: "local",
+    selectedAt: "2026-06-07T00:00:00.000Z",
+  });
+
+  assert.equal(selection.goalType, "build_product");
+  assert.equal(selection.goalText, "30일 안에 핵심 흐름 완주율 10%를 달성한다.");
+  assert.equal(selection.customer, "");
+  assert.equal(selection.problem, "");
+  assert.equal(selection.validationAction, "");
+
+  const context = buildDay1GoalProjectContext(selection);
+  assert.equal(context.goal, "30일 안에 핵심 흐름 완주율 10%를 달성한다.");
+  assert.equal(context.confidence, "low");
+  assert.deepEqual(context.pendingGoalFields, ["customer", "problem", "validationAction"]);
+  assert.equal(Object.hasOwn(context, "targetUser"), false);
+  assert.equal(Object.hasOwn(context, "problem"), false);
+  assert.equal(Object.hasOwn(context, "purpose"), false);
 });
 
 test("Day 1 goal normalization repairs legacy sentence-composition artifacts", () => {

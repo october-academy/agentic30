@@ -363,6 +363,13 @@ import {
   buildOfficeHoursEvidenceState,
   officeHoursEvidenceHasHardEvidence,
 } from "./office-hours-evidence-state.mjs";
+import {
+  DAY1_HANDOFF_CLARITY_DOC_TYPE,
+  assessDay1HandoffClarity,
+  buildDay1HandoffClarityStructuredInput,
+  isLowInformationDay1HandoffClarityAnswer,
+  mergeDay1HandoffClarityAnswer,
+} from "./day1-handoff-clarity.mjs";
 import { buildMiniActionSessionTriggerEvent } from "./adaptive-curriculum.mjs";
 import {
   appendCurriculumAnswer,
@@ -519,9 +526,12 @@ import {
   // gradeEvidence/requiredGradeForTransition directly.
 } from "./office-hours-contract.mjs";
 import {
+  FIRST_CANDIDATE_SIGNAL_ID,
+  FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID,
   shouldValidateFirstCandidatePayload,
   classifyFirstCandidatePayload,
   buildCanonicalFirstCandidateCard,
+  buildNoCandidateUnblockCard,
   hasRequiredFirstCandidatePrimaryTextInput,
 } from "./office-hours-first-candidate-host.mjs";
 import { describeVendor as describeGstackVendor } from "./vendor-skill-loader.mjs";
@@ -1630,10 +1640,11 @@ async function handleClientMessage(socket, payload) {
       const response = normalizeUserInputResponse(promptRequest, payload);
       const missingRequiredFreeText = findMissingRequiredFreeTextQuestion(response);
       if (missingRequiredFreeText) {
-        const primaryTextInput = normalizeResponsePrimaryTextInput(missingRequiredFreeText);
         throw new Error(
-          primaryTextInput?.validationMessage
-            || "Office Hours answer revision requires a non-empty free-text answer.",
+          officeHoursRequiredFreeTextValidationMessage(
+            missingRequiredFreeText,
+            "Office Hours answer revision requires a non-empty free-text answer.",
+          ),
         );
       }
       const userResponseText = formatStructuredPromptResponse(response);
@@ -1954,12 +1965,21 @@ async function handleClientMessage(socket, payload) {
       const response = normalizeUserInputResponse(pendingUserInput, payload);
       const missingRequiredFreeText = findMissingRequiredFreeTextQuestion(response);
       if (missingRequiredFreeText) {
-        const primaryTextInput = normalizeResponsePrimaryTextInput(missingRequiredFreeText);
+        const validationMessage = officeHoursRequiredFreeTextValidationMessage(
+          missingRequiredFreeText,
+          "선택지를 고르거나 기타를 입력해야 다음 질문으로 넘어갑니다.",
+        );
         broadcastIddSubmitProgress(
           "validation_error",
-          primaryTextInput?.validationMessage
-            || "선택지를 고르거나 기타를 입력해야 다음 질문으로 넘어갑니다.",
+          validationMessage,
         );
+        if (shouldReissueOfficeHoursMissingFreeTextPrompt(pendingUserInput, missingRequiredFreeText)) {
+          await reissueOfficeHoursMissingFreeTextPrompt(session, pendingUserInput, {
+            previousRequestId: requestId,
+            validationMessage,
+          });
+          return;
+        }
         session.status = "awaiting_input";
         session.error = null;
         touch(session);
@@ -1993,6 +2013,10 @@ async function handleClientMessage(socket, payload) {
       const answeredGenerationDocType = String(answeredGeneration?.docType || "").trim().toLowerCase();
       const isDay1DocHandoffJudgeResponse = answeredGenerationMode === "office_hours"
         && answeredGenerationDocType === "day1_doc_handoff_judge";
+      const isDay1HandoffClarityResponse = answeredGenerationMode === "office_hours"
+        && answeredGenerationDocType === DAY1_HANDOFF_CLARITY_DOC_TYPE;
+      const isDay1CandidateUnblockResponse = answeredGenerationMode === "office_hours"
+        && answeredGenerationDocType === "day1_candidate_unblock";
       const answeredSignalId = answeredGeneration?.signalId ? String(answeredGeneration.signalId) : null;
       const answeredSignalLabel = answeredGeneration?.signalLabel ? String(answeredGeneration.signalLabel) : null;
       const isOfficeHoursStructuredInputResponse = isOfficeHoursStructuredInputMode(
@@ -2045,6 +2069,7 @@ async function handleClientMessage(socket, payload) {
       let officeHoursProgressAfterAnswer = null;
       let officeHoursDocumentReadinessAfterAnswer = null;
       let officeHoursNeedsDocumentReadinessFollowup = false;
+      let officeHoursCompletionClarityAfterAnswer = null;
       if (isOfficeHoursStructuredInputResponse && userResponseText) {
         captureSidecarLog(
           "office_hours_interview_answer_submitted",
@@ -2076,6 +2101,82 @@ async function handleClientMessage(socket, payload) {
             throw new Error(
               `office hours submit could not build an attempt command for signal ${answeredGeneration?.signalId || "(none)"}`,
             );
+          }
+          if (command.type === "candidate_blocker") {
+            const snapshot = await projectAttempt({ workspaceRoot, attemptId: answeredGenerationAttemptId });
+            if (!snapshot) {
+              throw new Error(`office hours candidate blocker could not project attempt ${answeredGenerationAttemptId}`);
+            }
+            if (session.runtime?.officeHours) {
+              session.runtime.officeHours.attemptId = answeredGenerationAttemptId;
+              session.runtime.officeHours.revision = snapshot.revision;
+              const wireDTO = deriveOfficeHoursWireDTO(snapshot.projection);
+              if (wireDTO) {
+                session.runtime.officeHours.nextAction = wireDTO.nextAction;
+                session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+                session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
+              }
+            }
+            try {
+              await appendOfficeHoursTurn({
+                workspaceRoot,
+                turn: {
+                  day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day),
+                  sessionId: session.id,
+                  requestId,
+                  mode: answeredGeneration?.mode || "office_hours_structured_input",
+                  signalId: answeredGeneration?.signalId || "",
+                  signalLabel: answeredGeneration?.signalLabel || "",
+                  questionText: officeHoursStructuredQuestionText,
+                  responseText: userResponseText,
+                  responseDescription: userResponseDescription,
+                  promptSnapshot: pendingUserInput,
+                  submissions: response.responses,
+                  blocker: true,
+                },
+              });
+              await clearOfficeHoursPendingQuestionForSession(session, requestId, "candidate_blocker");
+            } catch (error) {
+              telemetry.captureException(error, {
+                operation: "office_hours_candidate_blocker_turn_append",
+                session_id: session.id,
+              });
+            }
+            await refreshOfficeHoursRuntimePromptSnapshots(session).catch((error) => {
+              reportError(error, {
+                operation: "office_hours_prompt_snapshot_refresh",
+                session_id: session.id,
+                provider: session.provider,
+                request_id: requestId,
+                day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day) || 0,
+              });
+            });
+            await writeUserInputResponse(appSupportPath, {
+              sessionId: session.id,
+              requestId,
+              response,
+            });
+            await abortActiveOfficeHoursRunAtQuestionCap(session);
+            if (!hasBlockingActiveRun) {
+              await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
+            }
+            state.resolvedUserInputIds.add(requestId);
+            session.pendingUserInput = null;
+            await attachDay1CandidateUnblockPrompt(session, {
+              previousRequestId: requestId,
+              blockerReason: command.fields.blockerReason,
+              nextUnblockAction: command.fields.nextUnblockAction,
+            });
+            await persistSessions();
+            telemetry.captureEvent("mac_sidecar_office_hours_candidate_blocker_received", {
+              session_id: session.id,
+              provider: session.provider,
+              request_id: requestId,
+              attempt_id: answeredGenerationAttemptId,
+              revision: snapshot.revision,
+            });
+            broadcast({ type: "session_updated", session });
+            return;
           }
           const expectedRevision = Number.isInteger(answeredGeneration?.expectedRevision)
             ? answeredGeneration.expectedRevision
@@ -2251,10 +2352,10 @@ async function handleClientMessage(socket, payload) {
           return;
         }
         // ── Non-attempt office-hours answer (non-get_users locked Day-1 lanes,
-        // Day2+, terminal-alternatives) ── these keep the original count-based
-        // completion + Day-1 doc-readiness follow-up (this cut is scoped to the
-        // locked get_users lane only).
+        // Day2+, terminal-alternatives) ── Day 1 still uses the count cap, but
+        // must pass handoff clarity before any document-readiness follow-up.
         const officeHoursTerminalAnswered = !isDay1DocHandoffJudgeResponse
+          && !isDay1HandoffClarityResponse
           && isOfficeHoursTerminalAlternativesRequest(pendingUserInput);
         if (officeHoursTerminalAnswered && session.runtime?.officeHours) {
           session.runtime.officeHours.terminalAnswered = true;
@@ -2308,7 +2409,7 @@ async function handleClientMessage(socket, payload) {
         // single clamp that evicted the `Goal lane: get_users` marker can never
         // re-leak day1_document_readiness_followup onto the get_users ladder.
         const submitIsLockedGetUsers = await isDurableLockedGetUsersLane(session);
-        if (!isDay1DocHandoffJudgeResponse && !submitIsLockedGetUsers) {
+        if (!isDay1DocHandoffJudgeResponse && !isDay1HandoffClarityResponse && !submitIsLockedGetUsers) {
           officeHoursProgressAfterAnswer = await getOfficeHoursQuestionProgress(session, {
             currentRequestId: requestId,
           });
@@ -2316,13 +2417,21 @@ async function handleClientMessage(socket, payload) {
             officeHoursDocumentReadinessAfterAnswer = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
               writeDebtReport: true,
             });
-            const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
-            officeHoursNeedsDocumentReadinessFollowup = officeHoursDocumentReadinessAfterAnswer?.ready !== true
-              && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP;
-            if (officeHoursNeedsDocumentReadinessFollowup) {
-              session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
+            officeHoursCompletionClarityAfterAnswer = assessDay1OfficeHoursCompletionClarity(
+              session,
+              officeHoursDocumentReadinessAfterAnswer,
+            );
+            if (!officeHoursCompletionClarityAfterAnswer) {
+              const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
+              officeHoursNeedsDocumentReadinessFollowup = officeHoursDocumentReadinessAfterAnswer?.ready !== true
+                && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP;
+              if (officeHoursNeedsDocumentReadinessFollowup) {
+                session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
+              } else {
+                stampOfficeHoursExpectedCountCompletion(session, officeHoursProgressAfterAnswer);
+              }
             } else {
-              stampOfficeHoursExpectedCountCompletion(session, officeHoursProgressAfterAnswer);
+              session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: 0 };
             }
           } else {
             stampOfficeHoursExpectedCountCompletion(session, officeHoursProgressAfterAnswer);
@@ -2340,6 +2449,15 @@ async function handleClientMessage(socket, payload) {
 
       state.resolvedUserInputIds.add(requestId);
       session.pendingUserInput = null;
+      if (officeHoursCompletionClarityAfterAnswer) {
+        await abortActiveOfficeHoursRunAtQuestionCap(session);
+        await attachDay1OfficeHoursCompletionClarityPrompt(
+          session,
+          officeHoursCompletionClarityAfterAnswer,
+          { previousRequestId: requestId, reason: "submit_cap" },
+        );
+        return;
+      }
       if (officeHoursNeedsDocumentReadinessFollowup) {
         await abortActiveOfficeHoursRunAtQuestionCap(session);
         await attachDay1DocumentReadinessFollowupPrompt(
@@ -2348,6 +2466,34 @@ async function handleClientMessage(socket, payload) {
           { previousRequestId: requestId },
         );
         await persistSessions();
+        broadcast({ type: "session_updated", session });
+        return;
+      }
+
+      if (isDay1CandidateUnblockResponse) {
+        session.status = "idle";
+        session.error = null;
+        session.runtime = {
+          ...(session.runtime || {}),
+          officeHours: {
+            ...(session.runtime?.officeHours || {}),
+            active: true,
+            candidateBlocker: {
+              ...(session.runtime?.officeHours?.candidateBlocker || {}),
+              unblockAnswer: userResponseText,
+              unblockAnswerDescription: userResponseDescription,
+              unblockRequestId: requestId,
+              updatedAt: new Date().toISOString(),
+            },
+          },
+        };
+        touch(session);
+        await persistSessions();
+        telemetry.captureEvent("mac_sidecar_office_hours_candidate_unblock_answer_recorded", {
+          session_id: session.id,
+          provider: session.provider,
+          request_id: requestId,
+        });
         broadcast({ type: "session_updated", session });
         return;
       }
@@ -2361,6 +2507,67 @@ async function handleClientMessage(socket, payload) {
         await abortActiveOfficeHoursRunAtQuestionCap(session);
       }
       touch(session);
+
+      if (isDay1HandoffClarityResponse) {
+        const currentHandoff = normalizeDay1HandoffPayload(session.runtime?.day1Handoff || {});
+        const lowInformationAnswer = isLowInformationDay1HandoffClarityAnswer(userResponseText);
+        const retryHandoff = normalizeDay1HandoffPayload(
+          mergeDay1HandoffClarityAnswer(currentHandoff, {
+            signalId: answeredSignalId || "",
+            responseText: userResponseText,
+            responseDescription: userResponseDescription,
+          }),
+        );
+        session.runtime = {
+          ...(session.runtime || {}),
+          day1Handoff: retryHandoff,
+          day1HandoffClarity: {
+            ...(session.runtime?.day1HandoffClarity || {}),
+            lastSignalId: answeredSignalId || "",
+            lastAnswerState: lowInformationAnswer ? "low_information" : "answered",
+            updatedAt: new Date().toISOString(),
+          },
+          iddMode: null,
+          pendingIddContinuation: null,
+          iddPendingAdaptiveContinuation: null,
+        };
+        session.status = "running";
+        session.error = null;
+        touch(session);
+        await persistSessions();
+        broadcast({ type: "session_updated", session });
+        broadcastIddSubmitProgress(
+          "clarity_retry",
+          "구체화 답변을 반영해 Day 1 handoff 저장 가능 여부를 다시 확인 중",
+          "all",
+        );
+        try {
+          await writeAllDay1DocHandoff({
+            sessionId: session.id,
+            provider: session.provider,
+            day1Handoff: retryHandoff,
+          });
+        } catch (error) {
+          const message = `Day 1 handoff 구체화를 다시 실행하지 못했습니다: ${formatError(error)}`;
+          session.status = "idle";
+          session.error = message;
+          touch(session);
+          await persistSessions();
+          broadcast({ type: "session_updated", session });
+          broadcast({
+            type: "error",
+            sessionId: session.id,
+            message,
+            recoverable: true,
+          });
+          telemetry.captureException(error, {
+            operation: "day1_handoff_clarity_retry",
+            session_id: session.id,
+            provider: session.provider,
+          });
+        }
+        return;
+      }
 
       if (isDay1DocHandoffJudgeResponse) {
         const retryHandoff = normalizeDay1HandoffPayload(session.runtime?.day1Handoff || {});
@@ -8449,7 +8656,7 @@ function buildAttemptCommandFromCard(pendingUserInput, response, answeredSignalI
   const fields = {};
   let transition = card.transition;
   if (isCandidateBlocker) {
-    transition = "block";
+    transition = "candidate_blocker";
     fields.blockerReason = "아직 후보 없음";
     fields.nextUnblockAction = "오늘 바로 연락할 수 있는 전업 1인 개발자 1명의 실명·핸들 또는 특정 스레드 URL을 찾는다.";
   } else if (card.transition === "schedule_execution") {
@@ -9216,6 +9423,95 @@ async function attachDay1DocumentReadinessFollowupPrompt(session = null, readine
   return request;
 }
 
+async function attachDay1CandidateUnblockPrompt(session = null, {
+  previousRequestId = "",
+  blockerReason = "아직 후보 없음",
+  nextUnblockAction = "",
+} = {}) {
+  if (!session?.id) return null;
+  session.runtime = {
+    ...(session.runtime || {}),
+    officeHours: {
+      ...(session.runtime?.officeHours || {}),
+      active: true,
+      candidateBlocker: {
+        blockerReason: String(blockerReason || "아직 후보 없음"),
+        nextUnblockAction: String(nextUnblockAction || ""),
+        previousRequestId: String(previousRequestId || ""),
+        updatedAt: new Date().toISOString(),
+      },
+    },
+  };
+  const input = buildNoCandidateUnblockCard({
+    sessionId: session.id,
+    provider: session.provider,
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+  });
+  const request = await createUserInputRequest(appSupportPath, {
+    sessionId: session.id,
+    ...input,
+  });
+  session.pendingUserInput = request;
+  session.status = "awaiting_input";
+  session.error = null;
+  touch(session);
+  await persistOfficeHoursPendingQuestion(session, request, "day1_candidate_unblock");
+  emitOfficeHoursStatus(session, {
+    stage: "question_ready",
+    requestId: request.requestId,
+    progressText: "후보 확보 질문 준비 완료",
+  });
+  telemetry.captureEvent("mac_sidecar_office_hours_candidate_unblock_created", {
+    session_id: session.id,
+    provider: session.provider,
+    request_id: request.requestId,
+    previous_request_id: previousRequestId || "",
+  });
+  return request;
+}
+
+function assessDay1OfficeHoursCompletionClarity(session = null, readinessResult = {}) {
+  if (!session?.runtime?.officeHours) return null;
+  const priorClarity = session.runtime?.day1HandoffClarity || {};
+  const handoffSnapshot = normalizeDay1HandoffPayload(
+    readinessResult?.day1Handoff || session.runtime?.day1Handoff || {},
+  );
+  const assessment = assessDay1HandoffClarity(handoffSnapshot, {
+    lastSignalId: priorClarity.lastSignalId || "",
+    lastAnswerState: priorClarity.lastAnswerState || "",
+  });
+  if (assessment.ready) return null;
+  return { handoffSnapshot, assessment };
+}
+
+async function attachDay1OfficeHoursCompletionClarityPrompt(session = null, clarity = null, {
+  previousRequestId = "",
+  reason = "",
+} = {}) {
+  if (!session?.id || !clarity?.assessment) return null;
+  const request = await attachDay1HandoffClarityPrompt(
+    session,
+    clarity.handoffSnapshot || {},
+    clarity.assessment,
+    { previousRequestId },
+  );
+  emitOfficeHoursStatus(session, {
+    stage: "question_ready",
+    requestId: request?.requestId,
+    progressText: "문서 준비 전에 Day 1 실행 조건 구체화 질문 준비 완료",
+  });
+  telemetry.captureEvent("mac_sidecar_office_hours_completion_clarity_required", {
+    session_id: session.id,
+    provider: session.provider,
+    request_id: request?.requestId || "",
+    previous_request_id: previousRequestId || "",
+    signal_id: clarity.assessment.signalId || "",
+    missing_slots: clarity.assessment.missingSlots || [],
+    reason: reason || "",
+  });
+  return request;
+}
+
 function resolveOfficeHoursExpectedQuestionCount(session, context = "") {
   const stampedExpected = Number.parseInt(String(session?.runtime?.officeHours?.expectedQuestionCount ?? ""), 10);
   if (Number.isFinite(stampedExpected) && stampedExpected > 0) {
@@ -9465,6 +9761,66 @@ async function persistOfficeHoursPendingQuestion(session = null, request = null,
   }
 }
 
+function shouldReissueOfficeHoursMissingFreeTextPrompt(pendingUserInput = null, missingQuestion = null) {
+  if (!isOfficeHoursStructuredInputMode(pendingUserInput?.generation?.mode)) return false;
+  const docType = String(pendingUserInput?.generation?.docType || "").trim().toLowerCase();
+  return docType === "day1_candidate_unblock"
+    || structuredPromptQuestionId(missingQuestion) === FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID;
+}
+
+async function reissueOfficeHoursMissingFreeTextPrompt(session = null, pendingUserInput = null, {
+  previousRequestId = "",
+  validationMessage = "",
+} = {}) {
+  if (!session?.id || !pendingUserInput?.requestId) return null;
+  const requestTemplate = normalizeDay1CandidateUnblockRequest(pendingUserInput) || pendingUserInput;
+  if (state.activeRuns.has(session.id)) {
+    await stopSession(session.id);
+  }
+  state.promptQueues.delete(session.id);
+  cancelWarmSession(session.id);
+  const staleSessionIds = new Set([
+    session.id,
+    String(pendingUserInput.sessionId || "").trim(),
+  ].filter(Boolean));
+  await Promise.allSettled(
+    [...staleSessionIds].map((sessionId) =>
+      deleteUserInputArtifacts(appSupportPath, sessionId, pendingUserInput.requestId)
+    ),
+  );
+  state.resolvedUserInputIds.add(pendingUserInput.requestId);
+
+  const request = await createUserInputRequest(appSupportPath, {
+    sessionId: session.id,
+    toolName: requestTemplate.toolName,
+    title: requestTemplate.title ?? null,
+    intro: requestTemplate.intro ?? null,
+    resources: requestTemplate.resources ?? null,
+    questions: requestTemplate.questions,
+    generation: requestTemplate.generation ?? null,
+  });
+  session.pendingUserInput = request;
+  session.status = "awaiting_input";
+  session.error = null;
+  touch(session);
+  await persistOfficeHoursPendingQuestion(session, request, "missing_required_free_text_retry");
+  await persistSessions();
+  emitOfficeHoursStatus(session, {
+    stage: "validation_error",
+    requestId: request.requestId,
+    progressText: validationMessage || "필수 입력을 적어야 다음 질문으로 넘어갑니다.",
+  });
+  telemetry.captureEvent("mac_sidecar_office_hours_required_free_text_retry", {
+    session_id: session.id,
+    provider: session.provider,
+    request_id: request.requestId,
+    previous_request_id: previousRequestId || pendingUserInput.requestId,
+    signal_id: request.generation?.signalId || "",
+  });
+  broadcast({ type: "session_updated", session });
+  return request;
+}
+
 async function clearOfficeHoursPendingQuestionForSession(session = null, requestId = "", reason = "") {
   const day = normalizeOfficeHoursDay(session?.runtime?.officeHours?.day);
   if (!day) return;
@@ -9658,10 +10014,13 @@ async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
 
   let request = null;
   try {
-    request = prepareOfficeHoursStructuredInputRequest({
+    const restoreRequest = {
       ...pending.request,
       sessionId: session.id,
-    });
+    };
+    request = prepareOfficeHoursStructuredInputRequest(
+      normalizeDay1CandidateUnblockRequest(restoreRequest) || restoreRequest,
+    );
   } catch (error) {
     telemetry.captureException(error, {
       operation: "office_hours_pending_question_restore_prepare",
@@ -9972,6 +10331,45 @@ function isOfficeHoursStructuredRequest(request = null) {
   return String(request.title || "").trim().toLowerCase() === "office hours";
 }
 
+function normalizeDay1CandidateUnblockRequest(request = null) {
+  if (!request || typeof request !== "object") return null;
+  const generation = request.generation && typeof request.generation === "object" && !Array.isArray(request.generation)
+    ? request.generation
+    : {};
+  const docType = String(generation.docType || generation.doc_type || "").trim();
+  const signalId = String(generation.signalId || generation.signal_id || "").trim();
+  if (docType !== "day1_candidate_unblock" && signalId !== FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID) {
+    return null;
+  }
+
+  const {
+    attemptId: _attemptId,
+    expectedRevision: _expectedRevision,
+    cardType: _cardType,
+    transition: _transition,
+    ...safeGeneration
+  } = generation;
+
+  return {
+    ...request,
+    generation: {
+      ...safeGeneration,
+      mode: "office_hours",
+      docType: "day1_candidate_unblock",
+      signalId: FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID,
+      signalLabel: "후보 확보",
+      previousSignalId: FIRST_CANDIDATE_SIGNAL_ID,
+    },
+    questions: (Array.isArray(request.questions) ? request.questions : []).map((question, index) => index === 0
+      ? {
+          ...question,
+          questionId: FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID,
+          header: question.header || "후보 확보",
+        }
+      : question),
+  };
+}
+
 function createOfficeHoursStructuredInputToolState() {
   return {
     pendingOutputSeen: false,
@@ -10050,6 +10448,11 @@ function officeHoursLockedGetUsersSignalLabel(signalId = "") {
 async function prepareOfficeHoursStructuredInputRequestForSession(session, request, {
   source = "sync_pending_user_input_requests",
 } = {}) {
+  const candidateUnblockRequest = normalizeDay1CandidateUnblockRequest(request);
+  if (candidateUnblockRequest) {
+    return prepareOfficeHoursStructuredInputRequest(candidateUnblockRequest);
+  }
+
   const context = activeOfficeHoursContext(session);
   if (!isLockedDay1GetUsersContext(context)) {
     return prepareOfficeHoursStructuredInputRequest(request);
@@ -10559,16 +10962,17 @@ async function runOfficeHours(session, {
           }
         }
       } else {
-        // Non-get_users lanes keep the count + Day-1 doc-readiness behavior.
+        // Non-get_users lanes keep the count cap, but handoff clarity gates
+        // document readiness.
         if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: completedSnapshotCapReached })) {
           const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
             writeDebtReport: true,
           });
-          const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
-          if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
-            session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
-            await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
+          const completionClarity = assessDay1OfficeHoursCompletionClarity(session, readiness);
+          if (completionClarity) {
+            await attachDay1OfficeHoursCompletionClarityPrompt(session, completionClarity, {
               previousRequestId: completedRuntime.promptSnapshots?.at(-1)?.requestId || "",
+              reason: "completed_snapshot",
             });
             await persistSessions();
             broadcast({ type: "session_updated", session });
@@ -10577,6 +10981,21 @@ async function runOfficeHours(session, {
               state.activeRuns.delete(session.id);
             }
             return;
+          } else {
+            const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
+            if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
+              session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
+              await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
+                previousRequestId: completedRuntime.promptSnapshots?.at(-1)?.requestId || "",
+              });
+              await persistSessions();
+              broadcast({ type: "session_updated", session });
+              const followupRun = state.activeRuns.get(session.id);
+              if (followupRun?.runKey === runKey) {
+                state.activeRuns.delete(session.id);
+              }
+              return;
+            }
           }
           completedRuntime.documentReadiness = session.runtime.officeHours.documentReadiness;
         }
@@ -10827,16 +11246,17 @@ async function runOfficeHours(session, {
             }
           }
         } else {
-          // Non-get_users lanes keep the count + Day-1 doc-readiness behavior.
+          // Non-get_users lanes keep the count cap, but handoff clarity gates
+          // document readiness.
           if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: officeHoursResumeCapReached })) {
             const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
               writeDebtReport: true,
             });
-            const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
-            if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
-              session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
-              await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
+            const completionClarity = assessDay1OfficeHoursCompletionClarity(session, readiness);
+            if (completionClarity) {
+              await attachDay1OfficeHoursCompletionClarityPrompt(session, completionClarity, {
                 previousRequestId: officeHoursRuntime.promptSnapshots?.at(-1)?.requestId || "",
+                reason: "resume_wrap_up",
               });
               await persistSessions();
               broadcast({ type: "session_updated", session });
@@ -10845,6 +11265,21 @@ async function runOfficeHours(session, {
                 state.activeRuns.delete(session.id);
               }
               return;
+            } else {
+              const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
+              if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
+                session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
+                await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
+                  previousRequestId: officeHoursRuntime.promptSnapshots?.at(-1)?.requestId || "",
+                });
+                await persistSessions();
+                broadcast({ type: "session_updated", session });
+                const followupRun = state.activeRuns.get(session.id);
+                if (followupRun?.runKey === runKey) {
+                  state.activeRuns.delete(session.id);
+                }
+                return;
+              }
             }
           }
           if (officeHoursResumeCapReached) {
@@ -14593,6 +15028,79 @@ function reusableDay1DocReviewSession(sessionId = "") {
     || null;
 }
 
+function resolveDay1HandoffClaritySession({ sessionId = "", provider = "" } = {}) {
+  const seed = resolveIddSessionSeed({ sessionId, provider });
+  const requestedSessionId = String(sessionId || "").trim();
+  if (requestedSessionId && state.sessions.has(requestedSessionId)) {
+    const requestedSession = state.sessions.get(requestedSessionId);
+    if (!isArchivedSession(requestedSession)) {
+      return { session: requestedSession, isNewSession: false, seed };
+    }
+  }
+  const session = createSession({
+    provider: seed.provider,
+    model: seed.model,
+    officeHoursDay: 1,
+    source: "day1_handoff_clarity",
+  });
+  return { session, isNewSession: true, seed };
+}
+
+async function attachDay1HandoffClarityPrompt(session, handoffSnapshot, assessment, {
+  isNewSession = false,
+  previousRequestId = "",
+} = {}) {
+  const priorOfficeHours = session.runtime?.officeHours || {};
+  const priorClarity = session.runtime?.day1HandoffClarity || {};
+  const structuredInput = buildDay1HandoffClarityStructuredInput({
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    assessment,
+    previousRequestId,
+  });
+  const request = await createUserInputRequest(appSupportPath, {
+    sessionId: session.id,
+    ...structuredInput,
+  });
+  session.title = session.title && !String(session.title).startsWith("New")
+    ? session.title
+    : "Office Hours · Day 1";
+  session.runtime = {
+    ...(session.runtime || {}),
+    iddMode: null,
+    pendingIddContinuation: null,
+    iddPendingAdaptiveContinuation: null,
+    iddAdaptiveRegenerationInFlight: false,
+    day1Handoff: handoffSnapshot,
+    day1HandoffClarity: {
+      ...priorClarity,
+      lastSignalId: assessment.signalId || "",
+      lastAnswerState: "asked",
+      missingSlots: assessment.missingSlots || [],
+      updatedAt: new Date().toISOString(),
+    },
+    officeHours: {
+      ...priorOfficeHours,
+      active: true,
+      source: priorOfficeHours.source || "day1_handoff_clarity",
+      day: normalizeOfficeHoursDay(priorOfficeHours.day) || 1,
+      context: priorOfficeHours.context || "Day 1 handoff 구체화: 문서 저장 전에 실제 후보, 요청, 성공 기준, 증거 위치를 좁힙니다.",
+    },
+  };
+  session.pendingUserInput = request;
+  session.status = "awaiting_input";
+  session.error = null;
+  touch(session);
+  state.sessions.set(session.id, session);
+  await persistSessions();
+  if (isNewSession) {
+    await syncAndBroadcastBipCoachSessionState({ preferredSessionId: session.id });
+    broadcast({ type: "session_created", session });
+  } else {
+    broadcast({ type: "session_updated", session });
+  }
+  return request;
+}
+
 async function ensureDay1DocReviewSession({
   sessionId = "",
   provider = "",
@@ -14792,6 +15300,53 @@ async function writeAllDay1DocHandoff({
 } = {}) {
   const seed = resolveIddSessionSeed({ sessionId, provider });
   const handoffSnapshot = normalizeDay1HandoffPayload(day1Handoff);
+  const requestedSession = String(sessionId || "").trim() && state.sessions.has(String(sessionId || "").trim())
+    ? state.sessions.get(String(sessionId || "").trim())
+    : null;
+  const priorClarity = requestedSession?.runtime?.day1HandoffClarity || {};
+  const clarityAssessment = assessDay1HandoffClarity(handoffSnapshot, {
+    lastSignalId: priorClarity.lastSignalId || "",
+    lastAnswerState: priorClarity.lastAnswerState || "",
+  });
+  if (!clarityAssessment.ready) {
+    const claritySessionResolution = resolveDay1HandoffClaritySession({ sessionId, provider: seed.provider });
+    state.iddSetup = await persistIddSetupState(workspaceRoot, {
+      ...state.iddSetup,
+      status: "interviewing",
+      currentDocType: DAY1_HANDOFF_DOC_TYPES[0],
+      lastProvider: seed.provider,
+      providerRecovery: null,
+      setupError: null,
+    });
+    const request = await attachDay1HandoffClarityPrompt(
+      claritySessionResolution.session,
+      handoffSnapshot,
+      clarityAssessment,
+      { isNewSession: claritySessionResolution.isNewSession },
+    );
+    broadcast({
+      type: "idd_setup_progress",
+      sessionId: claritySessionResolution.session.id,
+      requestId: request.requestId,
+      docType: "all",
+      stage: "clarity_required",
+      progressText: "Day 1 문서 저장 전에 실행 가능한 후보·요청·증거 위치를 먼저 구체화합니다.",
+      elapsedMs: 0,
+    });
+    broadcast({
+      type: "idd_setup_state",
+      ...serializeIddSetupFields(state.iddSetup),
+      ...serializeBipSetupGate(currentBipSetupGate()),
+    });
+    broadcastBipSetupGateState(currentBipSetupGate());
+    telemetry.captureEvent("mac_sidecar_day1_doc_handoff_clarity_required", {
+      session_id: claritySessionResolution.session.id,
+      provider: seed.provider,
+      signal_id: clarityAssessment.signalId,
+      missing_slots: clarityAssessment.missingSlots,
+    });
+    return state.iddSetup;
+  }
   const session = await ensureDay1DocReviewSession({
     sessionId,
     provider: seed.provider,
@@ -14830,6 +15385,7 @@ async function writeAllDay1DocHandoff({
     day1Handoff: handoffSnapshot,
     provider: seed.provider,
     runEvidenceJudge: true,
+    evidenceJudgePolicy: "advisory",
     onProgress: ({ stage, doc }) => {
       if (stage === "recorded") {
         progress("recording_response", `${doc.title} 문서 리뷰 자료 구성 중`, doc.type);
@@ -14843,42 +15399,16 @@ async function writeAllDay1DocHandoff({
   state.iddSetup = await persistIddSetupState(workspaceRoot, result.state);
 
   if (result.blocked) {
-    progress("judge_blocked", "Office Hours 증거 judge가 문서 리뷰를 보류했습니다.", "all");
+    progress("judge_blocked", "Day 1 handoff 저장 정책 충돌로 문서 저장을 중단했습니다.", "all");
     telemetry.captureEvent("mac_sidecar_day1_doc_handoff_write_all_blocked", {
       session_id: session?.id ?? "",
       provider: seed.provider,
       judge_score: result.judgeResult?.score ?? 0,
       judge_status: result.judgeResult?.status || "failed",
     });
-    let promptCreationError = null;
-    try {
-      const blockedInput = buildDay1HandoffJudgeBlockedStructuredInput(result);
-      const request = await createUserInputRequest(appSupportPath, {
-        sessionId: session.id,
-        ...blockedInput,
-      });
-      session.runtime = {
-        ...(session.runtime || {}),
-        iddMode: null,
-        pendingIddContinuation: null,
-        iddPendingAdaptiveContinuation: null,
-        day1Handoff: handoffSnapshot,
-        day1DocHandoffReviewAttempt: (Number.parseInt(session.runtime?.day1DocHandoffReviewAttempt ?? 0, 10) || 0) + 1,
-      };
-      session.pendingUserInput = request;
-      session.status = "awaiting_input";
-      session.error = null;
-    } catch (error) {
-      promptCreationError = error;
-      session.pendingUserInput = null;
-      session.status = "idle";
-      session.error = `저장 전 근거 보완 질문을 준비하지 못했습니다: ${formatError(error)}`;
-      telemetry.captureException(error, {
-        operation: "day1_doc_handoff_judge_prompt_create",
-        session_id: session.id,
-        provider: seed.provider,
-      });
-    }
+    session.pendingUserInput = null;
+    session.status = "idle";
+    session.error = "Day 1 handoff clarity gate 통과 후에도 evidence judge가 blocking으로 반환되었습니다. write_all 경로는 advisory 정책이어야 합니다.";
     touch(session);
     await persistSessions();
     broadcast({ type: "session_updated", session });
@@ -14888,14 +15418,12 @@ async function writeAllDay1DocHandoff({
       ...serializeBipSetupGate(currentBipSetupGate()),
     });
     broadcastBipSetupGateState(currentBipSetupGate());
-    if (promptCreationError) {
-      broadcast({
-        type: "error",
-        sessionId: session.id,
-        message: session.error,
-        recoverable: true,
-      });
-    }
+    broadcast({
+      type: "error",
+      sessionId: session.id,
+      message: session.error,
+      recoverable: false,
+    });
     return state.iddSetup;
   }
 
@@ -15245,9 +15773,51 @@ function buildWorkspaceScanDegradedNotice(scanRoot, { provider, model, reason, m
     providerReadiness,
     localFoundCount: localFindings.localFoundCount,
     localFindings,
+    ...(reason === "insufficient_evidence" ? { errorKind: "workspace_scan_insufficient_evidence" } : {}),
     ...(reason === "usage_limit" ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND } : {}),
     ...(reason === "unavailable" ? { errorKind: PROVIDER_AUTH_REQUIRED_ERROR_KIND } : {}),
     ...(reason === "aborted" ? { errorKind: PROVIDER_ABORTED_ERROR_KIND } : {}),
+  };
+}
+
+async function buildWorkspaceScanInsufficientEvidenceDegradedNotice(scanRoot, {
+  provider = "codex",
+  model = "",
+  day1AlignmentPlan = null,
+  evidenceBundle = null,
+  scanResult = {},
+  foundCount = 0,
+} = {}) {
+  const bundle = evidenceBundle || await buildWorkspaceScanEvidenceBundle({
+    workspaceRoot: scanRoot,
+    scanResult,
+  }).catch(() => null);
+  const readiness = day1AlignmentPlan?.readiness || {
+    status: "blocked",
+    missingFields: ["targetUser", "problem", "validationAction"],
+    fieldEvidence: {},
+    rootCause: "고객/문제/활성 행동 quote 근거가 부족해 Day 1 질문을 제한된 근거로 구성했습니다.",
+  };
+  const missingFields = Array.isArray(readiness.missingFields) ? readiness.missingFields : [];
+  const rootCause = String(
+    readiness.rootCause
+      || "필수 근거가 부족해 Day 1 질문을 제한된 근거로 구성했습니다.",
+  );
+  const localFindings = summarizeWorkspaceScanLocalFindings(bundle || {});
+  return {
+    ...buildWorkspaceScanDegradedNotice(scanRoot, {
+      provider,
+      model,
+      reason: "insufficient_evidence",
+      message: rootCause,
+    }, { evidenceBundle: bundle }),
+    message: rootCause,
+    localFoundCount: foundCount || localFindings.localFoundCount,
+    localFindings,
+    missingFields,
+    rootCause,
+    day1AlignmentReadiness: readiness,
+    errorKind: "workspace_scan_insufficient_evidence",
   };
 }
 
@@ -15274,6 +15844,9 @@ async function completeWorkspaceScanFromLocalSignals({
   agentHistory,
   localFoundCount,
   preferredProvider = "",
+  evidenceBundle = null,
+  fallbackProvider = "",
+  fallbackModel = "",
   degraded = null,
 }) {
   state.workspaceOnboardingHypothesis = localOnboardingHypothesis;
@@ -15298,8 +15871,8 @@ async function completeWorkspaceScanFromLocalSignals({
   broadcastWorkspaceScanProgress(
     scanRoot,
     degraded
-      ? `scan.degraded · 로컬 후보 ${localFoundCount}개로 Day 1을 구성 중 (AI 정밀 스캔 미적용)`
-      : `scan.verify · 로컬 후보 ${localFoundCount}개를 Day 1 ICP 근거로 확인 중`,
+      ? `scan.degraded · 로컬 근거 ${localFoundCount}개로 Day 1을 구성 중 (AI 정밀 스캔 미적용)`
+      : `scan.verify · 로컬 근거 ${localFoundCount}개를 Day 1 질문 재료로 확인 중`,
     {
       stage: "verifying",
       stepIndex: 2,
@@ -15335,12 +15908,49 @@ async function completeWorkspaceScanFromLocalSignals({
     localDiscovery,
   }).catch(() => null);
   if (!day1AlignmentPlanReadyForWorkspaceScan(day1AlignmentPlan)) {
-    await broadcastWorkspaceScanInsufficientEvidence(scanRoot, {
+    const notice = await buildWorkspaceScanInsufficientEvidenceDegradedNotice(scanRoot, {
+      provider: degraded?.provider || fallbackProvider || normalizeProviderName(preferredProvider) || "codex",
+      model: degraded?.model || fallbackModel || "",
       day1AlignmentPlan,
+      evidenceBundle,
       scanResult: localResult,
       foundCount: localFoundCount,
     });
-    return;
+    degraded = {
+      reason: "insufficient_evidence",
+      provider: notice.provider || degraded?.provider || fallbackProvider || normalizeProviderName(preferredProvider) || "codex",
+      model: notice.model || degraded?.model || fallbackModel || "",
+      notice,
+    };
+    const missingFields = Array.isArray(notice.missingFields) ? notice.missingFields : [];
+    captureSidecarLog("workspace scan degraded: insufficient evidence", "warn", {
+      operation: "completeWorkspaceScanFromLocalSignals",
+      scan_root: scanRoot,
+      reason: "insufficient_evidence",
+      missing_fields: missingFields,
+      root_cause: truncateTelemetryString(notice.rootCause || notice.message || ""),
+      local_found_count: notice.localFoundCount || localFoundCount,
+    });
+    telemetry.captureEvent("mac_sidecar_workspace_scan_degraded", {
+      scan_root: scanRoot,
+      reason: "insufficient_evidence",
+      missing_fields: missingFields,
+      local_found_count: notice.localFoundCount || localFoundCount,
+    });
+    broadcastWorkspaceScanProgress(
+      scanRoot,
+      missingFields.length
+        ? `scan.degraded · ${missingFields.map(workspaceScanMissingFieldLabel).join(", ")} 근거가 부족하지만 Day 1 질문을 구성했습니다`
+        : "scan.degraded · 근거 품질이 낮지만 Day 1 질문을 구성했습니다",
+      {
+        stage: "composing",
+        stepIndex: 3,
+        totalSteps: 3,
+        foundCount: notice.localFoundCount || localFoundCount,
+        missingFields,
+        rootCause: notice.rootCause || notice.message || "",
+      },
+    );
   }
   const day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot: scanRoot });
   if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
@@ -15393,6 +16003,7 @@ async function completeWorkspaceScanFromLocalSignals({
   broadcast({
     type: "workspace_scan_result",
     scanRoot,
+    foundCount: localFoundCount,
     icp: localResult.icp || null,
     spec: localResult.spec || null,
     values: localResult.values || null,
@@ -15441,6 +16052,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       workspaceRoot: scanRoot,
       scanResult: localResult,
     });
+    const localFindings = summarizeWorkspaceScanLocalFindings(workspaceScanEvidenceBundle);
     // Stage-3 deterministic local signals — git activity, project shape,
     // runway hints. Pure read; absorbs all errors so a non-git folder still
     // produces a stable shape.
@@ -15463,7 +16075,10 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       docPaths: localResult,
       agentHistory,
     });
-    const localFoundCount = countWorkspaceScanResults(localResult);
+    const localFoundCount = Math.max(
+      countWorkspaceScanResults(localResult),
+      localFindings.localFoundCount,
+    );
     if (isWorkspacePathLookupPrompt(prompt) && localFoundCount > 0) {
       await completeWorkspaceScanFromLocalSignals({
         scanRoot,
@@ -15473,14 +16088,15 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         agentHistory,
         localFoundCount,
         preferredProvider,
+        evidenceBundle: workspaceScanEvidenceBundle,
       });
       return;
     }
     broadcastWorkspaceScanProgress(
       scanRoot,
       localFoundCount > 0
-        ? `scan.verify · 로컬 후보 ${localFoundCount}개를 Day 1 ICP 근거로 검증 중`
-        : "scan.agent · 로컬 후보가 부족해 workspace 맥락을 확인 중",
+        ? `scan.verify · 로컬 근거 ${localFoundCount}개를 Day 1 질문 재료로 확인 중`
+        : "scan.agent · 로컬 근거가 부족해 workspace 맥락을 확인 중",
       {
         stage: "verifying",
         stepIndex: 2,
@@ -15507,45 +16123,35 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       .filter((outcome) => outcome.ok)
       .map((outcome) => outcome.result);
     if (!parsedAgentResults.length) {
-      // Agent verification failed (usage limit / no auth / run error). The
-      // founder explicitly approved flipping the prior fail-closed gate to
-      // fail-OPEN *when local signals exist*: instead of stalling onboarding
-      // at Day 1 because no provider could verify, complete the scan on
-      // local-only signals and label it as degraded so the user sees a
-      // non-blocking "provider not connected — local-only scan" warning and
-      // can reconnect for a precise scan later. The scan only stays blocked
-      // (fail-closed) when there is BOTH no usable provider AND no local
-      // canonical doc to seed Day 1 — that is the genuinely cannot-proceed
-      // case the pinned workspace-scan-blocked tests assert.
+      // Provider verification failed (usage limit / no auth / run error).
+      // Continue with deterministic workspace context and label the result as
+      // degraded so Day 1 can ask for the missing customer/problem/action facts.
       const failure = agentOutcomes.find((outcome) => !outcome.ok) || {
         provider: scanTargets[0]?.provider || "codex",
         model: scanTargets[0]?.model || "",
         reason: "error",
         message: "",
       };
-      if (localFoundCount > 0) {
-        const degradedNotice = buildWorkspaceScanDegradedNotice(scanRoot, failure, {
-          evidenceBundle: workspaceScanEvidenceBundle,
-        });
-        await completeWorkspaceScanFromLocalSignals({
-          scanRoot,
-          localResult,
-          localOnboardingHypothesis,
-          localDiscovery,
-          agentHistory,
-          localFoundCount,
-          preferredProvider,
-          degraded: {
-            reason: failure.reason || "error",
-            provider: failure.provider || "",
-            model: failure.model || "",
-            notice: degradedNotice,
-          },
-        });
-        return;
-      }
-      broadcastWorkspaceScanBlocked(scanRoot, failure, {
+      const degradedNotice = buildWorkspaceScanDegradedNotice(scanRoot, failure, {
         evidenceBundle: workspaceScanEvidenceBundle,
+      });
+      await completeWorkspaceScanFromLocalSignals({
+        scanRoot,
+        localResult,
+        localOnboardingHypothesis,
+        localDiscovery,
+        agentHistory,
+        localFoundCount,
+        preferredProvider,
+        evidenceBundle: workspaceScanEvidenceBundle,
+        fallbackProvider: failure.provider || scanTargets[0]?.provider || "codex",
+        fallbackModel: failure.model || scanTargets[0]?.model || "",
+        degraded: {
+          reason: failure.reason || "error",
+          provider: failure.provider || "",
+          model: failure.model || "",
+          notice: degradedNotice,
+        },
       });
       return;
     }
@@ -15562,7 +16168,10 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       onboardingHypothesis.recentWork = localOnboardingHypothesis.recentWork;
     }
     state.workspaceOnboardingHypothesis = onboardingHypothesis;
-    const foundCount = countWorkspaceScanResults(merged);
+    const foundCount = Math.max(
+      countWorkspaceScanResults(merged),
+      localFindings.localFoundCount,
+    );
 
     telemetry.captureEvent("mac_sidecar_workspace_scan_completed", {
       scan_root: scanRoot,
@@ -15603,14 +16212,52 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       agentSituationSignals,
       localDiscovery,
     }).catch(() => null);
+    let degraded = null;
     if (!day1AlignmentPlanReadyForWorkspaceScan(day1AlignmentPlan)) {
-      await broadcastWorkspaceScanInsufficientEvidence(scanRoot, {
+      const selectedTarget = scanTargets[0] || {};
+      const notice = await buildWorkspaceScanInsufficientEvidenceDegradedNotice(scanRoot, {
+        provider: selectedTarget.provider || normalizeProviderName(preferredProvider) || "codex",
+        model: selectedTarget.model || "",
         day1AlignmentPlan,
         evidenceBundle: workspaceScanEvidenceBundle,
         scanResult: merged,
         foundCount,
       });
-      return;
+      degraded = {
+        reason: "insufficient_evidence",
+        provider: notice.provider || selectedTarget.provider || normalizeProviderName(preferredProvider) || "codex",
+        model: notice.model || selectedTarget.model || "",
+        notice,
+      };
+      const missingFields = Array.isArray(notice.missingFields) ? notice.missingFields : [];
+      captureSidecarLog("workspace scan degraded: insufficient evidence", "warn", {
+        operation: "runWorkspaceScan",
+        scan_root: scanRoot,
+        reason: "insufficient_evidence",
+        missing_fields: missingFields,
+        root_cause: truncateTelemetryString(notice.rootCause || notice.message || ""),
+        local_found_count: notice.localFoundCount || foundCount,
+      });
+      telemetry.captureEvent("mac_sidecar_workspace_scan_degraded", {
+        scan_root: scanRoot,
+        reason: "insufficient_evidence",
+        missing_fields: missingFields,
+        local_found_count: notice.localFoundCount || foundCount,
+      });
+      broadcastWorkspaceScanProgress(
+        scanRoot,
+        missingFields.length
+          ? `scan.degraded · ${missingFields.map(workspaceScanMissingFieldLabel).join(", ")} 근거가 부족하지만 Day 1 질문을 구성했습니다`
+          : "scan.degraded · 근거 품질이 낮지만 Day 1 질문을 구성했습니다",
+        {
+          stage: "composing",
+          stepIndex: 3,
+          totalSteps: 3,
+          foundCount: notice.localFoundCount || foundCount,
+          missingFields,
+          rootCause: notice.rootCause || notice.message || "",
+        },
+      );
     }
     const day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot: scanRoot });
     if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
@@ -15663,6 +16310,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
     broadcast({
       type: "workspace_scan_result",
       scanRoot,
+      foundCount,
       icp: merged.icp || null,
       spec: merged.spec || null,
       values: merged.values || null,
@@ -15680,6 +16328,14 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       dayReviews: await loadOfficeHoursDayReviews(scanRoot, dayProgress, scanCurrentDay),
       evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
       agentic30Gitignore,
+      ...(degraded
+        ? {
+            degraded: true,
+            degradedReason: degraded.reason,
+            degradedProvider: degraded.provider,
+            scanBlockedNotice: degraded.notice || null,
+          }
+        : {}),
     });
     await emitProgramNotificationSchedule(null, scanRoot, { broadcastToAll: true });
     triggerDay1AlignmentPlanBroadcast({
@@ -15953,8 +16609,8 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
  * the UI can surface an explicit "switch provider and re-verify" button. No
  * automatic fallback happens on this side — provider switching requires the
  * user's consent via that button (see IntakeV2ShowcaseViews). The scan stage
- * itself no longer uses this: a failed scan verification broadcasts
- * workspace_scan_blocked instead (the scan must not pass on local signals).
+ * itself no longer uses this; weak scan evidence now completes as an explicit
+ * degraded workspace_scan_result so Day 1 can ask for the missing context.
  */
 function broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stage }) {
   broadcast({
@@ -15986,10 +16642,10 @@ async function broadcastWorkspaceScanInsufficientEvidence(scanRoot, {
     status: "blocked",
     missingFields: ["targetUser", "problem", "validationAction"],
     fieldEvidence: {},
-    rootCause: "고객/문제/활성 행동 quote 근거가 부족해 Day 1 목표 카드 생성을 차단했습니다.",
+    rootCause: "고객/문제/활성 행동 quote 근거가 부족해 Day 1 질문을 구성할 수 없습니다.",
   };
   const missingFields = Array.isArray(readiness.missingFields) ? readiness.missingFields : [];
-  const rootCause = String(readiness.rootCause || "필수 근거가 부족해 Day 1 목표 카드 생성을 차단했습니다.");
+  const rootCause = String(readiness.rootCause || "필수 근거가 부족해 Day 1 질문을 구성할 수 없습니다.");
   const localFindings = summarizeWorkspaceScanLocalFindings(bundle || {});
   telemetry.captureEvent("mac_sidecar_workspace_scan_blocked", {
     scan_root: scanRoot,
@@ -16021,8 +16677,8 @@ async function broadcastWorkspaceScanInsufficientEvidence(scanRoot, {
   broadcastWorkspaceScanProgress(
     scanRoot,
     missingFields.length
-      ? `scan.blocked · ${missingFields.map(workspaceScanMissingFieldLabel).join(", ")} 근거 부족으로 목표 카드 생성 차단`
-      : "scan.blocked · 근거 품질 재작업이 필요해 목표 카드 생성 차단",
+      ? `scan.blocked · ${missingFields.map(workspaceScanMissingFieldLabel).join(", ")} 근거 부족으로 Day 1 질문 구성 불가`
+      : "scan.blocked · 근거 품질 재작업이 필요해 Day 1 질문 구성 불가",
     {
       stage: "blocked",
       stepIndex: 3,
@@ -19275,16 +19931,21 @@ function isDay1DocHandoffJudgeRequest(request = null) {
     && String(request?.generation?.docType || "").trim().toLowerCase() === "day1_doc_handoff_judge";
 }
 
+function isDay1HandoffClarityRequest(request = null) {
+  return String(request?.generation?.mode || "").trim().toLowerCase() === "office_hours"
+    && String(request?.generation?.docType || "").trim().toLowerCase() === DAY1_HANDOFF_CLARITY_DOC_TYPE;
+}
+
 async function suppressOfficeHoursRequestAfterQuestionCap(session, request, activeRequestIds) {
   if (session?.runtime?.officeHours?.active !== true || !request?.requestId) {
     return false;
   }
-  if (isDay1DocHandoffJudgeRequest(request)) {
+  if (isDay1DocHandoffJudgeRequest(request) || isDay1HandoffClarityRequest(request)) {
     return false;
   }
   // R1.b: the locked Day-1 get_users flow uses the ValidationAttempt projection
   // (a stray card after gather-complete is suppressed). Non-get_users lanes keep
-  // the count-based cap + the Day-1 doc-readiness follow-up exemption.
+  // the count-based cap + Day-1 follow-up exemptions.
   const isGetUsers = isLockedDay1GetUsersContext(
     String(session?.runtime?.officeHours?.context || ""),
   );
@@ -19299,6 +19960,14 @@ async function suppressOfficeHoursRequestAfterQuestionCap(session, request, acti
     if (!countProgress.capReached) return false;
   }
 
+  let completionClarity = null;
+  if (countProgress && shouldGateDay1OfficeHoursDocumentReadiness(session, countProgress)) {
+    const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
+      writeDebtReport: true,
+    });
+    completionClarity = assessDay1OfficeHoursCompletionClarity(session, readiness);
+  }
+
   await deleteUserInputArtifacts(appSupportPath, request.sessionId || session.id, request.requestId);
   state.resolvedUserInputIds.add(request.requestId);
   activeRequestIds?.delete?.(request.requestId);
@@ -19310,6 +19979,14 @@ async function suppressOfficeHoursRequestAfterQuestionCap(session, request, acti
   session.pendingUserInput = null;
   session.status = "idle";
   session.error = null;
+  if (completionClarity) {
+    await abortActiveOfficeHoursRunAtQuestionCap(session);
+    await attachDay1OfficeHoursCompletionClarityPrompt(session, completionClarity, {
+      previousRequestId: request.requestId,
+      reason: "suppress_after_cap",
+    });
+    return true;
+  }
   if (countProgress) {
     stampOfficeHoursExpectedCountCompletion(session, countProgress);
   }
@@ -19493,11 +20170,12 @@ async function syncPendingUserInputRequests() {
 
 function normalizeUserInputResponse(promptRequest, payload) {
   const responses = Array.isArray(payload.responses) ? payload.responses : [];
+  const questions = Array.isArray(promptRequest.questions) ? promptRequest.questions : [];
   const answers = {};
   const annotations = {};
 
-  for (const question of promptRequest.questions) {
-    const match = responses.find((entry) => entry?.question === question.question);
+  for (const [index, question] of questions.entries()) {
+    const match = matchingUserInputResponseEntry(responses, question, index, questions.length);
     const selectedOptions = Array.isArray(match?.selectedOptions)
       ? match.selectedOptions
           .map((value) => String(value).trim())
@@ -19526,7 +20204,7 @@ function normalizeUserInputResponse(promptRequest, payload) {
   }
 
   return {
-    questions: promptRequest.questions,
+    questions,
     answers,
     annotations,
     responses: responses.map((entry) => ({
@@ -19539,22 +20217,58 @@ function normalizeUserInputResponse(promptRequest, payload) {
   };
 }
 
+function matchingUserInputResponseEntry(responses = [], question = {}, index = 0, questionCount = 0) {
+  const questionText = String(question?.question || "").trim();
+  const exact = responses.find((entry) => String(entry?.question || "").trim() === questionText);
+  if (exact) return exact;
+  if (questionCount === 1 && responses.length === 1) return responses[0];
+  return responses[index] || null;
+}
+
 function findMissingRequiredFreeTextQuestion(response) {
-  const responsesByQuestion = new Map(
-    (response.responses || []).map((entry) => [entry.question, entry]),
-  );
-  return (response.questions || []).find((question) => {
-    const entry = responsesByQuestion.get(question.question);
-    if (normalizeResponsePrimaryTextInput(question)?.required === true) {
+  const responses = Array.isArray(response.responses) ? response.responses : [];
+  const questions = Array.isArray(response.questions) ? response.questions : [];
+  return questions.find((question, index) => {
+    const entry = matchingUserInputResponseEntry(responses, question, index, questions.length);
+    if (officeHoursQuestionRequiresPrimaryFreeText(question)) {
       const freeText = String(entry?.freeText || "").trim();
       const selectedOptions = Array.isArray(entry?.selectedOptions) ? entry.selectedOptions : [];
       if (freeText) return false;
-      if (selectedOptions.some(isNoCandidateBlockerSelectionLabel)) return false;
+      if (
+        structuredPromptQuestionId(question) === FIRST_CANDIDATE_SIGNAL_ID
+        && selectedOptions.some(isNoCandidateBlockerSelectionLabel)
+      ) {
+        return false;
+      }
       return true;
     }
     if (question?.requiresFreeText !== true) return false;
     return !String(entry?.freeText || "").trim();
   }) || null;
+}
+
+function structuredPromptQuestionId(question = {}) {
+  return String(question?.questionId || question?.question_id || question?.id || "").trim();
+}
+
+function officeHoursQuestionRequiresPrimaryFreeText(question = {}) {
+  if (normalizeResponsePrimaryTextInput(question)?.required === true) return true;
+  const questionId = structuredPromptQuestionId(question);
+  return questionId === FIRST_CANDIDATE_SIGNAL_ID
+    || questionId === FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID;
+}
+
+function officeHoursRequiredFreeTextValidationMessage(question = {}, fallback = "") {
+  const primaryTextInput = normalizeResponsePrimaryTextInput(question);
+  if (primaryTextInput?.validationMessage) return primaryTextInput.validationMessage;
+  const questionId = structuredPromptQuestionId(question);
+  if (questionId === FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID) {
+    return "시간, 채널, 찾는 방법, 보낼 요청을 적어야 합니다.";
+  }
+  if (questionId === FIRST_CANDIDATE_SIGNAL_ID) {
+    return "실명·핸들 또는 구체적 스레드와 오늘 보낼 요청을 입력해야 합니다.";
+  }
+  return fallback;
 }
 
 function normalizeResponsePrimaryTextInput(question = {}) {

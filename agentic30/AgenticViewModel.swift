@@ -1163,6 +1163,7 @@ struct WorkspaceScanDegradedNoticePayload: Decodable, Equatable {
 /// readiness set routes to Settings.
 struct WorkspaceScanBlockedRecovery: Equatable {
     enum PrimaryAction: Equatable {
+        case reviewEvidence
         /// Same provider is still scan-ready — it just needs to run again.
         case retry(AgentProvider)
         /// A different scan-ready provider should take over.
@@ -1182,8 +1183,20 @@ struct WorkspaceScanBlockedRecovery: Equatable {
     init(notice: WorkspaceScanBlockedNotice) {
         let reason = notice.reason.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let kind = (notice.errorKind ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isInsufficientEvidence = reason == "insufficient_evidence"
+            || kind == "workspace_scan_insufficient_evidence"
         let isAborted = reason == "aborted" || kind == "provider_aborted"
         let isUsageLimit = reason == "usage_limit" || kind == "provider_usage_limit"
+
+        if isInsufficientEvidence {
+            primaryAction = .reviewEvidence
+            alternateProviders = []
+            title = "프로젝트 근거가 부족해요"
+            let message = notice.message.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+                ?? "고객, 문제, 검증 행동 근거를 보강한 뒤 다시 검증하세요."
+            body = "현재 폴더는 연결됐지만 Day 1 필수 근거가 부족합니다. \(message)"
+            return
+        }
 
         let scanReady = notice.providerReadiness.filter(\.scanReady)
         let authRequired = scanReady.isEmpty
@@ -1505,19 +1518,7 @@ struct IntakeV2BootLogState: Equatable {
             isActive: isScanning && !scanDidComplete && !scanDidBlock
         ))
 
-        if scanDidComplete {
-            let trimmedError = scanError?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-            let command = trimmedError == nil ? "scan.result" : "scan.failed"
-            let status = trimmedError
-                .map { "✗ \($0)" }
-                ?? "✓ \(foundArtifactCount ?? 0) artifacts verified"
-            nextLines.append(Line(
-                id: command,
-                command: command,
-                status: status,
-                isActive: false
-            ))
-        } else if scanDidBlock {
+        if scanDidBlock {
             let message = scanBlockedMessage?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .nonEmpty
@@ -1526,6 +1527,18 @@ struct IntakeV2BootLogState: Equatable {
                 id: "scan.blocked",
                 command: "scan.blocked",
                 status: "✗ \(message)",
+                isActive: false
+            ))
+        } else if scanDidComplete {
+            let trimmedError = scanError?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+            let command = trimmedError == nil ? "scan.result" : "scan.failed"
+            let status = trimmedError
+                .map { "✗ \($0)" }
+                ?? "✓ \(foundArtifactCount ?? 0) evidence sources scanned"
+            nextLines.append(Line(
+                id: command,
+                command: command,
+                status: status,
                 isActive: false
             ))
         }
@@ -1832,6 +1845,7 @@ struct Day1ScanWaitPresentation: Equatable {
     let state: State
     let phase: IntakeV2BootLogState.ScanPhase
     let elapsedSeconds: Int?
+    let blockedStatus: String?
 
     func headerTitle(questionCount: Int = 3) -> String {
         if canOpenDay1 {
@@ -1841,6 +1855,9 @@ struct Day1ScanWaitPresentation: Equatable {
             return "실행 보조 앱 연결 중"
         }
         if isBlocked {
+            if isEvidenceBlocked {
+                return "근거 보강이 필요합니다"
+            }
             return "AI 검증이 필요합니다"
         }
         return "Day 1 질문 \(questionCount)개를 만드는 중"
@@ -1854,6 +1871,9 @@ struct Day1ScanWaitPresentation: Equatable {
             return "연결 중…"
         }
         if isBlocked {
+            if isEvidenceBlocked {
+                return "근거 보강 필요"
+            }
             return "AI 연결 확인 필요"
         }
         if let remainingSeconds = estimatedRemainingSeconds, remainingSeconds > 0 {
@@ -1870,6 +1890,9 @@ struct Day1ScanWaitPresentation: Equatable {
             return "실행 보조 앱 연결 중"
         }
         if isBlocked {
+            if isEvidenceBlocked {
+                return "근거 보강이 필요합니다"
+            }
             return "AI 검증이 필요합니다"
         }
         if let remainingSeconds = estimatedRemainingSeconds, remainingSeconds > 0 {
@@ -1890,6 +1913,16 @@ struct Day1ScanWaitPresentation: Equatable {
         state == .scanningSlow
     }
 
+    var isEvidenceBlocked: Bool {
+        let status = blockedStatus?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        return status.contains("insufficient")
+            || status.contains("근거 부족")
+            || status.contains("근거가 부족")
+            || status.contains("근거 품질")
+    }
+
     var estimatedRemainingSeconds: Int? {
         guard !canOpenDay1, state != .connecting else { return nil }
         return max(0, Self.slowScanSeconds - (elapsedSeconds ?? 0))
@@ -1903,6 +1936,7 @@ struct Day1ScanWaitPresentation: Equatable {
     ) {
         phase = bootLogState.scanPhase
         elapsedSeconds = bootLogState.scanElapsed?.elapsedSeconds(at: now)
+        blockedStatus = bootLogState.lines.last(where: { $0.command == "scan.blocked" })?.status
 
         if !hasFolder {
             state = .scanMergedReady
@@ -3258,6 +3292,7 @@ final class AgenticViewModel: ObservableObject {
         let day1SituationSummary: Day1SituationSummary?
         let day1GoalSelection: Day1GoalSelection?
         let agentic30Gitignore: Agentic30GitignoreState?
+        let foundCount: Int?
         let error: String?
 
         var foundArtifactPaths: [String] {
@@ -3266,7 +3301,7 @@ final class AgenticViewModel: ObservableObject {
         }
 
         var foundArtifactCount: Int {
-            foundArtifactPaths.count
+            foundCount ?? foundArtifactPaths.count
         }
 
         func replacing(
@@ -3290,6 +3325,7 @@ final class AgenticViewModel: ObservableObject {
                 day1SituationSummary: day1SituationSummary ?? self.day1SituationSummary,
                 day1GoalSelection: day1GoalSelection ?? self.day1GoalSelection,
                 agentic30Gitignore: agentic30Gitignore,
+                foundCount: foundCount,
                 error: error
             )
         }
@@ -3310,6 +3346,7 @@ final class AgenticViewModel: ObservableObject {
                 day1SituationSummary: day1SituationSummary,
                 day1GoalSelection: selection,
                 agentic30Gitignore: agentic30Gitignore,
+                foundCount: foundCount,
                 error: error
             )
         }
@@ -5836,39 +5873,43 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private func makeDay1GoalDrafts() -> [Day1GoalDraft] {
-        guard let alignmentPlan = scanResult?.day1AlignmentPlan,
-              alignmentPlan.readiness?.isReady == true,
-              alignmentPlan.qualityGate.passed else {
-            return []
-        }
-
-        guard let customer = firstNonEmptyCandidate([
+        let alignmentPlan = scanResult?.day1AlignmentPlan
+        let customer = firstNonEmptyCandidate([
             day1GoalCustomerValue(from: alignmentPlan),
-            alignmentPlan.signals.currentIcpGuess,
-            alignmentPlan.signals.likelyUsers.first,
-            alignmentPlan.components.icp.statement,
-        ]),
-              let problem = firstNonEmptyCandidate([
-                alignmentPlan.signals.problem,
-                alignmentPlan.components.painPoint.statement,
-                alignmentPlan.alignmentStatement.painPoint,
-              ]),
-              let validationAction = firstNonEmptyCandidate([
-                cleanDay1ValidationAction(alignmentPlan.components.outcome.statement),
-                cleanDay1ValidationAction(alignmentPlan.alignmentStatement.outcome),
-              ]) else {
-            return []
-        }
-        let evidenceRefs = day1GoalEvidenceRefs(from: alignmentPlan)
-        guard !evidenceRefs.isEmpty else { return [] }
+            alignmentPlan?.signals.currentIcpGuess,
+            alignmentPlan?.signals.likelyUsers.first,
+            alignmentPlan?.components.icp.statement,
+        ]) ?? ""
+        let problem = firstNonEmptyCandidate([
+            alignmentPlan?.signals.problem,
+            alignmentPlan?.components.painPoint.statement,
+            alignmentPlan?.alignmentStatement.painPoint,
+        ]) ?? ""
+        let validationAction = firstNonEmptyCandidate([
+            cleanDay1ValidationAction(alignmentPlan?.components.outcome.statement),
+            cleanDay1ValidationAction(alignmentPlan?.alignmentStatement.outcome),
+        ]) ?? ""
+        let evidenceRefs = alignmentPlan.map(day1GoalEvidenceRefs(from:)) ?? []
         let proofSink: Day1ProofSink = isDay1BipProofSinkAvailable ? .bipOptional : .local
-        let recommended = recommendedDay1GoalType(
-            customer: customer,
-            problem: problem,
-            validationAction: validationAction
-        )
+        let recommendationInputs = [
+            onboardingContext?.goal,
+            onboardingContext?.currentStage,
+            onboardingContext?.businessDescription,
+            alignmentPlan?.projectGoal,
+            alignmentPlan?.alignmentStatement.statement,
+            customer,
+            problem,
+            validationAction,
+        ]
+        let hasRecommendationContext = recommendationInputs.contains {
+            ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+        let recommended = hasRecommendationContext
+            ? recommendedDay1GoalType(customer: customer, problem: problem, validationAction: validationAction)
+            : nil
         let fingerprint = stableDay1GoalFingerprint(parts: [
-            scanResult?.day1AlignmentPlan?.projectGoal,
+            "day1_goal_lane_v1",
+            alignmentPlan?.projectGoal,
             customer,
             problem,
             validationAction,
@@ -5881,11 +5922,11 @@ final class AgenticViewModel: ObservableObject {
         // value came from a fallback source with no matching spans and we keep
         // the legacy plain-row look (Stage 2 back-compat).
         let customerEmphasis = day1GoalRowEmphasis(
-            component: scanResult?.day1AlignmentPlan?.components.icp,
+            component: alignmentPlan?.components.icp,
             displayValue: customer
         )
         let problemEmphasis = day1GoalRowEmphasis(
-            component: scanResult?.day1AlignmentPlan?.components.painPoint,
+            component: alignmentPlan?.components.painPoint,
             displayValue: problem
         )
 
@@ -9141,6 +9182,7 @@ final class AgenticViewModel: ObservableObject {
                     day1SituationSummary: event.day1SituationSummary,
                     day1GoalSelection: event.day1GoalSelection,
                     agentic30Gitignore: event.agentic30Gitignore,
+                    foundCount: event.foundCount,
                     error: event.error
                 )
             } else {
@@ -9256,6 +9298,7 @@ final class AgenticViewModel: ObservableObject {
                 day1SituationSummary: event.day1SituationSummary,
                 day1GoalSelection: event.day1GoalSelection,
                 agentic30Gitignore: event.agentic30Gitignore,
+                foundCount: event.foundCount,
                 error: event.error
             )
             scanResult = result
@@ -9369,6 +9412,7 @@ final class AgenticViewModel: ObservableObject {
                 day1SituationSummary: current.day1SituationSummary,
                 day1GoalSelection: current.day1GoalSelection,
                 agentic30Gitignore: gitignore,
+                foundCount: current.foundCount,
                 error: current.error
             )
             scanResult = updated
@@ -9536,6 +9580,7 @@ final class AgenticViewModel: ObservableObject {
                         day1SituationSummary: event.day1SituationSummary,
                         day1GoalSelection: event.day1GoalSelection,
                         agentic30Gitignore: event.agentic30Gitignore,
+                        foundCount: event.foundCount,
                         error: nil
                     )
                 }
@@ -14459,6 +14504,7 @@ final class AgenticViewModel: ObservableObject {
             day1SituationSummary: usesSituationSummary ? makeUITestingDay1SituationSummary() : nil,
             day1GoalSelection: nil,
             agentic30Gitignore: nil,
+            foundCount: 4,
             error: nil
         )
     }

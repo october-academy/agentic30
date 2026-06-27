@@ -1736,7 +1736,7 @@ final class AgenticViewModelAuthTests {
         #expect(state.lines[2].status == "checking workspace files")
         #expect(state.lines[3].status == "3 local candidates found")
         #expect(state.lines[4].status == "verifying context")
-        #expect(state.lines[5].status == "✓ 3 artifacts verified")
+        #expect(state.lines[5].status == "✓ 3 evidence sources scanned")
         #expect(!state.lines.contains { $0.status == "Preparing workspace scan..." })
         #expect(!state.lines.contains { $0.status?.contains("Claude Sonnet") == true })
         #expect(!state.lines.contains { $0.status?.contains("gpt-5.1-codex-mini") == true })
@@ -2086,7 +2086,7 @@ final class AgenticViewModelAuthTests {
             isConnected: false,
             workspaceRoot: "",
             diagnostics: nil,
-            scanProgressLogs: ["scan.verify · 로컬 후보 2개를 Day 1 ICP 근거로 검증 중"],
+            scanProgressLogs: ["scan.verify · 로컬 근거 2개를 Day 1 질문 재료로 확인 중"],
             scanDidComplete: false,
             scanError: nil,
             foundArtifactCount: nil,
@@ -2129,6 +2129,56 @@ final class AgenticViewModelAuthTests {
         #expect(failedPresentation.headerTitle(questionCount: 3) == "Day 1 질문 3개가 준비됐어요")
         #expect(failedPresentation.primaryCTATitle(questionCount: 3) == "질문 3개 시작하기 →")
         #expect(failedPresentation.primaryCTAAccessibilityLabel(questionCount: 3) == "질문 3개 시작하기")
+    }
+
+    @Test @MainActor func blockedProviderScanResultShowsBlockedState() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let blockedMessage = "사용 가능한 에이전트가 없어 진행할 수 없습니다"
+        let state = IntakeV2BootLogState(
+            isConnected: true,
+            workspaceRoot: "/tmp/agentic30-public",
+            diagnostics: nil,
+            scanProgressLogs: [
+                "scan.agent · 연결된 AI에게 Day 1 맥락 검증 요청 중",
+                "scan.blocked · \(blockedMessage)",
+            ],
+            scanProgressSnapshots: [
+                WorkspaceScanProgressSnapshot(
+                    progressText: "scan.blocked · \(blockedMessage)",
+                    stage: "blocked",
+                    stepIndex: 3,
+                    totalSteps: 3,
+                    foundCount: 0
+                )
+            ],
+            scanDidComplete: true,
+            scanDidBlock: true,
+            scanBlockedMessage: blockedMessage,
+            scanError: nil,
+            foundArtifactCount: 0,
+            isScanning: false,
+            scanStartedAt: start,
+            scanCompletedAt: start.addingTimeInterval(20)
+        )
+
+        #expect(state.scanDidComplete)
+        #expect(state.scanDidBlock)
+        #expect(state.scanPhase.stage == .blocked)
+        #expect(state.lines.last?.command == "scan.blocked")
+        #expect(state.lines.last?.status == "✗ \(blockedMessage)")
+        #expect(!state.lines.contains { $0.command == "scan.result" })
+
+        let presentation = Day1ScanWaitPresentation(
+            bootLogState: state,
+            hasFolder: true,
+            hasWorkspaceScanResult: true,
+            now: start.addingTimeInterval(20)
+        )
+        #expect(presentation.state == .scanBlocked)
+        #expect(!presentation.canOpenDay1)
+        #expect(presentation.headerTitle(questionCount: 3) == "AI 검증이 필요합니다")
+        #expect(presentation.primaryCTATitle(questionCount: 3) == "AI 연결 확인 필요")
+        #expect(presentation.primaryCTAAccessibilityLabel(questionCount: 3) == "AI 검증이 필요합니다")
     }
 
     @Test @MainActor func workspaceScanGitignoreConsentSendsExplicitDecision() async throws {
@@ -2231,7 +2281,7 @@ final class AgenticViewModelAuthTests {
         {
           "type": "workspace_scan_progress",
           "scanRoot": "\(workspace.path)",
-          "progressText": "scan.verify · 로컬 후보 6개를 Day 1 ICP 근거로 검증 중",
+          "progressText": "scan.verify · 로컬 근거 6개를 Day 1 질문 재료로 확인 중",
           "stage": "verifying",
           "stepIndex": 2,
           "totalSteps": 3,
@@ -2777,6 +2827,39 @@ final class AgenticViewModelAuthTests {
         #expect(payload["commitmentText"] as? String == "고객 A에게 가격 ask 보내기")
     }
 
+    @Test @MainActor func day1GoalDraftsExistBeforeWorkspaceScanEvidence() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        sidecar.resetSentPayloads()
+
+        #expect(viewModel.scanResult == nil)
+        #expect(viewModel.day1GoalDrafts.map(\.goalType) == [.buildProduct, .getUsers, .makeMoney])
+        let draft = try #require(viewModel.day1GoalDrafts.first(where: { $0.goalType == .buildProduct }))
+        #expect(draft.customer == "")
+        #expect(draft.problem == "")
+        #expect(draft.validationAction == "")
+        #expect(draft.evidenceRefs == [])
+
+        let sent = viewModel.saveDay1GoalDraft(draft, workspaceRoot: workspace.path)
+
+        #expect(sent)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "day1_goal_save")
+        let selection = try #require(payload["selection"] as? [String: Any])
+        #expect(selection["goalType"] as? String == "build_product")
+        #expect(selection["goalText"] as? String == "30일 안에 핵심 흐름 완주율 10%를 달성한다.")
+        #expect(selection["customer"] as? String == "")
+        #expect(selection["problem"] as? String == "")
+        #expect(selection["validationAction"] as? String == "")
+        #expect(selection["evidenceRefs"] as? [String] == [])
+    }
+
     @Test @MainActor func day1GoalDraftsSaveThroughSidecarPayload() async throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
@@ -2836,7 +2919,7 @@ final class AgenticViewModelAuthTests {
         #expect(draft.goalText.contains("방법:") == false)
     }
 
-    @Test @MainActor func blockedDay1AlignmentReadinessDoesNotCreateGoalDrafts() async throws {
+    @Test @MainActor func degradedDay1AlignmentReadinessStillShowsGoalDrafts() async throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
         let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
@@ -2849,27 +2932,59 @@ final class AgenticViewModelAuthTests {
             includeValidationActionEvidence: false,
             readinessStatus: "blocked",
             readinessMissingFields: ["validationAction"],
-            readinessRootCause: "활성/검증 행동 quote 근거가 부족해 목표 카드 생성을 차단했습니다.",
+            readinessRootCause: "활성/검증 행동 quote 근거가 부족해 Day 1 질문에서 먼저 확인합니다.",
             qualityGatePassed: false
         ))
         let alignmentJSON = try #require(String(data: alignmentData, encoding: .utf8))
 
         try sidecar.emit("""
         {
-          "type": "workspace_scan_blocked",
+          "type": "workspace_scan_result",
           "scanRoot": "\(workspace.path)",
-          "provider": "codex",
-          "reason": "insufficient_evidence",
-          "message": "활성/검증 행동 quote 근거가 부족해 목표 카드 생성을 차단했습니다.",
-          "stage": "blocked",
+          "foundCount": 1,
+          "degraded": true,
+          "degradedReason": "insufficient_evidence",
+          "degradedProvider": "codex",
+          "scanBlockedNotice": {
+            "scanRoot": "\(workspace.path)",
+            "provider": "codex",
+            "model": "",
+            "reason": "insufficient_evidence",
+            "message": "활성/검증 행동 quote 근거가 부족해 Day 1 질문을 제한된 근거로 구성했습니다.",
+            "availableProviders": [],
+            "providerReadiness": [],
+            "errorKind": "workspace_scan_insufficient_evidence"
+          },
           "day1AlignmentPlan": \(alignmentJSON)
         }
         """)
         try await Task.sleep(nanoseconds: 10_000_000)
 
         #expect(viewModel.scanResult?.day1AlignmentPlan?.readiness?.status == "blocked")
-        #expect(viewModel.day1GoalDrafts.isEmpty)
-        #expect(viewModel.scanBlockedNotice?.message.contains("quote 근거가 부족") == true)
+        #expect(viewModel.scanResult?.foundArtifactCount == 1)
+        #expect(viewModel.day1GoalDrafts.map(\.goalType) == [.buildProduct, .getUsers, .makeMoney])
+        let draft = try #require(viewModel.day1GoalDrafts.first)
+        #expect(draft.customer == "B2B SaaS support lead")
+        #expect(draft.problem == "Slack escalation을 놓침")
+        #expect(draft.validationAction == "Ask three support leads for a paid pilot.")
+        #expect(viewModel.scanBlockedNotice == nil)
+        let notice = try #require(viewModel.scanDegradedNotice)
+        #expect(notice.message.contains("quote 근거가 부족"))
+        let recovery = WorkspaceScanBlockedRecovery(notice: notice)
+        #expect(recovery.primaryAction == .reviewEvidence)
+        #expect(recovery.title == "프로젝트 근거가 부족해요")
+        #expect(recovery.body.contains("quote 근거가 부족"))
+
+        let presentation = Day1ScanWaitPresentation(
+            bootLogState: viewModel.intakeV2BootLogState,
+            hasFolder: true,
+            hasWorkspaceScanResult: viewModel.scanResult != nil,
+            now: Date()
+        )
+        #expect(presentation.state == .scanMergedReady)
+        #expect(presentation.canOpenDay1)
+        #expect(presentation.headerTitle(questionCount: 3) == "Day 1 질문 3개가 준비됐어요")
+        #expect(presentation.primaryCTATitle(questionCount: 3) == "질문 3개 시작하기 →")
     }
 
     @Test func day1GoalSelectionOfficeHoursContextCopyIsConcise() {

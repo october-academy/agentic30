@@ -62,7 +62,7 @@ const OPTION_HIGHLIGHT_MAX_CHARS = 18;
 const OPTION_HIGHLIGHT_FULL_LABEL_MAX_CHARS = 14;
 const OPTION_HIGHLIGHT_MAX_LABEL_RATIO = 0.78;
 const USER_FACING_GENERIC_PROJECT_NAME = "이 프로젝트";
-const BLOCKED_GOAL_DIAGNOSTIC = "목표 카드 생성 차단";
+const BLOCKED_GOAL_DIAGNOSTIC = "Day 1 질문에서 목표 확인";
 const MISSING_TARGET_USER_DIAGNOSTIC = "고객 quote 근거 부족";
 const MISSING_PROBLEM_DIAGNOSTIC = "문제 quote 근거 부족";
 const MISSING_ACTION_DIAGNOSTIC = "활성/검증 행동 quote 근거 부족";
@@ -2209,8 +2209,8 @@ function readinessRootCause({ status, missingFields, qualityGate }) {
   }
   const labels = missingFields.map(readinessFieldLabel).join(", ");
   return labels
-    ? `${labels} quote 근거가 부족해 목표 카드 생성을 차단했습니다.`
-    : "필수 근거가 부족해 목표 카드 생성을 차단했습니다.";
+    ? `${labels} quote 근거가 부족해 Day 1 질문에서 먼저 확인합니다.`
+    : "필수 근거가 부족해 Day 1 질문에서 먼저 확인합니다.";
 }
 
 function readinessFieldLabel(field) {

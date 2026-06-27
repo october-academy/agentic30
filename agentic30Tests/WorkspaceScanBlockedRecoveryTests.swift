@@ -36,6 +36,7 @@ final class WorkspaceScanBlockedRecoveryTests: XCTestCase {
         reason: String,
         errorKind: String?,
         provider: AgentProvider,
+        message: String = "",
         nextProvider: AgentProvider? = nil,
         readiness list: [WorkspaceScanProviderReadiness]
     ) -> WorkspaceScanBlockedNotice {
@@ -44,7 +45,7 @@ final class WorkspaceScanBlockedRecoveryTests: XCTestCase {
             provider: provider,
             model: "",
             reason: reason,
-            message: "",
+            message: message,
             nextProvider: nextProvider,
             availableProviders: list.filter(\.scanReady).map(\.provider),
             providerReadiness: list,
@@ -106,6 +107,20 @@ final class WorkspaceScanBlockedRecoveryTests: XCTestCase {
             return XCTFail("expected .connect, got \(recovery.primaryAction)")
         }
         XCTAssertEqual(list.map(\.provider), [.codex, .claude])
+    }
+
+    func testInsufficientEvidenceKeepsProviderSettingsOutOfRecovery() {
+        let recovery = WorkspaceScanBlockedRecovery(notice: notice(
+            reason: "insufficient_evidence",
+            errorKind: "workspace_scan_insufficient_evidence",
+            provider: .codex,
+            message: "고객, 문제, 활성/검증 행동 근거는 Day 1 질문에서 먼저 확인합니다.",
+            readiness: []
+        ))
+        XCTAssertEqual(recovery.primaryAction, .reviewEvidence)
+        XCTAssertEqual(recovery.alternateProviders, [])
+        XCTAssertEqual(recovery.title, "프로젝트 근거가 부족해요")
+        XCTAssertTrue(recovery.body.contains("Day 1 질문"))
     }
 
     func testNothingInstalledRoutesToSettings() {

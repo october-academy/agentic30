@@ -1663,6 +1663,81 @@ struct OfficeHoursSubmittedPromptSnapshot: Identifiable, nonisolated Hashable {
     }
 }
 
+struct OfficeHoursSubmittedPromptSnapshotPolicy {
+    nonisolated static func visibleSnapshots(
+        _ snapshots: [OfficeHoursSubmittedPromptSnapshot],
+        pendingPrompt: StructuredPromptRequest?,
+        authoritativeRequestIDs: Set<String>
+    ) -> [OfficeHoursSubmittedPromptSnapshot] {
+        let pendingRetryIdentity = pendingPrompt.flatMap(retryIdentity(for:))
+        var latestLocalRequestByRetryIdentity: [String: OfficeHoursSubmittedPromptSnapshot] = [:]
+
+        for snapshot in snapshots where isLocalOptimisticSnapshot(snapshot, authoritativeRequestIDs: authoritativeRequestIDs) {
+            guard let identity = retryIdentity(for: snapshot.prompt) else { continue }
+            guard let current = latestLocalRequestByRetryIdentity[identity] else {
+                latestLocalRequestByRetryIdentity[identity] = snapshot
+                continue
+            }
+            if snapshot.submittedAt > current.submittedAt
+                || (snapshot.submittedAt == current.submittedAt && snapshot.requestId > current.requestId) {
+                latestLocalRequestByRetryIdentity[identity] = snapshot
+            }
+        }
+
+        return snapshots.filter { snapshot in
+            guard isLocalOptimisticSnapshot(snapshot, authoritativeRequestIDs: authoritativeRequestIDs) else {
+                return true
+            }
+            guard let identity = retryIdentity(for: snapshot.prompt) else {
+                return true
+            }
+            if let pendingPrompt,
+               pendingRetryIdentity == identity,
+               snapshot.requestId != pendingPrompt.requestId {
+                return false
+            }
+            guard let latest = latestLocalRequestByRetryIdentity[identity] else {
+                return true
+            }
+            return latest.requestId == snapshot.requestId
+        }
+    }
+
+    private nonisolated static func isLocalOptimisticSnapshot(
+        _ snapshot: OfficeHoursSubmittedPromptSnapshot,
+        authoritativeRequestIDs: Set<String>
+    ) -> Bool {
+        !snapshot.isRestored && !authoritativeRequestIDs.contains(snapshot.requestId)
+    }
+
+    private nonisolated static func retryIdentity(for prompt: StructuredPromptRequest) -> String? {
+        guard isOfficeHoursPrompt(prompt) else { return nil }
+        if let signalId = prompt.generation?.signalId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !signalId.isEmpty {
+            return "signal:\(signalId)"
+        }
+        guard prompt.generation?.docType == "day1_candidate_unblock" else { return nil }
+        let question = normalizedQuestionText(for: prompt)
+        guard !question.isEmpty else { return nil }
+        return "day1_candidate_unblock:\(question)"
+    }
+
+    private nonisolated static func normalizedQuestionText(for prompt: StructuredPromptRequest) -> String {
+        prompt.questions
+            .map(\.question)
+            .joined(separator: " ")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private nonisolated static func isOfficeHoursPrompt(_ prompt: StructuredPromptRequest) -> Bool {
+        prompt.generation?.mode?.hasPrefix("office_hours") == true
+            || prompt.title?.caseInsensitiveCompare("Office Hours") == .orderedSame
+    }
+}
+
 struct OfficeHoursLoadingSnapshot: Identifiable, nonisolated Hashable {
     let sessionId: String
     let requestId: String
@@ -2630,9 +2705,9 @@ struct ContentView: View {
                               !notice.scanRoot.isEmpty else { return }
                         viewModel.rescanWorkspace(root: notice.scanRoot, provider: provider)
                     },
-                    scanBlockedNotice: viewModel.scanBlockedNotice,
+                    scanBlockedNotice: viewModel.scanBlockedNotice ?? viewModel.scanDegradedNotice,
                     onScanBlockedRescan: { provider in
-                        guard let notice = viewModel.scanBlockedNotice,
+                        guard let notice = viewModel.scanBlockedNotice ?? viewModel.scanDegradedNotice,
                               !notice.scanRoot.isEmpty else { return }
                         viewModel.rescanWorkspace(root: notice.scanRoot, provider: provider)
                     },
@@ -5652,13 +5727,28 @@ struct ContentView: View {
                     }
 
                     if let activeDraft {
+                        let customerPending = activeDraft.customer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        let problemPending = activeDraft.problem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        let validationActionPending = activeDraft.validationAction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         VStack(spacing: 1) {
-                            officeHoursGoalDetailRow("고객", activeDraft.customer, emphasis: activeDraft.customerEmphasis)
-                            officeHoursGoalDetailRow("문제", activeDraft.problem, emphasis: activeDraft.problemEmphasis)
-                            officeHoursGoalDetailRow("활성/검증 행동", activeDraft.validationAction, strong: true)
+                            officeHoursGoalDetailRow(
+                                "고객",
+                                officeHoursGoalPendingDisplay(activeDraft.customer),
+                                emphasis: customerPending ? [] : activeDraft.customerEmphasis
+                            )
+                            officeHoursGoalDetailRow(
+                                "문제",
+                                officeHoursGoalPendingDisplay(activeDraft.problem),
+                                emphasis: problemPending ? [] : activeDraft.problemEmphasis
+                            )
+                            officeHoursGoalDetailRow(
+                                "활성/검증 행동",
+                                officeHoursGoalPendingDisplay(activeDraft.validationAction),
+                                strong: !validationActionPending
+                            )
                             officeHoursGoalDetailRow(
                                 "근거",
-                                activeDraft.evidenceRefs.prefix(3).joined(separator: ", "),
+                                officeHoursGoalEvidenceDisplay(activeDraft.evidenceRefs),
                                 strong: false
                             )
                         }
@@ -5737,7 +5827,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 7) {
             if let readiness = viewModel.scanResult?.day1AlignmentPlan?.readiness,
                readiness.isReady == false {
-                Text("목표 카드 생성이 차단되었습니다.")
+                Text("질문 답변으로 목표를 확정합니다.")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(OpenDesignOfficeHoursColor.fg)
                 Text(officeHoursReadinessBlockedCopy(readiness))
@@ -5745,10 +5835,10 @@ struct ContentView: View {
                     .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("검증된 고객·문제·행동 근거를 기다리는 중입니다.")
+                Text("목표 질문을 준비하는 중입니다.")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                Text("고객, 문제, 활성/검증 행동 각각에 원문 quote가 있어야 Day 1 목표를 만들 수 있습니다.")
+                Text("폴더에서 찾은 근거와 답변을 합쳐 Day 1 목표를 기록합니다.")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -5759,6 +5849,16 @@ struct ContentView: View {
         .background(openDesignOfficeHoursBackground(cornerRadius: 10, fill: OpenDesignOfficeHoursColor.surface2))
     }
 
+    private func officeHoursGoalPendingDisplay(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Day 1 질문에서 확인" : trimmed
+    }
+
+    private func officeHoursGoalEvidenceDisplay(_ refs: [String]) -> String {
+        let text = refs.prefix(3).joined(separator: ", ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? "scan 근거 없음 · 질문 답변으로 보강" : text
+    }
+
     private func officeHoursReadinessBlockedCopy(_ readiness: Day1AlignmentReadiness) -> String {
         let fields = readiness.missingFields
             .map(officeHoursReadinessFieldLabel)
@@ -5767,8 +5867,8 @@ struct ContentView: View {
         let rootCause = readiness.rootCause?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !rootCause.isEmpty { return rootCause }
         return fields.isEmpty
-            ? "필수 근거가 부족해 Day 1 목표를 만들 수 없습니다."
-            : "\(fields) 근거가 부족해 Day 1 목표를 만들 수 없습니다."
+            ? "필수 근거는 Day 1 질문에서 먼저 확인합니다."
+            : "\(fields) 근거는 Day 1 질문에서 먼저 확인합니다."
     }
 
     private func officeHoursReadinessFieldLabel(_ field: String) -> String {
@@ -6647,6 +6747,7 @@ struct ContentView: View {
 
     private func officeHoursSubmittedPromptSnapshots(for session: ChatSession) -> [OfficeHoursSubmittedPromptSnapshot] {
         var snapshots = officeHoursSubmittedPromptSnapshotsBySession[session.id] ?? []
+        let authoritativeRequestIDs = Set((session.runtime?.officeHours?.promptSnapshots ?? []).map(\.requestId))
         for stored in session.runtime?.officeHours?.promptSnapshots ?? [] {
             guard !snapshots.contains(where: { $0.requestId == stored.requestId }) else { continue }
             let submissions = stored.submissions.map { submission in
@@ -6682,7 +6783,11 @@ struct ContentView: View {
                 )
             )
         }
-        return snapshots.sorted { lhs, rhs in
+        return OfficeHoursSubmittedPromptSnapshotPolicy.visibleSnapshots(
+            snapshots,
+            pendingPrompt: session.pendingUserInput,
+            authoritativeRequestIDs: authoritativeRequestIDs
+        ).sorted { lhs, rhs in
             if lhs.submittedAt == rhs.submittedAt { return lhs.requestId < rhs.requestId }
             return lhs.submittedAt < rhs.submittedAt
         }
@@ -10618,10 +10723,25 @@ struct ContentView: View {
             "Day \(day) goal: \(officeHoursGoalLine(forDay: day))",
             "Day \(day) phase: \(officeHoursPhaseTitle(forDay: day))",
         ]
+        var day1PendingGoalFields: [String] = []
         if let goal = viewModel.day1GoalSelection {
+            let customer = goal.customer.trimmingCharacters(in: .whitespacesAndNewlines)
+            let problem = goal.problem.trimmingCharacters(in: .whitespacesAndNewlines)
+            let validationAction = goal.validationAction.trimmingCharacters(in: .whitespacesAndNewlines)
+            if customer.isEmpty {
+                day1PendingGoalFields.append("customer")
+            }
+            if problem.isEmpty {
+                day1PendingGoalFields.append("problem")
+            }
+            if validationAction.isEmpty {
+                day1PendingGoalFields.append("validationAction")
+            }
             if day == 1 {
                 lines.append("DAY1_LOCKED_GOAL")
-                lines.append("Flow contract: locked Day 1 goal interview.")
+                lines.append(day1PendingGoalFields.isEmpty
+                    ? "Flow contract: locked Day 1 goal interview."
+                    : "Flow contract: selected Day 1 goal lane with pending detail interview.")
             } else {
                 lines.append("DAY1_FOUNDATION_GOAL")
                 lines.append("DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS")
@@ -10634,9 +10754,18 @@ struct ContentView: View {
                 lines.append("Active user contract: 활성 사용자 1명은 선택한 ICP가 제품의 핵심 activation action을 완료한 고유 사람/계정입니다.")
                 lines.append("Active user anti-counts: 가입, waitlist, 페이지뷰, 좋아요, 팔로워, 관심 표현만으로는 활성 사용자로 세지 않습니다.")
             }
-            lines.append(day == 1 ? "Customer: \(goal.customer)" : "Day 1 customer: \(goal.customer)")
-            lines.append(day == 1 ? "Problem: \(goal.problem)" : "Day 1 problem: \(goal.problem)")
-            lines.append("Validation action: \(goal.validationAction)")
+            if !customer.isEmpty {
+                lines.append(day == 1 ? "Customer: \(customer)" : "Day 1 customer: \(customer)")
+            }
+            if !problem.isEmpty {
+                lines.append(day == 1 ? "Problem: \(problem)" : "Day 1 problem: \(problem)")
+            }
+            if !validationAction.isEmpty {
+                lines.append("Validation action: \(validationAction)")
+            }
+            if !day1PendingGoalFields.isEmpty {
+                lines.append("Pending Day 1 goal fields: \(day1PendingGoalFields.joined(separator: ", "))")
+            }
             if !goal.evidenceRefs.isEmpty {
                 lines.append("Evidence refs: \(goal.evidenceRefs.joined(separator: ", "))")
             }
@@ -10720,7 +10849,11 @@ struct ContentView: View {
         }
 
         if viewModel.day1GoalSelection != nil, day == 1 {
-            lines.append("Instruction: Run the Day 1 interview only against DAY1_LOCKED_GOAL. The first response must be exactly one structured input card. Ask one question at a time. Do not write files, create docs, publish posts, or edit project files unless the user explicitly approves later.")
+            if day1PendingGoalFields.isEmpty {
+                lines.append("Instruction: Run the Day 1 interview only against DAY1_LOCKED_GOAL. The first response must be exactly one structured input card. Ask one question at a time. Do not write files, create docs, publish posts, or edit project files unless the user explicitly approves later.")
+            } else {
+                lines.append("Instruction: Run the Day 1 interview against DAY1_LOCKED_GOAL. The 30-day goal lane is selected, but these fields are pending: \(day1PendingGoalFields.joined(separator: ", ")). The first response must be exactly one structured input card asking for the first missing field in this order: customer, problem, validation action. Ask one question at a time. Do not write files, create docs, publish posts, or edit project files unless the user explicitly approves later.")
+            }
         } else if viewModel.day1GoalSelection != nil {
             lines.append("Instruction: Run the Day \(day) office-hours interview only against the Day \(day) goal/carry-forward action above. Do not restart the Day 1 locked-goal interview, and do not reuse the Day 1 first question unless Day \(day) explicitly asks to revisit it. The first response must be exactly one structured input card. Ask one question at a time. Do not write files, create docs, publish posts, or edit project files unless the user explicitly approves later.")
         } else if let mode {

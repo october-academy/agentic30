@@ -41,11 +41,15 @@ test("evidence bundle keeps docs/ICP.md as support evidence while canonical ICP 
 
     assert.equal(bundle.canonicalDocs.icp.path, projectDocPath("icp"));
     assert.equal(bundle.canonicalDocs.icp.found, true);
-    assert.equal(bundle.localFoundCount, 1);
+    assert.equal(bundle.canonicalFoundCount, 1);
+    assert.ok(bundle.discoveredEvidenceCount >= 1);
+    assert.equal(bundle.localFoundCount, bundle.discoveredEvidenceCount);
     assert.ok(bundle.evidenceRefs.some((ref) => ref.path === "docs/ICP.md"));
     assert.equal(bundle.canonicalDocs.icp.path === "docs/ICP.md", false);
 
     const findings = summarizeWorkspaceScanLocalFindings(bundle);
+    assert.equal(findings.canonicalFoundCount, 1);
+    assert.equal(findings.localFoundCount, bundle.discoveredEvidenceCount);
     assert.equal(findings.canonicalDocs.icp.path, projectDocPath("icp"));
     assert.ok(findings.evidencePaths.includes("docs/ICP.md"));
   });

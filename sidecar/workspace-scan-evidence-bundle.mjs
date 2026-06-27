@@ -39,11 +39,15 @@ export async function buildWorkspaceScanEvidenceBundle({
     ...(Array.isArray(evidence?.evidence) ? evidence.evidence : []),
     ...supportingRefs,
   ]).slice(0, MAX_EVIDENCE_REFS);
+  const canonicalFoundCount = Object.values(canonicalDocs).filter((doc) => doc.found).length;
+  const discoveredEvidenceCount = evidenceRefs.length;
 
   return {
     schemaVersion: WORKSPACE_SCAN_EVIDENCE_BUNDLE_SCHEMA_VERSION,
     canonicalDocs,
-    localFoundCount: Object.values(canonicalDocs).filter((doc) => doc.found).length,
+    canonicalFoundCount,
+    discoveredEvidenceCount,
+    localFoundCount: discoveredEvidenceCount,
     missingCanonicalDocs: Object.entries(canonicalDocs)
       .filter(([, doc]) => !doc.found)
       .map(([role, doc]) => ({ role, canonicalPath: doc.canonicalPath })),
@@ -65,6 +69,12 @@ export function summarizeWorkspaceScanLocalFindings(bundle = {}) {
   return {
     schemaVersion: WORKSPACE_SCAN_EVIDENCE_BUNDLE_SCHEMA_VERSION,
     localFoundCount: Number.isFinite(bundle?.localFoundCount) ? bundle.localFoundCount : 0,
+    canonicalFoundCount: Number.isFinite(bundle?.canonicalFoundCount) ? bundle.canonicalFoundCount : 0,
+    discoveredEvidenceCount: Number.isFinite(bundle?.discoveredEvidenceCount)
+      ? bundle.discoveredEvidenceCount
+      : Number.isFinite(bundle?.localFoundCount)
+        ? bundle.localFoundCount
+        : 0,
     canonicalDocs,
     missingCanonicalDocs: Array.isArray(bundle?.missingCanonicalDocs) ? bundle.missingCanonicalDocs : [],
     evidencePaths: Array.isArray(bundle?.evidenceRefs)
@@ -77,6 +87,8 @@ export function formatWorkspaceScanEvidenceBundleForPrompt(bundle = {}) {
   return JSON.stringify({
     schemaVersion: bundle.schemaVersion,
     canonicalDocs: bundle.canonicalDocs,
+    canonicalFoundCount: bundle.canonicalFoundCount,
+    discoveredEvidenceCount: bundle.discoveredEvidenceCount,
     localFoundCount: bundle.localFoundCount,
     missingCanonicalDocs: bundle.missingCanonicalDocs,
     signals: bundle.signals,

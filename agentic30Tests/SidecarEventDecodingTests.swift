@@ -1681,6 +1681,76 @@ struct SidecarEventDecodingTests {
         #expect(event.session?.pendingUserInput?.questions.first?.freeTextPlaceholder?.contains("유료 고객이 없는 개발자") == true)
     }
 
+    @MainActor @Test func decodesDay1HandoffClarityStructuredPromptPayload() throws {
+        let payload = """
+        {
+          "type": "session_updated",
+          "session": {
+            "id": "office-hours-session",
+            "title": "Office Hours · Day 1",
+            "provider": "codex",
+            "model": "gpt-5.1-codex-mini",
+            "status": "awaiting_input",
+            "createdAt": "2026-06-27T00:00:00.000Z",
+            "updatedAt": "2026-06-27T00:00:00.000Z",
+            "messages": [],
+            "pendingUserInput": {
+              "requestId": "request-clarity-1",
+              "sessionId": "office-hours-session",
+              "toolName": "agentic30_request_user_input",
+              "title": "Office Hours 구체화",
+              "createdAt": "2026-06-27T00:00:00.000Z",
+              "questions": [
+                {
+                  "questionId": "day1_clarity_candidate_or_channel",
+                  "header": "첫 후보",
+                  "question": "오늘 실제로 연락할 수 있는 첫 후보의 이름·핸들·소속 채널 중 하나를 적어주세요.",
+                  "helperText": "세그먼트 설명이 아니라 지금 접근 가능한 한 사람이나 한 채널이어야 합니다.",
+                  "options": [
+                    {
+                      "label": "지금 답하기",
+                      "description": "아래 입력칸에 오늘 실행 가능한 한 문장으로 적습니다.",
+                      "nextIntent": "answer_candidate_or_channel"
+                    }
+                  ],
+                  "multiSelect": false,
+                  "allowFreeText": true,
+                  "requiresFreeText": false,
+                  "freeTextPlaceholder": "예: Threads @solo_maker에게 오늘 18시 DM",
+                  "textMode": "short"
+                }
+              ],
+              "generation": {
+                "mode": "office_hours",
+                "docType": "day1_handoff_clarity",
+                "signalId": "day1_clarity_candidate_or_channel",
+                "signalLabel": "후보/채널",
+                "dimensionTotal": 5
+              }
+            },
+            "runtime": {
+              "officeHours": {
+                "active": true,
+                "source": "day1_handoff_clarity",
+                "day": 1
+              }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let event = try decoder.decode(SidecarEvent.self, from: payload)
+
+        #expect(event.type == "session_updated")
+        #expect(event.session?.pendingUserInput?.toolName == "agentic30_request_user_input")
+        #expect(event.session?.pendingUserInput?.generation?.mode == "office_hours")
+        #expect(event.session?.pendingUserInput?.generation?.docType == "day1_handoff_clarity")
+        #expect(event.session?.pendingUserInput?.generation?.signalId == "day1_clarity_candidate_or_channel")
+        #expect(event.session?.pendingUserInput?.generation?.signalLabel == "후보/채널")
+        #expect(event.session?.pendingUserInput?.questions.first?.allowFreeText == true)
+        #expect(event.session?.pendingUserInput?.questions.first?.requiresFreeText == false)
+    }
+
     @MainActor @Test func decodesBipCoachStateWithOwningSession() throws {
         let payload = """
         {
@@ -1791,16 +1861,12 @@ struct SidecarEventDecodingTests {
     }
 
     @MainActor @Test func decodesDegradedWorkspaceScanResult() throws {
-        // Fail-open degraded scan: provider verification could not run (no auth)
-        // but a local canonical ICP exists, so the sidecar completes the scan on
-        // local signals and attaches additive degraded markers + an advisory
-        // (non-blocking) recovery notice. The result is otherwise a normal scan
-        // result and must keep decoding the canonical doc fields.
         let payload = """
         {
           "type": "workspace_scan_result",
           "scanRoot": "/Users/october/prj/myapp",
           "icp": ".agentic30/docs/ICP.md",
+          "foundCount": 2,
           "degraded": true,
           "degradedReason": "unavailable",
           "degradedProvider": "codex",
@@ -1833,6 +1899,7 @@ struct SidecarEventDecodingTests {
 
         #expect(event.type == "workspace_scan_result")
         #expect(event.icp == ".agentic30/docs/ICP.md")
+        #expect(event.foundCount == 2)
         #expect(event.degraded == true)
         #expect(event.degradedReason == "unavailable")
         #expect(event.degradedProvider == "codex")

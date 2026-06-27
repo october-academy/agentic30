@@ -29,6 +29,9 @@ import {
   inspectOfficeHoursUiCopyRequest,
   normalizeOfficeHoursUiCopyRequest,
 } from "../sidecar/office-hours-copy-rules.mjs";
+import {
+  buildNoCandidateUnblockCard,
+} from "../sidecar/office-hours-first-candidate-host.mjs";
 
 test("ERR_SELF_REPORT_COUNTED_AS_PROOF", () => {
   assert.throws(() => {
@@ -416,6 +419,21 @@ test("prepareOfficeHoursStructuredInputRequest accepts explicit active-user-defi
     ],
   );
   assert.equal(prepared.generation.signalId, "get_users_active_user_definition");
+});
+
+test("prepareOfficeHoursStructuredInputRequest accepts no-candidate unblock card contract", () => {
+  const prepared = prepareOfficeHoursStructuredInputRequest(buildNoCandidateUnblockCard({
+    sessionId: "session_no_candidate",
+    toolName: "agentic30_request_user_input",
+  }));
+
+  const question = prepared.questions[0];
+  assert.equal(prepared.generation.docType, "day1_candidate_unblock");
+  assert.equal(prepared.generation.signalId, "get_users_first_candidate_unblock");
+  assert.equal(question.allowFreeText, true);
+  assert.equal(question.requiresFreeText, false);
+  assert.equal(question.primaryTextInput.required, true);
+  assert.match(question.primaryTextInput.validationMessage, /적어야 합니다/);
 });
 
 test("Office Hours Korean UI-copy humanizer preserves adaptive locked Day 1 get-users cards", () => {

@@ -2066,9 +2066,13 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
   fsImpl = fs,
   onProgress = null,
   runEvidenceJudge = false,
+  evidenceJudgePolicy = runEvidenceJudge ? "blocking" : "off",
   judgeOfficeHoursDocs = judgeOfficeHoursEvidenceDocuments,
 } = {}) {
   let nextState = normalizeIddSetupState(state);
+  const normalizedEvidenceJudgePolicy = ["blocking", "advisory", "off"].includes(evidenceJudgePolicy)
+    ? evidenceJudgePolicy
+    : (runEvidenceJudge ? "blocking" : "off");
   const evidenceState = await buildOfficeHoursEvidenceState({
     workspaceRoot,
     day1Handoff,
@@ -2079,11 +2083,11 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
     ? mergeDay1HandoffWithEvidence(day1Handoff, evidenceState)
     : day1Handoff;
   let judgeResult = null;
-  // GATE-01: fail-closed. When the judge is requested we always run it, even
-  // with no reducer evidence — the judge's hard-evidence gate turns "no
-  // evidence" into a blocked save instead of silently writing the docs. The
-  // previous `&& hasEvidence` let new/Day0 users bypass the judge entirely.
-  if (runEvidenceJudge) {
+  // Default policy remains fail-closed. Office Hours bulk handoff can opt into
+  // advisory mode after the deterministic clarity gate has passed: hard
+  // evidence debt is recorded, but absence of hard evidence no longer blocks
+  // document creation.
+  if (normalizedEvidenceJudgePolicy !== "off") {
     const documents = Object.fromEntries(DAY1_HANDOFF_DOC_TYPES.map((type) => {
       const doc = day1HandoffDocByType(type);
       return [type, doc ? buildDay1HandoffResponseText(doc, { day1Handoff: mergedHandoff }) : ""];
@@ -2100,21 +2104,26 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
         judgeResult,
         fsImpl,
       }).catch(() => null);
-      const failedState = setIddSetupError(nextState, {
-        provider,
-        docType: DAY1_HANDOFF_DOC_TYPES[0],
-        message: `Office Hours 문서 judge가 ${judgeResult?.score ?? 0}/10으로 문서 리뷰를 보류했습니다. 기준은 ${OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE}/10입니다.`,
-      });
-      return {
-        state: failedState,
-        written: [],
-        blocked: true,
-        evidenceState,
-        judgeResult,
-        evidenceDebtCard: renderOfficeHoursEvidenceDebtCard(evidenceState),
-      };
+      if (normalizedEvidenceJudgePolicy === "blocking") {
+        const failedState = setIddSetupError(nextState, {
+          provider,
+          docType: DAY1_HANDOFF_DOC_TYPES[0],
+          message: `Office Hours 문서 judge가 ${judgeResult?.score ?? 0}/10으로 문서 리뷰를 보류했습니다. 기준은 ${OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE}/10입니다.`,
+        });
+        return {
+          state: failedState,
+          written: [],
+          blocked: true,
+          evidenceState,
+          judgeResult,
+          evidenceDebtCard: renderOfficeHoursEvidenceDebtCard(evidenceState),
+        };
+      }
     }
   }
+  const shouldPersistEvidenceSidecar = hasEvidence
+    || normalizedEvidenceJudgePolicy === "advisory"
+    || Boolean(judgeResult);
   const written = [];
   for (const type of DAY1_HANDOFF_DOC_TYPES) {
     const doc = day1HandoffDocByType(type);
@@ -2132,7 +2141,7 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
     await onProgress?.({ stage: "recorded", doc, state: nextState });
     nextState = await writeDay1HandoffDocument(workspaceRoot, nextState, doc, {
       day1Handoff: mergedHandoff,
-      evidenceState: hasEvidence ? evidenceState : null,
+      evidenceState: shouldPersistEvidenceSidecar ? evidenceState : null,
       judgeResult,
       fsImpl,
     });
@@ -2143,9 +2152,9 @@ export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
     state: normalizeIddSetupState(nextState),
     written,
     blocked: false,
-    evidenceState: hasEvidence ? evidenceState : null,
+    evidenceState: shouldPersistEvidenceSidecar ? evidenceState : null,
     judgeResult,
-    evidenceDebtCard: hasEvidence ? renderOfficeHoursEvidenceDebtCard(evidenceState) : "",
+    evidenceDebtCard: shouldPersistEvidenceSidecar ? renderOfficeHoursEvidenceDebtCard(evidenceState) : "",
   };
 }
 

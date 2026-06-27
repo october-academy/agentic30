@@ -564,6 +564,7 @@ final class WorkspaceSettingsTests: XCTestCase {
             day1SituationSummary: nil,
             day1GoalSelection: nil,
             agentic30Gitignore: nil,
+            foundCount: 4,
             error: nil
         )
     }

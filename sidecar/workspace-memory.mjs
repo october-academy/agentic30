@@ -802,9 +802,25 @@ function normalizeStructuredPromptQuestion(value = {}) {
     ...(typeof source.allowFreeText === "boolean" ? { allowFreeText: source.allowFreeText } : {}),
     ...(typeof source.requiresFreeText === "boolean" ? { requiresFreeText: source.requiresFreeText } : {}),
     ...(nullableCleanString(source.freeTextPlaceholder ?? source.free_text_placeholder, 400) ? { freeTextPlaceholder: nullableCleanString(source.freeTextPlaceholder ?? source.free_text_placeholder, 400) } : {}),
+    ...(normalizeStructuredPromptPrimaryTextInput(source.primaryTextInput ?? source.primary_text_input) ? { primaryTextInput: normalizeStructuredPromptPrimaryTextInput(source.primaryTextInput ?? source.primary_text_input) } : {}),
     ...(nullableCleanString(source.textMode ?? source.text_mode, 40) ? { textMode: nullableCleanString(source.textMode ?? source.text_mode, 40) } : {}),
   };
   return output;
+}
+
+function normalizeStructuredPromptPrimaryTextInput(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  if (!source) return null;
+  const label = cleanString(source.label, 240);
+  const placeholder = cleanString(source.placeholder ?? source.freeTextPlaceholder ?? source.free_text_placeholder, 400);
+  if (!label || !placeholder) return null;
+  return {
+    label,
+    placeholder,
+    ...(typeof source.required === "boolean" ? { required: source.required } : {}),
+    ...(nullableCleanString(source.submitLabel ?? source.submit_label, 120) ? { submitLabel: nullableCleanString(source.submitLabel ?? source.submit_label, 120) } : {}),
+    ...(nullableCleanString(source.validationMessage ?? source.validation_message, 400) ? { validationMessage: nullableCleanString(source.validationMessage ?? source.validation_message, 400) } : {}),
+  };
 }
 
 function normalizeStructuredPromptOptions(value) {

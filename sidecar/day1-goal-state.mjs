@@ -45,7 +45,7 @@ export function normalizeDay1GoalSelection(value = {}, { now = new Date() } = {}
   const goalType = cleanToken(value.goalType ?? value.goal_type);
   if (!GOAL_TYPES.has(goalType)) return null;
 
-  const rawGoalText = cleanString(value.goalText ?? value.goal_text, 500);
+  const rawGoalText = cleanString(value.goalText ?? value.goal_text, 500) || buildDay1GoalText({ goalType });
   const rawCustomer = cleanString(value.customer, 300);
   const problem = cleanString(value.problem, 500);
   const validationAction = cleanString(value.validationAction ?? value.validation_action, 500);
@@ -57,7 +57,7 @@ export function normalizeDay1GoalSelection(value = {}, { now = new Date() } = {}
     problem,
     validationAction,
   });
-  if (!goalText || !customer || !problem || !validationAction) return null;
+  if (!goalText) return null;
 
   const evidenceRefs = normalizeStringArray(value.evidenceRefs ?? value.evidence_refs, 12, 260);
   const proofSink = PROOF_SINKS.has(cleanToken(value.proofSink ?? value.proof_sink))
@@ -87,14 +87,32 @@ export function normalizeDay1GoalSelection(value = {}, { now = new Date() } = {}
 export function buildDay1GoalProjectContext(selection = null) {
   const goal = normalizeDay1GoalSelection(selection);
   if (!goal) return null;
-  return {
-    targetUser: goal.customer,
-    problem: goal.problem,
+  const pendingGoalFields = [];
+  const context = {
     goal: goal.goalText,
-    purpose: goal.validationAction,
     evidence: goal.evidenceRefs,
     confidence: "high",
   };
+  if (goal.customer) {
+    context.targetUser = goal.customer;
+  } else {
+    pendingGoalFields.push("customer");
+  }
+  if (goal.problem) {
+    context.problem = goal.problem;
+  } else {
+    pendingGoalFields.push("problem");
+  }
+  if (goal.validationAction) {
+    context.purpose = goal.validationAction;
+  } else {
+    pendingGoalFields.push("validationAction");
+  }
+  if (pendingGoalFields.length > 0) {
+    context.pendingGoalFields = pendingGoalFields;
+    context.confidence = "low";
+  }
+  return context;
 }
 
 export function fingerprintGoalSource(value = {}) {

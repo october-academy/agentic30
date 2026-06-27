@@ -876,7 +876,7 @@ test("Day 1 document handoff writes one canonical doc immediately without auto-s
   assert.equal(stderr.trim(), "");
 });
 
-test("Day 1 bulk document handoff writes all canonical docs without structured prompts", async () => {
+test("Day 1 bulk document handoff writes all canonical docs without structured prompts when handoff is concrete", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-handoff-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-handoff-app-"));
   await writeDay1Fixture(root, appSupportPath);
@@ -916,16 +916,20 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
       sessionId: created.session.id,
       provider: "codex",
       day1Handoff: {
-        northStarGoal: "첫 고객 반응 검증",
-        weeklyProof: "이번 주 3명 인터뷰 완료",
-        targetUser: "macOS에서 AI 코딩 도구를 쓰는 전업 1인 개발자",
-        problem: "무엇을 팔아야 할지 모른다",
-        currentAlternative: "노션과 스프레드시트로 인터뷰 메모를 복사함",
-        entryPoint: "첫 인터뷰 카드",
-        nextAction: "이번 주 3명 인터뷰 완료",
+        northStarGoal: "2026-06-28 18시까지 Threads DM으로 전업 1인 개발자 1명에게 3만원 파일럿 요청을 보내고 답변을 확인한다.",
+        weeklyProof: "내일 18시까지 답변 1건 또는 거절 1건을 캡처한다.",
+        targetUser: "Threads @solo_maker 채널의 macOS AI 코딩 도구를 쓰는 전업 1인 개발자 김OO",
+        problem: "유료 고객 없이 만든 기능이 실제 구매 요청으로 이어지는지 모른다.",
+        currentAlternative: "Notion과 스프레드시트로 후보와 요청 문구를 수동 추적하며 매주 3시간을 잃는다.",
+        entryPoint: "3만원 45분 파일럿 제안 DM",
+        nextAction: "오늘 18시까지 Threads @solo_maker에게 3만원 파일럿 요청 DM을 보내고 .agentic30/evidence/day1-dm.png에 오늘 20시까지 캡처 저장",
         nonGoals: ["넓은 고객 후보", "자동화 확장"],
+        sourceQuotes: [
+          "후보/채널: Threads @solo_maker",
+          "증거 위치/기한: .agentic30/evidence/day1-dm.png 오늘 20시",
+        ],
         qualityScore: "9.0/10",
-        markdown: "# 핵심 가설",
+        markdown: "# 핵심 가설\nThreads @solo_maker에게 3만원 파일럿 요청 DM을 보내고 오늘 20시까지 캡처 저장한다.",
       },
     }));
 
@@ -939,6 +943,13 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
       events.some((event) =>
         (event.type === "session_created" || event.type === "session_updated")
         && event.session?.pendingUserInput?.generation?.mode === "day1_handoff"
+      ),
+      false,
+    );
+    assert.equal(
+      events.some((event) =>
+        (event.type === "session_created" || event.type === "session_updated")
+        && event.session?.pendingUserInput?.generation?.docType === "day1_handoff_clarity"
       ),
       false,
     );
@@ -964,7 +975,7 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
   assert.equal(stderr.trim(), "");
 });
 
-test("Day 1 bulk document handoff without session creates structured review and loops until hard evidence passes", async () => {
+test("Day 1 bulk document handoff asks clarity instead of document judge when handoff is vague", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-blocked-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-blocked-app-"));
   await writeDay1Fixture(root, appSupportPath);
@@ -992,7 +1003,6 @@ test("Day 1 bulk document handoff without session creates structured review and 
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    const writeCommandEventStart = events.length;
     ws.send(JSON.stringify({
       type: "day1_doc_handoff_write_all",
       provider: "codex",
@@ -1010,145 +1020,174 @@ test("Day 1 bulk document handoff without session creates structured review and 
       },
     }));
 
-    const reviewSessionCreated = await waitForEvent(events, (event) =>
-      event.type === "session_created"
-      && event.session?.title === "Day 1 문서 리뷰"
+    const clarity = await waitForEvent(events, (event) =>
+      (event.type === "session_created" || event.type === "session_updated")
+      && event.session?.pendingUserInput?.generation?.docType === "day1_handoff_clarity"
     );
-    const blocked = await waitForEvent(events, (event) =>
-      event.type === "session_updated"
-      && event.session?.pendingUserInput?.generation?.docType === "day1_doc_handoff_judge"
-    );
-    const blockedSetupState = await waitForEvent(events, (event) =>
-      event.type === "idd_setup_state"
-      && String(event.iddSetupError?.message || "").includes("문서 리뷰를 보류")
-    );
-    const blockedIndex = events.findIndex((event, index) =>
-      index >= writeCommandEventStart && event === blocked
-    );
-    const blockedSetupIndex = events.findIndex((event, index) =>
-      index >= writeCommandEventStart && event === blockedSetupState
-    );
-    assert.equal(blocked.session.id, reviewSessionCreated.session.id);
-    assert.ok(blockedIndex >= 0, "expected blocked session snapshot after write command");
-    assert.ok(blockedSetupIndex >= 0, "expected blocked setup state after write command");
-    assert.ok(
-      blockedIndex < blockedSetupIndex,
-      "blocked session snapshot with structured prompt must precede amber setup error",
-    );
-    const pending = blocked.session.pendingUserInput;
+    const pending = clarity.session.pendingUserInput;
 
-    assert.equal(blocked.session.status, "awaiting_input");
-    assert.equal(pending.title, "Office Hours 저장 전 근거 보완");
-    assert.equal(pending.intro?.title, "문서 저장 전 근거 보완");
-    assert.match(pending.intro?.body || "", /정식 문서 저장 전 필요한 증거를 하나 고르세요/);
-    assert.doesNotMatch(pending.intro?.body || "", /자유 입력 대신/);
+    assert.notEqual(clarity.session.title, "Day 1 문서 리뷰");
+    assert.equal(clarity.session.status, "awaiting_input");
+    assert.equal(pending.title, "Office Hours 구체화");
+    assert.equal(pending.intro, undefined);
     assert.equal(pending.generation?.mode, "office_hours");
-    assert.equal(pending.generation?.signalLabel, "저장 전 근거 보완");
+    assert.equal(pending.generation?.signalId, "day1_clarity_candidate_or_channel");
+    assert.equal(pending.generation?.signalLabel, "후보/채널");
     assert.equal(pending.toolName, "agentic30_request_user_input");
-    assert.equal(pending.questions?.[0]?.allowFreeText, false);
+    assert.equal(pending.questions?.[0]?.allowFreeText, true);
     assert.equal(pending.questions?.[0]?.requiresFreeText, false);
-    assert.ok((pending.questions?.[0]?.options || []).length >= 3);
-    assert.ok(pending.questions[0].options.some((option) => option.nextIntent === "actual_payment_or_contract"));
-    assert.equal(Object.hasOwn(pending.questions[0], "freeTextPlaceholder"), false);
+    assert.match(pending.questions?.[0]?.question || "", /첫 후보/);
+    assert.equal(
+      events.some((event) =>
+        (event.type === "session_created" || event.type === "session_updated")
+        && event.session?.title === "Day 1 문서 리뷰"
+      ),
+      false,
+    );
+    assert.equal(
+      events.some((event) =>
+        (event.type === "session_created" || event.type === "session_updated")
+        && event.session?.pendingUserInput?.generation?.docType === "day1_doc_handoff_judge"
+      ),
+      false,
+    );
     await sleep(400);
     const persistedSessions = JSON.parse(
       await fs.readFile(path.join(appSupportPath, "sessions.json"), "utf8"),
     );
-    const persistedReviewSession = persistedSessions.sessions.find((session) => session.id === blocked.session.id);
+    const persistedReviewSession = persistedSessions.sessions.find((session) => session.id === clarity.session.id);
     assert.equal(
       persistedReviewSession?.pendingUserInput?.requestId,
       pending.requestId,
-      "Day 1 judge prompt must survive Office Hours question-cap cleanup",
+      "Day 1 clarity prompt must survive Office Hours question-cap cleanup",
     );
     await fs.stat(path.join(
       appSupportPath,
       "user-input-requests",
-      `${blocked.session.id}--${pending.requestId}.json`,
+      `${clarity.session.id}--${pending.requestId}.json`,
     ));
     assert.equal(
-      events.some((event) =>
-        event.type === "session_updated"
-        && event.session?.id === blocked.session.id
-        && event.session?.runtime?.day1DocHandoffReviewAttempt === blocked.session.runtime?.day1DocHandoffReviewAttempt
-        && event.session?.pendingUserInput == null
-      ),
-      false,
-      "Day 1 judge prompt must not be cleared after it is created",
-    );
-    assert.equal(
-      blocked.session.messages.some((message) =>
-        String(message.content || "").includes("GOAL/ICP/VALUES/SPEC 저장을 보류했습니다.")
-      ),
-      false,
-    );
-    assert.equal(
-      blocked.session.messages.some((message) =>
-        String(message.content || "").includes("문서 리뷰를 보류했습니다.")
-      ),
-      false,
-    );
-
-    const weakOption = pending.questions[0].options.find((option) => option.nextIntent === "defer_until_hard_evidence");
-    assert.ok(weakOption, "expected weak defer option");
-    ws.send(JSON.stringify({
-      type: "submit_user_input",
-      sessionId: blocked.session.id,
-      requestId: pending.requestId,
-      responses: [{
-        question: pending.questions[0].question,
-        selectedOptions: [weakOption.label],
-        freeText: "",
-      }],
-    }));
-    await waitForEvent(events, (event) =>
-      event.type === "idd_setup_progress"
-      && event.sessionId === blocked.session.id
-      && event.requestId === pending.requestId
-      && event.stage === "review_retry"
-    );
-    const secondBlocked = await waitForEvent(events, (event) =>
-      event.type === "session_updated"
-      && event.session?.id === blocked.session.id
-      && event.session?.pendingUserInput?.generation?.docType === "day1_doc_handoff_judge"
-      && event.session.pendingUserInput.requestId !== pending.requestId
-    );
-    const secondPending = secondBlocked.session.pendingUserInput;
-    assert.equal(secondBlocked.session.status, "awaiting_input");
-    assert.equal(secondPending.questions?.[0]?.allowFreeText, false);
-    assert.notEqual(secondPending.requestId, pending.requestId);
-    assert.equal(
-      secondBlocked.session.messages.some((message) =>
-        String(message.content || "").includes(weakOption.label)
-      ),
-      false,
+      persistedReviewSession?.runtime?.day1HandoffClarity?.lastSignalId,
+      "day1_clarity_candidate_or_channel",
     );
     await assert.rejects(
       fs.stat(path.join(root, ".agentic30", "docs", "GOAL.md")),
       { code: "ENOENT" },
     );
 
-    const hardOption = secondPending.questions[0].options.find((option) => option.nextIntent === "actual_payment_or_contract");
-    assert.ok(hardOption, "expected hard evidence option");
+    const noCandidateOption = pending.questions[0].options.find((option) => option.nextIntent === "unblock_action");
+    assert.ok(noCandidateOption, "expected unblock option");
     ws.send(JSON.stringify({
       type: "submit_user_input",
-      sessionId: blocked.session.id,
-      requestId: secondPending.requestId,
+      sessionId: clarity.session.id,
+      requestId: pending.requestId,
       responses: [{
-        question: secondPending.questions[0].question,
-        selectedOptions: [hardOption.label],
-        freeText: "",
+        question: pending.questions[0].question,
+        selectedOptions: [noCandidateOption.label],
+        freeText: "아직 후보 없음",
       }],
     }));
+    const unblock = await waitForEvent(events, (event) =>
+      event.type === "session_updated"
+      && event.session?.id === clarity.session.id
+      && event.session?.pendingUserInput?.generation?.docType === "day1_handoff_clarity"
+      && event.session.pendingUserInput.generation.signalId === "day1_clarity_unblock_action"
+      && event.session.pendingUserInput.requestId !== pending.requestId
+    );
+    assert.equal(unblock.session.status, "awaiting_input");
+    assert.notEqual(unblock.session.pendingUserInput.generation.signalId, pending.generation.signalId);
+    assert.equal(
+      events.some((event) =>
+        (event.type === "session_created" || event.type === "session_updated")
+        && event.session?.pendingUserInput?.generation?.docType === "day1_doc_handoff_judge"
+      ),
+      false,
+    );
+
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
+test("Day 1 bulk document handoff saves concrete handoff with advisory evidence debt", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-advisory-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-advisory-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
+      AGENTIC30_TEST_STUB_PROVIDER: "1",
+      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
+
+    ws.send(JSON.stringify({
+      type: "day1_doc_handoff_write_all",
+      provider: "codex",
+      day1Handoff: {
+        northStarGoal: "2026-06-28 18시까지 Threads DM으로 전업 1인 개발자 1명에게 3만원 파일럿 요청을 보내고 답변을 확인한다.",
+        weeklyProof: "내일 18시까지 답변 1건 또는 거절 1건을 캡처한다.",
+        targetUser: "Threads @solo_maker 채널의 macOS AI 코딩 도구를 쓰는 전업 1인 개발자 김OO",
+        problem: "유료 고객 없이 만든 기능이 실제 구매 요청으로 이어지는지 모른다.",
+        currentAlternative: "Notion과 스프레드시트로 후보와 요청 문구를 수동 추적하며 매주 3시간을 잃는다.",
+        entryPoint: "3만원 45분 파일럿 제안 DM",
+        nextAction: "오늘 18시까지 Threads @solo_maker에게 3만원 파일럿 요청 DM을 보내고 .agentic30/evidence/day1-dm.png에 오늘 20시까지 캡처 저장",
+        nonGoals: ["넓은 고객 후보", "자동화 확장"],
+        assumptions: ["아직 외부 하드 증거는 없으므로 Day 2에서 evidence debt를 갚는다."],
+        sourceQuotes: [
+          "후보/채널: Threads @solo_maker",
+          "증거 위치/기한: .agentic30/evidence/day1-dm.png 오늘 20시",
+        ],
+        qualityScore: "8.1/10",
+        markdown: "# 핵심 가설\nThreads @solo_maker에게 3만원 파일럿 요청 DM을 보내고 오늘 20시까지 캡처 저장한다.",
+      },
+    }));
+
     const completed = await waitForEvent(events, (event) =>
       event.type === "idd_setup_state"
       && event.iddSetupComplete === true
       && event.iddDocPreviews?.every((preview) => /^(written|approved)/.test(preview.status))
+    );
+    assert.equal(
+      events.some((event) =>
+        (event.type === "session_created" || event.type === "session_updated")
+        && event.session?.pendingUserInput?.generation?.docType === "day1_doc_handoff_judge"
+      ),
+      false,
     );
     assert.equal(completed.iddDocPreviews.length, 4);
     for (const rel of [".agentic30/docs/GOAL.md", ".agentic30/docs/ICP.md", ".agentic30/docs/VALUES.md", ".agentic30/docs/SPEC.md"]) {
       const content = await fs.readFile(path.join(root, rel), "utf8");
       assert.match(content, /agentic30:day1-handoff:start/);
     }
+    const debt = JSON.parse(await fs.readFile(path.join(root, ".agentic30", "docs", "OFFICE_HOURS_EVIDENCE_DEBT.json"), "utf8"));
+    assert.equal(debt.lastJudgeResult?.passed, false);
+    assert.ok(Array.isArray(debt.evidenceDebt));
+    const sidecar = JSON.parse(await fs.readFile(path.join(root, ".agentic30", "docs", "GOAL.evidence.json"), "utf8"));
+    assert.equal(sidecar.lastJudgeResult?.passed, false);
 
     await closeWebSocket(ws);
     ws = null;
