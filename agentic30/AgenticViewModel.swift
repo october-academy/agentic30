@@ -8885,6 +8885,8 @@ final class AgenticViewModel: ObservableObject {
             return "mac_sidecar_connection_state"
         case "office_hours_no_next_question":
             return "mac_office_hours_no_next_question"
+        case "office_hours_pending_state_unrecoverable":
+            return "mac_office_hours_pending_state_unrecoverable"
         default:
             return nil
         }

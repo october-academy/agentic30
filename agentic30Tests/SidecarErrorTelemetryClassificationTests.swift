@@ -12,6 +12,12 @@ final class SidecarErrorTelemetryClassificationTests: XCTestCase {
             ),
             "mac_office_hours_no_next_question"
         )
+        XCTAssertEqual(
+            AgenticViewModel.nonExceptionSidecarErrorTelemetryEvent(
+                forErrorKind: "office_hours_pending_state_unrecoverable"
+            ),
+            "mac_office_hours_pending_state_unrecoverable"
+        )
     }
 
     func testKnownRecoverableKindsStayNonException() {
@@ -50,6 +56,11 @@ final class SidecarErrorTelemetryClassificationTests: XCTestCase {
             ("provider_auth_required", "mac_provider_auth_required", "codex"),
             ("provider_aborted", "mac_provider_aborted", "claude"),
             ("office_hours_no_next_question", "mac_office_hours_no_next_question", "codex"),
+            (
+                "office_hours_pending_state_unrecoverable",
+                "mac_office_hours_pending_state_unrecoverable",
+                "codex"
+            ),
         ]
 
         for (errorKind, expectedTelemetryEvent, provider) in cases {
