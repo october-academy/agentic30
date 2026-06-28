@@ -1,0 +1,1021 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import Database from "better-sqlite3";
+
+export const RECORDER_STORE_SCHEMA_VERSION = 2;
+
+export const RECORDER_BASE_TABLES = Object.freeze([
+  "frames",
+  "media_assets",
+  "audio_chunks",
+  "transcript_segments",
+  "clipboard_events",
+  "memory_items",
+  "product_events",
+  "evidence_candidates",
+  "recorder_audit",
+  "api_tokens",
+  "pipe_definitions",
+  "pipe_runs",
+]);
+
+export const RECORDER_FTS_TABLES = Object.freeze([
+  "frames_text_fts",
+  "transcript_text_fts",
+  "memory_items_fts",
+  "product_events_fts",
+]);
+
+const BASE_TABLE_SET = new Set(RECORDER_BASE_TABLES);
+
+const TABLE_COLUMNS = Object.freeze({
+  frames: [
+    "id", "schema_version", "workspace_id", "project_id", "captured_at", "monitor_id",
+    "capture_trigger", "app_name", "window_title", "browser_url", "browser_domain",
+    "browser_url_normalized", "document_path", "snapshot_asset_id", "snapshot_sha256",
+    "content_hash", "simhash", "text_source", "accessibility_text", "ocr_text",
+    "redacted_text", "redaction_status", "privacy_state", "data_class", "safe_for_search",
+    "safe_for_memory", "safe_for_export", "created_at", "deleted_at",
+  ],
+  media_assets: [
+    "id", "asset_type", "relative_path", "sha256", "byte_size", "encrypted", "workspace_id",
+    "project_id", "created_at", "deleted_at",
+  ],
+  audio_chunks: [
+    "id", "workspace_id", "project_id", "started_at", "ended_at", "source", "audio_asset_id",
+    "transcript_status", "redaction_status", "privacy_state", "created_at", "deleted_at",
+  ],
+  transcript_segments: [
+    "id", "audio_chunk_id", "workspace_id", "project_id", "started_at", "ended_at",
+    "speaker_label", "text", "redacted_text", "redaction_status", "privacy_state",
+    "safe_for_search", "safe_for_memory", "created_at", "deleted_at",
+  ],
+  clipboard_events: [
+    "id", "workspace_id", "project_id", "occurred_at", "event_kind", "capture_mode",
+    "app_name", "window_title", "content_type", "content_hash", "content_text",
+    "redacted_text", "redaction_status", "privacy_state", "safe_for_search",
+    "safe_for_memory", "safe_for_export", "content_captured", "created_at", "deleted_at",
+  ],
+  memory_items: [
+    "id", "workspace_id", "project_id", "memory_type", "title", "summary", "source_ids_json",
+    "time_range_json", "redaction_status", "privacy_state", "safe_for_search",
+    "safe_for_memory", "safe_for_export", "confidence", "created_by", "created_at",
+    "deleted_at",
+  ],
+  product_events: [
+    "id", "workspace_id", "project_id", "event_type", "occurred_at", "title", "summary",
+    "source_ids_json", "safe_for_search", "safe_for_memory", "safe_for_export",
+    "verification_status", "proof_ledger_event_id", "confidence", "created_by",
+    "created_at", "deleted_at",
+  ],
+  evidence_candidates: [
+    "id", "workspace_id", "project_id", "candidate_status", "source_state", "claim",
+    "proof_kind", "source_ids_json", "proof_ledger_mapping_json", "evidence_debt_json",
+    "immutable_fingerprint", "idempotency_key", "verifier_result_json",
+    "proof_ledger_event_id", "created_by", "created_at", "reviewed_at", "deleted_at",
+  ],
+  recorder_audit: [
+    "id", "request_id", "actor_type", "actor_id", "workspace_id", "project_id", "endpoint",
+    "access_level", "source_ids_json", "decision", "reason", "created_at",
+  ],
+  api_tokens: [
+    "id", "token_hash", "client_id", "client_name", "actor_type", "scopes_json",
+    "issued_by", "issued_at", "expires_at", "revoked_at", "last_used_at",
+  ],
+  pipe_definitions: [
+    "id", "workspace_id", "project_id", "path", "name", "schedule", "enabled",
+    "pipe_kind", "permission_manifest_json", "created_at", "updated_at",
+  ],
+  pipe_runs: [
+    "id", "pipe_id", "workspace_id", "project_id", "trigger_reason", "status", "started_at",
+    "ended_at", "input_manifest_json", "output_manifest_json", "audit_log_json",
+    "error_message",
+  ],
+});
+
+export class RecorderStoreError extends Error {
+  constructor(code, message, details = {}) {
+    super(`${code}: ${message}`);
+    this.name = "RecorderStoreError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
+export class RecorderStore {
+  constructor({
+    dbPath = null,
+    appSupportRoot = null,
+    databaseFactory = (filename) => new Database(filename),
+  } = {}) {
+    this.dbPath = dbPath
+      ? path.resolve(dbPath)
+      : resolveRecorderDbPath({ appSupportRoot });
+    this.databaseFactory = databaseFactory;
+    this.db = null;
+  }
+
+  static resolveDbPath(options = {}) {
+    return resolveRecorderDbPath(options);
+  }
+
+  open() {
+    if (this.db) return this;
+    ensureRecorderDirectory(path.dirname(this.dbPath));
+    this.db = this.databaseFactory(this.dbPath);
+    this.db.pragma("foreign_keys = ON");
+    this.db.pragma("journal_mode = WAL");
+    migrateRecorderDatabase(this.db);
+    ensureRecorderSqlInspectorViews(this.db);
+    return this;
+  }
+
+  close() {
+    if (!this.db) return;
+    this.db.close();
+    this.db = null;
+  }
+
+  userVersion() {
+    return this.database().pragma("user_version", { simple: true });
+  }
+
+  baseTables() {
+    return this.database()
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (SELECT value FROM json_each(?)) ORDER BY name")
+      .all(JSON.stringify(RECORDER_BASE_TABLES))
+      .map((row) => row.name);
+  }
+
+  ftsTables() {
+    return this.database()
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (SELECT value FROM json_each(?)) ORDER BY name")
+      .all(JSON.stringify(RECORDER_FTS_TABLES))
+      .map((row) => row.name);
+  }
+
+  insertRecord(table, record = {}) {
+    const db = this.database();
+    const tableName = assertBaseTable(table);
+    const allowedColumns = new Set(TABLE_COLUMNS[tableName]);
+    const entries = Object.entries(record)
+      .filter(([column]) => allowedColumns.has(column));
+    if (!entries.length) {
+      fail("ERR_RECORDER_STORE_EMPTY_INSERT", `insertRecord(${tableName}) requires at least one valid column`);
+    }
+    const columns = entries.map(([column]) => column);
+    const placeholders = columns.map((column) => `@${column}`);
+    const values = Object.fromEntries(entries);
+    db.prepare(
+      `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`,
+    ).run(values);
+    return record;
+  }
+
+  withTransaction(callback) {
+    if (typeof callback !== "function") {
+      fail("ERR_RECORDER_STORE_INVALID_TRANSACTION", "withTransaction requires callback");
+    }
+    return this.database().transaction(() => callback())();
+  }
+
+  getRecord(table, id) {
+    const tableName = assertBaseTable(table);
+    const cleanId = cleanString(id, 240);
+    if (!cleanId) fail("ERR_RECORDER_STORE_MISSING_ID", `getRecord(${tableName}) requires id`);
+    return this.database().prepare(`SELECT * FROM ${tableName} WHERE id = ?`).get(cleanId) || null;
+  }
+
+  listRecords(table, { limit = 1000 } = {}) {
+    const tableName = assertBaseTable(table);
+    const max = Math.max(1, Math.min(5000, Number.parseInt(String(limit), 10) || 1000));
+    return this.database().prepare(`SELECT * FROM ${tableName} LIMIT ?`).all(max);
+  }
+
+  updateRecord(table, id, patch = {}) {
+    const db = this.database();
+    const tableName = assertBaseTable(table);
+    const cleanId = cleanString(id, 240);
+    if (!cleanId) fail("ERR_RECORDER_STORE_MISSING_ID", `updateRecord(${tableName}) requires id`);
+    const allowedColumns = new Set(TABLE_COLUMNS[tableName].filter((column) => column !== "id"));
+    const entries = Object.entries(patch)
+      .filter(([column]) => allowedColumns.has(column));
+    if (!entries.length) {
+      fail("ERR_RECORDER_STORE_EMPTY_UPDATE", `updateRecord(${tableName}) requires at least one valid column`);
+    }
+    const assignments = entries.map(([column]) => `${column} = @${column}`);
+    const values = { id: cleanId, ...Object.fromEntries(entries) };
+    const result = db.prepare(
+      `UPDATE ${tableName} SET ${assignments.join(", ")} WHERE id = @id`,
+    ).run(values);
+    return result.changes;
+  }
+
+  softDeleteRecord(table, id, { deletedAt = new Date().toISOString() } = {}) {
+    return this.updateRecord(table, id, { deleted_at: toIso(deletedAt) });
+  }
+
+  search(query, { limit = 20, sourceTypes = ["frame", "transcript", "memory", "product_event"] } = {}) {
+    const text = cleanString(query, 400);
+    if (!text) return [];
+    const max = Math.max(1, Math.min(100, Number.parseInt(String(limit), 10) || 20));
+    const enabled = new Set(sourceTypes);
+    const results = [];
+    if (enabled.has("frame")) {
+      results.push(...this.searchFrames(text, max));
+    }
+    if (enabled.has("transcript")) {
+      results.push(...this.searchTranscripts(text, max));
+    }
+    if (enabled.has("memory")) {
+      results.push(...this.searchMemoryItems(text, max));
+    }
+    if (enabled.has("product_event")) {
+      results.push(...this.searchProductEvents(text, max));
+    }
+    return results
+      .sort((lhs, rhs) => String(rhs.timestamp || "").localeCompare(String(lhs.timestamp || "")))
+      .slice(0, max);
+  }
+
+  searchFrames(query, limit = 20) {
+    const ftsQuery = toFtsQuery(query);
+    return this.database().prepare(`
+      SELECT
+        'frame' AS source_type,
+        frames.id AS source_id,
+        frames.captured_at AS timestamp,
+        frames.app_name,
+        frames.window_title,
+        frames.browser_domain,
+        frames.browser_url_normalized,
+        snippet(frames_text_fts, 1, '[', ']', '...', 12) AS snippet
+      FROM frames_text_fts
+      JOIN frames ON frames.id = frames_text_fts.frame_id
+      WHERE frames_text_fts MATCH ?
+        AND frames.safe_for_search = 1
+        AND frames.deleted_at IS NULL
+      ORDER BY frames.captured_at DESC
+      LIMIT ?
+    `).all(ftsQuery, limit);
+  }
+
+  searchTranscripts(query, limit = 20) {
+    const ftsQuery = toFtsQuery(query);
+    return this.database().prepare(`
+      SELECT
+        'transcript' AS source_type,
+        transcript_segments.id AS source_id,
+        transcript_segments.started_at AS timestamp,
+        transcript_segments.speaker_label,
+        snippet(transcript_text_fts, 1, '[', ']', '...', 12) AS snippet
+      FROM transcript_text_fts
+      JOIN transcript_segments ON transcript_segments.id = transcript_text_fts.segment_id
+      WHERE transcript_text_fts MATCH ?
+        AND transcript_segments.safe_for_search = 1
+        AND transcript_segments.deleted_at IS NULL
+      ORDER BY transcript_segments.started_at DESC
+      LIMIT ?
+    `).all(ftsQuery, limit);
+  }
+
+  searchMemoryItems(query, limit = 20) {
+    const ftsQuery = toFtsQuery(query);
+    return this.database().prepare(`
+      SELECT
+        'memory' AS source_type,
+        memory_items.id AS source_id,
+        memory_items.created_at AS timestamp,
+        memory_items.title,
+        snippet(memory_items_fts, 1, '[', ']', '...', 12) AS snippet
+      FROM memory_items_fts
+      JOIN memory_items ON memory_items.id = memory_items_fts.memory_id
+      WHERE memory_items_fts MATCH ?
+        AND memory_items.safe_for_search = 1
+        AND memory_items.deleted_at IS NULL
+      ORDER BY memory_items.created_at DESC
+      LIMIT ?
+    `).all(ftsQuery, limit);
+  }
+
+  searchProductEvents(query, limit = 20) {
+    const ftsQuery = toFtsQuery(query);
+    return this.database().prepare(`
+      SELECT
+        'product_event' AS source_type,
+        product_events.id AS source_id,
+        product_events.occurred_at AS timestamp,
+        product_events.event_type,
+        product_events.title,
+        snippet(product_events_fts, 1, '[', ']', '...', 12) AS snippet
+      FROM product_events_fts
+      JOIN product_events ON product_events.id = product_events_fts.product_event_id
+      WHERE product_events_fts MATCH ?
+        AND product_events.safe_for_search = 1
+        AND product_events.deleted_at IS NULL
+      ORDER BY product_events.occurred_at DESC
+      LIMIT ?
+    `).all(ftsQuery, limit);
+  }
+
+  database() {
+    if (!this.db) this.open();
+    return this.db;
+  }
+}
+
+export function resolveRecorderDbPath({ appSupportRoot = null, env = process.env, homeDir = os.homedir() } = {}) {
+  const base = appSupportRoot
+    || cleanString(env.AGENTIC30_APP_SUPPORT_PATH, 1000)
+    || path.join(homeDir, "Library", "Application Support", "agentic30");
+  return path.join(path.resolve(base), "recorder", "recorder.sqlite");
+}
+
+export function migrateRecorderDatabase(db) {
+  if (!db || typeof db.exec !== "function") {
+    fail("ERR_RECORDER_STORE_INVALID_DB", "migrateRecorderDatabase requires a better-sqlite3 database");
+  }
+  const currentVersion = db.pragma("user_version", { simple: true });
+  if (currentVersion > RECORDER_STORE_SCHEMA_VERSION) {
+    fail(
+      "ERR_RECORDER_STORE_UNSUPPORTED_SCHEMA",
+      `recorder.sqlite schema version ${currentVersion} is newer than supported ${RECORDER_STORE_SCHEMA_VERSION}`,
+      { currentVersion, supportedVersion: RECORDER_STORE_SCHEMA_VERSION },
+    );
+  }
+  if (currentVersion < 1) {
+    db.transaction(() => {
+      db.exec(RECORDER_SCHEMA_SQL);
+      db.pragma(`user_version = ${RECORDER_STORE_SCHEMA_VERSION}`);
+    })();
+  } else if (currentVersion < 2) {
+    db.transaction(() => {
+      db.exec(RECORDER_SCHEMA_V2_SQL);
+      db.pragma(`user_version = ${RECORDER_STORE_SCHEMA_VERSION}`);
+    })();
+  }
+  return db.pragma("user_version", { simple: true });
+}
+
+export function ensureRecorderSqlInspectorViews(db) {
+  if (!db || typeof db.exec !== "function") {
+    fail("ERR_RECORDER_STORE_INVALID_DB", "ensureRecorderSqlInspectorViews requires a better-sqlite3 database");
+  }
+  db.exec(RECORDER_SQL_INSPECTOR_VIEWS_SQL);
+}
+
+function ensureRecorderDirectory(directory) {
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(directory, 0o700);
+  } catch {
+    // Permission tightening can fail on non-POSIX volumes; DB open will still surface write failures.
+  }
+}
+
+function assertBaseTable(table) {
+  const tableName = cleanString(table, 120);
+  if (!BASE_TABLE_SET.has(tableName)) {
+    fail("ERR_RECORDER_STORE_UNKNOWN_TABLE", `unknown recorder table: ${tableName || "(missing)"}`);
+  }
+  return tableName;
+}
+
+function cleanString(value = "", maxLength = 500) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function toIso(value) {
+  const date = value instanceof Date ? value : new Date(value ?? Date.now());
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+}
+
+function toFtsQuery(value = "") {
+  const text = cleanString(value, 400).replace(/"/g, '""');
+  return `"${text}"`;
+}
+
+function fail(code, message, details = {}) {
+  throw new RecorderStoreError(code, message, details);
+}
+
+const RECORDER_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS media_assets (
+  id TEXT PRIMARY KEY,
+  asset_type TEXT NOT NULL CHECK (asset_type IN ('frame_jpeg', 'audio_m4a', 'export_bundle')),
+  relative_path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  byte_size INTEGER NOT NULL,
+  encrypted INTEGER NOT NULL DEFAULT 0,
+  workspace_id TEXT,
+  project_id TEXT,
+  created_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS frames (
+  id TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL,
+  workspace_id TEXT,
+  project_id TEXT,
+  captured_at TEXT NOT NULL,
+  monitor_id TEXT NOT NULL,
+  capture_trigger TEXT NOT NULL,
+  app_name TEXT,
+  window_title TEXT,
+  browser_url TEXT,
+  browser_domain TEXT,
+  browser_url_normalized TEXT,
+  document_path TEXT,
+  snapshot_asset_id TEXT NOT NULL,
+  snapshot_sha256 TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  simhash TEXT,
+  text_source TEXT NOT NULL,
+  accessibility_text TEXT,
+  ocr_text TEXT,
+  redacted_text TEXT,
+  redaction_status TEXT NOT NULL,
+  privacy_state TEXT NOT NULL,
+  data_class TEXT NOT NULL,
+  safe_for_search INTEGER NOT NULL DEFAULT 0,
+  safe_for_memory INTEGER NOT NULL DEFAULT 0,
+  safe_for_export INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY (snapshot_asset_id) REFERENCES media_assets(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_frames_captured_at ON frames(captured_at);
+CREATE INDEX IF NOT EXISTS idx_frames_workspace_project_time ON frames(workspace_id, project_id, captured_at);
+CREATE INDEX IF NOT EXISTS idx_frames_app_time ON frames(app_name, captured_at);
+CREATE INDEX IF NOT EXISTS idx_frames_domain_time ON frames(browser_domain, captured_at);
+CREATE INDEX IF NOT EXISTS idx_frames_trigger_time ON frames(capture_trigger, captured_at);
+
+CREATE TABLE IF NOT EXISTS audio_chunks (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT,
+  project_id TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('microphone', 'system_audio', 'meeting_audio')),
+  audio_asset_id TEXT NOT NULL,
+  transcript_status TEXT NOT NULL,
+  redaction_status TEXT NOT NULL,
+  privacy_state TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY (audio_asset_id) REFERENCES media_assets(id)
+);
+
+CREATE TABLE IF NOT EXISTS transcript_segments (
+  id TEXT PRIMARY KEY,
+  audio_chunk_id TEXT NOT NULL,
+  workspace_id TEXT,
+  project_id TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  speaker_label TEXT,
+  text TEXT NOT NULL,
+  redacted_text TEXT,
+  redaction_status TEXT NOT NULL,
+  privacy_state TEXT NOT NULL,
+  safe_for_search INTEGER NOT NULL DEFAULT 0,
+  safe_for_memory INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY (audio_chunk_id) REFERENCES audio_chunks(id)
+);
+
+CREATE TABLE IF NOT EXISTS clipboard_events (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT,
+  project_id TEXT,
+  occurred_at TEXT NOT NULL,
+  event_kind TEXT NOT NULL CHECK (event_kind IN ('copy', 'cut', 'paste', 'change', 'unknown')),
+  capture_mode TEXT NOT NULL CHECK (capture_mode IN ('trigger_only', 'content_opt_in')),
+  app_name TEXT,
+  window_title TEXT,
+  content_type TEXT NOT NULL CHECK (content_type IN ('text', 'url', 'file', 'image', 'unknown')),
+  content_hash TEXT,
+  content_text TEXT,
+  redacted_text TEXT,
+  redaction_status TEXT NOT NULL,
+  privacy_state TEXT NOT NULL,
+  safe_for_search INTEGER NOT NULL DEFAULT 0,
+  safe_for_memory INTEGER NOT NULL DEFAULT 0,
+  safe_for_export INTEGER NOT NULL DEFAULT 0,
+  content_captured INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  deleted_at TEXT,
+  CHECK (content_captured IN (0, 1)),
+  CHECK (content_captured = 1 OR content_text IS NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_clipboard_events_occurred_at ON clipboard_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_clipboard_events_workspace_project_time ON clipboard_events(workspace_id, project_id, occurred_at);
+
+CREATE TABLE IF NOT EXISTS memory_items (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT,
+  project_id TEXT,
+  memory_type TEXT NOT NULL CHECK (memory_type IN ('daily_summary', 'project_summary', 'product_event_summary', 'evidence_debt', 'pipe_output', 'execution_trace')),
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  source_ids_json TEXT NOT NULL,
+  time_range_json TEXT NOT NULL,
+  redaction_status TEXT NOT NULL,
+  privacy_state TEXT NOT NULL,
+  safe_for_search INTEGER NOT NULL DEFAULT 0,
+  safe_for_memory INTEGER NOT NULL DEFAULT 0,
+  safe_for_export INTEGER NOT NULL DEFAULT 0,
+  confidence TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS product_events (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT,
+  project_id TEXT,
+  event_type TEXT NOT NULL CHECK (event_type IN ('customer_interview', 'customer_ask_sent', 'public_post', 'activation_observed', 'payment_intent', 'payment_record', 'traffic_snapshot', 'build_or_test', 'internal_product_change', 'blocker', 'negative_evidence', 'research_signal', 'pipe_generated_worklog')),
+  occurred_at TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  source_ids_json TEXT NOT NULL,
+  safe_for_search INTEGER NOT NULL DEFAULT 0,
+  safe_for_memory INTEGER NOT NULL DEFAULT 0,
+  safe_for_export INTEGER NOT NULL DEFAULT 0,
+  verification_status TEXT NOT NULL DEFAULT 'unverified' CHECK (verification_status IN ('unverified', 'candidate_created', 'verifier_rejected', 'written_to_ledger')),
+  proof_ledger_event_id TEXT,
+  confidence TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS evidence_candidates (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT,
+  project_id TEXT,
+  candidate_status TEXT NOT NULL CHECK (candidate_status IN ('pending_review', 'degraded', 'rejected', 'approved_bundle', 'verifier_rejected', 'written_to_ledger')),
+  source_state TEXT NOT NULL,
+  claim TEXT NOT NULL,
+  proof_kind TEXT NOT NULL,
+  source_ids_json TEXT NOT NULL,
+  proof_ledger_mapping_json TEXT NOT NULL,
+  evidence_debt_json TEXT NOT NULL,
+  immutable_fingerprint TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  verifier_result_json TEXT,
+  proof_ledger_event_id TEXT UNIQUE,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS recorder_audit (
+  id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL,
+  actor_type TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  workspace_id TEXT,
+  project_id TEXT,
+  endpoint TEXT NOT NULL,
+  access_level TEXT NOT NULL,
+  source_ids_json TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  reason TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  client_id TEXT NOT NULL,
+  client_name TEXT NOT NULL,
+  actor_type TEXT NOT NULL,
+  scopes_json TEXT NOT NULL,
+  issued_by TEXT NOT NULL,
+  issued_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  last_used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pipe_definitions (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT,
+  project_id TEXT,
+  path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  schedule TEXT NOT NULL,
+  enabled INTEGER NOT NULL,
+  pipe_kind TEXT NOT NULL CHECK (pipe_kind IN ('built_in', 'signed_template', 'custom_disabled')),
+  permission_manifest_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pipe_runs (
+  id TEXT PRIMARY KEY,
+  pipe_id TEXT NOT NULL,
+  workspace_id TEXT,
+  project_id TEXT,
+  trigger_reason TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timed_out')),
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  input_manifest_json TEXT NOT NULL,
+  output_manifest_json TEXT,
+  audit_log_json TEXT NOT NULL,
+  error_message TEXT,
+  FOREIGN KEY (pipe_id) REFERENCES pipe_definitions(id)
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS frames_text_fts USING fts5(
+  frame_id UNINDEXED,
+  redacted_text,
+  app_name,
+  window_title,
+  browser_domain,
+  browser_url_normalized
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS transcript_text_fts USING fts5(
+  segment_id UNINDEXED,
+  redacted_text,
+  speaker_label
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_items_fts USING fts5(
+  memory_id UNINDEXED,
+  title,
+  summary
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS product_events_fts USING fts5(
+  product_event_id UNINDEXED,
+  title,
+  summary
+);
+
+CREATE TRIGGER IF NOT EXISTS frames_text_fts_ai AFTER INSERT ON frames
+WHEN new.safe_for_search = 1 AND new.deleted_at IS NULL
+BEGIN
+  INSERT INTO frames_text_fts(frame_id, redacted_text, app_name, window_title, browser_domain, browser_url_normalized)
+  VALUES (new.id, coalesce(new.redacted_text, ''), coalesce(new.app_name, ''), coalesce(new.window_title, ''), coalesce(new.browser_domain, ''), coalesce(new.browser_url_normalized, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS frames_text_fts_au AFTER UPDATE ON frames
+BEGIN
+  DELETE FROM frames_text_fts WHERE frame_id = old.id;
+  INSERT INTO frames_text_fts(frame_id, redacted_text, app_name, window_title, browser_domain, browser_url_normalized)
+  SELECT new.id, coalesce(new.redacted_text, ''), coalesce(new.app_name, ''), coalesce(new.window_title, ''), coalesce(new.browser_domain, ''), coalesce(new.browser_url_normalized, '')
+  WHERE new.safe_for_search = 1 AND new.deleted_at IS NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS frames_text_fts_ad AFTER DELETE ON frames
+BEGIN
+  DELETE FROM frames_text_fts WHERE frame_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS transcript_text_fts_ai AFTER INSERT ON transcript_segments
+WHEN new.safe_for_search = 1 AND new.deleted_at IS NULL
+BEGIN
+  INSERT INTO transcript_text_fts(segment_id, redacted_text, speaker_label)
+  VALUES (new.id, coalesce(new.redacted_text, ''), coalesce(new.speaker_label, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS transcript_text_fts_au AFTER UPDATE ON transcript_segments
+BEGIN
+  DELETE FROM transcript_text_fts WHERE segment_id = old.id;
+  INSERT INTO transcript_text_fts(segment_id, redacted_text, speaker_label)
+  SELECT new.id, coalesce(new.redacted_text, ''), coalesce(new.speaker_label, '')
+  WHERE new.safe_for_search = 1 AND new.deleted_at IS NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS transcript_text_fts_ad AFTER DELETE ON transcript_segments
+BEGIN
+  DELETE FROM transcript_text_fts WHERE segment_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_items_fts_ai AFTER INSERT ON memory_items
+WHEN new.safe_for_search = 1 AND new.deleted_at IS NULL
+BEGIN
+  INSERT INTO memory_items_fts(memory_id, title, summary)
+  VALUES (new.id, coalesce(new.title, ''), coalesce(new.summary, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_items_fts_au AFTER UPDATE ON memory_items
+BEGIN
+  DELETE FROM memory_items_fts WHERE memory_id = old.id;
+  INSERT INTO memory_items_fts(memory_id, title, summary)
+  SELECT new.id, coalesce(new.title, ''), coalesce(new.summary, '')
+  WHERE new.safe_for_search = 1 AND new.deleted_at IS NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_items_fts_ad AFTER DELETE ON memory_items
+BEGIN
+  DELETE FROM memory_items_fts WHERE memory_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS product_events_fts_ai AFTER INSERT ON product_events
+WHEN new.safe_for_search = 1 AND new.deleted_at IS NULL
+BEGIN
+  INSERT INTO product_events_fts(product_event_id, title, summary)
+  VALUES (new.id, coalesce(new.title, ''), coalesce(new.summary, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS product_events_fts_au AFTER UPDATE ON product_events
+BEGIN
+  DELETE FROM product_events_fts WHERE product_event_id = old.id;
+  INSERT INTO product_events_fts(product_event_id, title, summary)
+  SELECT new.id, coalesce(new.title, ''), coalesce(new.summary, '')
+  WHERE new.safe_for_search = 1 AND new.deleted_at IS NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS product_events_fts_ad AFTER DELETE ON product_events
+BEGIN
+  DELETE FROM product_events_fts WHERE product_event_id = old.id;
+END;
+`;
+
+const RECORDER_SCHEMA_V2_SQL = `
+CREATE TABLE IF NOT EXISTS clipboard_events (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT,
+  project_id TEXT,
+  occurred_at TEXT NOT NULL,
+  event_kind TEXT NOT NULL CHECK (event_kind IN ('copy', 'cut', 'paste', 'change', 'unknown')),
+  capture_mode TEXT NOT NULL CHECK (capture_mode IN ('trigger_only', 'content_opt_in')),
+  app_name TEXT,
+  window_title TEXT,
+  content_type TEXT NOT NULL CHECK (content_type IN ('text', 'url', 'file', 'image', 'unknown')),
+  content_hash TEXT,
+  content_text TEXT,
+  redacted_text TEXT,
+  redaction_status TEXT NOT NULL,
+  privacy_state TEXT NOT NULL,
+  safe_for_search INTEGER NOT NULL DEFAULT 0,
+  safe_for_memory INTEGER NOT NULL DEFAULT 0,
+  safe_for_export INTEGER NOT NULL DEFAULT 0,
+  content_captured INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  deleted_at TEXT,
+  CHECK (content_captured IN (0, 1)),
+  CHECK (content_captured = 1 OR content_text IS NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_clipboard_events_occurred_at ON clipboard_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_clipboard_events_workspace_project_time ON clipboard_events(workspace_id, project_id, occurred_at);
+`;
+
+const RECORDER_SQL_INSPECTOR_VIEWS_SQL = `
+CREATE VIEW IF NOT EXISTS recorder_sql_frames_redacted AS
+SELECT
+  id,
+  workspace_id,
+  project_id,
+  captured_at,
+  capture_trigger,
+  app_name,
+  window_title,
+  browser_domain,
+  redacted_text,
+  redaction_status,
+  privacy_state,
+  safe_for_search,
+  safe_for_memory,
+  safe_for_export,
+  text_source
+FROM frames
+WHERE deleted_at IS NULL AND safe_for_search = 1;
+
+CREATE VIEW IF NOT EXISTS recorder_sql_transcripts_redacted AS
+SELECT
+  transcript_segments.id,
+  transcript_segments.audio_chunk_id,
+  transcript_segments.workspace_id,
+  transcript_segments.project_id,
+  transcript_segments.started_at,
+  transcript_segments.ended_at,
+  transcript_segments.speaker_label,
+  transcript_segments.redacted_text,
+  transcript_segments.redaction_status,
+  transcript_segments.privacy_state,
+  transcript_segments.safe_for_search,
+  transcript_segments.safe_for_memory,
+  audio_chunks.transcript_status,
+  audio_chunks.source AS audio_source
+FROM transcript_segments
+JOIN audio_chunks ON audio_chunks.id = transcript_segments.audio_chunk_id
+WHERE transcript_segments.deleted_at IS NULL
+  AND audio_chunks.deleted_at IS NULL
+  AND transcript_segments.safe_for_search = 1;
+
+CREATE VIEW IF NOT EXISTS recorder_sql_clipboard_redacted AS
+SELECT
+  id,
+  workspace_id,
+  project_id,
+  occurred_at,
+  event_kind,
+  capture_mode,
+  app_name,
+  window_title,
+  content_type,
+  content_hash,
+  redacted_text,
+  redaction_status,
+  privacy_state,
+  safe_for_search,
+  safe_for_memory,
+  safe_for_export,
+  content_captured
+FROM clipboard_events
+WHERE deleted_at IS NULL
+  AND safe_for_search = 1;
+
+CREATE VIEW IF NOT EXISTS recorder_sql_frames_raw_admin AS
+SELECT
+  frames.id,
+  frames.workspace_id,
+  frames.project_id,
+  frames.captured_at,
+  frames.capture_trigger,
+  frames.app_name,
+  frames.window_title,
+  frames.browser_url,
+  frames.browser_url_normalized,
+  frames.browser_domain,
+  frames.document_path,
+  frames.accessibility_text,
+  frames.ocr_text,
+  frames.redacted_text,
+  frames.redaction_status,
+  frames.privacy_state,
+  frames.safe_for_search,
+  frames.safe_for_memory,
+  frames.safe_for_export,
+  frames.text_source,
+  frames.snapshot_asset_id,
+  media_assets.relative_path AS media_relative_path,
+  media_assets.sha256 AS media_sha256,
+  media_assets.byte_size AS media_byte_size,
+  media_assets.encrypted AS media_encrypted
+FROM frames
+JOIN media_assets ON media_assets.id = frames.snapshot_asset_id
+WHERE frames.deleted_at IS NULL
+  AND media_assets.deleted_at IS NULL;
+
+CREATE VIEW IF NOT EXISTS recorder_sql_transcripts_raw_admin AS
+SELECT
+  transcript_segments.id,
+  transcript_segments.audio_chunk_id,
+  transcript_segments.workspace_id,
+  transcript_segments.project_id,
+  transcript_segments.started_at,
+  transcript_segments.ended_at,
+  transcript_segments.speaker_label,
+  transcript_segments.text AS transcript_text,
+  transcript_segments.redacted_text,
+  transcript_segments.redaction_status,
+  transcript_segments.privacy_state,
+  transcript_segments.safe_for_search,
+  transcript_segments.safe_for_memory,
+  audio_chunks.transcript_status,
+  audio_chunks.source AS audio_source,
+  audio_chunks.audio_asset_id,
+  media_assets.relative_path AS audio_relative_path,
+  media_assets.sha256 AS audio_sha256,
+  media_assets.byte_size AS audio_byte_size,
+  media_assets.encrypted AS audio_encrypted
+FROM transcript_segments
+JOIN audio_chunks ON audio_chunks.id = transcript_segments.audio_chunk_id
+JOIN media_assets ON media_assets.id = audio_chunks.audio_asset_id
+WHERE transcript_segments.deleted_at IS NULL
+  AND audio_chunks.deleted_at IS NULL
+  AND media_assets.deleted_at IS NULL;
+
+CREATE VIEW IF NOT EXISTS recorder_sql_clipboard_raw_admin AS
+SELECT
+  id,
+  workspace_id,
+  project_id,
+  occurred_at,
+  event_kind,
+  capture_mode,
+  app_name,
+  window_title,
+  content_type,
+  content_hash,
+  content_text AS clipboard_text,
+  redacted_text,
+  redaction_status,
+  privacy_state,
+  safe_for_search,
+  safe_for_memory,
+  safe_for_export,
+  content_captured
+FROM clipboard_events
+WHERE deleted_at IS NULL;
+
+CREATE VIEW IF NOT EXISTS recorder_sql_memory_items AS
+SELECT
+  id,
+  workspace_id,
+  project_id,
+  memory_type,
+  title,
+  summary,
+  time_range_json,
+  redaction_status,
+  privacy_state,
+  safe_for_search,
+  safe_for_memory,
+  safe_for_export,
+  confidence,
+  created_by,
+  created_at
+FROM memory_items
+WHERE deleted_at IS NULL AND safe_for_memory = 1;
+
+CREATE VIEW IF NOT EXISTS recorder_sql_product_events AS
+SELECT
+  id,
+  workspace_id,
+  project_id,
+  event_type,
+  occurred_at,
+  title,
+  summary,
+  verification_status,
+  confidence,
+  created_by,
+  created_at,
+  safe_for_search,
+  safe_for_memory,
+  safe_for_export
+FROM product_events
+WHERE deleted_at IS NULL AND safe_for_search = 1;
+
+CREATE VIEW IF NOT EXISTS recorder_sql_audit_sanitized AS
+SELECT
+  id,
+  request_id,
+  actor_type,
+  actor_id,
+  workspace_id,
+  project_id,
+  endpoint,
+  access_level,
+  decision,
+  reason,
+  created_at
+FROM recorder_audit;
+
+CREATE VIEW IF NOT EXISTS recorder_sql_storage_stats AS
+SELECT
+  workspace_id,
+  project_id,
+  asset_type,
+  count(*) AS asset_count,
+  sum(byte_size) AS total_byte_size,
+  sum(CASE WHEN encrypted = 1 THEN 1 ELSE 0 END) AS encrypted_count,
+  sum(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted_count
+FROM media_assets
+GROUP BY workspace_id, project_id, asset_type;
+
+CREATE VIEW IF NOT EXISTS recorder_sql_capture_health AS
+SELECT
+  'frames' AS source_type,
+  count(*) AS row_count,
+  min(captured_at) AS started_at,
+  max(captured_at) AS ended_at,
+  sum(CASE WHEN safe_for_search = 1 THEN 1 ELSE 0 END) AS searchable_count,
+  sum(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted_count
+FROM frames
+UNION ALL
+SELECT
+  'transcripts' AS source_type,
+  count(*) AS row_count,
+  min(started_at) AS started_at,
+  max(ended_at) AS ended_at,
+  sum(CASE WHEN safe_for_search = 1 THEN 1 ELSE 0 END) AS searchable_count,
+  sum(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted_count
+FROM transcript_segments
+UNION ALL
+SELECT
+  'clipboard' AS source_type,
+  count(*) AS row_count,
+  min(occurred_at) AS started_at,
+  max(occurred_at) AS ended_at,
+  sum(CASE WHEN safe_for_search = 1 THEN 1 ELSE 0 END) AS searchable_count,
+  sum(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted_count
+FROM clipboard_events;
+`;
