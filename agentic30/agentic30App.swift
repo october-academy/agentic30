@@ -27,6 +27,14 @@ enum AgenticSettingsRouteNotification {
 struct agentic30App: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    init() {
+        #if DEBUG
+        if CommandLine.arguments.contains(where: { $0.hasPrefix("--ui-testing") }) {
+            NSApplication.shared.setActivationPolicy(.regular)
+        }
+        #endif
+    }
+
     var body: some Scene {
         Window("Agentic30", id: "workspace") {
             ContentView(
@@ -89,7 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingWorkspaceOpen = false
     #if DEBUG
     private var uiTestingMenuFixtureWindow: NSWindow?
+    private var uiTestingWorkspaceWindow: NSWindow?
     private weak var uiTestingUpdateInvokedLabel: NSTextField?
+    private var didRequestUITestingWorkspaceAfterActivation = false
     #endif
     private(set) var shouldMaximizeWorkspaceWindowOnFirstAppear = AppDelegate.shouldMaximizeWorkspaceWindowOnLaunch(
         isFirstLaunchEver: !PostHogTelemetry.hasPreviouslyGeneratedDistinctID,
@@ -378,6 +388,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The user is back in the app; question-ready banners in Notification
         // Center are stale from here on.
         OfficeHoursQuestionReadyNotification.removeDelivered()
+        #if DEBUG
+        guard Self.isUITestingLaunch(),
+              CommandLine.arguments.contains("--ui-testing-open-workspace"),
+              !didRequestUITestingWorkspaceAfterActivation else {
+            return
+        }
+        didRequestUITestingWorkspaceAfterActivation = true
+        DispatchQueue.main.async { [weak self] in
+            if CommandLine.arguments.contains("--ui-testing-direct-workspace-window") {
+                self?.presentUITestingWorkspaceWindow()
+                self?.requestUITestingOfficeHoursRouteIfNeeded()
+            } else {
+                self?.openWorkspaceWindow()
+            }
+        }
+        #endif
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -464,6 +490,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openWorkspaceHandler()
             focusWorkspaceWindow()
         } else {
+            #if DEBUG
+            if Self.isUITestingLaunch() {
+                presentUITestingWorkspaceWindow()
+                return
+            }
+            #endif
             pendingWorkspaceOpen = true
             PostHogTelemetry.capture("mac_workspace_open_handler_missing", authSession: viewModel.macAuthSession)
         }
@@ -731,12 +763,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     #if DEBUG
+    private func presentUITestingWorkspaceWindow() {
+        NSApp.setActivationPolicy(.regular)
+        if let uiTestingWorkspaceWindow {
+            uiTestingWorkspaceWindow.makeKeyAndOrderFront(nil)
+            uiTestingWorkspaceWindow.orderFrontRegardless()
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let hostingView = NSHostingView(rootView: ContentView(
+            viewModel: viewModel,
+            surfaceOverride: .workspace,
+            maximizeWorkspaceOnFirstAppear: false,
+            markWorkspaceInitialMaximizeApplied: {}
+        ))
+        let window = NSWindow(
+            contentRect: NSRect(x: 120, y: 120, width: 1360, height: 820),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = workspaceWindowTitle
+        window.contentView = hostingView
+        window.isReleasedWhenClosed = false
+        uiTestingWorkspaceWindow = window
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func scheduleUITestingWorkspaceOpen() {
+        let useDirectWorkspaceWindow = CommandLine.arguments.contains("--ui-testing-direct-workspace-window")
         for delay in [0.0, 0.2, 0.6, 1.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.openWorkspaceWindow()
+                if useDirectWorkspaceWindow {
+                    self?.presentUITestingWorkspaceWindow()
+                    self?.requestUITestingOfficeHoursRouteIfNeeded()
+                } else {
+                    self?.openWorkspaceWindow()
+                }
             }
         }
+    }
+
+    private func requestUITestingOfficeHoursRouteIfNeeded() {
+        guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt") else { return }
+        _ = viewModel.ensureOfficeHoursSession(forDay: 1)
+        guard let session = viewModel.selectedSession,
+              session.runtime?.officeHours?.active == true else { return }
+        requestAgenticAppRoute(AgenticAppRoute(
+            destination: .officeHoursQuestion(
+                sessionId: session.id,
+                requestId: session.pendingUserInput?.requestId
+            ),
+            telemetrySource: "ui_test_launch_argument"
+        ))
     }
     #endif
 }

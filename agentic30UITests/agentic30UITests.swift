@@ -380,6 +380,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-opaque-window",
         ], environment: [
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
@@ -478,6 +479,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-opaque-window",
         ], environment: [
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
@@ -1896,6 +1898,157 @@ final class agentic30UITests: XCTestCase {
             containing: "제출됨",
             timeout: 3
         ))
+    }
+
+    @MainActor
+    func testOfficeHoursCandidateUnblockDefaultSubmitCompletesWithoutSelectionOrInput() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-office-hours-candidate-unblock-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-office-hours-candidate-unblock-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchAppByAttachingToProcess(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-office-hours-structured-prompt",
+            "--ui-testing-seed-office-hours-candidate-unblock",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-direct-workspace-window",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 5))
+        confirmDay1GoalRequired(in: app)
+
+        let prompt = elementWithIdentifier(in: app, "assistant.structuredPrompt")
+        XCTAssertTrue(prompt.waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(
+            in: app,
+            "assistant.structuredDefaultPlan.get_users_first_candidate_unblock"
+        ).waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForElementLabel(
+            in: app,
+            identifier: "assistant.structuredDefaultPlan.get_users_first_candidate_unblock",
+            containing: "수정하지 않아도 이 실행안으로 바로 진행됩니다.",
+            timeout: 3
+        ))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "추천안으로 진행", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
+
+        let continueButton = app.buttons["assistant.structuredContinueButton"]
+        XCTAssertTrue(scrollElementToVisible(
+            continueButton,
+            in: app,
+            timeout: 4,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        tapRequired(continueButton, in: app, named: "Office Hours candidate unblock submit")
+
+        let submittedPrompt = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.ui-test-office-hours-candidate-unblock")
+        XCTAssertTrue(submittedPrompt.waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.docReady").waitForExistence(timeout: 8))
+        XCTAssertFalse(
+            app.buttons["assistant.structuredChoice.get_users_first_candidate_unblock.후보 찾기와 첫 도움 요청 만들기"].exists,
+            "After the default route is submitted, the candidate-unblock card must not remain the active prompt."
+        )
+        XCTAssertFalse(
+            app.buttons["assistant.structuredChoice.get_users_today_request.15분 실행 결과물 만들어주기"].exists,
+            "The no-candidate unblock path must complete from one visible card, not ask a second card."
+        )
+    }
+
+    @MainActor
+    func testOfficeHoursGetUsersDefaultValueCardCompletesWithoutSelectionOrInput() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-office-hours-get-users-value-flow-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-office-hours-get-users-value-flow-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchAppByAttachingToProcess(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-office-hours-structured-prompt",
+            "--ui-testing-seed-office-hours-get-users-icp-value",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-direct-workspace-window",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 5))
+        confirmDay1GoalRequired(in: app)
+
+        let icpPrompt = elementWithIdentifier(in: app, "assistant.structuredPrompt")
+        XCTAssertTrue(icpPrompt.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Agentic30가 오늘 첫 고객 후보 1명에게 바로 줄 도움을 만들까요?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(
+            in: app,
+            "assistant.structuredDefaultPlan.get_users_active_user_definition"
+        ).waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForElementLabel(
+            in: app,
+            identifier: "assistant.structuredDefaultPlan.get_users_active_user_definition",
+            containing: "수정하지 않아도 이 실행안으로 바로 진행됩니다.",
+            timeout: 3
+        ))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "추천안으로 진행", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
+
+        let icpSubmitButton = app.buttons["assistant.structuredContinueButton"]
+        XCTAssertTrue(scrollElementToVisible(
+            icpSubmitButton,
+            in: app,
+            timeout: 4,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        tapRequired(icpSubmitButton, in: app, named: "Office Hours get_users ICP value submit")
+
+        let submittedIcp = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.ui-test-office-hours-get-users-icp-value")
+        XCTAssertTrue(submittedIcp.waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.docReady").waitForExistence(timeout: 8))
+        XCTAssertFalse(
+            app.buttons["assistant.structuredChoice.get_users_active_user_definition.첫 고객에게 줄 도움 만들기"].exists,
+            "After the ICP value card is submitted, it must not remain the active prompt."
+        )
+        XCTAssertFalse(
+            app.buttons["assistant.structuredChoice.get_users_today_request.15분 실행 결과물 만들어주기"].exists,
+            "The get_users path must complete from one value card, not ask a second action card."
+        )
+        XCTAssertFalse(
+            app.buttons["assistant.structuredChoice.get_users_evidence_format.로컬 메모 + 화면 캡처로 닫기"].exists,
+            "The get_users path must not require a separate evidence-format card."
+        )
     }
 
     @MainActor
@@ -3922,6 +4075,52 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    private func launchAppByAttachingToProcess(
+        arguments: [String],
+        environment: [String: String] = [:],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIApplication {
+        terminateRunningAgenticAppIfNeeded()
+
+        let appBundleURL = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("agentic30.app", isDirectory: true)
+
+        guard FileManager.default.fileExists(atPath: appBundleURL.path) else {
+            XCTFail("Missing test app bundle at \(appBundleURL.path)", file: file, line: line)
+            return XCUIApplication(bundleIdentifier: "october-academy.agentic30")
+        }
+
+        let executableURL = appBundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("MacOS", isDirectory: true)
+            .appendingPathComponent("agentic30", isDirectory: false)
+        guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
+            XCTFail("Missing executable for test app bundle at \(executableURL.path)", file: file, line: line)
+            return XCUIApplication(bundleIdentifier: "october-academy.agentic30")
+        }
+
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+        var launchEnvironment = ProcessInfo.processInfo.environment
+        environment.forEach { key, value in
+            launchEnvironment[key] = value
+        }
+        process.environment = launchEnvironment
+        do {
+            try process.run()
+        } catch {
+            XCTFail("Failed to run test app executable: \(error)", file: file, line: line)
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "october-academy.agentic30")
+        waitForRunningAgenticApp(timeout: 5)
+        return app
+    }
+
+    @MainActor
     private func confirmDay1GoalRequired(
         in app: XCUIApplication,
         file: StaticString = #filePath,
@@ -4004,6 +4203,28 @@ final class agentic30UITests: XCTestCase {
             }
         }
         waitForAgenticAppToExit(bundleIdentifier: bundleIdentifier, timeout: 2)
+    }
+
+    private func waitForRunningAgenticApp(timeout: TimeInterval) {
+        let bundleIdentifier = "october-academy.agentic30"
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let isRunning = NSWorkspace.shared.runningApplications.contains {
+                $0.bundleIdentifier == bundleIdentifier
+            }
+            if isRunning { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+    }
+
+    private func activateRunningAgenticApp() {
+        let bundleIdentifier = "october-academy.agentic30"
+        guard let application = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleIdentifier
+        }) else {
+            return
+        }
+        application.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
     }
 
     private func waitForAgenticAppToExit(bundleIdentifier: String, timeout: TimeInterval) {

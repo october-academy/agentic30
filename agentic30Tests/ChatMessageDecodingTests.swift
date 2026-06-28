@@ -401,6 +401,41 @@ struct ChatMessageDecodingTests {
         #expect(question.isSatisfied(selectedOptions: ["리스크/실패 조건으로 보완"], freeText: "5명 중 0명이 과거 행동을 말하지 못하면 ICP를 다시 좁힌다") == true)
     }
 
+    @MainActor @Test func structuredPromptQuestionWithRequiredPrimaryTextNeedsSelectionAndText() throws {
+        let payload = """
+        {
+          "header": "후보 확보",
+          "question_id": "get_users_first_candidate_unblock",
+          "question": "아직 후보가 없다면 오늘 30분 안에 어떤 한 줄 요청을 보낼 건가요?",
+          "helperText": "범주가 아니라 실행 문장을 적습니다.",
+          "options": [
+            { "label": "스레드/커뮤니티에서 찾기", "description": "검색어, 게시 위치, 후보 조건, 보낼 요청을 한 줄로 적습니다." }
+          ],
+          "multiSelect": false,
+          "allowFreeText": true,
+          "requiresFreeText": false,
+          "freeTextPlaceholder": "예: Threads에서 검색해 DM 보낸다",
+          "primaryTextInput": {
+            "label": "후보 확보 행동",
+            "placeholder": "시간 + 채널 + 검색어/게시 위치 + 보낼 요청",
+            "required": true,
+            "submitLabel": "후보 찾기 행동 확정",
+            "validationMessage": "시간, 채널, 찾는 방법, 보낼 요청을 적어야 합니다."
+          },
+          "textMode": "short"
+        }
+        """.data(using: .utf8)!
+
+        let question = try Self.makeDecoder().decode(StructuredPromptQuestion.self, from: payload)
+
+        #expect(question.primaryTextInput?.label == "후보 확보 행동")
+        #expect(question.primaryTextInput?.required == true)
+        #expect(question.isSatisfied(selectedOptions: [], freeText: "") == false)
+        #expect(question.isSatisfied(selectedOptions: ["스레드/커뮤니티에서 찾기"], freeText: "") == false)
+        #expect(question.isSatisfied(selectedOptions: [], freeText: "오늘 18:00까지 Threads에서 검색해 DM 보낸다") == false)
+        #expect(question.isSatisfied(selectedOptions: ["스레드/커뮤니티에서 찾기"], freeText: "오늘 18:00까지 Threads에서 검색해 DM 보낸다") == true)
+    }
+
     @MainActor @Test func structuredPromptQuestionDecodesStableQuestionIdentity() throws {
         let payload = """
         {

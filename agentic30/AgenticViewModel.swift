@@ -4,6 +4,11 @@ import Combine
 import AuthenticationServices
 import UserNotifications
 import AppKit
+import ApplicationServices
+import CryptoKit
+#if canImport(ScreenCaptureKit)
+import ScreenCaptureKit
+#endif
 
 typealias WebAuthenticationSessionCompletion = (URL?, Error?) -> Void
 typealias WebAuthenticationSessionFactory = (
@@ -2543,6 +2548,623 @@ struct EvidenceOSSummary: Codable, Equatable, Hashable {
     }
 }
 
+struct RecorderPipeDefinition: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let workspaceId: String?
+    let projectId: String?
+    let path: String
+    let name: String
+    let schedule: String
+    let enabled: Bool
+    let kind: String
+    let proofAcceptedByPipeDefinition: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id, workspaceId, workspace_id, projectId, project_id, path, name, schedule, enabled, kind
+        case pipeKind, pipe_kind, proofAcceptedByPipeDefinition, proof_accepted_by_pipe_definition
+    }
+
+    init(
+        id: String,
+        workspaceId: String? = nil,
+        projectId: String? = nil,
+        path: String,
+        name: String,
+        schedule: String,
+        enabled: Bool,
+        kind: String,
+        proofAcceptedByPipeDefinition: Bool = false
+    ) {
+        self.id = id
+        self.workspaceId = workspaceId
+        self.projectId = projectId
+        self.path = path
+        self.name = name
+        self.schedule = schedule
+        self.enabled = enabled
+        self.kind = kind
+        self.proofAcceptedByPipeDefinition = proofAcceptedByPipeDefinition
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+            ?? c.decodeIfPresent(String.self, forKey: .workspace_id)
+        projectId = try c.decodeIfPresent(String.self, forKey: .projectId)
+            ?? c.decodeIfPresent(String.self, forKey: .project_id)
+        path = try c.decodeIfPresent(String.self, forKey: .path) ?? ""
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? id
+        schedule = try c.decodeIfPresent(String.self, forKey: .schedule) ?? ""
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+            ?? c.decodeIfPresent(String.self, forKey: .pipeKind)
+            ?? c.decodeIfPresent(String.self, forKey: .pipe_kind)
+            ?? ""
+        proofAcceptedByPipeDefinition = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByPipeDefinition)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_pipe_definition)
+            ?? false
+    }
+}
+
+struct RecorderPipeRun: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let pipeId: String
+    let workspaceId: String?
+    let projectId: String?
+    let triggerReason: String
+    let status: String
+    let startedAt: String
+    let endedAt: String?
+    let errorMessage: String?
+    let proofAcceptedByPipeRun: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id, pipeId, pipe_id, workspaceId, workspace_id, projectId, project_id
+        case triggerReason, trigger_reason, status, startedAt, started_at, endedAt, ended_at
+        case errorMessage, error_message, proofAcceptedByPipeRun, proof_accepted_by_pipe_run
+    }
+
+    init(
+        id: String,
+        pipeId: String,
+        workspaceId: String? = nil,
+        projectId: String? = nil,
+        triggerReason: String,
+        status: String,
+        startedAt: String,
+        endedAt: String? = nil,
+        errorMessage: String? = nil,
+        proofAcceptedByPipeRun: Bool = false
+    ) {
+        self.id = id
+        self.pipeId = pipeId
+        self.workspaceId = workspaceId
+        self.projectId = projectId
+        self.triggerReason = triggerReason
+        self.status = status
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.errorMessage = errorMessage
+        self.proofAcceptedByPipeRun = proofAcceptedByPipeRun
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        pipeId = try c.decodeIfPresent(String.self, forKey: .pipeId)
+            ?? c.decodeIfPresent(String.self, forKey: .pipe_id)
+            ?? ""
+        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+            ?? c.decodeIfPresent(String.self, forKey: .workspace_id)
+        projectId = try c.decodeIfPresent(String.self, forKey: .projectId)
+            ?? c.decodeIfPresent(String.self, forKey: .project_id)
+        triggerReason = try c.decodeIfPresent(String.self, forKey: .triggerReason)
+            ?? c.decodeIfPresent(String.self, forKey: .trigger_reason)
+            ?? ""
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? ""
+        startedAt = try c.decodeIfPresent(String.self, forKey: .startedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .started_at)
+            ?? ""
+        endedAt = try c.decodeIfPresent(String.self, forKey: .endedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .ended_at)
+        errorMessage = try c.decodeIfPresent(String.self, forKey: .errorMessage)
+            ?? c.decodeIfPresent(String.self, forKey: .error_message)
+        proofAcceptedByPipeRun = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByPipeRun)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_pipe_run)
+            ?? false
+    }
+}
+
+struct RecorderPipeSchedulerResult: Decodable, Equatable, Hashable {
+    let queuedCount: Int
+    let skippedCount: Int
+    let executedCount: Int
+    let failedCount: Int
+    let proofAcceptedByScheduler: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case queuedCount, queued_count, skippedCount, skipped_count
+        case executedCount, executed_count, failedCount, failed_count
+        case proofAcceptedByScheduler, proof_accepted_by_scheduler
+    }
+
+    init(
+        queuedCount: Int = 0,
+        skippedCount: Int = 0,
+        executedCount: Int = 0,
+        failedCount: Int = 0,
+        proofAcceptedByScheduler: Bool = false
+    ) {
+        self.queuedCount = queuedCount
+        self.skippedCount = skippedCount
+        self.executedCount = executedCount
+        self.failedCount = failedCount
+        self.proofAcceptedByScheduler = proofAcceptedByScheduler
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        queuedCount = try c.decodeIfPresent(Int.self, forKey: .queuedCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .queued_count)
+            ?? 0
+        skippedCount = try c.decodeIfPresent(Int.self, forKey: .skippedCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .skipped_count)
+            ?? 0
+        executedCount = try c.decodeIfPresent(Int.self, forKey: .executedCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .executed_count)
+            ?? 0
+        failedCount = try c.decodeIfPresent(Int.self, forKey: .failedCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .failed_count)
+            ?? 0
+        proofAcceptedByScheduler = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByScheduler)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_scheduler)
+            ?? false
+    }
+}
+
+struct RecorderControlConsent: Decodable, Equatable, Hashable {
+    let status: String
+    let visibleIndicatorRequired: Bool
+    let visibleIndicatorAcknowledged: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case visibleIndicatorRequired, visible_indicator_required
+        case visibleIndicatorAcknowledged, visible_indicator_acknowledged
+    }
+
+    init(
+        status: String = "not_requested",
+        visibleIndicatorRequired: Bool = true,
+        visibleIndicatorAcknowledged: Bool = false
+    ) {
+        self.status = status
+        self.visibleIndicatorRequired = visibleIndicatorRequired
+        self.visibleIndicatorAcknowledged = visibleIndicatorAcknowledged
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "not_requested"
+        visibleIndicatorRequired = try c.decodeIfPresent(Bool.self, forKey: .visibleIndicatorRequired)
+            ?? c.decodeIfPresent(Bool.self, forKey: .visible_indicator_required)
+            ?? true
+        visibleIndicatorAcknowledged = try c.decodeIfPresent(Bool.self, forKey: .visibleIndicatorAcknowledged)
+            ?? c.decodeIfPresent(Bool.self, forKey: .visible_indicator_acknowledged)
+            ?? false
+    }
+}
+
+struct RecorderSensitiveCapture: Decodable, Equatable, Hashable {
+    let clipboardMode: String
+    let microphone: Bool
+    let systemAudio: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case clipboardMode, clipboard_mode
+        case microphone
+        case systemAudio, system_audio
+    }
+
+    init(clipboardMode: String = "trigger_only", microphone: Bool = false, systemAudio: Bool = false) {
+        self.clipboardMode = clipboardMode
+        self.microphone = microphone
+        self.systemAudio = systemAudio
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        clipboardMode = try c.decodeIfPresent(String.self, forKey: .clipboardMode)
+            ?? c.decodeIfPresent(String.self, forKey: .clipboard_mode)
+            ?? "trigger_only"
+        microphone = try c.decodeIfPresent(Bool.self, forKey: .microphone) ?? false
+        systemAudio = try c.decodeIfPresent(Bool.self, forKey: .systemAudio)
+            ?? c.decodeIfPresent(Bool.self, forKey: .system_audio)
+            ?? false
+    }
+}
+
+struct RecorderControlState: Decodable, Equatable, Hashable {
+    let mode: String
+    let consent: RecorderControlConsent
+    let permissions: [String: String]
+    let sensitiveCapture: RecorderSensitiveCapture
+    let updatedAt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, consent, permissions
+        case sensitiveCapture, sensitive_capture
+        case updatedAt, updated_at
+    }
+
+    init(
+        mode: String = "inactive",
+        consent: RecorderControlConsent = RecorderControlConsent(),
+        permissions: [String: String] = [:],
+        sensitiveCapture: RecorderSensitiveCapture = RecorderSensitiveCapture(),
+        updatedAt: String? = nil
+    ) {
+        self.mode = mode
+        self.consent = consent
+        self.permissions = permissions
+        self.sensitiveCapture = sensitiveCapture
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try c.decodeIfPresent(String.self, forKey: .mode) ?? "inactive"
+        consent = try c.decodeIfPresent(RecorderControlConsent.self, forKey: .consent) ?? RecorderControlConsent()
+        permissions = try c.decodeIfPresent([String: String].self, forKey: .permissions) ?? [:]
+        sensitiveCapture = try c.decodeIfPresent(RecorderSensitiveCapture.self, forKey: .sensitiveCapture)
+            ?? c.decodeIfPresent(RecorderSensitiveCapture.self, forKey: .sensitive_capture)
+            ?? RecorderSensitiveCapture()
+        updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .updated_at)
+    }
+}
+
+struct RecorderCaptureIssue: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let severity: String?
+    let message: String
+    let permission: String?
+    let state: String?
+}
+
+struct RecorderCaptureReadiness: Decodable, Equatable, Hashable {
+    let canRecord: Bool
+    let state: String
+    let mode: String
+    let blockers: [RecorderCaptureIssue]
+    let warnings: [RecorderCaptureIssue]
+    let visibleIndicatorRequired: Bool
+    let visibleIndicatorAcknowledged: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case canRecord, can_record
+        case state, mode, blockers, warnings
+        case visibleIndicatorRequired, visible_indicator_required
+        case visibleIndicatorAcknowledged, visible_indicator_acknowledged
+    }
+
+    init(
+        canRecord: Bool = false,
+        state: String = "blocked",
+        mode: String = "inactive",
+        blockers: [RecorderCaptureIssue] = [],
+        warnings: [RecorderCaptureIssue] = [],
+        visibleIndicatorRequired: Bool = true,
+        visibleIndicatorAcknowledged: Bool = false
+    ) {
+        self.canRecord = canRecord
+        self.state = state
+        self.mode = mode
+        self.blockers = blockers
+        self.warnings = warnings
+        self.visibleIndicatorRequired = visibleIndicatorRequired
+        self.visibleIndicatorAcknowledged = visibleIndicatorAcknowledged
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        canRecord = try c.decodeIfPresent(Bool.self, forKey: .canRecord)
+            ?? c.decodeIfPresent(Bool.self, forKey: .can_record)
+            ?? false
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? "blocked"
+        mode = try c.decodeIfPresent(String.self, forKey: .mode) ?? "inactive"
+        blockers = try c.decodeIfPresent([RecorderCaptureIssue].self, forKey: .blockers) ?? []
+        warnings = try c.decodeIfPresent([RecorderCaptureIssue].self, forKey: .warnings) ?? []
+        visibleIndicatorRequired = try c.decodeIfPresent(Bool.self, forKey: .visibleIndicatorRequired)
+            ?? c.decodeIfPresent(Bool.self, forKey: .visible_indicator_required)
+            ?? true
+        visibleIndicatorAcknowledged = try c.decodeIfPresent(Bool.self, forKey: .visibleIndicatorAcknowledged)
+            ?? c.decodeIfPresent(Bool.self, forKey: .visible_indicator_acknowledged)
+            ?? false
+    }
+}
+
+struct RecorderFrameCaptureReceipt: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let capturedAt: String
+    let monitorId: String
+    let captureTrigger: String
+    let appName: String?
+    let windowTitle: String?
+    let snapshotAssetId: String
+    let snapshotSha256: String
+    let contentHash: String
+    let redactionStatus: String
+    let privacyState: String
+    let safeForSearch: Bool
+    let safeForMemory: Bool
+    let safeForExport: Bool
+    let proofAcceptedByRecorderIngest: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case capturedAt, captured_at
+        case monitorId, monitor_id
+        case captureTrigger, capture_trigger
+        case appName, app_name
+        case windowTitle, window_title
+        case snapshotAssetId, snapshot_asset_id
+        case snapshotSha256, snapshot_sha256
+        case contentHash, content_hash
+        case redactionStatus, redaction_status
+        case privacyState, privacy_state
+        case safeForSearch, safe_for_search
+        case safeForMemory, safe_for_memory
+        case safeForExport, safe_for_export
+        case proofAcceptedByRecorderIngest, proof_accepted_by_recorder_ingest
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        capturedAt = try c.decodeIfPresent(String.self, forKey: .capturedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .captured_at)
+            ?? ""
+        monitorId = try c.decodeIfPresent(String.self, forKey: .monitorId)
+            ?? c.decodeIfPresent(String.self, forKey: .monitor_id)
+            ?? "unknown"
+        captureTrigger = try c.decodeIfPresent(String.self, forKey: .captureTrigger)
+            ?? c.decodeIfPresent(String.self, forKey: .capture_trigger)
+            ?? "unknown"
+        appName = try c.decodeIfPresent(String.self, forKey: .appName)
+            ?? c.decodeIfPresent(String.self, forKey: .app_name)
+        windowTitle = try c.decodeIfPresent(String.self, forKey: .windowTitle)
+            ?? c.decodeIfPresent(String.self, forKey: .window_title)
+        snapshotAssetId = try c.decodeIfPresent(String.self, forKey: .snapshotAssetId)
+            ?? c.decodeIfPresent(String.self, forKey: .snapshot_asset_id)
+            ?? ""
+        snapshotSha256 = try c.decodeIfPresent(String.self, forKey: .snapshotSha256)
+            ?? c.decodeIfPresent(String.self, forKey: .snapshot_sha256)
+            ?? ""
+        contentHash = try c.decodeIfPresent(String.self, forKey: .contentHash)
+            ?? c.decodeIfPresent(String.self, forKey: .content_hash)
+            ?? ""
+        redactionStatus = try c.decodeIfPresent(String.self, forKey: .redactionStatus)
+            ?? c.decodeIfPresent(String.self, forKey: .redaction_status)
+            ?? "unknown"
+        privacyState = try c.decodeIfPresent(String.self, forKey: .privacyState)
+            ?? c.decodeIfPresent(String.self, forKey: .privacy_state)
+            ?? "raw_local"
+        safeForSearch = try c.decodeIfPresent(Bool.self, forKey: .safeForSearch)
+            ?? c.decodeIfPresent(Bool.self, forKey: .safe_for_search)
+            ?? false
+        safeForMemory = try c.decodeIfPresent(Bool.self, forKey: .safeForMemory)
+            ?? c.decodeIfPresent(Bool.self, forKey: .safe_for_memory)
+            ?? false
+        safeForExport = try c.decodeIfPresent(Bool.self, forKey: .safeForExport)
+            ?? c.decodeIfPresent(Bool.self, forKey: .safe_for_export)
+            ?? false
+        proofAcceptedByRecorderIngest = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByRecorderIngest)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_recorder_ingest)
+            ?? false
+    }
+}
+
+struct RecorderMediaAssetReceipt: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let assetType: String
+    let sha256: String
+    let byteSize: Int
+    let encrypted: Bool
+    let pathExposed: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case assetType, asset_type
+        case sha256
+        case byteSize, byte_size
+        case encrypted
+        case pathExposed, path_exposed
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        assetType = try c.decodeIfPresent(String.self, forKey: .assetType)
+            ?? c.decodeIfPresent(String.self, forKey: .asset_type)
+            ?? ""
+        sha256 = try c.decodeIfPresent(String.self, forKey: .sha256) ?? ""
+        byteSize = try c.decodeIfPresent(Int.self, forKey: .byteSize)
+            ?? c.decodeIfPresent(Int.self, forKey: .byte_size)
+            ?? 0
+        encrypted = try c.decodeIfPresent(Bool.self, forKey: .encrypted) ?? false
+        pathExposed = try c.decodeIfPresent(Bool.self, forKey: .pathExposed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .path_exposed)
+            ?? false
+    }
+}
+
+struct RecorderFrameDeleteReceipt: Decodable, Equatable, Hashable {
+    let status: String
+    let frameId: String
+    let mediaAssetId: String
+    let mediaRemoved: Bool
+    let pathExposed: Bool
+    let deletedAt: String
+    let proofAcceptedByRecorderDelete: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case frameId, frame_id
+        case mediaAssetId, media_asset_id
+        case mediaRemoved, media_removed
+        case pathExposed, path_exposed
+        case deletedAt, deleted_at
+        case proofAcceptedByRecorderDelete, proof_accepted_by_recorder_delete
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
+        frameId = try c.decodeIfPresent(String.self, forKey: .frameId)
+            ?? c.decodeIfPresent(String.self, forKey: .frame_id)
+            ?? ""
+        mediaAssetId = try c.decodeIfPresent(String.self, forKey: .mediaAssetId)
+            ?? c.decodeIfPresent(String.self, forKey: .media_asset_id)
+            ?? ""
+        mediaRemoved = try c.decodeIfPresent(Bool.self, forKey: .mediaRemoved)
+            ?? c.decodeIfPresent(Bool.self, forKey: .media_removed)
+            ?? false
+        pathExposed = try c.decodeIfPresent(Bool.self, forKey: .pathExposed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .path_exposed)
+            ?? false
+        deletedAt = try c.decodeIfPresent(String.self, forKey: .deletedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .deleted_at)
+            ?? ""
+        proofAcceptedByRecorderDelete = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByRecorderDelete)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_recorder_delete)
+            ?? false
+    }
+}
+
+struct RecorderFrameRangeDeleteReceipt: Decodable, Equatable, Hashable {
+    let status: String
+    let frameCount: Int
+    let mediaRemovedCount: Int
+    let frameIds: [String]
+    let mediaAssetIds: [String]
+    let pathExposed: Bool
+    let deletedAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case frameCount, frame_count
+        case mediaRemovedCount, media_removed_count
+        case frameIds, frame_ids
+        case mediaAssetIds, media_asset_ids
+        case pathExposed, path_exposed
+        case deletedAt, deleted_at
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
+        frameCount = try c.decodeIfPresent(Int.self, forKey: .frameCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .frame_count)
+            ?? 0
+        mediaRemovedCount = try c.decodeIfPresent(Int.self, forKey: .mediaRemovedCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .media_removed_count)
+            ?? 0
+        frameIds = try c.decodeIfPresent([String].self, forKey: .frameIds)
+            ?? c.decodeIfPresent([String].self, forKey: .frame_ids)
+            ?? []
+        mediaAssetIds = try c.decodeIfPresent([String].self, forKey: .mediaAssetIds)
+            ?? c.decodeIfPresent([String].self, forKey: .media_asset_ids)
+            ?? []
+        pathExposed = try c.decodeIfPresent(Bool.self, forKey: .pathExposed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .path_exposed)
+            ?? false
+        deletedAt = try c.decodeIfPresent(String.self, forKey: .deletedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .deleted_at)
+            ?? ""
+    }
+}
+
+struct RecorderRawApiStatus: Decodable, Equatable, Hashable {
+    let enabled: Bool
+    let host: String
+    let port: Int
+    let url: String
+    let tokenIssuer: String
+    let proofAcceptedByRawApi: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+        case host
+        case port
+        case url
+        case tokenIssuer, token_issuer
+        case proofAcceptedByRawApi, proof_accepted_by_raw_api
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        host = try c.decodeIfPresent(String.self, forKey: .host) ?? ""
+        port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 0
+        url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+        tokenIssuer = try c.decodeIfPresent(String.self, forKey: .tokenIssuer)
+            ?? c.decodeIfPresent(String.self, forKey: .token_issuer)
+            ?? ""
+        proofAcceptedByRawApi = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByRawApi)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_raw_api)
+            ?? false
+    }
+}
+
+struct RecorderRawApiToken: Decodable, Equatable, Hashable {
+    let token: String
+    let tokenId: String
+    let clientId: String
+    let scopes: [String]
+    let issuedAt: String
+    let expiresAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case token
+        case tokenId, token_id
+        case clientId, client_id
+        case scopes
+        case issuedAt, issued_at
+        case expiresAt, expires_at
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        token = try c.decodeIfPresent(String.self, forKey: .token) ?? ""
+        tokenId = try c.decodeIfPresent(String.self, forKey: .tokenId)
+            ?? c.decodeIfPresent(String.self, forKey: .token_id)
+            ?? ""
+        clientId = try c.decodeIfPresent(String.self, forKey: .clientId)
+            ?? c.decodeIfPresent(String.self, forKey: .client_id)
+            ?? ""
+        scopes = try c.decodeIfPresent([String].self, forKey: .scopes) ?? []
+        issuedAt = try c.decodeIfPresent(String.self, forKey: .issuedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .issued_at)
+            ?? ""
+        expiresAt = try c.decodeIfPresent(String.self, forKey: .expiresAt)
+            ?? c.decodeIfPresent(String.self, forKey: .expires_at)
+            ?? ""
+    }
+}
+
+struct RecorderFrameImagePreview: Equatable, Hashable, Identifiable {
+    let id: String
+    let frameId: String
+    let mediaAssetId: String
+    let auditId: String
+    let fetchedAt: String
+    let data: Data
+    let pathExposed: Bool
+    let proofAcceptedByRawApi: Bool
+}
+
 struct DayReviewWorkArea: Codable, Equatable, Hashable, Identifiable {
     var id: String { name }
     let name: String
@@ -3240,6 +3862,34 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var strategyReportDynamicActivated = false
     @Published private(set) var bipResearch: BipResearchSnapshot = .empty
     @Published private(set) var workHistory: WorkHistorySnapshot = .empty
+    @Published private(set) var recorderControlState: RecorderControlState?
+    @Published private(set) var recorderCaptureReadiness: RecorderCaptureReadiness?
+    @Published private(set) var recorderControlRefreshing = false
+    @Published private(set) var recorderControlActionInFlight: String?
+    @Published private(set) var recorderControlLastError: String?
+    @Published private(set) var recorderFrameCaptureInFlight = false
+    @Published private(set) var recorderFrameCaptureLastError: String?
+    @Published private(set) var recorderLastFrameCapture: RecorderFrameCaptureReceipt?
+    @Published private(set) var recorderFrameDeleteInFlight = false
+    @Published private(set) var recorderFrameDeleteLastError: String?
+    @Published private(set) var recorderLastFrameDelete: RecorderFrameDeleteReceipt?
+    @Published private(set) var recorderLastFrameRangeDelete: RecorderFrameRangeDeleteReceipt?
+    @Published private(set) var recorderFrameCaptures: [RecorderFrameCaptureReceipt] = []
+    @Published private(set) var recorderFrameCapturesRefreshing = false
+    @Published private(set) var recorderFrameCapturesLastError: String?
+    @Published private(set) var recorderFrameImagePreview: RecorderFrameImagePreview?
+    @Published private(set) var recorderFrameImageLoadingID: String?
+    @Published private(set) var recorderFrameImageLastError: String?
+    @Published private(set) var recorderAutoCaptureRunning = false
+    @Published private(set) var recorderAutoCaptureLastTrigger: String?
+    @Published private(set) var recorderAutoCaptureLastError: String?
+    @Published private(set) var recorderPipes: [RecorderPipeDefinition] = []
+    @Published private(set) var recorderPipeRuns: [RecorderPipeRun] = []
+    @Published private(set) var recorderPipesRefreshing = false
+    @Published private(set) var recorderPipeActionInFlight: Set<String> = []
+    @Published private(set) var recorderPipeSchedulerRunning = false
+    @Published private(set) var recorderPipeLastSchedulerResult: RecorderPipeSchedulerResult?
+    @Published private(set) var recorderPipeLastError: String?
     @Published private(set) var githubCliAuthStatus: GitHubCLIAuthStatus = .unknown
     // Settings > 연동 live checks (sidecar verifies tokens against the real
     // services: gh auth / PostHog /users/@me / Cloudflare /zones).
@@ -3276,6 +3926,14 @@ final class AgenticViewModel: ObservableObject {
     private let localDataResetter: @MainActor (Agentic30LocalDataResetOptions, [URL]) -> KeychainHelper.LocalDataResetReport
     private var startupSessionAppearStartedAt: Date?
     private var didRecordStartupSessionAppear = false
+    private var recorderAutoCaptureTimer: Timer?
+    private var recorderAutoCaptureActivationObserver: NSObjectProtocol?
+    private let recorderAutoCaptureIntervalSeconds: TimeInterval = 120
+    private var recorderAutoCaptureLocallyStopped = false
+    private var recorderRawApiStatus: RecorderRawApiStatus?
+    private var pendingRecorderFrameImageRequestID: String?
+    private var recorderFrameImagePreparedForDisplay = false
+    private static let recorderFrameImageClientId = "agentic30-founder-replay"
 
     struct WorkspaceScanResult: Codable, Equatable {
         let icp: String?
@@ -3763,6 +4421,13 @@ final class AgenticViewModel: ObservableObject {
         hydrateWorkspaceScanResultFromCacheIfAvailable()
     }
 
+    deinit {
+        recorderAutoCaptureTimer?.invalidate()
+        if let recorderAutoCaptureActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(recorderAutoCaptureActivationObserver)
+        }
+    }
+
     struct StructuredPromptSubmission: Codable, nonisolated Hashable {
         let question: String
         let selectedOptions: [String]
@@ -3946,6 +4611,7 @@ final class AgenticViewModel: ObservableObject {
         var draft = state.answersByQuestionID[question.id] ?? StructuredPromptAnswerDraft()
         let supportsFreeText = question.allowFreeText == true
             || question.requiresFreeText == true
+            || question.primaryTextInput != nil
             || question.options?.isEmpty != false
         let hasOptions = question.options?.isEmpty == false
         if supportsFreeText && !hasOptions {
@@ -4001,10 +4667,23 @@ final class AgenticViewModel: ObservableObject {
             let customSelections = draft.selectedOptions
                 .filter { !optionOrder.contains($0) }
                 .sorted()
+            let trimmedFreeText = draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines)
+            var selectedOptions = orderedSelections + customSelections
+            if selectedOptions.isEmpty,
+               trimmedFreeText.isEmpty,
+               question.allowsEmptySubmit == true,
+               question.primaryTextInput?.required != true,
+               question.requiresFreeText != true,
+               let defaultOption = (question.options ?? []).first(where: { $0.recommended == true }) ?? (question.options ?? []).first {
+                let defaultLabel = defaultOption.label.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !defaultLabel.isEmpty {
+                    selectedOptions = [defaultLabel]
+                }
+            }
             return StructuredPromptSubmission(
                 question: question.question,
-                selectedOptions: orderedSelections + customSelections,
-                freeText: draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines)
+                selectedOptions: selectedOptions,
+                freeText: trimmedFreeText
             )
         }
     }
@@ -7062,6 +7741,920 @@ final class AgenticViewModel: ObservableObject {
         requestWorkHistory()
     }
 
+    func prepareRecorderControlForDisplay() {
+        guard recorderControlState == nil && recorderCaptureReadiness == nil else { return }
+        refreshRecorderControlState()
+    }
+
+    func refreshRecorderControlState() {
+        guard isConnected else {
+            recorderControlLastError = "실행 보조 앱이 연결되지 않아 Recorder 상태를 불러올 수 없습니다."
+            return
+        }
+        recorderControlRefreshing = true
+        recorderControlLastError = nil
+        guard sidecar.send(payload: [
+            "type": "recorder_control_state_get",
+        ]) else {
+            recorderControlRefreshing = false
+            recorderControlLastError = "Recorder 상태 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_control_refresh_requested",
+            authSession: macAuthSession
+        )
+    }
+
+    func grantRecorderConsent() {
+        recorderAutoCaptureLocallyStopped = false
+        sendRecorderControlAction(
+            [
+                "type": "grant_consent",
+                "visibleIndicatorAcknowledged": true,
+            ],
+            actionID: "grant_consent"
+        )
+    }
+
+    func revokeRecorderConsent() {
+        stopRecorderAutoCapture(reason: "local_user_revoked_consent", locallyStopped: true)
+        sendRecorderControlAction(
+            [
+                "type": "revoke_consent",
+                "reason": "local_user_revoked_consent",
+            ],
+            actionID: "revoke_consent"
+        )
+    }
+
+    func pauseRecorderCapture() {
+        stopRecorderAutoCapture(reason: "local_user_pause", locallyStopped: true)
+        sendRecorderControlAction(
+            [
+                "type": "pause",
+                "reason": "local_user_pause",
+            ],
+            actionID: "pause"
+        )
+    }
+
+    func resumeRecorderCapture() {
+        recorderAutoCaptureLocallyStopped = false
+        sendRecorderControlAction(
+            [
+                "type": "resume",
+                "reason": "local_user_resume",
+            ],
+            actionID: "resume"
+        )
+    }
+
+    func stopRecorderForToday() {
+        stopRecorderAutoCapture(reason: "local_user_stop_for_today", locallyStopped: true)
+        sendRecorderControlAction(
+            [
+                "type": "stop_for_today",
+                "reason": "local_user_stop_for_today",
+            ],
+            actionID: "stop_for_today"
+        )
+    }
+
+    func refreshRecorderPermissionProbe() {
+        guard isConnected else {
+            recorderControlLastError = "실행 보조 앱이 연결되지 않아 macOS 권한 상태를 반영할 수 없습니다."
+            return
+        }
+        let permissions = Self.currentRecorderPermissionProbe()
+        guard !permissions.isEmpty else {
+            recorderControlLastError = "확인할 수 있는 macOS 권한 항목이 없습니다."
+            return
+        }
+        recorderControlActionInFlight = "permission_probe"
+        recorderControlLastError = nil
+        var sentAll = true
+        for permission in permissions {
+            let sent = sidecar.send(payload: [
+                "type": "recorder_control_action",
+                "action": [
+                    "type": "set_permission",
+                    "permission": permission.id,
+                    "state": permission.state,
+                ],
+            ])
+            sentAll = sentAll && sent
+        }
+        guard sentAll else {
+            recorderControlActionInFlight = nil
+            recorderControlLastError = "macOS 권한 상태 업데이트를 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_permission_probe_requested",
+            properties: Dictionary(uniqueKeysWithValues: permissions.map { ($0.id, $0.state) }),
+            authSession: macAuthSession
+        )
+    }
+
+    func prepareRecorderFrameCapturesForDisplay() {
+        guard recorderFrameCaptures.isEmpty else { return }
+        refreshRecorderFrameCaptures()
+    }
+
+    func refreshRecorderFrameCaptures() {
+        guard isConnected else {
+            recorderFrameCapturesLastError = "실행 보조 앱이 연결되지 않아 최근 화면 기록을 불러올 수 없습니다."
+            return
+        }
+        recorderFrameCapturesRefreshing = true
+        recorderFrameCapturesLastError = nil
+        guard sidecar.send(payload: [
+            "type": "recorder_frame_captures_list",
+            "limit": 24,
+        ]) else {
+            recorderFrameCapturesRefreshing = false
+            recorderFrameCapturesLastError = "최근 화면 기록 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_frame_captures_refresh_requested",
+            authSession: macAuthSession
+        )
+    }
+
+    func prepareRecorderFrameImageForDisplay(frameId: String?) {
+        recorderFrameImagePreparedForDisplay = true
+        requestRecorderFrameImageIfNeeded(frameId: frameId)
+    }
+
+    func loadRecorderFrameImage(frameId: String) {
+        recorderFrameImagePreparedForDisplay = true
+        requestRecorderFrameImageIfNeeded(frameId: frameId, force: true)
+    }
+
+    func captureRecorderFrameNow() {
+        captureRecorderFrame(trigger: "manual_swift_screencapturekit", automatic: false)
+    }
+
+    func deleteLastRecorderFrame() {
+        guard let frameId = recorderLastFrameCapture?.id.trimmingCharacters(in: .whitespacesAndNewlines),
+              !frameId.isEmpty else {
+            recorderFrameDeleteLastError = "삭제할 화면 기록이 없습니다."
+            return
+        }
+        deleteRecorderFrame(
+            id: frameId,
+            telemetrySource: "latest_control",
+            stopAutomaticCapture: true
+        )
+    }
+
+    func deleteRecorderFrame(id frameId: String) {
+        deleteRecorderFrame(
+            id: frameId,
+            telemetrySource: "selected_replay_frame",
+            stopAutomaticCapture: false
+        )
+    }
+
+    func deleteRecorderFrameRange(frameIds: [String]) {
+        guard !recorderFrameDeleteInFlight else { return }
+        guard isConnected else {
+            recorderFrameDeleteLastError = "실행 보조 앱이 연결되지 않아 화면 기록 범위를 삭제할 수 없습니다."
+            return
+        }
+        let requested = Set(frameIds.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        guard !requested.isEmpty else {
+            recorderFrameDeleteLastError = "삭제할 화면 기록 범위가 없습니다."
+            return
+        }
+        let targets = recorderFrameCaptures.filter { requested.contains($0.id) }
+        guard !targets.isEmpty else {
+            recorderFrameDeleteLastError = "현재 목록에서 삭제할 화면 기록을 찾지 못했습니다."
+            return
+        }
+        let parsedDates = targets.compactMap { Self.recorderDate(fromIsoTimestamp: $0.capturedAt) }
+        guard parsedDates.count == targets.count,
+              let startedAt = parsedDates.min(),
+              let latestAt = parsedDates.max() else {
+            recorderFrameDeleteLastError = "화면 기록 시각을 해석하지 못해 범위 삭제를 중단했습니다."
+            return
+        }
+        let endedAt = latestAt.addingTimeInterval(1)
+        recorderFrameDeleteInFlight = true
+        recorderFrameDeleteLastError = nil
+        guard sidecar.send(payload: [
+            "type": "recorder_frame_captures_delete_range",
+            "startedAt": Self.recorderIsoTimestamp(startedAt),
+            "endedAt": Self.recorderIsoTimestamp(endedAt),
+            "limit": max(targets.count, 1),
+            "confirm": true,
+        ]) else {
+            recorderFrameDeleteInFlight = false
+            recorderFrameDeleteLastError = "화면 기록 범위 삭제 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_frame_captures_delete_range_requested",
+            properties: [
+                "source": "founder_replay_visible_range",
+                "frame_count": targets.count,
+            ],
+            authSession: macAuthSession
+        )
+    }
+
+    private func deleteRecorderFrame(
+        id frameId: String,
+        telemetrySource: String,
+        stopAutomaticCapture: Bool
+    ) {
+        guard !recorderFrameDeleteInFlight else { return }
+        guard isConnected else {
+            recorderFrameDeleteLastError = "실행 보조 앱이 연결되지 않아 화면 기록을 삭제할 수 없습니다."
+            return
+        }
+        let cleanFrameId = frameId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanFrameId.isEmpty else {
+            recorderFrameDeleteLastError = "삭제할 화면 기록이 없습니다."
+            return
+        }
+        if stopAutomaticCapture {
+            stopRecorderAutoCapture(reason: "local_user_delete_latest_frame", locallyStopped: true)
+        }
+        recorderFrameDeleteInFlight = true
+        recorderFrameDeleteLastError = nil
+        guard sidecar.send(payload: [
+            "type": "recorder_frame_capture_delete",
+            "frameId": cleanFrameId,
+        ]) else {
+            recorderFrameDeleteInFlight = false
+            recorderFrameDeleteLastError = "화면 기록 삭제 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_frame_capture_delete_requested",
+            properties: [
+                "source": telemetrySource,
+                "frame_id": cleanFrameId,
+            ],
+            authSession: macAuthSession
+        )
+    }
+
+    func startRecorderAutoCapture() {
+        startRecorderAutoCapture(reason: "local_user_start_auto_capture")
+    }
+
+    private func startRecorderAutoCapture(reason: String) {
+        guard !recorderAutoCaptureRunning else { return }
+        guard isConnected else {
+            recorderAutoCaptureLastError = "실행 보조 앱이 연결되지 않아 자동 화면 기록을 시작할 수 없습니다."
+            return
+        }
+        guard recorderCaptureReadiness?.canRecord == true else {
+            let blocker = recorderCaptureReadiness?.blockers.first?.message ?? "Recorder capture readiness is blocked."
+            recorderAutoCaptureLastError = blocker
+            return
+        }
+        recorderAutoCaptureLocallyStopped = false
+        recorderAutoCaptureRunning = true
+        recorderAutoCaptureLastError = nil
+        let startTrigger = reason == "readiness_auto_arm"
+            ? "auto_swift_screencapturekit_readiness_auto_arm"
+            : "auto_swift_screencapturekit_start"
+        recorderAutoCaptureLastTrigger = startTrigger
+        installRecorderAutoCaptureTriggers()
+        captureRecorderFrame(trigger: startTrigger, automatic: true)
+        PostHogTelemetry.capture(
+            "mac_recorder_auto_capture_started",
+            properties: [
+                "interval_seconds": Int(recorderAutoCaptureIntervalSeconds),
+                "reason": reason,
+            ],
+            authSession: macAuthSession
+        )
+    }
+
+    func stopRecorderAutoCapture() {
+        stopRecorderAutoCapture(reason: "local_user_stop_auto_capture", locallyStopped: true)
+    }
+
+    private func captureRecorderFrame(trigger: String, automatic: Bool) {
+        guard !recorderFrameCaptureInFlight else { return }
+        guard isConnected else {
+            recorderFrameCaptureLastError = "실행 보조 앱이 연결되지 않아 화면 캡처를 저장할 수 없습니다."
+            if automatic {
+                stopRecorderAutoCapture(reason: "sidecar_disconnected", errorMessage: recorderFrameCaptureLastError)
+            }
+            return
+        }
+        guard recorderCaptureReadiness?.canRecord == true else {
+            let blocker = recorderCaptureReadiness?.blockers.first?.message ?? "Recorder capture readiness is blocked."
+            recorderFrameCaptureLastError = blocker
+            if automatic {
+                stopRecorderAutoCapture(reason: "readiness_blocked", errorMessage: blocker)
+            }
+            return
+        }
+        recorderFrameCaptureInFlight = true
+        recorderFrameCaptureLastError = nil
+        Task { [weak self] in
+            do {
+                let envelope = try await Self.buildScreenCaptureKitFrameEnvelope(trigger: trigger)
+                await MainActor.run {
+                    self?.sendRecorderFrameCaptureEnvelope(envelope, automatic: automatic)
+                }
+            } catch {
+                await MainActor.run {
+                    self?.recorderFrameCaptureInFlight = false
+                    self?.recorderFrameCaptureLastError = error.localizedDescription
+                    if automatic {
+                        self?.stopRecorderAutoCapture(
+                            reason: "capture_failed",
+                            errorMessage: error.localizedDescription,
+                            locallyStopped: true
+                        )
+                    }
+                    PostHogTelemetry.captureException(error, properties: [
+                        "component": "agentic_view_model",
+                        "operation": automatic ? "recorder_auto_capture" : "recorder_frame_capture_now",
+                        "capture_trigger": trigger,
+                    ], authSession: self?.macAuthSession)
+                }
+            }
+        }
+    }
+
+    private func installRecorderAutoCaptureTriggers() {
+        recorderAutoCaptureTimer?.invalidate()
+        recorderAutoCaptureTimer = Timer.scheduledTimer(
+            withTimeInterval: recorderAutoCaptureIntervalSeconds,
+            repeats: true
+        ) { [weak self] _ in
+            self?.recordRecorderAutoCaptureTrigger("auto_swift_screencapturekit_interval")
+        }
+        recorderAutoCaptureTimer?.tolerance = min(15, recorderAutoCaptureIntervalSeconds / 4)
+
+        if recorderAutoCaptureActivationObserver == nil {
+            recorderAutoCaptureActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.recordRecorderAutoCaptureTrigger("auto_swift_screencapturekit_app_activation")
+            }
+        }
+    }
+
+    private func recordRecorderAutoCaptureTrigger(_ trigger: String) {
+        guard recorderAutoCaptureRunning else { return }
+        guard !recorderFrameCaptureInFlight else {
+            recorderAutoCaptureLastTrigger = "\(trigger)_skipped_in_flight"
+            return
+        }
+        guard recorderCaptureReadiness?.canRecord == true else {
+            let blocker = recorderCaptureReadiness?.blockers.first?.message ?? "Recorder capture readiness is blocked."
+            stopRecorderAutoCapture(reason: "readiness_blocked", errorMessage: blocker)
+            return
+        }
+        recorderAutoCaptureLastTrigger = trigger
+        captureRecorderFrame(trigger: trigger, automatic: true)
+    }
+
+    private func reconcileRecorderAutoCaptureWithReadiness() {
+        if recorderCaptureReadiness?.canRecord == true {
+            if !recorderAutoCaptureRunning && !recorderAutoCaptureLocallyStopped {
+                startRecorderAutoCapture(reason: "readiness_auto_arm")
+            }
+            return
+        }
+
+        if recorderAutoCaptureRunning {
+            let blocker = recorderCaptureReadiness?.blockers.first?.message ?? "Recorder capture readiness is blocked."
+            stopRecorderAutoCapture(reason: "readiness_blocked", errorMessage: blocker)
+        }
+    }
+
+    private func stopRecorderAutoCapture(
+        reason: String,
+        errorMessage: String? = nil,
+        locallyStopped: Bool = false
+    ) {
+        if locallyStopped {
+            recorderAutoCaptureLocallyStopped = true
+        }
+        let wasRunning = recorderAutoCaptureRunning
+            || recorderAutoCaptureTimer != nil
+            || recorderAutoCaptureActivationObserver != nil
+
+        recorderAutoCaptureTimer?.invalidate()
+        recorderAutoCaptureTimer = nil
+        if let recorderAutoCaptureActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(recorderAutoCaptureActivationObserver)
+            self.recorderAutoCaptureActivationObserver = nil
+        }
+        recorderAutoCaptureRunning = false
+        if let errorMessage {
+            recorderAutoCaptureLastError = errorMessage
+        } else if reason == "local_user_stop_auto_capture" {
+            recorderAutoCaptureLastError = nil
+        }
+
+        guard wasRunning else { return }
+        PostHogTelemetry.capture(
+            "mac_recorder_auto_capture_stopped",
+            properties: [
+                "reason": reason,
+            ],
+            authSession: macAuthSession
+        )
+    }
+
+    private func sendRecorderControlAction(_ action: [String: Any], actionID: String) {
+        guard isConnected else {
+            recorderControlLastError = "실행 보조 앱이 연결되지 않아 Recorder 제어 요청을 보낼 수 없습니다."
+            return
+        }
+        recorderControlActionInFlight = actionID
+        recorderControlLastError = nil
+        let sent = sidecar.send(payload: [
+            "type": "recorder_control_action",
+            "action": action,
+        ])
+        guard sent else {
+            recorderControlActionInFlight = nil
+            recorderControlLastError = "Recorder 제어 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_control_action_requested",
+            properties: ["action": actionID],
+            authSession: macAuthSession
+        )
+    }
+
+    private func sendRecorderFrameCaptureEnvelope(_ envelope: [String: Any], automatic: Bool) {
+        let sent = sidecar.send(payload: [
+            "type": "recorder_frame_capture_ingest",
+            "envelope": envelope,
+        ])
+        guard sent else {
+            recorderFrameCaptureInFlight = false
+            recorderFrameCaptureLastError = "화면 캡처 저장 요청을 실행 보조 앱에 보내지 못했습니다."
+            if automatic {
+                stopRecorderAutoCapture(reason: "ingest_send_failed", errorMessage: recorderFrameCaptureLastError)
+            }
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_frame_capture_ingest_requested",
+            properties: [
+                "capture_trigger": envelope["captureTrigger"] as? String ?? "unknown",
+                "automatic": automatic,
+            ],
+            authSession: macAuthSession
+        )
+    }
+
+    private func requestRecorderFrameImageIfNeeded(frameId: String?, force: Bool = false) {
+        let id = frameId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !id.isEmpty else {
+            recorderFrameImagePreview = nil
+            recorderFrameImageLoadingID = nil
+            pendingRecorderFrameImageRequestID = nil
+            return
+        }
+        if !force && recorderFrameImagePreview?.frameId == id {
+            return
+        }
+        if !force && recorderFrameImageLoadingID == id {
+            return
+        }
+        guard isConnected else {
+            recorderFrameImageLastError = "실행 보조 앱이 연결되지 않아 캡처 이미지를 불러올 수 없습니다."
+            return
+        }
+        recorderFrameImageLoadingID = id
+        recorderFrameImageLastError = nil
+        pendingRecorderFrameImageRequestID = id
+        guard sidecar.send(payload: [
+            "type": "recorder_raw_api_token_issue",
+            "scopes": ["raw_frame"],
+            "ttlMs": 60_000,
+            "clientId": Self.recorderFrameImageClientId,
+            "clientName": "Agentic30 Founder Replay",
+        ]) else {
+            recorderFrameImageLoadingID = nil
+            pendingRecorderFrameImageRequestID = nil
+            recorderFrameImageLastError = "raw_frame 토큰 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_frame_image_token_requested",
+            properties: ["frame_id": id],
+            authSession: macAuthSession
+        )
+    }
+
+    private func handleRecorderRawApiTokenIssued(_ event: SidecarEvent) {
+        if let status = event.recorderRawApi {
+            recorderRawApiStatus = status
+        }
+        guard let requestedFrameID = pendingRecorderFrameImageRequestID,
+              let token = event.recorderRawApiToken,
+              token.clientId == Self.recorderFrameImageClientId,
+              token.scopes.contains("raw_frame") else {
+            return
+        }
+        pendingRecorderFrameImageRequestID = nil
+        let status = event.recorderRawApi ?? recorderRawApiStatus
+        guard let rawApiURL = status?.url.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawApiURL.isEmpty,
+              status?.enabled == true else {
+            recorderFrameImageLoadingID = nil
+            recorderFrameImageLastError = "Recorder raw API가 준비되지 않아 캡처 이미지를 불러올 수 없습니다."
+            return
+        }
+        let rawToken = token.token
+        guard !rawToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            recorderFrameImageLoadingID = nil
+            recorderFrameImageLastError = "raw_frame 토큰 응답이 비어 있어 캡처 이미지를 불러올 수 없습니다."
+            return
+        }
+        fetchRecorderFrameImage(frameId: requestedFrameID, rawApiURL: rawApiURL, token: rawToken)
+    }
+
+    private func fetchRecorderFrameImage(frameId: String, rawApiURL: String, token: String) {
+        Task { [weak self] in
+            do {
+                guard let baseURL = URL(string: rawApiURL) else {
+                    throw RecorderFrameImageError.invalidRawApiURL
+                }
+                let url = baseURL
+                    .appendingPathComponent("recorder")
+                    .appendingPathComponent("frames")
+                    .appendingPathComponent(frameId)
+                    .appendingPathComponent("image")
+                var request = URLRequest(url: url)
+                request.httpMethod = "GET"
+                request.setValue("agentic30://app", forHTTPHeaderField: "Origin")
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                request.setValue("frame-image-\(UUID().uuidString.lowercased())", forHTTPHeaderField: "x-request-id")
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw RecorderFrameImageError.invalidResponse
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    throw RecorderFrameImageError.httpStatus(http.statusCode)
+                }
+                let contentType = http.value(forHTTPHeaderField: "content-type") ?? ""
+                guard contentType.lowercased().contains("image/jpeg") else {
+                    throw RecorderFrameImageError.invalidContentType(contentType)
+                }
+                guard !data.isEmpty, NSImage(data: data) != nil else {
+                    throw RecorderFrameImageError.invalidImageData
+                }
+                let preview = RecorderFrameImagePreview(
+                    id: frameId,
+                    frameId: frameId,
+                    mediaAssetId: http.value(forHTTPHeaderField: "x-agentic30-recorder-media-asset-id") ?? "",
+                    auditId: http.value(forHTTPHeaderField: "x-agentic30-recorder-audit-id") ?? "",
+                    fetchedAt: Self.recorderIsoTimestamp(Date()),
+                    data: data,
+                    pathExposed: false,
+                    proofAcceptedByRawApi: false
+                )
+                await MainActor.run {
+                    guard self?.recorderFrameImageLoadingID == frameId else { return }
+                    self?.recorderFrameImagePreview = preview
+                    self?.recorderFrameImageLoadingID = nil
+                    self?.recorderFrameImageLastError = nil
+                }
+            } catch {
+                await MainActor.run {
+                    guard self?.recorderFrameImageLoadingID == frameId else { return }
+                    self?.recorderFrameImageLoadingID = nil
+                    self?.recorderFrameImageLastError = error.localizedDescription
+                    PostHogTelemetry.captureException(error, properties: [
+                        "component": "agentic_view_model",
+                        "operation": "recorder_frame_image_fetch",
+                        "frame_id": frameId,
+                    ], authSession: self?.macAuthSession)
+                }
+            }
+        }
+    }
+
+    private func replaceRecorderFrameCaptures(_ frames: [RecorderFrameCaptureReceipt]) {
+        recorderFrameCaptures = Array(frames.sorted { lhs, rhs in
+            if lhs.capturedAt != rhs.capturedAt { return lhs.capturedAt > rhs.capturedAt }
+            return lhs.id > rhs.id
+        }.prefix(48))
+        if recorderFrameImagePreparedForDisplay {
+            requestRecorderFrameImageIfNeeded(frameId: recorderFrameCaptures.first?.id)
+        }
+    }
+
+    private func upsertRecorderFrameCapture(_ frame: RecorderFrameCaptureReceipt) {
+        var frames = recorderFrameCaptures.filter { $0.id != frame.id }
+        frames.append(frame)
+        replaceRecorderFrameCaptures(frames)
+    }
+
+    private func removeRecorderFrameCapture(id: String) {
+        recorderFrameCaptures.removeAll { $0.id == id }
+        if recorderFrameImagePreview?.frameId == id {
+            recorderFrameImagePreview = nil
+        }
+        if recorderFrameImageLoadingID == id {
+            recorderFrameImageLoadingID = nil
+            pendingRecorderFrameImageRequestID = nil
+        }
+        if recorderFrameImagePreparedForDisplay {
+            requestRecorderFrameImageIfNeeded(frameId: recorderFrameCaptures.first?.id, force: true)
+        }
+    }
+
+    private static func buildScreenCaptureKitFrameEnvelope(trigger: String) async throws -> [String: Any] {
+        #if canImport(ScreenCaptureKit)
+        if #available(macOS 14.0, *) {
+            return try await buildScreenCaptureKitFrameEnvelopeAvailable(trigger: trigger)
+        }
+        #endif
+        throw RecorderFrameCaptureError.screenCaptureKitUnavailable
+    }
+
+    #if canImport(ScreenCaptureKit)
+    @available(macOS 14.0, *)
+    private static func buildScreenCaptureKitFrameEnvelopeAvailable(trigger: String) async throws -> [String: Any] {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first else {
+            throw RecorderFrameCaptureError.noDisplay
+        }
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let configuration = SCStreamConfiguration()
+        configuration.width = Int(display.width)
+        configuration.height = Int(display.height)
+        configuration.showsCursor = true
+
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: filter,
+            configuration: configuration
+        )
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        guard let data = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.78]) else {
+            throw RecorderFrameCaptureError.jpegEncodingFailed
+        }
+
+        let now = Date()
+        let timestamp = recorderIsoTimestamp(now)
+        let day = String(timestamp.prefix(10))
+        let frameId = "frame-\(UUID().uuidString.lowercased())"
+        let assetId = "asset-\(UUID().uuidString.lowercased())"
+        let relativePath = "media/frames/\(day)/\(assetId).jpg"
+        let recorderRoot = FoundationProgressStore.defaultAppSupportURL()
+            .appendingPathComponent("recorder", isDirectory: true)
+        let fileURL = recorderRoot.appendingPathComponent(relativePath, isDirectory: false)
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: fileURL, options: [.atomic])
+
+        let digest = sha256Hex(data)
+        let appName = NSWorkspace.shared.frontmostApplication?.localizedName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let windowTitle = NSApp.keyWindow?.title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return [
+            "id": frameId,
+            "capturedAt": timestamp,
+            "monitorId": "display-\(display.displayID)",
+            "captureTrigger": trigger,
+            "appName": appName?.isEmpty == false ? appName! : NSNull(),
+            "windowTitle": windowTitle?.isEmpty == false ? windowTitle! : NSNull(),
+            "contentHash": digest,
+            "textSource": "screen_capture",
+            "redactionStatus": "not_redacted",
+            "safeForSearch": false,
+            "safeForMemory": false,
+            "safeForExport": false,
+            "privacyState": "raw_local",
+            "dataClass": "screen",
+            "snapshot": [
+                "id": assetId,
+                "relativePath": relativePath,
+                "sha256": digest,
+                "byteSize": data.count,
+                "encrypted": false,
+                "createdAt": timestamp,
+            ],
+        ]
+    }
+    #endif
+
+    private static func recorderIsoTimestamp(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
+    private static func recorderDate(fromIsoTimestamp value: String) -> Date? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: trimmed) {
+            return date
+        }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: trimmed)
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private static func currentRecorderPermissionProbe() -> [(id: String, state: String)] {
+        [
+            ("screenRecording", CGPreflightScreenCaptureAccess() ? "granted" : "denied"),
+            ("accessibility", AXIsProcessTrusted() ? "granted" : "denied"),
+        ]
+    }
+
+    private enum RecorderFrameCaptureError: LocalizedError {
+        case screenCaptureKitUnavailable
+        case noDisplay
+        case jpegEncodingFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .screenCaptureKitUnavailable:
+                return "ScreenCaptureKit is unavailable on this macOS runtime."
+            case .noDisplay:
+                return "ScreenCaptureKit did not return a capturable display."
+            case .jpegEncodingFailed:
+                return "ScreenCaptureKit frame could not be encoded as JPEG."
+            }
+        }
+    }
+
+    private enum RecorderFrameImageError: LocalizedError {
+        case invalidRawApiURL
+        case invalidResponse
+        case httpStatus(Int)
+        case invalidContentType(String)
+        case invalidImageData
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidRawApiURL:
+                return "Recorder raw API URL is invalid."
+            case .invalidResponse:
+                return "Recorder raw API image response was not an HTTP response."
+            case .httpStatus(let status):
+                return "Recorder raw frame image request failed with HTTP \(status)."
+            case .invalidContentType(let contentType):
+                return "Recorder raw frame image returned unexpected content type: \(contentType.isEmpty ? "missing" : contentType)."
+            case .invalidImageData:
+                return "Recorder raw frame image bytes could not be decoded as JPEG."
+            }
+        }
+    }
+
+    func prepareRecorderPipesForDisplay() {
+        guard recorderPipes.isEmpty && recorderPipeRuns.isEmpty else { return }
+        refreshRecorderPipes()
+    }
+
+    func refreshRecorderPipes() {
+        guard isConnected else {
+            recorderPipeLastError = "실행 보조 앱이 연결되지 않아 Pipe 상태를 불러올 수 없습니다."
+            return
+        }
+        recorderPipesRefreshing = true
+        recorderPipeLastError = nil
+        guard sidecar.send(payload: [
+            "type": "recorder_pipes_list",
+            "limit": 50,
+            "runLimit": 50,
+        ]) else {
+            recorderPipesRefreshing = false
+            recorderPipeLastError = "Pipe 상태 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_pipes_refresh_requested",
+            authSession: macAuthSession
+        )
+    }
+
+    func runRecorderPipe(_ pipeId: String) {
+        let cleanPipeId = pipeId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanPipeId.isEmpty else { return }
+        guard isConnected else {
+            recorderPipeLastError = "실행 보조 앱이 연결되지 않아 Pipe를 실행할 수 없습니다."
+            return
+        }
+        let now = Date()
+        let startedAt = Calendar.current.date(byAdding: .hour, value: -24, to: now) ?? now
+        recorderPipeActionInFlight.insert(cleanPipeId)
+        recorderPipeLastError = nil
+        let sent = sidecar.send(payload: [
+            "type": "recorder_pipe_run",
+            "pipeId": cleanPipeId,
+            "startedAt": ISO8601DateFormatter().string(from: startedAt),
+            "endedAt": ISO8601DateFormatter().string(from: now),
+            "triggerReason": "manual",
+            "limit": 2000,
+            "runLimit": 50,
+        ])
+        guard sent else {
+            recorderPipeActionInFlight.remove(cleanPipeId)
+            recorderPipeLastError = "Pipe 실행 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_pipe_run_requested",
+            properties: ["pipe_id": cleanPipeId],
+            authSession: macAuthSession
+        )
+    }
+
+    func cancelRecorderPipeRun(_ runId: String) {
+        let cleanRunId = runId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanRunId.isEmpty else { return }
+        guard isConnected else {
+            recorderPipeLastError = "실행 보조 앱이 연결되지 않아 Pipe 실행을 취소할 수 없습니다."
+            return
+        }
+        recorderPipeActionInFlight.insert(cleanRunId)
+        recorderPipeLastError = nil
+        let sent = sidecar.send(payload: [
+            "type": "recorder_pipe_cancel",
+            "runId": cleanRunId,
+            "reason": "local_user_cancelled",
+            "runLimit": 50,
+        ])
+        guard sent else {
+            recorderPipeActionInFlight.remove(cleanRunId)
+            recorderPipeLastError = "Pipe 취소 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_pipe_cancel_requested",
+            properties: ["run_id": cleanRunId],
+            authSession: macAuthSession
+        )
+    }
+
+    func tickRecorderPipeScheduler() {
+        guard isConnected else {
+            recorderPipeLastError = "실행 보조 앱이 연결되지 않아 Pipe 스케줄러를 실행할 수 없습니다."
+            return
+        }
+        recorderPipeSchedulerRunning = true
+        recorderPipeLastError = nil
+        let sent = sidecar.send(payload: [
+            "type": "recorder_pipe_scheduler_tick",
+            "autoRun": true,
+            "limit": 50,
+            "maxRuns": 10,
+            "runLimit": 50,
+        ])
+        guard sent else {
+            recorderPipeSchedulerRunning = false
+            recorderPipeLastError = "Pipe 스케줄러 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_pipe_scheduler_tick_requested",
+            authSession: macAuthSession
+        )
+    }
+
+    private func replaceRecorderPipeRuns(_ runs: [RecorderPipeRun]) {
+        recorderPipeRuns = runs.sorted { lhs, rhs in
+            if lhs.startedAt != rhs.startedAt {
+                return lhs.startedAt > rhs.startedAt
+            }
+            return lhs.id > rhs.id
+        }
+    }
+
+    private func upsertRecorderPipeRun(_ run: RecorderPipeRun) {
+        var nextRuns = recorderPipeRuns.filter { $0.id != run.id }
+        nextRuns.append(run)
+        replaceRecorderPipeRuns(nextRuns)
+    }
+
     /// 아침 브리핑 탭 진입 시 호출. 사이드카가 캐시된 브리핑을 즉시 돌려주고,
     /// 로컬 날짜가 바뀌었으면 소스 수집을 다시 돈다.
     func prepareMorningBriefingForDisplay() {
@@ -8973,6 +10566,9 @@ final class AgenticViewModel: ObservableObject {
             if let diagnostics = event.diagnostics {
                 sidecarDiagnostics = diagnostics
             }
+            if let recorderRawApi = event.recorderRawApi {
+                recorderRawApiStatus = recorderRawApi
+            }
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
             }
@@ -9458,6 +11054,93 @@ final class AgenticViewModel: ObservableObject {
             } else {
                 dayGateBlocked = nil
                 dayGateBlockedMessage = nil
+            }
+        case "recorder_pipes_state":
+            if let pipes = event.pipes {
+                recorderPipes = pipes
+            }
+            if let runs = event.runs {
+                replaceRecorderPipeRuns(runs)
+            }
+            recorderPipesRefreshing = false
+            recorderPipeLastError = nil
+        case "recorder_raw_api_status":
+            if let recorderRawApi = event.recorderRawApi {
+                recorderRawApiStatus = recorderRawApi
+            }
+        case "recorder_raw_api_token_issued":
+            handleRecorderRawApiTokenIssued(event)
+        case "recorder_control_state":
+            if let controlState = event.controlState {
+                recorderControlState = controlState
+            }
+            if let readiness = event.readiness {
+                recorderCaptureReadiness = readiness
+            }
+            reconcileRecorderAutoCaptureWithReadiness()
+            recorderControlRefreshing = false
+            recorderControlActionInFlight = nil
+            recorderControlLastError = nil
+        case "recorder_frame_capture_ingested":
+            if let frame = event.frame {
+                recorderLastFrameCapture = frame
+                upsertRecorderFrameCapture(frame)
+            }
+            recorderFrameCaptureInFlight = false
+            recorderFrameCaptureLastError = nil
+            if recorderAutoCaptureRunning {
+                recorderAutoCaptureLastError = nil
+            }
+        case "recorder_frame_captures":
+            if let frames = event.frames {
+                replaceRecorderFrameCaptures(frames)
+            }
+            recorderFrameCapturesRefreshing = false
+            recorderFrameCapturesLastError = nil
+        case "recorder_frame_capture_deleted":
+            if let deletion = event.deletion {
+                recorderLastFrameDelete = deletion
+                if recorderLastFrameCapture?.id == deletion.frameId {
+                    recorderLastFrameCapture = nil
+                }
+                removeRecorderFrameCapture(id: deletion.frameId)
+            }
+            recorderFrameDeleteInFlight = false
+            recorderFrameDeleteLastError = nil
+        case "recorder_frame_captures_deleted":
+            if let deletionRange = event.deletionRange {
+                recorderLastFrameRangeDelete = deletionRange
+                if let lastID = recorderLastFrameCapture?.id,
+                   deletionRange.frameIds.contains(lastID) {
+                    recorderLastFrameCapture = nil
+                }
+                for frameId in deletionRange.frameIds {
+                    removeRecorderFrameCapture(id: frameId)
+                }
+            }
+            recorderFrameDeleteInFlight = false
+            recorderFrameDeleteLastError = nil
+        case "recorder_pipe_run_result", "recorder_pipe_cancel_result":
+            if let run = event.pipeRun {
+                recorderPipeActionInFlight.remove(run.pipeId)
+                recorderPipeActionInFlight.remove(run.id)
+                upsertRecorderPipeRun(run)
+            }
+            if let runs = event.runs {
+                replaceRecorderPipeRuns(runs)
+            }
+            recorderPipeLastError = nil
+        case "recorder_pipe_scheduler_tick_result":
+            recorderPipeSchedulerRunning = false
+            recorderPipeLastSchedulerResult = event.drainResult ?? event.enqueueResult ?? event.scheduler
+            if let runs = event.runs {
+                replaceRecorderPipeRuns(runs)
+            }
+            if let failedCount = recorderPipeLastSchedulerResult?.failedCount,
+               failedCount > 0 {
+                recorderPipeLastError = "Pipe 스케줄러 실행 중 \(failedCount)개 작업이 실패했습니다."
+            } else {
+                recorderPipeLastError = nil
             }
         case "program_notification_schedule":
             if event.success == false {
@@ -10118,6 +11801,40 @@ final class AgenticViewModel: ObservableObject {
             bipMissionProgress = event.bipMissionProgress
         case "error":
             lastError = event.message
+            if recorderControlRefreshing || recorderControlActionInFlight != nil {
+                recorderControlRefreshing = false
+                recorderControlActionInFlight = nil
+                recorderControlLastError = event.message ?? "Recorder 제어 요청이 실패했습니다."
+            }
+            if recorderFrameCaptureInFlight {
+                recorderFrameCaptureInFlight = false
+                recorderFrameCaptureLastError = event.message ?? "화면 캡처 저장 요청이 실패했습니다."
+                if recorderAutoCaptureRunning {
+                    stopRecorderAutoCapture(
+                        reason: "ingest_failed",
+                        errorMessage: recorderFrameCaptureLastError
+                    )
+                }
+            }
+            if recorderFrameDeleteInFlight {
+                recorderFrameDeleteInFlight = false
+                recorderFrameDeleteLastError = event.message ?? "화면 기록 삭제 요청이 실패했습니다."
+            }
+            if recorderFrameCapturesRefreshing {
+                recorderFrameCapturesRefreshing = false
+                recorderFrameCapturesLastError = event.message ?? "최근 화면 기록 요청이 실패했습니다."
+            }
+            if recorderFrameImageLoadingID != nil || pendingRecorderFrameImageRequestID != nil {
+                recorderFrameImageLoadingID = nil
+                pendingRecorderFrameImageRequestID = nil
+                recorderFrameImageLastError = event.message ?? "캡처 이미지 요청이 실패했습니다."
+            }
+            if recorderPipesRefreshing || recorderPipeSchedulerRunning || !recorderPipeActionInFlight.isEmpty {
+                recorderPipesRefreshing = false
+                recorderPipeSchedulerRunning = false
+                recorderPipeActionInFlight.removeAll()
+                recorderPipeLastError = event.message ?? "Recorder Pipe 요청이 실패했습니다."
+            }
             if longRunningCompletionAttempts[.bipMission] != nil {
                 completeLongRunningCompletionAttempt(
                     .bipMission,
@@ -10294,6 +12011,7 @@ final class AgenticViewModel: ObservableObject {
 
     private var usesInlineUITestStubResponses: Bool {
         ProcessInfo.processInfo.environment["AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES"] == "1"
+            || CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt")
     }
 
     private func ensureInlineUITestStubSession() {
@@ -10585,6 +12303,34 @@ final class AgenticViewModel: ObservableObject {
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt") else {
             return nil
         }
+        if CommandLine.arguments.contains("--ui-testing-seed-office-hours-candidate-unblock") {
+            return Self.makeUITestingOfficeHoursCandidateUnblockPrompt(
+                sessionID: requestedSessionID,
+                requestId: "ui-test-office-hours-candidate-unblock",
+                createdAt: createdAt
+            )
+        }
+        if CommandLine.arguments.contains("--ui-testing-seed-office-hours-get-users-icp-value") {
+            return Self.makeUITestingOfficeHoursGetUsersIcpValuePrompt(
+                sessionID: requestedSessionID,
+                requestId: "ui-test-office-hours-get-users-icp-value",
+                createdAt: createdAt
+            )
+        }
+        if CommandLine.arguments.contains("--ui-testing-seed-office-hours-get-users-evidence") {
+            return Self.makeUITestingOfficeHoursGetUsersEvidencePrompt(
+                sessionID: requestedSessionID,
+                requestId: "ui-test-office-hours-get-users-evidence",
+                createdAt: createdAt
+            )
+        }
+        if CommandLine.arguments.contains("--ui-testing-seed-office-hours-get-users-commitment") {
+            return Self.makeUITestingOfficeHoursGetUsersCommitmentPrompt(
+                sessionID: requestedSessionID,
+                requestId: "ui-test-office-hours-get-users-commitment",
+                createdAt: createdAt
+            )
+        }
         return Self.makeUITestingOfficeHoursStructuredPrompt(
             sessionID: requestedSessionID,
             requestId: "ui-test-office-hours-request",
@@ -10594,6 +12340,301 @@ final class AgenticViewModel: ObservableObject {
         #else
         return nil
         #endif
+    }
+
+    private static func makeUITestingOfficeHoursGetUsersIcpValuePrompt(
+        sessionID requestedSessionID: String,
+        requestId: String,
+        createdAt: Date
+    ) -> StructuredPromptRequest {
+        let prompt = StructuredPromptQuestion(
+            questionId: "get_users_active_user_definition",
+            header: "첫 고객과 첫 가치",
+            question: "Agentic30가 오늘 첫 고객 후보 1명에게 바로 줄 도움을 만들까요?",
+            helperText: "기본안으로 바로 진행됩니다. 다른 후보·채널·요청이 이미 있을 때만 한 줄로 바꾸세요.",
+            options: [
+                StructuredPromptOption(
+                    label: "첫 고객에게 줄 도움 만들기",
+                    description: "후보 찾기, 첫 요청문, 15분 도움 제공안, 남길 흔적을 한 번에 묶습니다.",
+                    preview: nil,
+                    nextIntent: "help_first_customer_request",
+                    recommended: true
+                ),
+            ],
+            multiSelect: false,
+            allowFreeText: true,
+            requiresFreeText: false,
+            allowsEmptySubmit: true,
+            freeTextPlaceholder: "선택사항: 다른 후보·채널·요청문이 있으면 한 줄 수정",
+            primaryTextInput: StructuredPromptPrimaryTextInput(
+                label: "필요하면 한 줄 수정",
+                placeholder: "선택사항: 후보·채널·요청문",
+                required: false,
+                submitLabel: "추천안으로 진행",
+                validationMessage: "입력하지 않아도 추천안으로 진행됩니다."
+            ),
+            textMode: .short
+        )
+        return StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: requestedSessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: createdAt,
+            questions: [prompt],
+            generation: StructuredPromptGeneration(
+                mode: "office_hours",
+                docType: "day1_step",
+                signalId: "get_users_active_user_definition",
+                signalLabel: "첫 고객과 첫 가치",
+                dimensionStepIndex: 1,
+                dimensionTotal: 1
+            )
+        )
+    }
+
+    private static func makeUITestingOfficeHoursGetUsersActionPrompt(
+        sessionID requestedSessionID: String,
+        requestId: String,
+        createdAt: Date
+    ) -> StructuredPromptRequest {
+        let prompt = StructuredPromptQuestion(
+            questionId: "get_users_today_request",
+            header: "오늘 줄 도움",
+            question: "오늘 이 ICP에게 Agentic30가 어떤 도움을 바로 제공할까요?",
+            helperText: "방법보다 상대가 오늘 얻는 결과를 고릅니다. 선택만 해도 실행 계약이 만들어집니다.",
+            options: [
+                StructuredPromptOption(
+                    label: "15분 실행 결과물 만들어주기",
+                    description: "상대의 문서·코드·메모 하나를 받아 바로 쓸 수 있는 결과로 바꿔 줍니다.",
+                    preview: nil,
+                    nextIntent: "make_15_min_output",
+                    recommended: true
+                ),
+                StructuredPromptOption(
+                    label: "고객 요청 DM을 대신 완성해주기",
+                    description: "상대가 오늘 실제 고객에게 보낼 한 줄 요청을 바로 보낼 수 있게 만듭니다.",
+                    preview: nil,
+                    nextIntent: "complete_customer_dm"
+                ),
+                StructuredPromptOption(
+                    label: "막힌 화면을 보고 다음 행동 정리",
+                    description: "화면 공유나 캡처를 받아 막힌 지점과 바로 할 다음 행동을 정리합니다.",
+                    preview: nil,
+                    nextIntent: "summarize_next_action"
+                ),
+            ],
+            multiSelect: false,
+            allowFreeText: true,
+            requiresFreeText: false,
+            freeTextPlaceholder: "선택사항: 특정 채널, 시간, 보낼 문장을 알고 있으면 보강",
+            primaryTextInput: StructuredPromptPrimaryTextInput(
+                label: "도움 방식 보강",
+                placeholder: "선택사항: 시간, 채널, 보낼 문장",
+                required: false,
+                submitLabel: "선택한 도움 제공",
+                validationMessage: "보강 입력은 선택사항입니다."
+            ),
+            textMode: .short
+        )
+        return StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: requestedSessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: createdAt,
+            questions: [prompt],
+            generation: StructuredPromptGeneration(
+                mode: "office_hours",
+                docType: "day1_step",
+                signalId: "get_users_today_request",
+                signalLabel: "오늘 줄 도움",
+                dimensionStepIndex: 2,
+                dimensionTotal: 3
+            )
+        )
+    }
+
+    private static func makeUITestingOfficeHoursCandidateUnblockPrompt(
+        sessionID requestedSessionID: String,
+        requestId: String,
+        createdAt: Date
+    ) -> StructuredPromptRequest {
+        let prompt = StructuredPromptQuestion(
+            questionId: "get_users_first_candidate_unblock",
+            header: "첫 고객 도움 만들기",
+            question: "아직 후보가 없다면 Agentic30가 고객 후보 1명과 첫 도움 요청까지 바로 만들까요?",
+            helperText: "기본안으로 바로 진행됩니다. 이미 떠오른 사람·채널·검색어가 있을 때만 한 줄로 바꾸세요.",
+            options: [
+                StructuredPromptOption(
+                    label: "후보 찾기와 첫 도움 요청 만들기",
+                    description: "검색어, 후보 조건, 보낼 요청, 남길 흔적을 한 번에 묶습니다.",
+                    preview: nil,
+                    nextIntent: "find_candidate_in_thread_or_community",
+                    recommended: true
+                ),
+            ],
+            multiSelect: false,
+            allowFreeText: true,
+            requiresFreeText: false,
+            allowsEmptySubmit: true,
+            freeTextPlaceholder: "선택사항: 사람·채널·검색어가 있으면 한 줄 수정",
+            primaryTextInput: StructuredPromptPrimaryTextInput(
+                label: "필요하면 한 줄 수정",
+                placeholder: "선택사항: 사람·채널·검색어·보낼 요청",
+                required: false,
+                submitLabel: "추천안으로 진행",
+                validationMessage: "입력하지 않아도 추천안으로 진행됩니다."
+            ),
+            textMode: .short
+        )
+        return StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: requestedSessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: createdAt,
+            questions: [prompt],
+            generation: StructuredPromptGeneration(
+                mode: "office_hours",
+                docType: "day1_candidate_unblock",
+                signalId: "get_users_first_candidate_unblock",
+                signalLabel: "첫 고객 도움",
+                dimensionStepIndex: 1,
+                dimensionTotal: 1
+            )
+        )
+    }
+
+    private static func makeUITestingOfficeHoursGetUsersEvidencePrompt(
+        sessionID requestedSessionID: String,
+        requestId: String,
+        createdAt: Date
+    ) -> StructuredPromptRequest {
+        let prompt = StructuredPromptQuestion(
+            questionId: "get_users_evidence_format",
+            header: "흔적과 마감",
+            question: "도움을 줬다는 흔적과 오늘 마감은 무엇이면 충분할까요?",
+            helperText: "내일 다시 판단할 수 있는 가장 단순한 흔적을 고릅니다. 선택하면 Day 1 실행안이 닫힙니다.",
+            options: [
+                StructuredPromptOption(
+                    label: "로컬 메모 + 화면 캡처로 닫기",
+                    description: "도움을 준 결과 화면과 짧은 판단 메모만 남깁니다.",
+                    preview: nil,
+                    nextIntent: "local_capture_and_note",
+                    recommended: true
+                ),
+                StructuredPromptOption(
+                    label: "DM/댓글 답장만 남기기",
+                    description: "상대가 보인 반응, 거절, 다음 약속을 그대로 남깁니다.",
+                    preview: nil,
+                    nextIntent: "dm_reply_or_rejection"
+                ),
+                StructuredPromptOption(
+                    label: "보낸 요청문과 내일 확인 시각 고정",
+                    description: "오늘 실행이 발송까지라면 요청문, 채널, 내일 확인 시각만 남깁니다.",
+                    preview: nil,
+                    nextIntent: "sent_request_and_check_time"
+                ),
+            ],
+            multiSelect: false,
+            allowFreeText: true,
+            requiresFreeText: false,
+            freeTextPlaceholder: "선택사항: 저장 위치나 파일명을 알고 있으면 보강",
+            primaryTextInput: StructuredPromptPrimaryTextInput(
+                label: "흔적 보강",
+                placeholder: "선택사항: 캡처/답장/메모 위치",
+                required: false,
+                submitLabel: "선택한 흔적으로 Day 1 닫기",
+                validationMessage: "보강 입력은 선택사항입니다."
+            ),
+            textMode: .short,
+            highlightPhrases: ["활성 사용자 여부"]
+        )
+        return StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: requestedSessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: createdAt,
+            questions: [prompt],
+            generation: StructuredPromptGeneration(
+                mode: "office_hours",
+                docType: "day1_step",
+                signalId: "get_users_evidence_format",
+                signalLabel: "흔적과 마감",
+                dimensionStepIndex: 3,
+                dimensionTotal: 3
+            )
+        )
+    }
+
+    private static func makeUITestingOfficeHoursGetUsersCommitmentPrompt(
+        sessionID requestedSessionID: String,
+        requestId: String,
+        createdAt: Date
+    ) -> StructuredPromptRequest {
+        let prompt = StructuredPromptQuestion(
+            questionId: "get_users_day1_commitment",
+            header: "오늘 실행",
+            question: "오늘 어떤 도움 실행으로 끝낼까요?",
+            helperText: "선택하면 그 실행안으로 Day 1을 닫습니다. 세부 이름이나 시간은 있으면 보강하세요.",
+            options: [
+                StructuredPromptOption(
+                    label: "오늘 DM 보내고 15분 도움 제공",
+                    description: "후보에게 작은 실행 도움을 제안하고 답장/결과를 로컬에 남깁니다.",
+                    preview: nil,
+                    nextIntent: "send_dm_and_save_note",
+                    recommended: true
+                ),
+                StructuredPromptOption(
+                    label: "오늘 안에 화면 공유 요청",
+                    description: "실제 사용 장면을 볼 수 있도록 짧은 화면 공유를 요청합니다.",
+                    preview: nil,
+                    nextIntent: "request_screen_share"
+                ),
+                StructuredPromptOption(
+                    label: "오늘 안에 후보 1명 더 찾기",
+                    description: "아직 이름이 약하면 Agentic30가 후보 찾기 도움으로 이어갑니다.",
+                    preview: nil,
+                    nextIntent: "find_one_more_candidate"
+                ),
+                StructuredPromptOption(
+                    label: "내일로 넘김",
+                    description: "오늘 실행하지 않으면 활성 사용자 검증도 내일로 밀립니다.",
+                    preview: nil,
+                    nextIntent: "defer_to_tomorrow"
+                ),
+            ],
+            multiSelect: false,
+            allowFreeText: true,
+            requiresFreeText: false,
+            freeTextPlaceholder: "선택사항: 정확한 사람, 시간, 채널을 알고 있으면 보강",
+            primaryTextInput: StructuredPromptPrimaryTextInput(
+                label: "실행 세부 보강",
+                placeholder: "선택사항: 시간 + 후보 + 채널",
+                required: false,
+                submitLabel: "선택한 실행으로 Day 1 닫기",
+                validationMessage: "보강 입력은 선택사항입니다."
+            ),
+            textMode: .short
+        )
+        return StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: requestedSessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: createdAt,
+            questions: [prompt],
+            generation: StructuredPromptGeneration(
+                mode: "office_hours",
+                docType: "day1_step",
+                signalId: "get_users_day1_commitment",
+                signalLabel: "오늘 약속",
+                dimensionStepIndex: 6,
+                dimensionTotal: 6
+            )
+        )
     }
 
     private static func makeUITestingOfficeHoursStructuredPrompt(
@@ -12069,7 +14110,10 @@ final class AgenticViewModel: ObservableObject {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            self?.installUITestingDay1BulkDocPreviews(completingSessionID: sessionID)
+            self?.installUITestingDay1BulkDocPreviews(
+                completingSessionID: sessionID,
+                state: .written
+            )
         }
         return true
     }
@@ -12206,13 +14250,30 @@ final class AgenticViewModel: ObservableObject {
         refreshPresentationState()
     }
 
-    private func installUITestingDay1BulkDocPreviews(completingSessionID sessionID: String) {
+    private enum UITestingDay1BulkDocPreviewState {
+        case ready
+        case written
+
+        var status: String {
+            switch self {
+            case .ready:
+                return "ready"
+            case .written:
+                return "written"
+            }
+        }
+    }
+
+    private func installUITestingDay1BulkDocPreviews(
+        completingSessionID sessionID: String,
+        state: UITestingDay1BulkDocPreviewState = .written
+    ) {
         let order = ["goal", "icp", "values", "spec"]
         let seededPreviews = [
-            IddDocPreview(type: "goal", title: "GOAL", path: ".agentic30/docs/GOAL.md", status: "written", content: "UI test GOAL handoff response"),
-            IddDocPreview(type: "icp", title: "Ideal Customer Profile", path: ".agentic30/docs/ICP.md", status: "written", content: "UI test customer candidate handoff response"),
-            IddDocPreview(type: "values", title: "VALUES", path: ".agentic30/docs/VALUES.md", status: "written", content: "UI test VALUES handoff response"),
-            IddDocPreview(type: "spec", title: "SPEC", path: ".agentic30/docs/SPEC.md", status: "written", content: "UI test SPEC handoff response"),
+            IddDocPreview(type: "goal", title: "GOAL", path: ".agentic30/docs/GOAL.md", status: state.status, content: "UI test GOAL handoff response"),
+            IddDocPreview(type: "icp", title: "Ideal Customer Profile", path: ".agentic30/docs/ICP.md", status: state.status, content: "UI test customer candidate handoff response"),
+            IddDocPreview(type: "values", title: "VALUES", path: ".agentic30/docs/VALUES.md", status: state.status, content: "UI test VALUES handoff response"),
+            IddDocPreview(type: "spec", title: "SPEC", path: ".agentic30/docs/SPEC.md", status: state.status, content: "UI test SPEC handoff response"),
         ]
         var mergedPreviews = iddDocPreviews.filter { !order.contains($0.type) }
         mergedPreviews.append(contentsOf: seededPreviews)
@@ -12232,6 +14293,26 @@ final class AgenticViewModel: ObservableObject {
             refreshPresentationState()
             return
         }
+        var runtime = sessions[sessionIndex].runtime ?? ChatSessionRuntime(
+            codexThreadId: nil,
+            codexThreadMeta: nil,
+            codexWarm: nil,
+            startupTiming: nil,
+            iddDocumentType: "day1_step",
+            iddMode: "office_hours",
+            officeHours: nil
+        )
+        var officeHours = runtime.officeHours ?? OfficeHoursRuntime(
+            active: true,
+            source: "ui_testing_day1_doc_ready",
+            startedAt: ISO8601DateFormatter().string(from: Date()),
+            context: "UI test completed Day 1 Office Hours",
+            day: 1
+        )
+        officeHours.nextAction = OfficeHoursNextAction(kind: "wait", waitReason: "action")
+        officeHours.gatherProgress = OfficeHoursGatherProgress(answered: 6, total: 6)
+        runtime.officeHours = officeHours
+        sessions[sessionIndex].runtime = runtime
         sessions[sessionIndex].pendingUserInput = nil
         sessions[sessionIndex].status = .idle
         sessions[sessionIndex].error = nil
@@ -12425,7 +14506,10 @@ final class AgenticViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self else { return }
             if hasHardEvidence {
-                self.installUITestingDay1BulkDocPreviews(completingSessionID: sessionId)
+                self.installUITestingDay1BulkDocPreviews(
+                    completingSessionID: sessionId,
+                    state: .written
+                )
             } else {
                 self.installUITestingDay1HandoffJudgeBlock(attempt: currentAttempt + 1)
             }
@@ -12474,6 +14558,69 @@ final class AgenticViewModel: ObservableObject {
         structuredPromptDraftBySession.removeValue(forKey: sessionId)
         refreshPresentationState()
 
+        if prompt.generation?.signalId == "get_users_active_user_definition"
+            || prompt.generation?.signalId == "get_users_first_candidate_unblock" {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                guard let self,
+                      let refreshedIndex = self.sessions.firstIndex(where: { $0.id == sessionId }) else {
+                    return
+                }
+                self.installUITestingDay1BulkDocPreviews(
+                    completingSessionID: self.sessions[refreshedIndex].id,
+                    state: .ready
+                )
+            }
+            return true
+        }
+
+        if prompt.generation?.signalId == "get_users_today_request" {
+            let nextPrompt = Self.makeUITestingOfficeHoursGetUsersEvidencePrompt(
+                sessionID: sessionId,
+                requestId: "ui-test-office-hours-get-users-evidence",
+                createdAt: now
+            )
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard let self,
+                      let refreshedIndex = self.sessions.firstIndex(where: { $0.id == sessionId }) else {
+                    return
+                }
+                self.sessions[refreshedIndex].pendingUserInput = nextPrompt
+                self.sessions[refreshedIndex].status = .awaitingInput
+                self.sessions[refreshedIndex].error = nil
+                self.sessions[refreshedIndex].updatedAt = Date()
+                self.officeHoursLiveStatusBySession[sessionId] = OfficeHoursLiveStatus(
+                    sessionId: sessionId,
+                    stage: "question_ready",
+                    title: "다음 질문 준비됨",
+                    detail: nil,
+                    progressText: nil,
+                    messageId: nil,
+                    requestId: nextPrompt.requestId,
+                    elapsedMs: nil,
+                    updatedAt: Date()
+                )
+                self.refreshPresentationState()
+            }
+            return true
+        }
+
+        if prompt.generation?.signalId == "get_users_evidence_format" {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                guard let self,
+                      let refreshedIndex = self.sessions.firstIndex(where: { $0.id == sessionId }) else {
+                    return
+                }
+                self.installUITestingDay1BulkDocPreviews(
+                    completingSessionID: self.sessions[refreshedIndex].id,
+                    state: .ready
+                )
+            }
+            return true
+        }
+
         if currentStep < totalSteps {
             let nextStep = currentStep + 1
             let nextPrompt = Self.makeUITestingOfficeHoursStructuredPrompt(
@@ -12512,33 +14659,10 @@ final class AgenticViewModel: ObservableObject {
                       let refreshedIndex = self.sessions.firstIndex(where: { $0.id == sessionId }) else {
                     return
                 }
-                self.sessions[refreshedIndex].status = .idle
-                self.sessions[refreshedIndex].pendingUserInput = nil
-                self.sessions[refreshedIndex].error = nil
-                self.officeHoursLiveStatusBySession[sessionId] = OfficeHoursLiveStatus(
-                    sessionId: sessionId,
-                    stage: "completed",
-                    title: "Office Hours completed",
-                    detail: nil,
-                    progressText: nil,
-                    messageId: nil,
-                    requestId: requestId,
-                    elapsedMs: nil,
-                    updatedAt: Date()
+                self.installUITestingDay1BulkDocPreviews(
+                    completingSessionID: self.sessions[refreshedIndex].id,
+                    state: .ready
                 )
-                self.sessions[refreshedIndex].messages.append(ChatMessage(
-                    id: UUID().uuidString,
-                    role: .assistant,
-                    provider: self.sessions[refreshedIndex].provider,
-                    content: "선택지를 확인했어요. 답변이 모두 기록됐습니다.",
-                    state: .final,
-                    createdAt: .now,
-                    error: nil,
-                    bipMissionChoices: nil,
-                    providerAuthActions: nil
-                ))
-                self.sessions[refreshedIndex].updatedAt = Date()
-                self.refreshPresentationState()
             }
         }
         return true
@@ -15613,6 +17737,21 @@ struct SidecarEvent: Decodable {
     let officeHoursMemory: OfficeHoursMemorySummary?
     let officeHoursHistory: OfficeHoursHistorySummary?
     let evidenceOS: EvidenceOSSummary?
+    let controlState: RecorderControlState?
+    let readiness: RecorderCaptureReadiness?
+    let frame: RecorderFrameCaptureReceipt?
+    let mediaAsset: RecorderMediaAssetReceipt?
+    let deletion: RecorderFrameDeleteReceipt?
+    let deletionRange: RecorderFrameRangeDeleteReceipt?
+    let frames: [RecorderFrameCaptureReceipt]?
+    let recorderRawApi: RecorderRawApiStatus?
+    let recorderRawApiToken: RecorderRawApiToken?
+    let pipes: [RecorderPipeDefinition]?
+    let runs: [RecorderPipeRun]?
+    let pipeRun: RecorderPipeRun?
+    let scheduler: RecorderPipeSchedulerResult?
+    let enqueueResult: RecorderPipeSchedulerResult?
+    let drainResult: RecorderPipeSchedulerResult?
     let dayClosePolicy: OfficeHoursDayClosePolicy?
     let programNotificationSchedule: ProgramNotificationSchedule?
     // Interview-gate block fields (day_progress_state): when the founder tries to close a
@@ -16470,6 +18609,21 @@ struct SidecarEvent: Decodable {
         self.officeHoursMemory = officeHoursMemory
         self.officeHoursHistory = officeHoursHistory
         self.evidenceOS = evidenceOS
+        self.controlState = nil
+        self.readiness = nil
+        self.frame = nil
+        self.mediaAsset = nil
+        self.deletion = nil
+        self.deletionRange = nil
+        self.frames = nil
+        self.recorderRawApi = nil
+        self.recorderRawApiToken = nil
+        self.pipes = nil
+        self.runs = nil
+        self.pipeRun = nil
+        self.scheduler = nil
+        self.enqueueResult = nil
+        self.drainResult = nil
         self.dayClosePolicy = dayClosePolicy
         self.programNotificationSchedule = programNotificationSchedule
         self.needsCommitment = needsCommitment
@@ -16885,6 +19039,25 @@ extension SidecarEvent {
         case officeHoursMemory
         case officeHoursHistory
         case evidenceOS
+        case controlState
+        case controlStateSnake = "control_state"
+        case readiness
+        case frame
+        case mediaAsset
+        case mediaAssetSnake = "media_asset"
+        case deletion
+        case deletionRange
+        case deletionRangeSnake = "deletion_range"
+        case frames
+        case recorderRawApi
+        case recorderRawApiSnake = "recorder_raw_api"
+        case recorderRawApiToken = "token"
+        case pipes
+        case runs
+        case pipeRun
+        case scheduler
+        case enqueueResult
+        case drainResult
         case dayClosePolicy
         case programNotificationSchedule
         case needsCommitment
@@ -17031,6 +19204,25 @@ extension SidecarEvent {
         officeHoursMemory = Self.decodeIfPresent(OfficeHoursMemorySummary.self, from: container, forKey: .officeHoursMemory)
         officeHoursHistory = Self.decodeIfPresent(OfficeHoursHistorySummary.self, from: container, forKey: .officeHoursHistory)
         evidenceOS = Self.decodeIfPresent(EvidenceOSSummary.self, from: container, forKey: .evidenceOS)
+        controlState = Self.decodeIfPresent(RecorderControlState.self, from: container, forKey: .controlState)
+            ?? Self.decodeIfPresent(RecorderControlState.self, from: container, forKey: .controlStateSnake)
+        readiness = Self.decodeIfPresent(RecorderCaptureReadiness.self, from: container, forKey: .readiness)
+        frame = Self.decodeIfPresent(RecorderFrameCaptureReceipt.self, from: container, forKey: .frame)
+        mediaAsset = Self.decodeIfPresent(RecorderMediaAssetReceipt.self, from: container, forKey: .mediaAsset)
+            ?? Self.decodeIfPresent(RecorderMediaAssetReceipt.self, from: container, forKey: .mediaAssetSnake)
+        deletion = Self.decodeIfPresent(RecorderFrameDeleteReceipt.self, from: container, forKey: .deletion)
+        deletionRange = Self.decodeIfPresent(RecorderFrameRangeDeleteReceipt.self, from: container, forKey: .deletionRange)
+            ?? Self.decodeIfPresent(RecorderFrameRangeDeleteReceipt.self, from: container, forKey: .deletionRangeSnake)
+        frames = Self.decodeIfPresent([RecorderFrameCaptureReceipt].self, from: container, forKey: .frames)
+        recorderRawApi = Self.decodeIfPresent(RecorderRawApiStatus.self, from: container, forKey: .recorderRawApi)
+            ?? Self.decodeIfPresent(RecorderRawApiStatus.self, from: container, forKey: .recorderRawApiSnake)
+        recorderRawApiToken = Self.decodeIfPresent(RecorderRawApiToken.self, from: container, forKey: .recorderRawApiToken)
+        pipes = Self.decodeIfPresent([RecorderPipeDefinition].self, from: container, forKey: .pipes)
+        runs = Self.decodeIfPresent([RecorderPipeRun].self, from: container, forKey: .runs)
+        pipeRun = Self.decodeIfPresent(RecorderPipeRun.self, from: container, forKey: .pipeRun)
+        scheduler = Self.decodeIfPresent(RecorderPipeSchedulerResult.self, from: container, forKey: .scheduler)
+        enqueueResult = Self.decodeIfPresent(RecorderPipeSchedulerResult.self, from: container, forKey: .enqueueResult)
+        drainResult = Self.decodeIfPresent(RecorderPipeSchedulerResult.self, from: container, forKey: .drainResult)
         dayClosePolicy = Self.decodeIfPresent(OfficeHoursDayClosePolicy.self, from: container, forKey: .dayClosePolicy)
         programNotificationSchedule = Self.decodeIfPresent(ProgramNotificationSchedule.self, from: container, forKey: .programNotificationSchedule)
         needsCommitment = Self.decodeIfPresent(Bool.self, from: container, forKey: .needsCommitment)

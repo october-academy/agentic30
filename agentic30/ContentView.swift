@@ -2299,7 +2299,7 @@ enum WorkspaceChromeStyle: nonisolated Equatable {
         switch railDestination.surfaceKind(routesTodayToOfficeHours: true) {
         case .reference(let page):
             return page == .settings ? .day1OfficeHours : .standard
-        case .today, .officeHours, .morningBriefing, .strategy:
+        case .today, .officeHours, .founderReplay, .morningBriefing, .strategy:
             return .day1OfficeHours
         }
     }
@@ -2383,6 +2383,7 @@ struct ContentView: View {
     @State private var editingOfficeHoursSubmittedFreeTextID: String?
     @State private var editingOfficeHoursSubmittedFreeTextValue = ""
     @State private var pendingOfficeHoursRouteScrollRequest: OfficeHoursRouteScrollRequest?
+    @State private var expandedOfficeHoursDefaultEditIDs: Set<String> = []
     @State private var officeHoursScrollGeneration = 0
     @State private var officeHoursMainScrollCaptureAnchor: NSView?
     @State private var officeHoursSharePicker: NSSharingServicePicker?
@@ -2955,6 +2956,102 @@ struct ContentView: View {
                     },
                     prepareWorkHistory: {
                         viewModel.prepareWorkHistoryForDisplay()
+                    },
+                    recorderControlState: viewModel.recorderControlState,
+                    recorderCaptureReadiness: viewModel.recorderCaptureReadiness,
+                    recorderControlRefreshing: viewModel.recorderControlRefreshing,
+                    recorderControlActionInFlight: viewModel.recorderControlActionInFlight,
+                    recorderControlLastError: viewModel.recorderControlLastError,
+                    recorderFrameCaptureInFlight: viewModel.recorderFrameCaptureInFlight,
+                    recorderFrameCaptureLastError: viewModel.recorderFrameCaptureLastError,
+                    recorderLastFrameCapture: viewModel.recorderLastFrameCapture,
+                    recorderFrameDeleteInFlight: viewModel.recorderFrameDeleteInFlight,
+                    recorderFrameDeleteLastError: viewModel.recorderFrameDeleteLastError,
+                    recorderLastFrameDelete: viewModel.recorderLastFrameDelete,
+                    recorderFrameCaptures: viewModel.recorderFrameCaptures,
+                    recorderFrameCapturesRefreshing: viewModel.recorderFrameCapturesRefreshing,
+                    recorderFrameCapturesLastError: viewModel.recorderFrameCapturesLastError,
+                    recorderFrameImagePreview: viewModel.recorderFrameImagePreview,
+                    recorderFrameImageLoadingID: viewModel.recorderFrameImageLoadingID,
+                    recorderFrameImageLastError: viewModel.recorderFrameImageLastError,
+                    recorderAutoCaptureRunning: viewModel.recorderAutoCaptureRunning,
+                    recorderAutoCaptureLastTrigger: viewModel.recorderAutoCaptureLastTrigger,
+                    recorderAutoCaptureLastError: viewModel.recorderAutoCaptureLastError,
+                    refreshRecorderControl: {
+                        viewModel.refreshRecorderControlState()
+                    },
+                    prepareRecorderControl: {
+                        viewModel.prepareRecorderControlForDisplay()
+                    },
+                    refreshRecorderPermissions: {
+                        viewModel.refreshRecorderPermissionProbe()
+                    },
+                    grantRecorderConsent: {
+                        viewModel.grantRecorderConsent()
+                    },
+                    revokeRecorderConsent: {
+                        viewModel.revokeRecorderConsent()
+                    },
+                    pauseRecorderCapture: {
+                        viewModel.pauseRecorderCapture()
+                    },
+                    resumeRecorderCapture: {
+                        viewModel.resumeRecorderCapture()
+                    },
+                    stopRecorderForToday: {
+                        viewModel.stopRecorderForToday()
+                    },
+                    captureRecorderFrame: {
+                        viewModel.captureRecorderFrameNow()
+                    },
+                    deleteRecorderFrame: {
+                        viewModel.deleteLastRecorderFrame()
+                    },
+                    deleteRecorderFrameWithID: { frameId in
+                        viewModel.deleteRecorderFrame(id: frameId)
+                    },
+                    deleteRecorderFrameRange: { frameIds in
+                        viewModel.deleteRecorderFrameRange(frameIds: frameIds)
+                    },
+                    refreshRecorderFrameCaptures: {
+                        viewModel.refreshRecorderFrameCaptures()
+                    },
+                    prepareRecorderFrameCaptures: {
+                        viewModel.prepareRecorderFrameCapturesForDisplay()
+                    },
+                    loadRecorderFrameImage: { frameId in
+                        viewModel.loadRecorderFrameImage(frameId: frameId)
+                    },
+                    prepareRecorderFrameImage: { frameId in
+                        viewModel.prepareRecorderFrameImageForDisplay(frameId: frameId)
+                    },
+                    startRecorderAutoCapture: {
+                        viewModel.startRecorderAutoCapture()
+                    },
+                    stopRecorderAutoCapture: {
+                        viewModel.stopRecorderAutoCapture()
+                    },
+                    recorderPipes: viewModel.recorderPipes,
+                    recorderPipeRuns: viewModel.recorderPipeRuns,
+                    recorderPipesRefreshing: viewModel.recorderPipesRefreshing,
+                    recorderPipeActionInFlight: viewModel.recorderPipeActionInFlight,
+                    recorderPipeSchedulerRunning: viewModel.recorderPipeSchedulerRunning,
+                    recorderPipeLastSchedulerResult: viewModel.recorderPipeLastSchedulerResult,
+                    recorderPipeLastError: viewModel.recorderPipeLastError,
+                    refreshRecorderPipes: {
+                        viewModel.refreshRecorderPipes()
+                    },
+                    prepareRecorderPipes: {
+                        viewModel.prepareRecorderPipesForDisplay()
+                    },
+                    runRecorderPipe: { pipeId in
+                        viewModel.runRecorderPipe(pipeId)
+                    },
+                    cancelRecorderPipeRun: { runId in
+                        viewModel.cancelRecorderPipeRun(runId)
+                    },
+                    tickRecorderPipeScheduler: {
+                        viewModel.tickRecorderPipeScheduler()
                     },
                     day1SurfaceReview: viewModel.day1SurfaceReview,
                     day1SurfaceReviewGenerating: viewModel.day1SurfaceReviewGenerating,
@@ -8274,12 +8371,17 @@ struct ContentView: View {
         session: ChatSession
     ) -> some View {
         let hasOptions = question.options?.isEmpty == false
+        let requiresPrimaryText = question.primaryTextInput?.required == true
         let isRequiredTextOnly = question.requiresFreeText == true && !hasOptions
         let submission = officeHoursSubmittedSubmission(for: question, questionIndex: questionIndex, snapshot: snapshot)
         let selectedLabels = officeHoursSubmittedSelectedOptionLabels(submission)
         let freeText = submission?.freeText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let pickedCount = selectedLabels.isEmpty && freeText.isEmpty ? 0 : 1
-        let shouldShowFreeText = !freeText.isEmpty || question.requiresFreeText == true
+        let requiredCount = hasOptions && requiresPrimaryText ? 2 : 1
+        let pickedCount = min(
+            requiredCount,
+            (selectedLabels.isEmpty ? 0 : 1) + (freeText.isEmpty ? 0 : 1)
+        )
+        let shouldShowFreeText = !freeText.isEmpty || question.requiresFreeText == true || requiresPrimaryText
         let editable = officeHoursCanReviseSubmittedPrompt(snapshot, in: session)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -8287,7 +8389,7 @@ struct ContentView: View {
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
                         .fill(OpenDesignOfficeHoursColor.accent)
                         .frame(width: 4, height: 14)
-                    Text(isRequiredTextOnly ? "근거 문장 입력" : "하나 선택")
+                    Text(hasOptions && requiresPrimaryText ? "도움안 선택 + 보강" : isRequiredTextOnly || requiresPrimaryText ? "행동 보강" : hasOptions ? "도움안 선택" : "응답")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(OpenDesignOfficeHoursColor.fg)
                 }
@@ -8295,7 +8397,7 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     Text("\(pickedCount)")
                         .foregroundStyle(OpenDesignOfficeHoursColor.accent)
-                    Text("/ 1")
+                    Text("/ \(requiredCount)")
                         .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                 }
                 .font(.system(size: 10.5, weight: .medium, design: .monospaced))
@@ -8681,7 +8783,7 @@ struct ContentView: View {
         }
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(isRequiredText ? "근거 문장 입력" : hasOptions ? "근거 추가 선택사항" : "선택지에 없으면 입력")
+                Text(isRequiredText ? "필수 보강" : hasOptions ? "필요하면 보강" : "직접 입력")
                 Spacer(minLength: 0)
                 Text(hasPendingFreeText ? "수정 예정" : editable ? "클릭해 수정" : "제출됨")
                     .foregroundStyle(hasPendingFreeText ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.mutedDeep)
@@ -8958,6 +9060,8 @@ struct ContentView: View {
         let isSubmitting = submissionState?.requestId == prompt.requestId
         let canSubmitPrompt = canSubmit(prompt) && !isSubmitting
         let hintParts = officeHoursStructuredPromptHintParts(prompt)
+        let blockedSubmitLabel = officeHoursStructuredPromptBlockedSubmitLabel(prompt)
+        let defaultSubmitLabel = officeHoursDefaultSubmitButtonLabel(prompt)
         let footerVerticalPadding: CGFloat = (prompt.generation?.dimensionStepIndex ?? 1) > 1 ? 11 : 16
         return VStack(alignment: .leading, spacing: 0) {
             officeHoursStructuredPromptContext(prompt)
@@ -8994,7 +9098,7 @@ struct ContentView: View {
                                 .controlSize(.mini)
                                 .scaleEffect(0.7)
                         }
-                        Text(isSubmitting ? "제출 중" : "제출")
+                        Text(isSubmitting ? "제출 중" : canSubmitPrompt ? defaultSubmitLabel : blockedSubmitLabel ?? "제출")
                         Text(isSubmitting ? "…" : "↵")
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
                             .padding(.horizontal, 5)
@@ -9019,6 +9123,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSubmitPrompt)
+                .accessibilityLabel(isSubmitting ? "제출 중" : canSubmitPrompt ? defaultSubmitLabel : blockedSubmitLabel ?? "제출")
                 .accessibilityValue(canSubmitPrompt ? "Ready" : "Incomplete")
                 .accessibilityIdentifier("assistant.structuredContinueButton")
             }
@@ -9109,36 +9214,67 @@ struct ContentView: View {
         isSubmitting: Bool
     ) -> some View {
         let hasOptions = question.options?.isEmpty == false
+        let requiresPrimaryText = question.primaryTextInput?.required == true
         let isRequiredTextOnly = question.requiresFreeText == true && !hasOptions
         let draft = viewModel.structuredPromptDraft(for: question, in: prompt)
         let trimmedFreeText = draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pickedCount = draft.selectedOptions.isEmpty && trimmedFreeText.isEmpty ? 0 : 1
+        let allowsDefaultSubmit = question.allowsEmptySubmit == true && hasOptions && !requiresPrimaryText && !isRequiredTextOnly
+        let defaultPlan = officeHoursDefaultActionPlanInfo(question)
+        let usesDefaultPlanCard = allowsDefaultSubmit && defaultPlan != nil
+        let requiredCount = allowsDefaultSubmit ? 1 : hasOptions && requiresPrimaryText ? 2 : 1
+        let pickedCount = allowsDefaultSubmit
+            ? 1
+            : min(
+                requiredCount,
+                (draft.selectedOptions.isEmpty ? 0 : 1) + (trimmedFreeText.isEmpty ? 0 : 1)
+            )
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 HStack(spacing: 8) {
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
                         .fill(OpenDesignOfficeHoursColor.accent)
                         .frame(width: 4, height: 14)
-                    Text(isRequiredTextOnly ? "근거 문장 입력" : "하나 선택")
+                    Text(
+                        allowsDefaultSubmit
+                            ? "Agentic30 추천 실행안"
+                            : hasOptions && requiresPrimaryText ? "1. 방법 선택 · 2. 행동 입력" : isRequiredTextOnly || requiresPrimaryText ? "행동 입력" : hasOptions ? "도움안 선택" : "하나 선택"
+                    )
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(OpenDesignOfficeHoursColor.fg)
                 }
                 Spacer(minLength: 0)
-                HStack(spacing: 4) {
-                    Text("\(pickedCount)")
+                if allowsDefaultSubmit {
+                    Text("바로 진행 가능")
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignOfficeHoursColor.accent)
-                    Text("/ 1")
-                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                } else {
+                    HStack(spacing: 4) {
+                        Text("\(pickedCount)")
+                            .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                        Text("/ \(requiredCount)")
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    }
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                 }
-                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 13.25)
             .background(OpenDesignOfficeHoursColor.surface2)
             .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
 
-            if hasOptions {
+            officeHoursPrimaryTextRequirementStatus(question: question, prompt: prompt)
+
+            if let defaultPlan, usesDefaultPlanCard {
+                officeHoursDefaultActionPlan(
+                    defaultPlan.option,
+                    optionIndex: defaultPlan.index,
+                    question: question,
+                    prompt: prompt,
+                    disabled: isSubmitting
+                )
+            } else if hasOptions {
                 VStack(spacing: 2) {
+                    officeHoursOptionsSectionHeader(question: question)
                     ForEach(Array((question.options ?? []).enumerated()), id: \.element.label) { optionIndex, option in
                         officeHoursPromptOptionRow(
                             option,
@@ -9152,11 +9288,200 @@ struct ContentView: View {
                 .padding(6)
             }
 
-            if question.allowFreeText == true || question.options?.isEmpty != false {
+            if usesDefaultPlanCard {
+                if officeHoursShowsDefaultEditField(question: question, prompt: prompt) {
+                    officeHoursFreeTextArea(question: question, prompt: prompt, isDisabled: isSubmitting)
+                }
+            } else if question.allowFreeText == true || question.options?.isEmpty != false {
                 officeHoursFreeTextArea(question: question, prompt: prompt, isDisabled: isSubmitting)
             }
         }
         .opacity(isSubmitting ? 0.72 : 1)
+    }
+
+    private func officeHoursDefaultActionPlanInfo(
+        _ question: StructuredPromptQuestion
+    ) -> (index: Int, option: StructuredPromptOption)? {
+        guard question.allowsEmptySubmit == true,
+              question.primaryTextInput?.required != true,
+              question.requiresFreeText != true,
+              let options = question.options,
+              options.count == 1
+        else {
+            return nil
+        }
+        return (1, options[0])
+    }
+
+    private func officeHoursDefaultEditID(question: StructuredPromptQuestion, prompt: StructuredPromptRequest) -> String {
+        "\(prompt.requestId)\u{1F}\(question.id)"
+    }
+
+    private func officeHoursFreeTextFocusID(
+        question: StructuredPromptQuestion,
+        prompt: StructuredPromptRequest
+    ) -> String {
+        "office-hours-free-text-\(prompt.requestId)-\(question.id)"
+    }
+
+    private func officeHoursShowsDefaultEditField(
+        question: StructuredPromptQuestion,
+        prompt: StructuredPromptRequest
+    ) -> Bool {
+        let draft = viewModel.structuredPromptDraft(for: question, in: prompt)
+        if !draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return expandedOfficeHoursDefaultEditIDs.contains(officeHoursDefaultEditID(question: question, prompt: prompt))
+    }
+
+    private func officeHoursToggleDefaultEdit(
+        question: StructuredPromptQuestion,
+        prompt: StructuredPromptRequest
+    ) {
+        let editID = officeHoursDefaultEditID(question: question, prompt: prompt)
+        if expandedOfficeHoursDefaultEditIDs.contains(editID) {
+            expandedOfficeHoursDefaultEditIDs.remove(editID)
+        } else {
+            expandedOfficeHoursDefaultEditIDs.insert(editID)
+            let focusID = officeHoursFreeTextFocusID(question: question, prompt: prompt)
+            DispatchQueue.main.async {
+                focusedOfficeHoursStructuredFreeTextID = focusID
+            }
+        }
+    }
+
+    private func officeHoursDefaultActionPlan(
+        _ option: StructuredPromptOption,
+        optionIndex: Int,
+        question: StructuredPromptQuestion,
+        prompt: StructuredPromptRequest,
+        disabled: Bool
+    ) -> some View {
+        let showsEditField = officeHoursShowsDefaultEditField(question: question, prompt: prompt)
+        let editButtonLabel = showsEditField ? "수정 접기" : "다르게 적기"
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(OpenDesignOfficeHoursColor.accent)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.bgDeep)
+                }
+                .frame(width: 28, height: 28)
+                .padding(.top, 2)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Text(option.label)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if option.recommended == true {
+                            Text("추천")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(OpenDesignOfficeHoursColor.bgDeep)
+                                .padding(.horizontal, 5)
+                                .frame(height: 16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .fill(OpenDesignOfficeHoursColor.accent)
+                                )
+                        }
+                    }
+                    Text(option.description)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("수정하지 않아도 이 실행안으로 바로 진행됩니다.")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    guard !disabled else { return }
+                    officeHoursToggleDefaultEdit(question: question, prompt: prompt)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: showsEditField ? "chevron.up" : "pencil")
+                            .font(.system(size: 10.5, weight: .semibold))
+                        Text(editButtonLabel)
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(OpenDesignOfficeHoursColor.bgDeep)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(disabled)
+                .accessibilityLabel(editButtonLabel)
+                .accessibilityIdentifier("assistant.structuredDefaultEditButton.\(question.id)")
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(OpenDesignOfficeHoursColor.accentDim.opacity(0.38))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(OpenDesignOfficeHoursColor.accentLine.opacity(0.85), lineWidth: 1)
+                    )
+            )
+            .padding(6)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("assistant.structuredDefaultPlan.\(question.id)")
+    }
+
+    @ViewBuilder
+    private func officeHoursOptionsSectionHeader(question: StructuredPromptQuestion) -> some View {
+        let requiresPrimaryText = question.primaryTextInput?.required == true
+        let hasOptions = question.options?.isEmpty == false
+        if hasOptions {
+            let label = question.allowsEmptySubmit == true ? "기본 실행안" : requiresPrimaryText ? officeHoursOptionsSectionLabel(question: question) : "도움안 선택"
+            HStack(spacing: 8) {
+                Text(requiresPrimaryText ? "1. \(label)" : label)
+                Spacer(minLength: 0)
+                Text(question.allowsEmptySubmit == true ? "바로 제출 가능 · 수정 선택사항" : requiresPrimaryText ? "필수 · 제출 조건" : "선택하면 제출 가능")
+                    .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
+                    .tracking(0.4)
+            }
+            .font(.system(size: 10, weight: .regular, design: .monospaced))
+            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            .tracking(1.0)
+            .textCase(.uppercase)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 5)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(question.allowsEmptySubmit == true ? "\(label). 바로 제출 가능. 필요할 때만 수정" : requiresPrimaryText ? "1. \(label). 필수 제출 조건" : "\(label). 선택하면 제출 가능")
+            .accessibilityIdentifier("assistant.structuredOptionsSectionTitle.\(question.id)")
+        }
+    }
+
+    private func officeHoursOptionsSectionLabel(question: StructuredPromptQuestion) -> String {
+        if let primaryLabel = question.primaryTextInput?.label.nonEmpty {
+            if primaryLabel.hasSuffix("행동") {
+                return String(primaryLabel.dropLast("행동".count)) + "방법"
+            }
+            if primaryLabel.contains("행동") {
+                return primaryLabel.replacingOccurrences(of: "행동", with: "방법")
+            }
+        }
+        return "\(question.header) 선택"
     }
 
     private func officeHoursPromptOptionRow(
@@ -9168,6 +9493,10 @@ struct ContentView: View {
     ) -> some View {
         let draft = viewModel.structuredPromptDraft(for: question, in: prompt)
         let selected = draft.selectedOptions.contains(option.label)
+        let requiresPrimaryText = question.primaryTextInput?.required == true
+        let missingRequiredText = requiresPrimaryText
+            && draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let requiredTextHint = officeHoursPrimaryTextRequiredHint(question: question)
         return Button {
             guard !disabled else { return }
             // Tapping an option means the user is committing to a choice, not the
@@ -9219,6 +9548,13 @@ struct ContentView: View {
                         .foregroundStyle(selected ? OpenDesignOfficeHoursColor.fgSecondary : OpenDesignOfficeHoursColor.muted)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
+                    if selected && missingRequiredText {
+                        Text("다음: 아래에 \(requiredTextHint) 입력")
+                            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("assistant.structuredChoiceRequiredTextHint.\(question.id).\(option.label)")
+                    }
                     // Risk / evidence target / failure mode are intentionally not
                     // rendered here — they ride along to the agent as context on
                     // submit (collectSelectedOptionDescriptions in sidecar/index.mjs)
@@ -9252,8 +9588,108 @@ struct ContentView: View {
         .accessibilityIdentifier("assistant.structuredChoice.\(question.id).\(option.label)")
         .accessibilityLabel(option.label)
         .accessibilityHint(officeHoursOptionAccessibilityHint(option))
-        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityValue(
+            selected
+                ? (missingRequiredText ? "Selected. 다음: 아래에 \(requiredTextHint) 입력" : "Selected")
+                : "Not selected"
+        )
         .accessibilityAddTraits(.isButton)
+    }
+
+    private func officeHoursPrimaryTextRequiredHint(question: StructuredPromptQuestion) -> String {
+        if let placeholder = question.primaryTextInput?.placeholder.nonEmpty {
+            return placeholder
+        }
+        if let label = question.primaryTextInput?.label.nonEmpty {
+            return label
+        }
+        return "행동"
+    }
+
+    @ViewBuilder
+    private func officeHoursPrimaryTextRequirementStatus(
+        question: StructuredPromptQuestion,
+        prompt: StructuredPromptRequest
+    ) -> some View {
+        let hasOptions = question.options?.isEmpty == false
+        let requiresPrimaryText = question.primaryTextInput?.required == true
+        if hasOptions && requiresPrimaryText {
+            let draft = viewModel.structuredPromptDraft(for: question, in: prompt)
+            let hasSelection = !draft.selectedOptions.isEmpty
+            let hasText = !draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let statusText = officeHoursPrimaryTextRequirementStatusText(hasSelection: hasSelection, hasText: hasText)
+            HStack(alignment: .center, spacing: 8) {
+                officeHoursRequirementStepPill(label: "1 도움안 선택", isComplete: hasSelection)
+                officeHoursRequirementStepPill(label: "2 한 줄 보강", isComplete: hasText)
+                Spacer(minLength: 0)
+                Text(statusText)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(hasSelection && hasText ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.fgSecondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                Rectangle()
+                    .fill((hasSelection && !hasText ? OpenDesignOfficeHoursColor.accentDim : OpenDesignOfficeHoursColor.bgDeep).opacity(0.88))
+            )
+            .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(hasSelection ? "도움안 선택 완료" : "도움안 선택 필요"). \(hasText ? "보강 완료" : "보강 필요"). \(statusText)")
+            .accessibilityIdentifier("assistant.structuredRequirementStatus.\(question.id)")
+        }
+    }
+
+    private func officeHoursRequirementStepPill(label: String, isComplete: Bool) -> some View {
+        HStack(spacing: 5) {
+            Text(isComplete ? "✓" : "•")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+            Text(label)
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+        }
+        .foregroundStyle(isComplete ? OpenDesignOfficeHoursColor.bgDeep : OpenDesignOfficeHoursColor.muted)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(
+            Capsule(style: .continuous)
+                .fill(isComplete ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.surface2)
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(isComplete ? Color.clear : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private func officeHoursPrimaryTextRequirementStatusText(hasSelection: Bool, hasText: Bool) -> String {
+        switch (hasSelection, hasText) {
+        case (false, false):
+            return "두 항목을 모두 채워야 제출됩니다"
+        case (true, false):
+            return "남은 단계: 한 줄 보강"
+        case (false, true):
+            return "남은 단계: 도움안 선택"
+        case (true, true):
+            return "제출 가능"
+        }
+    }
+
+    private func officeHoursStructuredPromptBlockedSubmitLabel(_ prompt: StructuredPromptRequest) -> String? {
+        for question in prompt.questions where question.primaryTextInput?.required == true {
+            let draft = viewModel.structuredPromptDraft(for: question, in: prompt)
+            let hasOptions = question.options?.isEmpty == false
+            let hasSelection = !hasOptions || !draft.selectedOptions.isEmpty
+            let hasText = !draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if !hasSelection && !hasText {
+                return hasOptions ? "도움안 + 보강 필요" : "보강 필요"
+            }
+            if !hasSelection {
+                return "도움안 필요"
+            }
+            if !hasText {
+                return "보강 필요"
+            }
+        }
+        return nil
     }
 
     private func officeHoursOptionMetadataLines(_ option: StructuredPromptOption) -> [String] {
@@ -9285,16 +9721,22 @@ struct ContentView: View {
         isDisabled: Bool
     ) -> some View {
         let hasOptions = question.options?.isEmpty == false
-        let isRequiredText = question.requiresFreeText == true && !hasOptions
-        let placeholder = question.freeTextPlaceholder?.nonEmpty ?? "예: 실제 사용자, 현재 대안, 이번 주 행동"
-        let focusID = "office-hours-free-text-\(prompt.requestId)-\(question.id)"
+        let isRequiredText = question.primaryTextInput?.required == true || (question.requiresFreeText == true && !hasOptions)
+        let label = question.primaryTextInput?.label.nonEmpty
+            ?? (isRequiredText ? "근거 문장 입력" : hasOptions ? "필요하면 보강" : "선택지에 없으면 입력")
+        let placeholder = question.primaryTextInput?.placeholder.nonEmpty
+            ?? question.freeTextPlaceholder?.nonEmpty
+            ?? "예: 실제 사용자, 현재 대안, 이번 주 행동"
+        let requirementText = question.primaryTextInput?.validationMessage?.nonEmpty
+            ?? "시간, 채널, 찾는 방법, 보낼 요청을 한 줄로 적어야 합니다."
+        let focusID = officeHoursFreeTextFocusID(question: question, prompt: prompt)
         let showsPromptFocusRing = !isDisabled
             && focusedOfficeHoursStructuredFreeTextID == focusID
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(isRequiredText ? "근거 문장 입력" : hasOptions ? "근거 추가 선택사항" : "선택지에 없으면 입력")
+                Text(isRequiredText && question.primaryTextInput != nil ? "2. \(label)" : label)
                 Spacer(minLength: 0)
-                Text(isRequiredText ? "필수" : hasOptions ? "선택사항" : "Enter 제출")
+                Text(isRequiredText ? "필수 · 제출 조건" : hasOptions ? "선택사항" : "Enter 제출")
                     .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
                     .tracking(0.4)
             }
@@ -9302,6 +9744,14 @@ struct ContentView: View {
             .foregroundStyle(OpenDesignOfficeHoursColor.muted)
             .tracking(1.0)
             .textCase(.uppercase)
+
+            if isRequiredText {
+                Text(requirementText)
+                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("assistant.structuredFreeTextRequirement.\(question.id)")
+            }
 
             HStack(spacing: 10) {
                 Text("›")
@@ -9398,7 +9848,34 @@ struct ContentView: View {
         if let freeText = officeHoursFreeTextAnswerInfo(prompt) {
             return ("입력됨", freeText)
         }
+        if let defaultOption = officeHoursDefaultSubmitOptionInfo(prompt) {
+            return ("바로 진행", defaultOption.label)
+        }
         return ("미선택", nil)
+    }
+
+    private func officeHoursDefaultSubmitButtonLabel(_ prompt: StructuredPromptRequest) -> String {
+        guard officeHoursSelectedOptionInfo(prompt) == nil,
+              officeHoursFreeTextAnswerInfo(prompt) == nil,
+              officeHoursDefaultSubmitOptionInfo(prompt) != nil else {
+            return "제출"
+        }
+        return "추천안으로 진행"
+    }
+
+    private func officeHoursDefaultSubmitOptionInfo(
+        _ prompt: StructuredPromptRequest
+    ) -> (index: Int, label: String)? {
+        for question in prompt.questions where question.allowsEmptySubmit == true {
+            let options = question.options ?? []
+            if let recommendedIndex = options.firstIndex(where: { $0.recommended == true }) {
+                return (recommendedIndex + 1, options[recommendedIndex].label)
+            }
+            if let first = options.first {
+                return (1, first.label)
+            }
+        }
+        return nil
     }
 
     private func officeHoursSelectedOptionInfo(
@@ -13854,6 +14331,9 @@ struct ContentView: View {
     }
 
     private func freeTextLabel(for question: StructuredPromptQuestion, compact: Bool) -> String {
+        if let label = question.primaryTextInput?.label.nonEmpty {
+            return label
+        }
         if question.options?.isEmpty == false {
             return "기타"
         }
@@ -13937,6 +14417,9 @@ struct ContentView: View {
         isDisabled: Bool = false
     ) -> some View {
         if question.textMode == .long {
+            let placeholder = question.primaryTextInput?.placeholder.nonEmpty
+                ?? question.freeTextPlaceholder?.nonEmpty
+                ?? "Type your answer"
             return AnyView(
                 TextEditor(
                     text: Binding(
@@ -13955,13 +14438,16 @@ struct ContentView: View {
                 )
                 .disabled(isDisabled)
                 .accessibilityIdentifier("assistant.structuredFreeText.\(question.id)")
-                .accessibilityLabel(question.freeTextPlaceholder?.nonEmpty ?? "Type your answer")
+                .accessibilityLabel(placeholder)
             )
         }
 
+        let placeholder = question.primaryTextInput?.placeholder.nonEmpty
+            ?? question.freeTextPlaceholder?.nonEmpty
+            ?? "Type your answer"
         return AnyView(
             TextField(
-                question.freeTextPlaceholder?.nonEmpty ?? "Type your answer",
+                placeholder,
                 text: Binding(
                     get: { viewModel.structuredPromptDraft(for: question, in: prompt).freeText },
                     set: { viewModel.updateStructuredPromptFreeText($0, for: question, in: prompt) }
@@ -13981,7 +14467,7 @@ struct ContentView: View {
                 submitPrompt(prompt)
             }
             .accessibilityIdentifier("assistant.structuredFreeText.\(question.id)")
-            .accessibilityLabel(question.freeTextPlaceholder?.nonEmpty ?? "Type your answer")
+            .accessibilityLabel(placeholder)
         )
     }
 
@@ -14995,6 +15481,10 @@ private struct RealisticConfettiRandomGenerator: RandomNumberGenerator {
     }
 }
 
+private func uiTestingOpaqueWindowLevel() -> NSWindow.Level {
+    NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) + 1)
+}
+
 private struct WindowChrome: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
@@ -15008,7 +15498,7 @@ private struct WindowChrome: NSViewRepresentable {
             window.backgroundColor = .clear
             window.isMovableByWindowBackground = true
             if CommandLine.arguments.contains("--ui-testing-opaque-window") {
-                window.level = .screenSaver
+                window.level = uiTestingOpaqueWindowLevel()
                 window.collectionBehavior.insert(.canJoinAllSpaces)
                 window.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
@@ -15074,7 +15564,7 @@ private struct WorkspaceWindowChrome: NSViewRepresentable {
             }
             window.isMovableByWindowBackground = true
             if CommandLine.arguments.contains("--ui-testing-opaque-window") {
-                window.level = .screenSaver
+                window.level = uiTestingOpaqueWindowLevel()
                 window.collectionBehavior.insert(.canJoinAllSpaces)
                 window.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)

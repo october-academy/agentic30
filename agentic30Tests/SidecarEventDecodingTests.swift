@@ -4643,6 +4643,324 @@ struct SidecarEventDecodingTests {
         #expect(question.highlightPhrases == ["수요 증거"])
     }
 
+    @MainActor @Test func decodesRecorderControlStateEvent() throws {
+        let payload = """
+        {
+          "type": "recorder_control_state",
+          "control_state": {
+            "mode": "active",
+            "consent": {
+              "status": "granted",
+              "visible_indicator_required": true,
+              "visible_indicator_acknowledged": true
+            },
+            "permissions": {
+              "screenRecording": "granted",
+              "accessibility": "denied",
+              "inputMonitoring": "unknown"
+            },
+            "sensitive_capture": {
+              "clipboard_mode": "trigger_only",
+              "microphone": false,
+              "system_audio": false
+            },
+            "updated_at": "2026-06-28T09:00:00.000Z"
+          },
+          "readiness": {
+            "can_record": false,
+            "state": "blocked",
+            "mode": "active",
+            "visible_indicator_required": true,
+            "visible_indicator_acknowledged": true,
+            "blockers": [
+              {
+                "id": "accessibility_missing",
+                "severity": "blocked",
+                "message": "Accessibility permission is required for recorder capture.",
+                "permission": "accessibility",
+                "state": "denied"
+              }
+            ],
+            "warnings": [
+              {
+                "id": "input_monitoring_degraded",
+                "severity": "degraded",
+                "message": "Input Monitoring is unavailable; capture will run with less context.",
+                "permission": "inputMonitoring",
+                "state": "unknown"
+              }
+            ]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "recorder_control_state")
+        #expect(event.controlState?.mode == "active")
+        #expect(event.controlState?.consent.status == "granted")
+        #expect(event.controlState?.consent.visibleIndicatorAcknowledged == true)
+        #expect(event.controlState?.permissions["screenRecording"] == "granted")
+        #expect(event.controlState?.permissions["accessibility"] == "denied")
+        #expect(event.controlState?.sensitiveCapture.clipboardMode == "trigger_only")
+        #expect(event.readiness?.canRecord == false)
+        #expect(event.readiness?.blockers.first?.id == "accessibility_missing")
+        #expect(event.readiness?.blockers.first?.permission == "accessibility")
+        #expect(event.readiness?.warnings.first?.id == "input_monitoring_degraded")
+    }
+
+    @MainActor @Test func decodesRecorderFrameCaptureIngestedEvent() throws {
+        let payload = """
+        {
+          "type": "recorder_frame_capture_ingested",
+          "frame": {
+            "id": "frame-1",
+            "captured_at": "2026-06-28T09:00:00.000Z",
+            "monitor_id": "display-1",
+            "capture_trigger": "manual_swift_screencapturekit",
+            "app_name": "Agentic30",
+            "window_title": "Founder Replay",
+            "snapshot_asset_id": "asset-1",
+            "snapshot_sha256": "abc123",
+            "content_hash": "abc123",
+            "text_source": "screen_capture",
+            "redaction_status": "not_redacted",
+            "privacy_state": "raw_local",
+            "safe_for_search": false,
+            "safe_for_memory": false,
+            "safe_for_export": false,
+            "proof_accepted_by_recorder_ingest": false
+          },
+          "media_asset": {
+            "id": "asset-1",
+            "asset_type": "frame_jpeg",
+            "sha256": "abc123",
+            "byte_size": 42,
+            "encrypted": false,
+            "path_exposed": false
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "recorder_frame_capture_ingested")
+        #expect(event.frame?.id == "frame-1")
+        #expect(event.frame?.captureTrigger == "manual_swift_screencapturekit")
+        #expect(event.frame?.proofAcceptedByRecorderIngest == false)
+        #expect(event.mediaAsset?.id == "asset-1")
+        #expect(event.mediaAsset?.pathExposed == false)
+    }
+
+    @MainActor @Test func decodesRecorderFrameCaptureDeletedEvent() throws {
+        let payload = """
+        {
+          "type": "recorder_frame_capture_deleted",
+          "deletion": {
+            "status": "deleted",
+            "frame_id": "frame-1",
+            "media_asset_id": "asset-1",
+            "media_removed": true,
+            "path_exposed": false,
+            "deleted_at": "2026-06-28T09:01:00.000Z",
+            "proof_accepted_by_recorder_delete": false
+          },
+          "proof_accepted_by_recorder_delete": false,
+          "proof_ledger_write_allowed": false
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "recorder_frame_capture_deleted")
+        #expect(event.deletion?.frameId == "frame-1")
+        #expect(event.deletion?.mediaAssetId == "asset-1")
+        #expect(event.deletion?.mediaRemoved == true)
+        #expect(event.deletion?.pathExposed == false)
+        #expect(event.deletion?.proofAcceptedByRecorderDelete == false)
+    }
+
+    @MainActor @Test func decodesRecorderFrameCapturesDeletedEvent() throws {
+        let payload = """
+        {
+          "type": "recorder_frame_captures_deleted",
+          "deletion_range": {
+            "status": "deleted",
+            "frame_count": 2,
+            "media_removed_count": 2,
+            "frame_ids": ["frame-1", "frame-2"],
+            "media_asset_ids": ["asset-1", "asset-2"],
+            "path_exposed": false,
+            "deleted_at": "2026-06-28T09:05:00.000Z"
+          },
+          "proof_accepted_by_recorder_delete": false,
+          "proof_ledger_write_allowed": false
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "recorder_frame_captures_deleted")
+        #expect(event.deletionRange?.status == "deleted")
+        #expect(event.deletionRange?.frameCount == 2)
+        #expect(event.deletionRange?.mediaRemovedCount == 2)
+        #expect(event.deletionRange?.frameIds == ["frame-1", "frame-2"])
+        #expect(event.deletionRange?.mediaAssetIds == ["asset-1", "asset-2"])
+        #expect(event.deletionRange?.pathExposed == false)
+    }
+
+    @MainActor @Test func decodesRecorderFrameCapturesEvent() throws {
+        let payload = """
+        {
+          "type": "recorder_frame_captures",
+          "frames": [
+            {
+              "id": "frame-2",
+              "captured_at": "2026-06-28T09:02:00.000Z",
+              "monitor_id": "display-1",
+              "capture_trigger": "auto_swift_screencapturekit_interval",
+              "app_name": "Agentic30",
+              "window_title": "Founder Replay",
+              "snapshot_asset_id": "asset-2",
+              "snapshot_sha256": "def456",
+              "content_hash": "def456",
+              "text_source": "screen_capture",
+              "redaction_status": "not_redacted",
+              "privacy_state": "raw_local",
+              "safe_for_search": false,
+              "safe_for_memory": false,
+              "safe_for_export": false,
+              "proof_accepted_by_recorder_ingest": false
+            }
+          ],
+          "proof_accepted_by_recorder_frames": false,
+          "proof_ledger_write_allowed": false
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "recorder_frame_captures")
+        #expect(event.frames?.count == 1)
+        #expect(event.frames?.first?.id == "frame-2")
+        #expect(event.frames?.first?.captureTrigger == "auto_swift_screencapturekit_interval")
+        #expect(event.frames?.first?.proofAcceptedByRecorderIngest == false)
+    }
+
+    @MainActor @Test func decodesRecorderRawApiTokenIssuedEvent() throws {
+        let payload = """
+        {
+          "type": "recorder_raw_api_token_issued",
+          "recorder_raw_api": {
+            "enabled": true,
+            "host": "127.0.0.1",
+            "port": 31337,
+            "url": "http://127.0.0.1:31337",
+            "token_issuer": "sidecar_websocket",
+            "proof_accepted_by_raw_api": false
+          },
+          "token": {
+            "token": "a30_recorder_local_token",
+            "token_id": "token-1",
+            "client_id": "agentic30-founder-replay",
+            "scopes": ["raw_frame"],
+            "issued_at": "2026-06-28T09:03:00.000Z",
+            "expires_at": "2026-06-28T09:04:00.000Z"
+          },
+          "proof_accepted_by_raw_api": false
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "recorder_raw_api_token_issued")
+        #expect(event.recorderRawApi?.enabled == true)
+        #expect(event.recorderRawApi?.url == "http://127.0.0.1:31337")
+        #expect(event.recorderRawApi?.proofAcceptedByRawApi == false)
+        #expect(event.recorderRawApiToken?.clientId == "agentic30-founder-replay")
+        #expect(event.recorderRawApiToken?.scopes == ["raw_frame"])
+    }
+
+    @MainActor @Test func decodesRecorderPipeManagementEvents() throws {
+        let statePayload = """
+        {
+          "type": "recorder_pipes_state",
+          "pipes": [
+            {
+              "id": "daily-founder-memory",
+              "workspace_id": null,
+              "project_id": null,
+              "path": ".agentic30/pipes/daily-founder-memory/pipe.md",
+              "name": "Daily Founder Memory",
+              "schedule": "every day at 18:00",
+              "enabled": true,
+              "pipe_kind": "built_in",
+              "proof_accepted_by_pipe_definition": false
+            }
+          ],
+          "runs": [
+            {
+              "id": "run-1",
+              "pipe_id": "daily-founder-memory",
+              "trigger_reason": "manual",
+              "status": "succeeded",
+              "started_at": "2026-06-28T09:00:00.000Z",
+              "ended_at": "2026-06-28T09:00:01.000Z",
+              "error_message": "",
+              "proof_accepted_by_pipe_run": false
+            }
+          ]
+        }
+        """
+        let state = try decoder.decode(SidecarEvent.self, from: Data(statePayload.utf8))
+        #expect(state.pipes?.first?.id == "daily-founder-memory")
+        #expect(state.pipes?.first?.kind == "built_in")
+        #expect(state.pipes?.first?.proofAcceptedByPipeDefinition == false)
+        #expect(state.runs?.first?.pipeId == "daily-founder-memory")
+        #expect(state.runs?.first?.status == "succeeded")
+        #expect(state.runs?.first?.proofAcceptedByPipeRun == false)
+
+        let runPayload = """
+        {
+          "type": "recorder_pipe_run_result",
+          "pipeRun": {
+            "id": "run-2",
+            "pipeId": "evidence-inbox-builder",
+            "triggerReason": "manual",
+            "status": "failed",
+            "startedAt": "2026-06-28T09:00:00.000Z",
+            "endedAt": "2026-06-28T09:00:01.000Z",
+            "errorMessage": "ERR_RECORDER_PIPE_RUN_FAILED",
+            "proofAcceptedByPipeRun": false
+          },
+          "runs": []
+        }
+        """
+        let run = try decoder.decode(SidecarEvent.self, from: Data(runPayload.utf8))
+        #expect(run.pipeRun?.pipeId == "evidence-inbox-builder")
+        #expect(run.pipeRun?.errorMessage == "ERR_RECORDER_PIPE_RUN_FAILED")
+
+        let schedulerPayload = """
+        {
+          "type": "recorder_pipe_scheduler_tick_result",
+          "enqueueResult": {
+            "queued_count": 1,
+            "skipped_count": 2,
+            "executed_count": 0,
+            "failed_count": 0,
+            "proof_accepted_by_scheduler": false
+          },
+          "drainResult": {
+            "queuedCount": 0,
+            "skippedCount": 0,
+            "executedCount": 1,
+            "failedCount": 0,
+            "proofAcceptedByScheduler": false
+          },
+          "runs": []
+        }
+        """
+        let scheduler = try decoder.decode(SidecarEvent.self, from: Data(schedulerPayload.utf8))
+        #expect(scheduler.enqueueResult?.queuedCount == 1)
+        #expect(scheduler.enqueueResult?.skippedCount == 2)
+        #expect(scheduler.drainResult?.executedCount == 1)
+        #expect(scheduler.drainResult?.proofAcceptedByScheduler == false)
+    }
+
     private var decoder: JSONDecoder {
         let decoder = JSONDecoder()
         let formatter = ISO8601DateFormatter()

@@ -1880,6 +1880,58 @@ struct EmphasisSpan: Codable, nonisolated Hashable {
     }
 }
 
+struct StructuredPromptPrimaryTextInput: Codable, nonisolated Hashable {
+    let label: String
+    let placeholder: String
+    let required: Bool
+    let submitLabel: String?
+    let validationMessage: String?
+
+    init(
+        label: String,
+        placeholder: String,
+        required: Bool,
+        submitLabel: String? = nil,
+        validationMessage: String? = nil
+    ) {
+        self.label = label
+        self.placeholder = placeholder
+        self.required = required
+        self.submitLabel = submitLabel
+        self.validationMessage = validationMessage
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case label
+        case placeholder
+        case required
+        case submitLabel
+        case submitLabelSnake = "submit_label"
+        case validationMessage
+        case validationMessageSnake = "validation_message"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        label = try container.decode(String.self, forKey: .label)
+        placeholder = try container.decode(String.self, forKey: .placeholder)
+        required = try container.decodeIfPresent(Bool.self, forKey: .required) ?? false
+        submitLabel = try container.decodeIfPresent(String.self, forKey: .submitLabel)
+            ?? container.decodeIfPresent(String.self, forKey: .submitLabelSnake)
+        validationMessage = try container.decodeIfPresent(String.self, forKey: .validationMessage)
+            ?? container.decodeIfPresent(String.self, forKey: .validationMessageSnake)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(label, forKey: .label)
+        try container.encode(placeholder, forKey: .placeholder)
+        try container.encode(required, forKey: .required)
+        try container.encodeIfPresent(submitLabel, forKey: .submitLabel)
+        try container.encodeIfPresent(validationMessage, forKey: .validationMessage)
+    }
+}
+
 struct StructuredPromptQuestion: Identifiable, Codable, nonisolated Hashable {
     let questionId: String?
     let header: String
@@ -1891,7 +1943,9 @@ struct StructuredPromptQuestion: Identifiable, Codable, nonisolated Hashable {
     let multiSelect: Bool?
     let allowFreeText: Bool?
     let requiresFreeText: Bool?
+    let allowsEmptySubmit: Bool?
     let freeTextPlaceholder: String?
+    let primaryTextInput: StructuredPromptPrimaryTextInput?
     let textMode: StructuredPromptTextMode?
 
     init(
@@ -1903,7 +1957,9 @@ struct StructuredPromptQuestion: Identifiable, Codable, nonisolated Hashable {
         multiSelect: Bool?,
         allowFreeText: Bool?,
         requiresFreeText: Bool?,
+        allowsEmptySubmit: Bool? = nil,
         freeTextPlaceholder: String?,
+        primaryTextInput: StructuredPromptPrimaryTextInput? = nil,
         textMode: StructuredPromptTextMode?,
         highlightPhrases: [String]? = nil,
         emphasis: [EmphasisSpan]? = nil
@@ -1918,7 +1974,9 @@ struct StructuredPromptQuestion: Identifiable, Codable, nonisolated Hashable {
         self.multiSelect = multiSelect
         self.allowFreeText = allowFreeText
         self.requiresFreeText = requiresFreeText
+        self.allowsEmptySubmit = allowsEmptySubmit
         self.freeTextPlaceholder = freeTextPlaceholder
+        self.primaryTextInput = primaryTextInput
         self.textMode = textMode
     }
 
@@ -1934,7 +1992,9 @@ struct StructuredPromptQuestion: Identifiable, Codable, nonisolated Hashable {
             multiSelect: multiSelect,
             allowFreeText: allowFreeText,
             requiresFreeText: requiresFreeText,
+            allowsEmptySubmit: allowsEmptySubmit,
             freeTextPlaceholder: freeTextPlaceholder,
+            primaryTextInput: primaryTextInput,
             textMode: textMode,
             highlightPhrases: highlightPhrases,
             emphasis: emphasis
@@ -1945,12 +2005,20 @@ struct StructuredPromptQuestion: Identifiable, Codable, nonisolated Hashable {
         let hasSelection = !selectedOptions.isEmpty
         let hasFreeText = !freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasOptions = options?.isEmpty == false
+        let requiresPrimaryText = primaryTextInput?.required == true
+
+        if allowsEmptySubmit == true && !requiresPrimaryText && requiresFreeText != true {
+            return true
+        }
 
         if hasOptions {
+            if requiresPrimaryText {
+                return hasSelection && hasFreeText
+            }
             return hasSelection || (allowFreeText == true && hasFreeText)
         }
 
-        if allowFreeText == true || requiresFreeText == true {
+        if allowFreeText == true || requiresFreeText == true || requiresPrimaryText {
             return hasFreeText
         }
 
@@ -1974,7 +2042,11 @@ struct StructuredPromptQuestion: Identifiable, Codable, nonisolated Hashable {
         case multiSelect
         case allowFreeText
         case requiresFreeText
+        case allowsEmptySubmit
+        case allowsEmptySubmitSnake = "allows_empty_submit"
         case freeTextPlaceholder
+        case primaryTextInput
+        case primaryTextInputSnake = "primary_text_input"
         case textMode
     }
 
@@ -1992,7 +2064,11 @@ struct StructuredPromptQuestion: Identifiable, Codable, nonisolated Hashable {
         multiSelect = try container.decodeIfPresent(Bool.self, forKey: .multiSelect)
         allowFreeText = try container.decodeIfPresent(Bool.self, forKey: .allowFreeText)
         requiresFreeText = try container.decodeIfPresent(Bool.self, forKey: .requiresFreeText)
+        allowsEmptySubmit = try container.decodeIfPresent(Bool.self, forKey: .allowsEmptySubmit)
+            ?? container.decodeIfPresent(Bool.self, forKey: .allowsEmptySubmitSnake)
         freeTextPlaceholder = try container.decodeIfPresent(String.self, forKey: .freeTextPlaceholder)
+        primaryTextInput = try container.decodeIfPresent(StructuredPromptPrimaryTextInput.self, forKey: .primaryTextInput)
+            ?? container.decodeIfPresent(StructuredPromptPrimaryTextInput.self, forKey: .primaryTextInputSnake)
         textMode = try container.decodeIfPresent(StructuredPromptTextMode.self, forKey: .textMode)
     }
 
@@ -2008,7 +2084,9 @@ struct StructuredPromptQuestion: Identifiable, Codable, nonisolated Hashable {
         try container.encodeIfPresent(multiSelect, forKey: .multiSelect)
         try container.encodeIfPresent(allowFreeText, forKey: .allowFreeText)
         try container.encodeIfPresent(requiresFreeText, forKey: .requiresFreeText)
+        try container.encodeIfPresent(allowsEmptySubmit, forKey: .allowsEmptySubmit)
         try container.encodeIfPresent(freeTextPlaceholder, forKey: .freeTextPlaceholder)
+        try container.encodeIfPresent(primaryTextInput, forKey: .primaryTextInput)
         try container.encodeIfPresent(textMode, forKey: .textMode)
     }
 

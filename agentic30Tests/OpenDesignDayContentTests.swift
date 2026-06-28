@@ -34,7 +34,7 @@ struct OpenDesignDayContentTests {
         #expect(officeHoursDigestSourceDotTone(legacyFailed) == .unavailable)
     }
 
-    @Test func workspaceChromeStyleUsesDay1ChromeForOfficeHoursAndSettingsOnly() {
+    @Test func workspaceChromeStyleUsesDay1ChromeForCoreExecutionSurfaces() {
         #expect(WorkspaceChromeStyle.resolve(
             isWorkspaceWindow: true,
             dayNumber: 1,
@@ -44,6 +44,11 @@ struct OpenDesignDayContentTests {
             isWorkspaceWindow: true,
             dayNumber: 1,
             railDestination: .reference(.settings)
+        ) == .day1OfficeHours)
+        #expect(WorkspaceChromeStyle.resolve(
+            isWorkspaceWindow: true,
+            dayNumber: 1,
+            railDestination: .founderReplay
         ) == .day1OfficeHours)
         #expect(WorkspaceChromeStyle.resolve(
             isWorkspaceWindow: true,
@@ -65,19 +70,21 @@ struct OpenDesignDayContentTests {
     @Test func railDestinationDerivesActiveItemAndSurfaceFromSingleState() throws {
         #expect(OpenDesignRailDestination.strategy.activeRailItemID == "strategy")
         #expect(OpenDesignRailDestination.officeHours.activeRailItemID == "today")
+        #expect(OpenDesignRailDestination.founderReplay.activeRailItemID == "founder-replay")
         #expect(OpenDesignRailDestination.reference(.news).activeRailItemID == "news")
         #expect(OpenDesignRailDestination.today.surfaceKind(routesTodayToOfficeHours: true) == .officeHours)
+        #expect(OpenDesignRailDestination.founderReplay.surfaceKind(routesTodayToOfficeHours: true) == .founderReplay)
         #expect(OpenDesignRailDestination.today.surfaceKind(routesTodayToOfficeHours: false) == .today)
         #expect(OpenDesignRailDestination.reference(.news).referencePage == .news)
     }
 
-    @Test func primaryRailItemsUseStrategyNewsBriefingOrder() {
+    @Test func primaryRailItemsKeepFounderReplayBeforeStrategyNewsBriefing() {
         let railItems = OpenDesignDayContent.makeRailItems(
             todayTitle: "오늘 · Day 1",
             showsDevelopmentOnlyReferencePages: false
         )
 
-        #expect(railItems.map(\.id) == ["today", "strategy", "news", "briefing", "settings"])
+        #expect(railItems.map(\.id) == ["today", "founder-replay", "strategy", "news", "briefing", "settings"])
     }
 
     @Test func railDestinationActivationMovesNewsReferenceDirectlyToStrategy() throws {
@@ -85,14 +92,23 @@ struct OpenDesignDayContentTests {
             todayTitle: "오늘 · Day 1",
             showsDevelopmentOnlyReferencePages: false
         ).first(where: { $0.id == "strategy" }))
+        let founderReplayRailItem = try #require(OpenDesignDayContent.makeRailItems(
+            todayTitle: "오늘 · Day 1",
+            showsDevelopmentOnlyReferencePages: false
+        ).first(where: { $0.id == "founder-replay" }))
 
         let current = OpenDesignRailDestination.reference(.news)
         #expect(openDesignRailDestinationAfterOpeningSearch(current: current) == current)
         #expect(openDesignRailDestination(for: strategyRailItem, routesTodayToOfficeHours: true) == OpenDesignRailDestination.strategy)
+        #expect(openDesignRailDestination(
+            for: founderReplayRailItem,
+            routesTodayToOfficeHours: true
+        ) == OpenDesignRailDestination.founderReplay)
     }
 
     @Test func railAccessPolicyLocksFeatureTabsWithoutSidecarDayProgress() {
         #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.strategy, dayProgress: nil) == .locked(requiredCompletedDay: 1, requiredStep: "first_interview"))
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.founderReplay, dayProgress: nil) == .locked(requiredCompletedDay: 1, requiredStep: "first_interview"))
         #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.news, dayProgress: nil) == .locked(requiredCompletedDay: 2, requiredStep: "interview"))
         #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.morningBriefing, dayProgress: nil) == .locked(requiredCompletedDay: 3, requiredStep: "interview"))
 
@@ -107,6 +123,7 @@ struct OpenDesignDayContentTests {
 
     @Test func railAccessPolicyUnlocksProgressivelyFromInterviewCompletionOnly() {
         let day1Progress = Self.makeRailUnlockDayProgress(completedThrough: 1)
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.founderReplay, dayProgress: day1Progress) == .unlocked)
         #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.strategy, dayProgress: day1Progress) == .unlocked)
         #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.news, dayProgress: day1Progress) == .locked(requiredCompletedDay: 2, requiredStep: "interview"))
         #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.morningBriefing, dayProgress: day1Progress) == .locked(requiredCompletedDay: 3, requiredStep: "interview"))
@@ -127,6 +144,7 @@ struct OpenDesignDayContentTests {
         foundationProgress.completedDays = Set([1, 2, 3])
 
         #expect(foundationProgress.completedDays == Set([1, 2, 3]))
+        #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.founderReplay, dayProgress: nil) == .locked(requiredCompletedDay: 1, requiredStep: "first_interview"))
         #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.strategy, dayProgress: nil) == .locked(requiredCompletedDay: 1, requiredStep: "first_interview"))
         #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.news, dayProgress: nil) == .locked(requiredCompletedDay: 2, requiredStep: "interview"))
         #expect(OpenDesignRailAccessPolicy.state(for: OpenDesignRailFeature.morningBriefing, dayProgress: nil) == .locked(requiredCompletedDay: 3, requiredStep: "interview"))
@@ -143,10 +161,11 @@ struct OpenDesignDayContentTests {
     }
 
     @Test func lockedRailMockSurfaceKindsStayFeatureSpecific() {
+        #expect(openDesignLockedRailMockSurfaceKind(for: .founderReplay) == .founderReplay)
         #expect(openDesignLockedRailMockSurfaceKind(for: .news) == .newsMarketRadar)
         #expect(openDesignLockedRailMockSurfaceKind(for: .morningBriefing) == .morningBriefing)
         #expect(openDesignLockedRailMockSurfaceKind(for: .strategy) == .strategy)
-        #expect(Set(OpenDesignRailFeature.allCases.map(openDesignLockedRailMockSurfaceKind)).count == 3)
+        #expect(Set(OpenDesignRailFeature.allCases.map(openDesignLockedRailMockSurfaceKind)).count == 4)
     }
 
     @Test func officeHoursTranscriptRowsHideSyntheticStartPrompt() {
@@ -1388,6 +1407,7 @@ struct OpenDesignDayContentTests {
 
         #expect(content.railItems.map(\.title) == [
             "오늘 · Day 1",
+            "Founder Replay",
             "전략",
             "뉴스",
             "아침 브리핑",
@@ -1443,6 +1463,7 @@ struct OpenDesignDayContentTests {
 
         #expect(railIDs == [
             "today",
+            "founder-replay",
             "strategy",
             "news",
             "briefing",
@@ -1450,6 +1471,7 @@ struct OpenDesignDayContentTests {
         ])
         #expect(pageIDs == [
             "page-today",
+            "page-founder-replay",
             "page-search",
             "page-projects",
             "page-settings",
@@ -1482,6 +1504,7 @@ struct OpenDesignDayContentTests {
 
         #expect(productionRailIDs == [
             "today",
+            "founder-replay",
             "strategy",
             "news",
             "briefing",
@@ -1491,6 +1514,7 @@ struct OpenDesignDayContentTests {
 
         #expect(productionPageIDs == [
             "page-today",
+            "page-founder-replay",
             "page-search",
             "page-settings",
             "page-news",
@@ -1506,6 +1530,7 @@ struct OpenDesignDayContentTests {
 
         #expect(railIDs == [
             "today",
+            "founder-replay",
             "strategy",
             "news",
             "briefing",

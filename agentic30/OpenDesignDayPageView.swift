@@ -32,6 +32,7 @@ struct OpenDesignDayContent {
             case today
             case search
             case officeHours
+            case founderReplay
             case morningBriefing
             case strategy
             case settings
@@ -416,6 +417,7 @@ struct OpenDesignDayContent {
     ) -> [RailItem] {
         visibleRailItems([
             RailItem(id: "today", title: todayTitle, systemImage: "calendar", isActive: true, hasNewDot: false, route: todayRoute),
+            RailItem(id: "founder-replay", title: "Founder Replay", systemImage: "play.rectangle.on.rectangle", isActive: false, hasNewDot: false, route: .founderReplay),
             RailItem(id: "strategy", title: "전략", systemImage: "chart.line.uptrend.xyaxis", isActive: false, hasNewDot: false, route: .strategy),
             RailItem(id: "news", title: "뉴스", systemImage: "newspaper", isActive: false, hasNewDot: false, route: .inert),
             RailItem(id: "briefing", title: "아침 브리핑", systemImage: "sunrise", isActive: false, hasNewDot: false, route: .morningBriefing),
@@ -1561,6 +1563,7 @@ struct OpenDesignDayContent {
     ) -> [SearchItem] {
         visibleSearchItems([
             SearchItem(id: "page-today", kind: .page, title: "오늘 · Day 1", subtitle: "Office Hours", day: nil, systemImage: "scope", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .officeHours),
+            SearchItem(id: "page-founder-replay", kind: .page, title: "Founder Replay", subtitle: "Day Memory Review · Evidence Inbox", day: nil, systemImage: "play.rectangle.on.rectangle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .founderReplay),
             SearchItem(id: "page-search", kind: .page, title: "검색", subtitle: "전체 페이지 · 과제 찾기", day: nil, systemImage: "magnifyingglass", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .search),
             SearchItem(id: "page-projects", kind: .page, title: "프로젝트", subtitle: "활성 3개 · 소스 루트 여러 개 관리", day: nil, systemImage: "folder", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "page-settings", kind: .page, title: "설정", subtitle: "워크스페이스 · AI 연결 · 권한", day: nil, systemImage: "gearshape", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .settings),
@@ -2148,6 +2151,7 @@ nonisolated enum OpenDesignRailNavigationEffect: Hashable {
 nonisolated enum OpenDesignRailSurfaceKind: Hashable {
     case today
     case officeHours
+    case founderReplay
     case morningBriefing
     case strategy
     case reference(OpenDesignReferencePageKind)
@@ -2164,6 +2168,22 @@ nonisolated enum OpenDesignRailSurfaceKind: Hashable {
             return true
         }
         return false
+    }
+
+    var isFounderReplay: Bool {
+        if case .founderReplay = self {
+            return true
+        }
+        return false
+    }
+
+    var usesDay1WorkspacePalette: Bool {
+        switch self {
+        case .officeHours, .founderReplay:
+            return true
+        case .today, .morningBriefing, .strategy, .reference:
+            return false
+        }
     }
 
     var isMorningBriefing: Bool {
@@ -2184,6 +2204,7 @@ nonisolated enum OpenDesignRailSurfaceKind: Hashable {
 nonisolated enum OpenDesignRailDestination: Hashable {
     case today
     case officeHours
+    case founderReplay
     case morningBriefing
     case strategy
     case reference(OpenDesignReferencePageKind)
@@ -2192,6 +2213,8 @@ nonisolated enum OpenDesignRailDestination: Hashable {
         switch self {
         case .today, .officeHours:
             return "today"
+        case .founderReplay:
+            return "founder-replay"
         case .morningBriefing:
             return "briefing"
         case .strategy:
@@ -2214,6 +2237,8 @@ nonisolated enum OpenDesignRailDestination: Hashable {
             return routesTodayToOfficeHours ? .officeHours : .today
         case .officeHours:
             return .officeHours
+        case .founderReplay:
+            return .founderReplay
         case .morningBriefing:
             return .morningBriefing
         case .strategy:
@@ -2239,6 +2264,8 @@ nonisolated func openDesignRailDestination(
         return .today
     case .officeHours:
         return .officeHours
+    case .founderReplay:
+        return .founderReplay
     case .morningBriefing:
         return .morningBriefing
     case .strategy:
@@ -2264,6 +2291,8 @@ nonisolated func openDesignTelemetryRoute(_ route: OpenDesignDayContent.RailItem
         return "search"
     case .officeHours:
         return "office_hours"
+    case .founderReplay:
+        return "founder_replay"
     case .morningBriefing:
         return "morning_briefing"
     case .strategy:
@@ -2281,6 +2310,8 @@ nonisolated func openDesignTelemetryRoute(_ destination: OpenDesignRailDestinati
         return "today"
     case .officeHours:
         return "office_hours"
+    case .founderReplay:
+        return "founder_replay"
     case .morningBriefing:
         return "morning_briefing"
     case .strategy:
@@ -2299,6 +2330,8 @@ nonisolated func openDesignTelemetrySurface(
         return "today"
     case .officeHours:
         return "office_hours"
+    case .founderReplay:
+        return "founder_replay"
     case .morningBriefing:
         return "morning_briefing"
     case .strategy:
@@ -2309,6 +2342,7 @@ nonisolated func openDesignTelemetrySurface(
 }
 
 nonisolated enum OpenDesignRailFeature: String, CaseIterable, Hashable {
+    case founderReplay = "founder-replay"
     case strategy
     case news
     case morningBriefing = "briefing"
@@ -2317,6 +2351,8 @@ nonisolated enum OpenDesignRailFeature: String, CaseIterable, Hashable {
 
     var title: String {
         switch self {
+        case .founderReplay:
+            return "Founder Replay"
         case .morningBriefing:
             return "아침 브리핑"
         case .strategy:
@@ -2328,6 +2364,8 @@ nonisolated enum OpenDesignRailFeature: String, CaseIterable, Hashable {
 
     var systemImage: String {
         switch self {
+        case .founderReplay:
+            return "play.rectangle.on.rectangle"
         case .morningBriefing:
             return "sunrise"
         case .strategy:
@@ -2339,7 +2377,7 @@ nonisolated enum OpenDesignRailFeature: String, CaseIterable, Hashable {
 
     var requiredCompletedDay: Int {
         switch self {
-        case .strategy:
+        case .founderReplay, .strategy:
             return 1
         case .news:
             return 2
@@ -2350,7 +2388,7 @@ nonisolated enum OpenDesignRailFeature: String, CaseIterable, Hashable {
 
     var requiredStep: String {
         switch self {
-        case .strategy:
+        case .founderReplay, .strategy:
             return "first_interview"
         case .news, .morningBriefing:
             return "interview"
@@ -2359,6 +2397,8 @@ nonisolated enum OpenDesignRailFeature: String, CaseIterable, Hashable {
 
     var destination: OpenDesignRailDestination {
         switch self {
+        case .founderReplay:
+            return .founderReplay
         case .morningBriefing:
             return .morningBriefing
         case .strategy:
@@ -2374,6 +2414,8 @@ nonisolated enum OpenDesignRailFeature: String, CaseIterable, Hashable {
 
     init?(destination: OpenDesignRailDestination) {
         switch destination {
+        case .founderReplay:
+            self = .founderReplay
         case .morningBriefing:
             self = .morningBriefing
         case .strategy:
@@ -4554,6 +4596,56 @@ struct OpenDesignDayPageView: View {
     let workHistory: WorkHistorySnapshot
     let refreshWorkHistory: () -> Void
     let prepareWorkHistory: () -> Void
+    let recorderControlState: RecorderControlState?
+    let recorderCaptureReadiness: RecorderCaptureReadiness?
+    let recorderControlRefreshing: Bool
+    let recorderControlActionInFlight: String?
+    let recorderControlLastError: String?
+    let recorderFrameCaptureInFlight: Bool
+    let recorderFrameCaptureLastError: String?
+    let recorderLastFrameCapture: RecorderFrameCaptureReceipt?
+    let recorderFrameDeleteInFlight: Bool
+    let recorderFrameDeleteLastError: String?
+    let recorderLastFrameDelete: RecorderFrameDeleteReceipt?
+    let recorderFrameCaptures: [RecorderFrameCaptureReceipt]
+    let recorderFrameCapturesRefreshing: Bool
+    let recorderFrameCapturesLastError: String?
+    let recorderFrameImagePreview: RecorderFrameImagePreview?
+    let recorderFrameImageLoadingID: String?
+    let recorderFrameImageLastError: String?
+    let recorderAutoCaptureRunning: Bool
+    let recorderAutoCaptureLastTrigger: String?
+    let recorderAutoCaptureLastError: String?
+    let refreshRecorderControl: () -> Void
+    let prepareRecorderControl: () -> Void
+    let refreshRecorderPermissions: () -> Void
+    let grantRecorderConsent: () -> Void
+    let revokeRecorderConsent: () -> Void
+    let pauseRecorderCapture: () -> Void
+    let resumeRecorderCapture: () -> Void
+    let stopRecorderForToday: () -> Void
+    let captureRecorderFrame: () -> Void
+    let deleteRecorderFrame: () -> Void
+    let deleteRecorderFrameWithID: (String) -> Void
+    let deleteRecorderFrameRange: ([String]) -> Void
+    let refreshRecorderFrameCaptures: () -> Void
+    let prepareRecorderFrameCaptures: () -> Void
+    let loadRecorderFrameImage: (String) -> Void
+    let prepareRecorderFrameImage: (String?) -> Void
+    let startRecorderAutoCapture: () -> Void
+    let stopRecorderAutoCapture: () -> Void
+    let recorderPipes: [RecorderPipeDefinition]
+    let recorderPipeRuns: [RecorderPipeRun]
+    let recorderPipesRefreshing: Bool
+    let recorderPipeActionInFlight: Set<String>
+    let recorderPipeSchedulerRunning: Bool
+    let recorderPipeLastSchedulerResult: RecorderPipeSchedulerResult?
+    let recorderPipeLastError: String?
+    let refreshRecorderPipes: () -> Void
+    let prepareRecorderPipes: () -> Void
+    let runRecorderPipe: (String) -> Void
+    let cancelRecorderPipeRun: (String) -> Void
+    let tickRecorderPipeScheduler: () -> Void
     let day1SurfaceReview: Day1SurfaceReview?
     let day1SurfaceReviewGenerating: Bool
     let day1SurfaceReviewDecisionPending: String?
@@ -4626,6 +4718,56 @@ struct OpenDesignDayPageView: View {
         workHistory: WorkHistorySnapshot = .empty,
         refreshWorkHistory: @escaping () -> Void = {},
         prepareWorkHistory: @escaping () -> Void = {},
+        recorderControlState: RecorderControlState? = nil,
+        recorderCaptureReadiness: RecorderCaptureReadiness? = nil,
+        recorderControlRefreshing: Bool = false,
+        recorderControlActionInFlight: String? = nil,
+        recorderControlLastError: String? = nil,
+        recorderFrameCaptureInFlight: Bool = false,
+        recorderFrameCaptureLastError: String? = nil,
+        recorderLastFrameCapture: RecorderFrameCaptureReceipt? = nil,
+        recorderFrameDeleteInFlight: Bool = false,
+        recorderFrameDeleteLastError: String? = nil,
+        recorderLastFrameDelete: RecorderFrameDeleteReceipt? = nil,
+        recorderFrameCaptures: [RecorderFrameCaptureReceipt] = [],
+        recorderFrameCapturesRefreshing: Bool = false,
+        recorderFrameCapturesLastError: String? = nil,
+        recorderFrameImagePreview: RecorderFrameImagePreview? = nil,
+        recorderFrameImageLoadingID: String? = nil,
+        recorderFrameImageLastError: String? = nil,
+        recorderAutoCaptureRunning: Bool = false,
+        recorderAutoCaptureLastTrigger: String? = nil,
+        recorderAutoCaptureLastError: String? = nil,
+        refreshRecorderControl: @escaping () -> Void = {},
+        prepareRecorderControl: @escaping () -> Void = {},
+        refreshRecorderPermissions: @escaping () -> Void = {},
+        grantRecorderConsent: @escaping () -> Void = {},
+        revokeRecorderConsent: @escaping () -> Void = {},
+        pauseRecorderCapture: @escaping () -> Void = {},
+        resumeRecorderCapture: @escaping () -> Void = {},
+        stopRecorderForToday: @escaping () -> Void = {},
+        captureRecorderFrame: @escaping () -> Void = {},
+        deleteRecorderFrame: @escaping () -> Void = {},
+        deleteRecorderFrameWithID: @escaping (String) -> Void = { _ in },
+        deleteRecorderFrameRange: @escaping ([String]) -> Void = { _ in },
+        refreshRecorderFrameCaptures: @escaping () -> Void = {},
+        prepareRecorderFrameCaptures: @escaping () -> Void = {},
+        loadRecorderFrameImage: @escaping (String) -> Void = { _ in },
+        prepareRecorderFrameImage: @escaping (String?) -> Void = { _ in },
+        startRecorderAutoCapture: @escaping () -> Void = {},
+        stopRecorderAutoCapture: @escaping () -> Void = {},
+        recorderPipes: [RecorderPipeDefinition] = [],
+        recorderPipeRuns: [RecorderPipeRun] = [],
+        recorderPipesRefreshing: Bool = false,
+        recorderPipeActionInFlight: Set<String> = [],
+        recorderPipeSchedulerRunning: Bool = false,
+        recorderPipeLastSchedulerResult: RecorderPipeSchedulerResult? = nil,
+        recorderPipeLastError: String? = nil,
+        refreshRecorderPipes: @escaping () -> Void = {},
+        prepareRecorderPipes: @escaping () -> Void = {},
+        runRecorderPipe: @escaping (String) -> Void = { _ in },
+        cancelRecorderPipeRun: @escaping (String) -> Void = { _ in },
+        tickRecorderPipeScheduler: @escaping () -> Void = {},
         day1SurfaceReview: Day1SurfaceReview? = nil,
         day1SurfaceReviewGenerating: Bool = false,
         day1SurfaceReviewDecisionPending: String? = nil,
@@ -4683,6 +4825,56 @@ struct OpenDesignDayPageView: View {
         self.workHistory = workHistory
         self.refreshWorkHistory = refreshWorkHistory
         self.prepareWorkHistory = prepareWorkHistory
+        self.recorderControlState = recorderControlState
+        self.recorderCaptureReadiness = recorderCaptureReadiness
+        self.recorderControlRefreshing = recorderControlRefreshing
+        self.recorderControlActionInFlight = recorderControlActionInFlight
+        self.recorderControlLastError = recorderControlLastError
+        self.recorderFrameCaptureInFlight = recorderFrameCaptureInFlight
+        self.recorderFrameCaptureLastError = recorderFrameCaptureLastError
+        self.recorderLastFrameCapture = recorderLastFrameCapture
+        self.recorderFrameDeleteInFlight = recorderFrameDeleteInFlight
+        self.recorderFrameDeleteLastError = recorderFrameDeleteLastError
+        self.recorderLastFrameDelete = recorderLastFrameDelete
+        self.recorderFrameCaptures = recorderFrameCaptures
+        self.recorderFrameCapturesRefreshing = recorderFrameCapturesRefreshing
+        self.recorderFrameCapturesLastError = recorderFrameCapturesLastError
+        self.recorderFrameImagePreview = recorderFrameImagePreview
+        self.recorderFrameImageLoadingID = recorderFrameImageLoadingID
+        self.recorderFrameImageLastError = recorderFrameImageLastError
+        self.recorderAutoCaptureRunning = recorderAutoCaptureRunning
+        self.recorderAutoCaptureLastTrigger = recorderAutoCaptureLastTrigger
+        self.recorderAutoCaptureLastError = recorderAutoCaptureLastError
+        self.refreshRecorderControl = refreshRecorderControl
+        self.prepareRecorderControl = prepareRecorderControl
+        self.refreshRecorderPermissions = refreshRecorderPermissions
+        self.grantRecorderConsent = grantRecorderConsent
+        self.revokeRecorderConsent = revokeRecorderConsent
+        self.pauseRecorderCapture = pauseRecorderCapture
+        self.resumeRecorderCapture = resumeRecorderCapture
+        self.stopRecorderForToday = stopRecorderForToday
+        self.captureRecorderFrame = captureRecorderFrame
+        self.deleteRecorderFrame = deleteRecorderFrame
+        self.deleteRecorderFrameWithID = deleteRecorderFrameWithID
+        self.deleteRecorderFrameRange = deleteRecorderFrameRange
+        self.refreshRecorderFrameCaptures = refreshRecorderFrameCaptures
+        self.prepareRecorderFrameCaptures = prepareRecorderFrameCaptures
+        self.loadRecorderFrameImage = loadRecorderFrameImage
+        self.prepareRecorderFrameImage = prepareRecorderFrameImage
+        self.startRecorderAutoCapture = startRecorderAutoCapture
+        self.stopRecorderAutoCapture = stopRecorderAutoCapture
+        self.recorderPipes = recorderPipes
+        self.recorderPipeRuns = recorderPipeRuns
+        self.recorderPipesRefreshing = recorderPipesRefreshing
+        self.recorderPipeActionInFlight = recorderPipeActionInFlight
+        self.recorderPipeSchedulerRunning = recorderPipeSchedulerRunning
+        self.recorderPipeLastSchedulerResult = recorderPipeLastSchedulerResult
+        self.recorderPipeLastError = recorderPipeLastError
+        self.refreshRecorderPipes = refreshRecorderPipes
+        self.prepareRecorderPipes = prepareRecorderPipes
+        self.runRecorderPipe = runRecorderPipe
+        self.cancelRecorderPipeRun = cancelRecorderPipeRun
+        self.tickRecorderPipeScheduler = tickRecorderPipeScheduler
         self.day1SurfaceReview = day1SurfaceReview
         self.day1SurfaceReviewGenerating = day1SurfaceReviewGenerating
         self.day1SurfaceReviewDecisionPending = day1SurfaceReviewDecisionPending
@@ -4768,6 +4960,56 @@ struct OpenDesignDayPageView: View {
                     workHistory: workHistory,
                     refreshWorkHistory: refreshWorkHistory,
                     prepareWorkHistory: prepareWorkHistory,
+                    recorderControlState: recorderControlState,
+                    recorderCaptureReadiness: recorderCaptureReadiness,
+                    recorderControlRefreshing: recorderControlRefreshing,
+                    recorderControlActionInFlight: recorderControlActionInFlight,
+                    recorderControlLastError: recorderControlLastError,
+                    recorderFrameCaptureInFlight: recorderFrameCaptureInFlight,
+                    recorderFrameCaptureLastError: recorderFrameCaptureLastError,
+                    recorderLastFrameCapture: recorderLastFrameCapture,
+                    recorderFrameDeleteInFlight: recorderFrameDeleteInFlight,
+                    recorderFrameDeleteLastError: recorderFrameDeleteLastError,
+                    recorderLastFrameDelete: recorderLastFrameDelete,
+                    recorderFrameCaptures: recorderFrameCaptures,
+                    recorderFrameCapturesRefreshing: recorderFrameCapturesRefreshing,
+                    recorderFrameCapturesLastError: recorderFrameCapturesLastError,
+                    recorderFrameImagePreview: recorderFrameImagePreview,
+                    recorderFrameImageLoadingID: recorderFrameImageLoadingID,
+                    recorderFrameImageLastError: recorderFrameImageLastError,
+                    recorderAutoCaptureRunning: recorderAutoCaptureRunning,
+                    recorderAutoCaptureLastTrigger: recorderAutoCaptureLastTrigger,
+                    recorderAutoCaptureLastError: recorderAutoCaptureLastError,
+                    refreshRecorderControl: refreshRecorderControl,
+                    prepareRecorderControl: prepareRecorderControl,
+                    refreshRecorderPermissions: refreshRecorderPermissions,
+                    grantRecorderConsent: grantRecorderConsent,
+                    revokeRecorderConsent: revokeRecorderConsent,
+                    pauseRecorderCapture: pauseRecorderCapture,
+                    resumeRecorderCapture: resumeRecorderCapture,
+                    stopRecorderForToday: stopRecorderForToday,
+                    captureRecorderFrame: captureRecorderFrame,
+                    deleteRecorderFrame: deleteRecorderFrame,
+                    deleteRecorderFrameWithID: deleteRecorderFrameWithID,
+                    deleteRecorderFrameRange: deleteRecorderFrameRange,
+                    refreshRecorderFrameCaptures: refreshRecorderFrameCaptures,
+                    prepareRecorderFrameCaptures: prepareRecorderFrameCaptures,
+                    loadRecorderFrameImage: loadRecorderFrameImage,
+                    prepareRecorderFrameImage: prepareRecorderFrameImage,
+                    startRecorderAutoCapture: startRecorderAutoCapture,
+                    stopRecorderAutoCapture: stopRecorderAutoCapture,
+                    recorderPipes: recorderPipes,
+                    recorderPipeRuns: recorderPipeRuns,
+                    recorderPipesRefreshing: recorderPipesRefreshing,
+                    recorderPipeActionInFlight: recorderPipeActionInFlight,
+                    recorderPipeSchedulerRunning: recorderPipeSchedulerRunning,
+                    recorderPipeLastSchedulerResult: recorderPipeLastSchedulerResult,
+                    recorderPipeLastError: recorderPipeLastError,
+                    refreshRecorderPipes: refreshRecorderPipes,
+                    prepareRecorderPipes: prepareRecorderPipes,
+                    runRecorderPipe: runRecorderPipe,
+                    cancelRecorderPipeRun: cancelRecorderPipeRun,
+                    tickRecorderPipeScheduler: tickRecorderPipeScheduler,
                     day1SurfaceReview: day1SurfaceReview,
                     day1SurfaceReviewGenerating: day1SurfaceReviewGenerating,
                     day1SurfaceReviewDecisionPending: day1SurfaceReviewDecisionPending,
@@ -5018,6 +5260,9 @@ struct OpenDesignDayPageView: View {
         case .officeHours:
             closeSearch()
             openOfficeHoursFromRail()
+        case .founderReplay:
+            closeSearch()
+            openFounderReplayFromRail()
         case .morningBriefing:
             closeSearch()
             openMorningBriefingFromRail()
@@ -5082,6 +5327,8 @@ struct OpenDesignDayPageView: View {
             openSearch()
         case .officeHours:
             openOfficeHoursFromRail()
+        case .founderReplay:
+            openFounderReplayFromRail()
         case .morningBriefing:
             openMorningBriefingFromRail()
         case .strategy:
@@ -5128,6 +5375,10 @@ struct OpenDesignDayPageView: View {
 
     private func openOfficeHoursFromRail() {
         openRailDestination(.officeHours)
+    }
+
+    private func openFounderReplayFromRail() {
+        openRailDestination(.founderReplay)
     }
 
     private func openMorningBriefingFromRail() {
@@ -5452,6 +5703,56 @@ struct OpenDesignDayShell: View {
     let workHistory: WorkHistorySnapshot
     let refreshWorkHistory: () -> Void
     let prepareWorkHistory: () -> Void
+    let recorderControlState: RecorderControlState?
+    let recorderCaptureReadiness: RecorderCaptureReadiness?
+    let recorderControlRefreshing: Bool
+    let recorderControlActionInFlight: String?
+    let recorderControlLastError: String?
+    let recorderFrameCaptureInFlight: Bool
+    let recorderFrameCaptureLastError: String?
+    let recorderLastFrameCapture: RecorderFrameCaptureReceipt?
+    let recorderFrameDeleteInFlight: Bool
+    let recorderFrameDeleteLastError: String?
+    let recorderLastFrameDelete: RecorderFrameDeleteReceipt?
+    let recorderFrameCaptures: [RecorderFrameCaptureReceipt]
+    let recorderFrameCapturesRefreshing: Bool
+    let recorderFrameCapturesLastError: String?
+    let recorderFrameImagePreview: RecorderFrameImagePreview?
+    let recorderFrameImageLoadingID: String?
+    let recorderFrameImageLastError: String?
+    let recorderAutoCaptureRunning: Bool
+    let recorderAutoCaptureLastTrigger: String?
+    let recorderAutoCaptureLastError: String?
+    let refreshRecorderControl: () -> Void
+    let prepareRecorderControl: () -> Void
+    let refreshRecorderPermissions: () -> Void
+    let grantRecorderConsent: () -> Void
+    let revokeRecorderConsent: () -> Void
+    let pauseRecorderCapture: () -> Void
+    let resumeRecorderCapture: () -> Void
+    let stopRecorderForToday: () -> Void
+    let captureRecorderFrame: () -> Void
+    let deleteRecorderFrame: () -> Void
+    let deleteRecorderFrameWithID: (String) -> Void
+    let deleteRecorderFrameRange: ([String]) -> Void
+    let refreshRecorderFrameCaptures: () -> Void
+    let prepareRecorderFrameCaptures: () -> Void
+    let loadRecorderFrameImage: (String) -> Void
+    let prepareRecorderFrameImage: (String?) -> Void
+    let startRecorderAutoCapture: () -> Void
+    let stopRecorderAutoCapture: () -> Void
+    let recorderPipes: [RecorderPipeDefinition]
+    let recorderPipeRuns: [RecorderPipeRun]
+    let recorderPipesRefreshing: Bool
+    let recorderPipeActionInFlight: Set<String>
+    let recorderPipeSchedulerRunning: Bool
+    let recorderPipeLastSchedulerResult: RecorderPipeSchedulerResult?
+    let recorderPipeLastError: String?
+    let refreshRecorderPipes: () -> Void
+    let prepareRecorderPipes: () -> Void
+    let runRecorderPipe: (String) -> Void
+    let cancelRecorderPipeRun: (String) -> Void
+    let tickRecorderPipeScheduler: () -> Void
     let day1SurfaceReview: Day1SurfaceReview?
     let day1SurfaceReviewGenerating: Bool
     let day1SurfaceReviewDecisionPending: String?
@@ -5493,6 +5794,10 @@ struct OpenDesignDayShell: View {
 
     private var isOfficeHoursPresented: Bool {
         railSurfaceKind.isOfficeHours
+    }
+
+    private var isFounderReplayPresented: Bool {
+        railSurfaceKind.isFounderReplay
     }
 
     private var isMorningBriefingPresented: Bool {
@@ -5539,6 +5844,56 @@ struct OpenDesignDayShell: View {
         workHistory: WorkHistorySnapshot,
         refreshWorkHistory: @escaping () -> Void,
         prepareWorkHistory: @escaping () -> Void,
+        recorderControlState: RecorderControlState?,
+        recorderCaptureReadiness: RecorderCaptureReadiness?,
+        recorderControlRefreshing: Bool,
+        recorderControlActionInFlight: String?,
+        recorderControlLastError: String?,
+        recorderFrameCaptureInFlight: Bool,
+        recorderFrameCaptureLastError: String?,
+        recorderLastFrameCapture: RecorderFrameCaptureReceipt?,
+        recorderFrameDeleteInFlight: Bool,
+        recorderFrameDeleteLastError: String?,
+        recorderLastFrameDelete: RecorderFrameDeleteReceipt?,
+        recorderFrameCaptures: [RecorderFrameCaptureReceipt],
+        recorderFrameCapturesRefreshing: Bool,
+        recorderFrameCapturesLastError: String?,
+        recorderFrameImagePreview: RecorderFrameImagePreview?,
+        recorderFrameImageLoadingID: String?,
+        recorderFrameImageLastError: String?,
+        recorderAutoCaptureRunning: Bool,
+        recorderAutoCaptureLastTrigger: String?,
+        recorderAutoCaptureLastError: String?,
+        refreshRecorderControl: @escaping () -> Void,
+        prepareRecorderControl: @escaping () -> Void,
+        refreshRecorderPermissions: @escaping () -> Void,
+        grantRecorderConsent: @escaping () -> Void,
+        revokeRecorderConsent: @escaping () -> Void,
+        pauseRecorderCapture: @escaping () -> Void,
+        resumeRecorderCapture: @escaping () -> Void,
+        stopRecorderForToday: @escaping () -> Void,
+        captureRecorderFrame: @escaping () -> Void,
+        deleteRecorderFrame: @escaping () -> Void,
+        deleteRecorderFrameWithID: @escaping (String) -> Void,
+        deleteRecorderFrameRange: @escaping ([String]) -> Void,
+        refreshRecorderFrameCaptures: @escaping () -> Void,
+        prepareRecorderFrameCaptures: @escaping () -> Void,
+        loadRecorderFrameImage: @escaping (String) -> Void,
+        prepareRecorderFrameImage: @escaping (String?) -> Void,
+        startRecorderAutoCapture: @escaping () -> Void,
+        stopRecorderAutoCapture: @escaping () -> Void,
+        recorderPipes: [RecorderPipeDefinition],
+        recorderPipeRuns: [RecorderPipeRun],
+        recorderPipesRefreshing: Bool,
+        recorderPipeActionInFlight: Set<String>,
+        recorderPipeSchedulerRunning: Bool,
+        recorderPipeLastSchedulerResult: RecorderPipeSchedulerResult?,
+        recorderPipeLastError: String?,
+        refreshRecorderPipes: @escaping () -> Void,
+        prepareRecorderPipes: @escaping () -> Void,
+        runRecorderPipe: @escaping (String) -> Void,
+        cancelRecorderPipeRun: @escaping (String) -> Void,
+        tickRecorderPipeScheduler: @escaping () -> Void,
         day1SurfaceReview: Day1SurfaceReview?,
         day1SurfaceReviewGenerating: Bool,
         day1SurfaceReviewDecisionPending: String?,
@@ -5606,6 +5961,56 @@ struct OpenDesignDayShell: View {
         self.workHistory = workHistory
         self.refreshWorkHistory = refreshWorkHistory
         self.prepareWorkHistory = prepareWorkHistory
+        self.recorderControlState = recorderControlState
+        self.recorderCaptureReadiness = recorderCaptureReadiness
+        self.recorderControlRefreshing = recorderControlRefreshing
+        self.recorderControlActionInFlight = recorderControlActionInFlight
+        self.recorderControlLastError = recorderControlLastError
+        self.recorderFrameCaptureInFlight = recorderFrameCaptureInFlight
+        self.recorderFrameCaptureLastError = recorderFrameCaptureLastError
+        self.recorderLastFrameCapture = recorderLastFrameCapture
+        self.recorderFrameDeleteInFlight = recorderFrameDeleteInFlight
+        self.recorderFrameDeleteLastError = recorderFrameDeleteLastError
+        self.recorderLastFrameDelete = recorderLastFrameDelete
+        self.recorderFrameCaptures = recorderFrameCaptures
+        self.recorderFrameCapturesRefreshing = recorderFrameCapturesRefreshing
+        self.recorderFrameCapturesLastError = recorderFrameCapturesLastError
+        self.recorderFrameImagePreview = recorderFrameImagePreview
+        self.recorderFrameImageLoadingID = recorderFrameImageLoadingID
+        self.recorderFrameImageLastError = recorderFrameImageLastError
+        self.recorderAutoCaptureRunning = recorderAutoCaptureRunning
+        self.recorderAutoCaptureLastTrigger = recorderAutoCaptureLastTrigger
+        self.recorderAutoCaptureLastError = recorderAutoCaptureLastError
+        self.refreshRecorderControl = refreshRecorderControl
+        self.prepareRecorderControl = prepareRecorderControl
+        self.refreshRecorderPermissions = refreshRecorderPermissions
+        self.grantRecorderConsent = grantRecorderConsent
+        self.revokeRecorderConsent = revokeRecorderConsent
+        self.pauseRecorderCapture = pauseRecorderCapture
+        self.resumeRecorderCapture = resumeRecorderCapture
+        self.stopRecorderForToday = stopRecorderForToday
+        self.captureRecorderFrame = captureRecorderFrame
+        self.deleteRecorderFrame = deleteRecorderFrame
+        self.deleteRecorderFrameWithID = deleteRecorderFrameWithID
+        self.deleteRecorderFrameRange = deleteRecorderFrameRange
+        self.refreshRecorderFrameCaptures = refreshRecorderFrameCaptures
+        self.prepareRecorderFrameCaptures = prepareRecorderFrameCaptures
+        self.loadRecorderFrameImage = loadRecorderFrameImage
+        self.prepareRecorderFrameImage = prepareRecorderFrameImage
+        self.startRecorderAutoCapture = startRecorderAutoCapture
+        self.stopRecorderAutoCapture = stopRecorderAutoCapture
+        self.recorderPipes = recorderPipes
+        self.recorderPipeRuns = recorderPipeRuns
+        self.recorderPipesRefreshing = recorderPipesRefreshing
+        self.recorderPipeActionInFlight = recorderPipeActionInFlight
+        self.recorderPipeSchedulerRunning = recorderPipeSchedulerRunning
+        self.recorderPipeLastSchedulerResult = recorderPipeLastSchedulerResult
+        self.recorderPipeLastError = recorderPipeLastError
+        self.refreshRecorderPipes = refreshRecorderPipes
+        self.prepareRecorderPipes = prepareRecorderPipes
+        self.runRecorderPipe = runRecorderPipe
+        self.cancelRecorderPipeRun = cancelRecorderPipeRun
+        self.tickRecorderPipeScheduler = tickRecorderPipeScheduler
         self.day1SurfaceReview = day1SurfaceReview
         self.day1SurfaceReviewGenerating = day1SurfaceReviewGenerating
         self.day1SurfaceReviewDecisionPending = day1SurfaceReviewDecisionPending
@@ -5729,6 +6134,8 @@ struct OpenDesignDayShell: View {
                     isRightSidebarVisible: isOfficeHoursRightSidebarVisible,
                     toggleRightSidebar: toggleOfficeHoursRightSidebar
                 )
+            } else if isFounderReplayPresented {
+                OpenDesignFounderReplayTitlebar(openSearch: toggleSearch)
             } else if isStrategyPresented {
                 OpenDesignStrategyTitlebar(openSearch: toggleSearch)
             } else if let market = content.market {
@@ -5767,7 +6174,7 @@ struct OpenDesignDayShell: View {
                 }
                 .frame(width: layout.railWidth)
                 .frame(maxHeight: .infinity)
-                .background(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.bg : OpenDesignDayColor.bg)
+                .background(railSurfaceKind.usesDay1WorkspacePalette ? OpenDesignOfficeHoursColor.bg : OpenDesignDayColor.bg)
                 .zIndex(20)
                 .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("opendesign.day.rail")
@@ -5828,6 +6235,61 @@ struct OpenDesignDayShell: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .transition(.opacity)
                     }
+                } else if isFounderReplayPresented {
+                    OpenDesignFounderReplayPageView(
+                        controlState: recorderControlState,
+                        readiness: recorderCaptureReadiness,
+                        controlRefreshing: recorderControlRefreshing,
+                        controlActionInFlight: recorderControlActionInFlight,
+                        controlLastError: recorderControlLastError,
+                        frameCaptureInFlight: recorderFrameCaptureInFlight,
+                        frameCaptureLastError: recorderFrameCaptureLastError,
+                        lastFrameCapture: recorderLastFrameCapture,
+                        frameDeleteInFlight: recorderFrameDeleteInFlight,
+                        frameDeleteLastError: recorderFrameDeleteLastError,
+                        lastFrameDelete: recorderLastFrameDelete,
+                        frameCaptures: recorderFrameCaptures,
+                        frameCapturesRefreshing: recorderFrameCapturesRefreshing,
+                        frameCapturesLastError: recorderFrameCapturesLastError,
+                        frameImagePreview: recorderFrameImagePreview,
+                        frameImageLoadingID: recorderFrameImageLoadingID,
+                        frameImageLastError: recorderFrameImageLastError,
+                        autoCaptureRunning: recorderAutoCaptureRunning,
+                        autoCaptureLastTrigger: recorderAutoCaptureLastTrigger,
+                        autoCaptureLastError: recorderAutoCaptureLastError,
+                        refreshControl: refreshRecorderControl,
+                        prepareControl: prepareRecorderControl,
+                        refreshPermissions: refreshRecorderPermissions,
+                        grantConsent: grantRecorderConsent,
+                        revokeConsent: revokeRecorderConsent,
+                        pauseCapture: pauseRecorderCapture,
+                        resumeCapture: resumeRecorderCapture,
+                        stopForToday: stopRecorderForToday,
+                        captureFrame: captureRecorderFrame,
+                        deleteFrame: deleteRecorderFrame,
+                        deleteFrameWithID: deleteRecorderFrameWithID,
+                        deleteFrameRange: deleteRecorderFrameRange,
+                        refreshFrameCaptures: refreshRecorderFrameCaptures,
+                        prepareFrameCaptures: prepareRecorderFrameCaptures,
+                        loadFrameImage: loadRecorderFrameImage,
+                        prepareFrameImage: prepareRecorderFrameImage,
+                        startAutoCapture: startRecorderAutoCapture,
+                        stopAutoCapture: stopRecorderAutoCapture,
+                        pipes: recorderPipes,
+                        runs: recorderPipeRuns,
+                        isRefreshing: recorderPipesRefreshing,
+                        actionInFlight: recorderPipeActionInFlight,
+                        schedulerRunning: recorderPipeSchedulerRunning,
+                        lastSchedulerResult: recorderPipeLastSchedulerResult,
+                        lastError: recorderPipeLastError,
+                        refresh: refreshRecorderPipes,
+                        prepare: prepareRecorderPipes,
+                        runPipe: runRecorderPipe,
+                        cancelRun: cancelRecorderPipeRun,
+                        tickScheduler: tickRecorderPipeScheduler
+                    )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
                 } else if isStrategyPresented {
                     OpenDesignStrategyPageView(
                         strategyReport: strategyReport,
@@ -6173,6 +6635,45 @@ private struct OpenDesignOfficeHoursTitlebar: View {
     }
 }
 
+private struct OpenDesignFounderReplayTitlebar: View {
+    let openSearch: () -> Void
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 8) {
+                Spacer(minLength: 82)
+                Text("Agentic30")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Text("/")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
+                Text("Founder Replay")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 4) {
+                Spacer()
+                OpenDesignToolbarButton(
+                    systemImage: "magnifyingglass",
+                    label: "검색 · ⌘ K",
+                    keyboardKey: "k",
+                    usesOfficeHoursPalette: true,
+                    accessibilityIdentifier: "opendesign.founderReplay.search",
+                    action: openSearch
+                )
+            }
+            .padding(.trailing, 12)
+        }
+        .frame(height: 36)
+        .background(OpenDesignOfficeHoursColor.bg)
+        .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
+        .openDesignWindowTitlebarAccessibility()
+    }
+}
+
 private struct OpenDesignStrategyTitlebar: View {
     let openSearch: () -> Void
 
@@ -6371,6 +6872,7 @@ private struct OpenDesignLockedRailFeaturePreview<PreviewContent: View>: View {
 }
 
 nonisolated enum OpenDesignLockedRailMockSurfaceKind: String, CaseIterable, Hashable {
+    case founderReplay
     case newsMarketRadar
     case morningBriefing
     case strategy
@@ -6380,6 +6882,8 @@ nonisolated func openDesignLockedRailMockSurfaceKind(
     for feature: OpenDesignRailFeature
 ) -> OpenDesignLockedRailMockSurfaceKind {
     switch feature {
+    case .founderReplay:
+        return .founderReplay
     case .news:
         return .newsMarketRadar
     case .morningBriefing:
@@ -6395,6 +6899,8 @@ private struct OpenDesignLockedRailMockSurface: View {
     var body: some View {
         Group {
             switch openDesignLockedRailMockSurfaceKind(for: feature) {
+            case .founderReplay:
+                OpenDesignLockedFounderReplayMockSurface()
             case .newsMarketRadar:
                 OpenDesignLockedNewsMockSurface()
             case .morningBriefing:
@@ -6404,6 +6910,12 @@ private struct OpenDesignLockedRailMockSurface: View {
             }
         }
         .accessibilityIdentifier("opendesign.rail.lockedPreview.mock.\(feature.railItemID)")
+    }
+}
+
+private struct OpenDesignLockedFounderReplayMockSurface: View {
+    var body: some View {
+        OpenDesignFounderReplayPageView()
     }
 }
 
@@ -7818,6 +8330,8 @@ private struct OpenDesignLockedRailMockPreview: View {
 
     private var rows: [String] {
         switch feature {
+        case .founderReplay:
+            return ["Replay", "Table", "Evidence"]
         case .morningBriefing:
             return ["고객 증거", "밤사이 신호", "오늘 액션"]
         case .strategy:
@@ -7986,6 +8500,1487 @@ nonisolated func openDesignRefreshCompletedTimingLabel(_ elapsedMs: Int?) -> Str
 nonisolated func openDesignRefreshFailedTimingLabel(_ elapsedMs: Int?) -> String? {
     guard let elapsedMs else { return nil }
     return "\(openDesignRefreshDurationText(elapsedMs)) 후 실패"
+}
+
+private enum OpenDesignFounderReplayMode: String, CaseIterable, Identifiable {
+    case replay
+    case table
+    case control
+    case pipes
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .replay: return "리플레이"
+        case .table: return "테이블"
+        case .control: return "Control"
+        case .pipes: return "Pipes"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .replay: return "play.circle"
+        case .table: return "tablecells"
+        case .control: return "record.circle"
+        case .pipes: return "slider.horizontal.3"
+        }
+    }
+}
+
+private struct OpenDesignFounderReplaySummaryRow: Identifiable {
+    let id: String
+    let time: String
+    let action: String
+    let workState: String
+    let decision: String
+}
+
+private struct OpenDesignRecorderPermissionRow: Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let settingsURL: String?
+}
+
+private struct OpenDesignFounderReplayPageView: View {
+    let controlState: RecorderControlState?
+    let readiness: RecorderCaptureReadiness?
+    let controlRefreshing: Bool
+    let controlActionInFlight: String?
+    let controlLastError: String?
+    let frameCaptureInFlight: Bool
+    let frameCaptureLastError: String?
+    let lastFrameCapture: RecorderFrameCaptureReceipt?
+    let frameDeleteInFlight: Bool
+    let frameDeleteLastError: String?
+    let lastFrameDelete: RecorderFrameDeleteReceipt?
+    let frameCaptures: [RecorderFrameCaptureReceipt]
+    let frameCapturesRefreshing: Bool
+    let frameCapturesLastError: String?
+    let frameImagePreview: RecorderFrameImagePreview?
+    let frameImageLoadingID: String?
+    let frameImageLastError: String?
+    let autoCaptureRunning: Bool
+    let autoCaptureLastTrigger: String?
+    let autoCaptureLastError: String?
+    let refreshControl: () -> Void
+    let prepareControl: () -> Void
+    let refreshPermissions: () -> Void
+    let grantConsent: () -> Void
+    let revokeConsent: () -> Void
+    let pauseCapture: () -> Void
+    let resumeCapture: () -> Void
+    let stopForToday: () -> Void
+    let captureFrame: () -> Void
+    let deleteFrame: () -> Void
+    let deleteFrameWithID: (String) -> Void
+    let deleteFrameRange: ([String]) -> Void
+    let refreshFrameCaptures: () -> Void
+    let prepareFrameCaptures: () -> Void
+    let loadFrameImage: (String) -> Void
+    let prepareFrameImage: (String?) -> Void
+    let startAutoCapture: () -> Void
+    let stopAutoCapture: () -> Void
+    let pipes: [RecorderPipeDefinition]
+    let runs: [RecorderPipeRun]
+    let isRefreshing: Bool
+    let actionInFlight: Set<String>
+    let schedulerRunning: Bool
+    let lastSchedulerResult: RecorderPipeSchedulerResult?
+    let lastError: String?
+    let refresh: () -> Void
+    let prepare: () -> Void
+    let runPipe: (String) -> Void
+    let cancelRun: (String) -> Void
+    let tickScheduler: () -> Void
+
+    @State private var selectedMode: OpenDesignFounderReplayMode = .replay
+    @State private var selectedFrameID: String?
+    @State private var visibleRangeDeleteArmed = false
+
+    private let rows: [OpenDesignFounderReplaySummaryRow] = [
+        .init(id: "permission", time: "권한", action: "Screen Recording · Accessibility", workState: "미확인", decision: "Swift permission UI 필요"),
+        .init(id: "capture", time: "캡처", action: "ScreenCaptureKit envelope", workState: "미연결", decision: "sidecar ingest 전송 전"),
+        .init(id: "review", time: "요약", action: "Day Memory Review", workState: "DTO 준비", decision: "Swift 렌더링 필요"),
+        .init(id: "evidence", time: "증거", action: "Evidence Inbox", workState: "후보 승인 전", decision: "proof ledger 기준 유지"),
+    ]
+
+    init(
+        controlState: RecorderControlState? = nil,
+        readiness: RecorderCaptureReadiness? = nil,
+        controlRefreshing: Bool = false,
+        controlActionInFlight: String? = nil,
+        controlLastError: String? = nil,
+        frameCaptureInFlight: Bool = false,
+        frameCaptureLastError: String? = nil,
+        lastFrameCapture: RecorderFrameCaptureReceipt? = nil,
+        frameDeleteInFlight: Bool = false,
+        frameDeleteLastError: String? = nil,
+        lastFrameDelete: RecorderFrameDeleteReceipt? = nil,
+        frameCaptures: [RecorderFrameCaptureReceipt] = [],
+        frameCapturesRefreshing: Bool = false,
+        frameCapturesLastError: String? = nil,
+        frameImagePreview: RecorderFrameImagePreview? = nil,
+        frameImageLoadingID: String? = nil,
+        frameImageLastError: String? = nil,
+        autoCaptureRunning: Bool = false,
+        autoCaptureLastTrigger: String? = nil,
+        autoCaptureLastError: String? = nil,
+        refreshControl: @escaping () -> Void = {},
+        prepareControl: @escaping () -> Void = {},
+        refreshPermissions: @escaping () -> Void = {},
+        grantConsent: @escaping () -> Void = {},
+        revokeConsent: @escaping () -> Void = {},
+        pauseCapture: @escaping () -> Void = {},
+        resumeCapture: @escaping () -> Void = {},
+        stopForToday: @escaping () -> Void = {},
+        captureFrame: @escaping () -> Void = {},
+        deleteFrame: @escaping () -> Void = {},
+        deleteFrameWithID: @escaping (String) -> Void = { _ in },
+        deleteFrameRange: @escaping ([String]) -> Void = { _ in },
+        refreshFrameCaptures: @escaping () -> Void = {},
+        prepareFrameCaptures: @escaping () -> Void = {},
+        loadFrameImage: @escaping (String) -> Void = { _ in },
+        prepareFrameImage: @escaping (String?) -> Void = { _ in },
+        startAutoCapture: @escaping () -> Void = {},
+        stopAutoCapture: @escaping () -> Void = {},
+        pipes: [RecorderPipeDefinition] = [],
+        runs: [RecorderPipeRun] = [],
+        isRefreshing: Bool = false,
+        actionInFlight: Set<String> = [],
+        schedulerRunning: Bool = false,
+        lastSchedulerResult: RecorderPipeSchedulerResult? = nil,
+        lastError: String? = nil,
+        refresh: @escaping () -> Void = {},
+        prepare: @escaping () -> Void = {},
+        runPipe: @escaping (String) -> Void = { _ in },
+        cancelRun: @escaping (String) -> Void = { _ in },
+        tickScheduler: @escaping () -> Void = {}
+    ) {
+        self.controlState = controlState
+        self.readiness = readiness
+        self.controlRefreshing = controlRefreshing
+        self.controlActionInFlight = controlActionInFlight
+        self.controlLastError = controlLastError
+        self.frameCaptureInFlight = frameCaptureInFlight
+        self.frameCaptureLastError = frameCaptureLastError
+        self.lastFrameCapture = lastFrameCapture
+        self.frameDeleteInFlight = frameDeleteInFlight
+        self.frameDeleteLastError = frameDeleteLastError
+        self.lastFrameDelete = lastFrameDelete
+        self.frameCaptures = frameCaptures
+        self.frameCapturesRefreshing = frameCapturesRefreshing
+        self.frameCapturesLastError = frameCapturesLastError
+        self.frameImagePreview = frameImagePreview
+        self.frameImageLoadingID = frameImageLoadingID
+        self.frameImageLastError = frameImageLastError
+        self.autoCaptureRunning = autoCaptureRunning
+        self.autoCaptureLastTrigger = autoCaptureLastTrigger
+        self.autoCaptureLastError = autoCaptureLastError
+        self.refreshControl = refreshControl
+        self.prepareControl = prepareControl
+        self.refreshPermissions = refreshPermissions
+        self.grantConsent = grantConsent
+        self.revokeConsent = revokeConsent
+        self.pauseCapture = pauseCapture
+        self.resumeCapture = resumeCapture
+        self.stopForToday = stopForToday
+        self.captureFrame = captureFrame
+        self.deleteFrame = deleteFrame
+        self.deleteFrameWithID = deleteFrameWithID
+        self.deleteFrameRange = deleteFrameRange
+        self.refreshFrameCaptures = refreshFrameCaptures
+        self.prepareFrameCaptures = prepareFrameCaptures
+        self.loadFrameImage = loadFrameImage
+        self.prepareFrameImage = prepareFrameImage
+        self.startAutoCapture = startAutoCapture
+        self.stopAutoCapture = stopAutoCapture
+        self.pipes = pipes
+        self.runs = runs
+        self.isRefreshing = isRefreshing
+        self.actionInFlight = actionInFlight
+        self.schedulerRunning = schedulerRunning
+        self.lastSchedulerResult = lastSchedulerResult
+        self.lastError = lastError
+        self.refresh = refresh
+        self.prepare = prepare
+        self.runPipe = runPipe
+        self.cancelRun = cancelRun
+        self.tickScheduler = tickScheduler
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            modeSelector
+            Group {
+                switch selectedMode {
+                case .replay:
+                    replaySurface
+                case .table:
+                    tableSurface
+                case .control:
+                    controlSurface
+                case .pipes:
+                    pipesSurface
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .onAppear {
+            prepare()
+            prepareControl()
+            prepareFrameCaptures()
+            prepareSelectedReplayFrameImage()
+        }
+        .onChange(of: recentFrameIDsSignature) { _ in
+            visibleRangeDeleteArmed = false
+            reconcileSelectedReplayFrame()
+        }
+        .background(OpenDesignOfficeHoursColor.bg)
+        .accessibilityIdentifier("opendesign.founderReplay.screen")
+    }
+
+    private var header: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(OpenDesignOfficeHoursColor.accentDim)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(OpenDesignOfficeHoursColor.accentLine, lineWidth: 1)
+                    )
+                Image(systemName: "play.rectangle.on.rectangle")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+            }
+            .frame(width: 42, height: 42)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Founder Replay")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(OpenDesignOfficeHoursColor.amber)
+                        .frame(width: 6, height: 6)
+                    Text("Recorder UI · 캡처 미연결 · Day Memory Review")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            founderReplayStatusPill("로컬 전용")
+            founderReplayStatusPill("원인 명시", tone: .amber)
+        }
+        .padding(.horizontal, 28)
+        .frame(height: 76)
+        .background(OpenDesignOfficeHoursColor.bg)
+        .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private var modeSelector: some View {
+        HStack(spacing: 6) {
+            ForEach(OpenDesignFounderReplayMode.allCases) { mode in
+                Button {
+                    selectedMode = mode
+                } label: {
+                    Label(mode.title, systemImage: mode.systemImage)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(selectedMode == mode ? OpenDesignOfficeHoursColor.bgDeep : OpenDesignOfficeHoursColor.fgSecondary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 30)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(selectedMode == mode ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.surface)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                        .stroke(selectedMode == mode ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                                )
+                        )
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .accessibilityIdentifier("opendesign.founderReplay.mode.\(mode.rawValue)")
+            }
+
+            Spacer(minLength: 0)
+
+            Text(modeStatusText)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+        }
+        .padding(.horizontal, 28)
+        .frame(height: 48)
+        .background(OpenDesignOfficeHoursColor.bgDeep)
+        .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private var replaySurface: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let frameCapturesLastError, !frameCapturesLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                pipesNotice(text: frameCapturesLastError, tone: .amber)
+            }
+            if let frameImageLastError, !frameImageLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                pipesNotice(text: frameImageLastError, tone: .amber)
+            }
+            replayViewport
+            replayRail
+        }
+        .padding(28)
+        .frame(maxWidth: 1180, alignment: .topLeading)
+    }
+
+    private var replayViewport: some View {
+        let selected = selectedReplayFrame
+        return ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.bgDeep)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+            if let selected {
+                HStack(alignment: .top, spacing: 18) {
+                    replayImagePanel(for: selected)
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "rectangle.on.rectangle")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(selected.appName?.isEmpty == false ? selected.appName! : "Captured Frame")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                                Text(selected.windowTitle?.isEmpty == false ? selected.windowTitle! : selected.id)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 12)
+                            Button {
+                                loadFrameImage(selected.id)
+                            } label: {
+                                Image(systemName: "photo")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .frame(width: 28, height: 28)
+                            }
+                            .buttonStyle(OpenDesignInteractiveButtonStyle())
+                            .disabled(frameImageLoadingID == selected.id)
+                            .help("Load audited local frame image")
+                            Button {
+                                deleteFrameWithID(selected.id)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .frame(width: 28, height: 28)
+                            }
+                            .buttonStyle(OpenDesignInteractiveButtonStyle())
+                            .disabled(frameDeleteInFlight)
+                            .help("Delete selected local frame through sidecar")
+                            founderReplayStatusPill("selected", tone: .accent)
+                            founderReplayStatusPill("non-proof", tone: .amber)
+                            founderReplayStatusPill(selected.privacyState, tone: .sky)
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            replayMetadataRow("captured", compactIsoTimestamp(selected.capturedAt))
+                            replayMetadataRow("trigger", selected.captureTrigger)
+                            replayMetadataRow("frame", selected.id)
+                            replayMetadataRow("asset", selected.snapshotAssetId)
+                            if let frameImagePreview, frameImagePreview.frameId == selected.id {
+                                replayMetadataRow("audit", frameImagePreview.auditId)
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            founderReplayStatusPill(selected.redactionStatus, tone: selected.safeForSearch ? .accent : .amber)
+                            founderReplayStatusPill(selected.safeForSearch ? "search safe" : "search off", tone: selected.safeForSearch ? .accent : .sky)
+                            founderReplayStatusPill(selected.safeForMemory ? "memory safe" : "memory off", tone: selected.safeForMemory ? .accent : .sky)
+                            founderReplayStatusPill("path hidden", tone: .accent)
+                            founderReplayStatusPill("raw API audited", tone: .accent)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: frameCapturesRefreshing ? "arrow.clockwise" : "rectangle.dashed")
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    Text(frameCapturesRefreshing ? "불러오는 중" : "캡처 없음")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    Text("Recorder frame receipt is empty.")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .multilineTextAlignment(.center)
+                }
+            }
+        }
+        .frame(height: 360)
+        .accessibilityIdentifier("opendesign.founderReplay.viewport")
+    }
+
+    private func replayImagePanel(for frame: RecorderFrameCaptureReceipt) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface.opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+            if let preview = frameImagePreview,
+               preview.frameId == frame.id,
+               let image = NSImage(data: preview.data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.medium)
+                    .aspectRatio(contentMode: .fit)
+                    .padding(8)
+                VStack {
+                    Spacer()
+                    HStack {
+                        founderReplayStatusPill("audited", tone: .accent)
+                        founderReplayStatusPill(preview.pathExposed ? "path exposed" : "path hidden", tone: preview.pathExposed ? .amber : .accent)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(12)
+                }
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: frameImageLoadingID == frame.id ? "arrow.clockwise" : "photo")
+                        .font(.system(size: 26, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    Text(frameImageLoadingID == frame.id ? "이미지 불러오는 중" : "이미지 대기")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    Text("GET /recorder/frames/:id/image")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                }
+                .padding(16)
+            }
+        }
+        .frame(width: 420, height: 312)
+        .accessibilityIdentifier("opendesign.founderReplay.frameImage")
+    }
+
+    private func replayMetadataRow(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                .frame(width: 74, alignment: .leading)
+            Text(value.isEmpty ? "unknown" : value)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                .lineLimit(1)
+        }
+    }
+
+    private var replayRail: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("24시간 캡처 레일")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                Spacer()
+                Button(action: requestVisibleRangeDelete) {
+                    Label(visibleRangeDeleteArmed ? "확인 삭제" : "보이는 기록 삭제", systemImage: "trash")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(height: 26)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(recentFrameCaptures.isEmpty || frameDeleteInFlight)
+                .help("Delete the currently visible local frame range through sidecar")
+                .accessibilityIdentifier("opendesign.founderReplay.frames.deleteVisible")
+                Button(action: refreshFrameCaptures) {
+                    Label(frameCapturesRefreshing ? "새로고침 중" : "새로고침", systemImage: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(height: 26)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(frameCapturesRefreshing)
+                .accessibilityIdentifier("opendesign.founderReplay.frames.refresh")
+                Text("\(recentFrameCaptures.count) frames")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            }
+
+            HStack(spacing: 4) {
+                if recentFrameCaptures.isEmpty {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(OpenDesignOfficeHoursColor.surface2)
+                        .frame(height: 12)
+                } else {
+                    ForEach(Array(recentFrameCaptures.prefix(24).enumerated()), id: \.element.id) { index, frame in
+                        let selected = replayFrameIsSelected(frame)
+                        Button {
+                            selectReplayFrame(frame)
+                        } label: {
+                            Capsule()
+                                .fill(selected ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.surface2)
+                                .overlay(
+                                    Capsule()
+                                        .stroke(frame.safeForSearch ? OpenDesignOfficeHoursColor.accentLine : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                                )
+                                .frame(height: selected ? 18 : 12)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.plain)
+                        .help("\(compactIsoTimestamp(frame.capturedAt)) · \(frame.captureTrigger)")
+                        .accessibilityIdentifier("opendesign.founderReplay.timeline.frame.\(index)")
+                    }
+                }
+            }
+            .frame(height: 20)
+            .accessibilityIdentifier("opendesign.founderReplay.timeline.frames")
+
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(OpenDesignOfficeHoursColor.surface)
+                    .frame(height: 12)
+                Rectangle()
+                    .fill(OpenDesignOfficeHoursColor.borderSoft)
+                    .frame(height: 1)
+                    .padding(.horizontal, 8)
+            }
+            HStack {
+                ForEach(["00", "06", "12", "18", "24"], id: \.self) { label in
+                    Text(label)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
+                    if label != "24" { Spacer(minLength: 0) }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+        .accessibilityIdentifier("opendesign.founderReplay.timeline")
+    }
+
+    private var tableSurface: some View {
+        VStack(spacing: 0) {
+            tableHeader
+            if recentFrameCaptures.isEmpty {
+                ForEach(rows) { row in
+                    founderReplayTableRow(row)
+                }
+            } else {
+                ForEach(recentFrameCaptures) { frame in
+                    founderReplayFrameTableRow(frame, selected: replayFrameIsSelected(frame))
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(28)
+        .frame(maxWidth: 1180, alignment: .topLeading)
+        .accessibilityIdentifier("opendesign.founderReplay.table")
+    }
+
+    private var tableHeader: some View {
+        HStack(spacing: 0) {
+            tableCell("시간", width: 92, isHeader: true)
+            tableCell("액션", minWidth: 220, isHeader: true)
+            tableCell("작업 상태", minWidth: 160, isHeader: true)
+            tableCell("의사결정 요약", minWidth: 240, isHeader: true)
+            tableIconCell(isHeader: true)
+        }
+        .background(OpenDesignOfficeHoursColor.surface2)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+        )
+    }
+
+    private func founderReplayTableRow(_ row: OpenDesignFounderReplaySummaryRow) -> some View {
+        HStack(spacing: 0) {
+            tableCell(row.time, width: 92)
+            tableCell(row.action, minWidth: 220)
+            tableCell(row.workState, minWidth: 160)
+            tableCell(row.decision, minWidth: 240)
+            tableIconCell()
+        }
+        .background(OpenDesignOfficeHoursColor.surface.opacity(0.72))
+        .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private func founderReplayFrameTableRow(_ frame: RecorderFrameCaptureReceipt, selected: Bool = false) -> some View {
+        HStack(spacing: 0) {
+            tableCell(compactIsoTimestamp(frame.capturedAt), width: 92)
+            tableCell(frame.captureTrigger, minWidth: 220)
+            tableCell(frame.safeForSearch ? "search safe" : frame.redactionStatus, minWidth: 160)
+            tableCell(frame.windowTitle?.isEmpty == false ? frame.windowTitle! : frame.id, minWidth: 240)
+            Button {
+                deleteFrameWithID(frame.id)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle())
+            .disabled(frameDeleteInFlight)
+            .help("Delete selected local frame through sidecar")
+            .frame(width: 44)
+            .frame(minHeight: 44)
+        }
+        .background(selected ? OpenDesignOfficeHoursColor.accentDim.opacity(0.46) : OpenDesignOfficeHoursColor.surface.opacity(0.72))
+        .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectReplayFrame(frame)
+        }
+        .accessibilityIdentifier("opendesign.founderReplay.table.frame.\(frame.id)")
+    }
+
+    private func tableCell(
+        _ text: String,
+        width: CGFloat? = nil,
+        minWidth: CGFloat? = nil,
+        isHeader: Bool = false
+    ) -> some View {
+        Text(text)
+            .font(.system(size: isHeader ? 10.5 : 12, weight: isHeader ? .semibold : .medium, design: isHeader ? .monospaced : .default))
+            .foregroundStyle(isHeader ? OpenDesignOfficeHoursColor.muted : OpenDesignOfficeHoursColor.fgSecondary)
+            .lineLimit(2)
+            .frame(
+                minWidth: width ?? minWidth,
+                maxWidth: width ?? (minWidth == nil ? nil : .infinity),
+                minHeight: isHeader ? 34 : 44,
+                alignment: .leading
+            )
+            .padding(.horizontal, 12)
+            .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(width: 1), alignment: .trailing)
+    }
+
+    private func tableIconCell(isHeader: Bool = false) -> some View {
+        Group {
+            if isHeader {
+                Image(systemName: "trash")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: 44)
+        .frame(minHeight: isHeader ? 34 : 44)
+    }
+
+    private var sortedPipes: [RecorderPipeDefinition] {
+        pipes.sorted { lhs, rhs in
+            if lhs.enabled != rhs.enabled { return lhs.enabled && !rhs.enabled }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private var sortedRuns: [RecorderPipeRun] {
+        runs.sorted { lhs, rhs in
+            if lhs.startedAt != rhs.startedAt { return lhs.startedAt > rhs.startedAt }
+            return lhs.id > rhs.id
+        }
+    }
+
+    private var recentFrameCaptures: [RecorderFrameCaptureReceipt] {
+        var frames = frameCaptures
+        if let lastFrameCapture, !frames.contains(where: { $0.id == lastFrameCapture.id }) {
+            frames.append(lastFrameCapture)
+        }
+        return Array(frames.sorted { lhs, rhs in
+            if lhs.capturedAt != rhs.capturedAt { return lhs.capturedAt > rhs.capturedAt }
+            return lhs.id > rhs.id
+        }.prefix(24))
+    }
+
+    private var recentFrameIDsSignature: String {
+        recentFrameCaptures.map(\.id).joined(separator: "|")
+    }
+
+    private var selectedReplayFrame: RecorderFrameCaptureReceipt? {
+        if let selectedFrameID,
+           let frame = recentFrameCaptures.first(where: { $0.id == selectedFrameID }) {
+            return frame
+        }
+        return recentFrameCaptures.first
+    }
+
+    private var activeRunIDs: Set<String> {
+        Set(runs.filter { ["queued", "running"].contains($0.status) }.map(\.id))
+    }
+
+    private func selectReplayFrame(_ frame: RecorderFrameCaptureReceipt) {
+        selectedFrameID = frame.id
+        prepareFrameImage(frame.id)
+    }
+
+    private func prepareSelectedReplayFrameImage() {
+        prepareFrameImage(selectedReplayFrame?.id)
+    }
+
+    private func reconcileSelectedReplayFrame() {
+        if let selectedFrameID,
+           !recentFrameCaptures.contains(where: { $0.id == selectedFrameID }) {
+            self.selectedFrameID = nil
+        }
+        prepareSelectedReplayFrameImage()
+    }
+
+    private func replayFrameIsSelected(_ frame: RecorderFrameCaptureReceipt) -> Bool {
+        selectedReplayFrame?.id == frame.id
+    }
+
+    private func requestVisibleRangeDelete() {
+        guard !recentFrameCaptures.isEmpty else { return }
+        guard visibleRangeDeleteArmed else {
+            visibleRangeDeleteArmed = true
+            return
+        }
+        visibleRangeDeleteArmed = false
+        deleteFrameRange(recentFrameCaptures.map(\.id))
+    }
+
+    private var modeStatusText: String {
+        switch selectedMode {
+        case .pipes:
+            return "\(pipes.count) pipes · \(runs.count) runs"
+        case .control:
+            return "\(recorderMode) · \(readiness?.state ?? "unknown")"
+        case .replay, .table:
+            return frameCapturesRefreshing ? "frames loading" : "\(recentFrameCaptures.count) frames"
+        }
+    }
+
+    private var recorderMode: String {
+        controlState?.mode ?? readiness?.mode ?? "unknown"
+    }
+
+    private var isRecorderActive: Bool {
+        recorderMode == "active"
+    }
+
+    private var isRecorderPaused: Bool {
+        recorderMode == "paused"
+    }
+
+    private var controlBusy: Bool {
+        controlRefreshing || controlActionInFlight != nil
+    }
+
+    private var permissionRows: [OpenDesignRecorderPermissionRow] {
+        [
+            .init(
+                id: "screenRecording",
+                title: "Screen Recording",
+                detail: "Core Memory frame capture",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+            ),
+            .init(
+                id: "accessibility",
+                title: "Accessibility",
+                detail: "window/app metadata extraction",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            ),
+            .init(
+                id: "inputMonitoring",
+                title: "Input Monitoring",
+                detail: "event-trigger timing",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+            ),
+            .init(id: "visionOcr", title: "Vision OCR", detail: "local OCR fallback", settingsURL: nil),
+            .init(id: "browserMetadata", title: "Browser metadata", detail: "degraded when unavailable", settingsURL: nil),
+            .init(id: "documentMetadata", title: "Document metadata", detail: "degraded when unavailable", settingsURL: nil),
+            .init(id: "clipboard", title: "Clipboard", detail: "trigger-only policy", settingsURL: nil),
+            .init(
+                id: "microphone",
+                title: "Microphone",
+                detail: "off until local opt-in",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+            ),
+            .init(id: "systemAudio", title: "System Audio", detail: "off until local opt-in", settingsURL: nil),
+        ]
+    }
+
+    private var controlSurface: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                controlToolbar
+                if let controlLastError, !controlLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    pipesNotice(text: controlLastError, tone: .amber)
+                }
+                if let frameCaptureLastError, !frameCaptureLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    pipesNotice(text: frameCaptureLastError, tone: .amber)
+                }
+                if let frameDeleteLastError, !frameDeleteLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    pipesNotice(text: frameDeleteLastError, tone: .amber)
+                }
+                if let autoCaptureLastError, !autoCaptureLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    pipesNotice(text: autoCaptureLastError, tone: .amber)
+                }
+                controlConsentPanel
+                controlReadinessPanel
+                controlFrameCapturePanel
+                controlPermissionLadder
+                controlSensitivePolicy
+            }
+            .padding(28)
+            .frame(maxWidth: 1180, alignment: .topLeading)
+        }
+        .accessibilityIdentifier("opendesign.founderReplay.control")
+    }
+
+    private var controlToolbar: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Recorder Control")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Text("local only · proof off · explicit blockers")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            }
+            Spacer(minLength: 12)
+            founderReplayStatusPill(recorderMode, tone: readiness?.canRecord == true ? .accent : .amber)
+            founderReplayStatusPill(readiness?.canRecord == true ? "can record" : (readiness?.state ?? "blocked"), tone: readiness?.canRecord == true ? .accent : .amber)
+            Button(action: autoCaptureRunning ? stopAutoCapture : startAutoCapture) {
+                Label(autoCaptureRunning ? "Auto on" : "Auto", systemImage: autoCaptureRunning ? "record.circle.fill" : "record.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: 30)
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle())
+            .disabled(!autoCaptureRunning && readiness?.canRecord != true)
+            .accessibilityIdentifier("opendesign.founderReplay.control.autoCapture")
+            Button(action: captureFrame) {
+                Label(frameCaptureInFlight ? "캡처 중" : "Capture", systemImage: "camera.viewfinder")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: 30)
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle())
+            .disabled(frameCaptureInFlight || readiness?.canRecord != true)
+            .accessibilityIdentifier("opendesign.founderReplay.control.captureFrame")
+            Button(action: refreshControl) {
+                Label(controlRefreshing ? "새로고침 중" : "새로고침", systemImage: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: 30)
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle())
+            .disabled(controlRefreshing)
+            .accessibilityIdentifier("opendesign.founderReplay.control.refresh")
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private var controlFrameCapturePanel: some View {
+        HStack(spacing: 12) {
+            Image(systemName: lastFrameCapture == nil ? "rectangle.dashed" : "checkmark.rectangle")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(lastFrameCapture == nil ? OpenDesignOfficeHoursColor.muted : OpenDesignOfficeHoursColor.accent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("ScreenCaptureKit Frame")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Text(autoCaptureRunning ? "automatic capture running" : "automatic capture stopped")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(autoCaptureRunning ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                if let lastFrameCapture {
+                    Text("\(lastFrameCapture.id) · \(compactIsoTimestamp(lastFrameCapture.capturedAt)) · \(lastFrameCapture.snapshotAssetId)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                } else {
+                    Text(frameCaptureInFlight ? "ScreenCaptureKit frame ingest in progress" : "No frame has been ingested in this session")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                }
+                if let autoCaptureLastTrigger, !autoCaptureLastTrigger.isEmpty {
+                    Text("trigger \(autoCaptureLastTrigger)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                }
+                if let lastFrameDelete {
+                    Text("deleted \(lastFrameDelete.frameId) · media \(lastFrameDelete.mediaRemoved ? "removed" : "not removed") · path exposed \(lastFrameDelete.pathExposed ? "yes" : "no")")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 10)
+            founderReplayStatusPill(autoCaptureRunning ? "auto" : "manual", tone: autoCaptureRunning ? .accent : .sky)
+            founderReplayStatusPill(lastFrameCapture?.proofAcceptedByRecorderIngest == true ? "proof?" : "non-proof", tone: .amber)
+            if let lastFrameCapture {
+                founderReplayStatusPill(lastFrameCapture.redactionStatus, tone: .sky)
+            }
+            Button(action: deleteFrame) {
+                Label(frameDeleteInFlight ? "삭제 중" : "Delete", systemImage: "trash")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: 30)
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle())
+            .disabled(frameDeleteInFlight || lastFrameCapture == nil)
+            .accessibilityIdentifier("opendesign.founderReplay.control.deleteFrame")
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private var controlConsentPanel: some View {
+        let consent = controlState?.consent ?? RecorderControlConsent()
+        let consentGranted = consent.status == "granted"
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("Consent")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                founderReplayStatusPill(consent.status, tone: consentGranted ? .accent : .amber)
+                founderReplayStatusPill(consent.visibleIndicatorAcknowledged ? "indicator ack" : "indicator required", tone: consent.visibleIndicatorAcknowledged ? .accent : .amber)
+                Spacer(minLength: 0)
+                if consentGranted {
+                    Button(action: revokeConsent) {
+                        Label(controlActionInFlight == "revoke_consent" ? "철회 중" : "동의 철회", systemImage: "xmark.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(height: 30)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle())
+                    .disabled(controlBusy)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.revokeConsent")
+                } else {
+                    Button(action: grantConsent) {
+                        Label(controlActionInFlight == "grant_consent" ? "동의 중" : "동의", systemImage: "checkmark.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(height: 30)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle())
+                    .disabled(controlBusy)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.grantConsent")
+                }
+            }
+            HStack(spacing: 8) {
+                Button(action: pauseCapture) {
+                    Label(controlActionInFlight == "pause" ? "일시정지 중" : "Pause", systemImage: "pause.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 30)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(controlBusy || !isRecorderActive)
+                .accessibilityIdentifier("opendesign.founderReplay.control.pause")
+
+                Button(action: resumeCapture) {
+                    Label(controlActionInFlight == "resume" ? "재개 중" : "Resume", systemImage: "play.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 30)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(controlBusy || !isRecorderPaused)
+                .accessibilityIdentifier("opendesign.founderReplay.control.resume")
+
+                Button(action: stopForToday) {
+                    Label(controlActionInFlight == "stop_for_today" ? "중지 중" : "Stop today", systemImage: "stop.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 30)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(controlBusy || recorderMode == "stopped_today")
+                .accessibilityIdentifier("opendesign.founderReplay.control.stopToday")
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private var controlReadinessPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("Readiness")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                founderReplayStatusPill(readiness?.state ?? "unknown", tone: readiness?.canRecord == true ? .accent : .amber)
+                Spacer(minLength: 0)
+                founderReplayStatusPill("not proof", tone: .amber)
+            }
+            readinessIssues("Blockers", issues: readiness?.blockers ?? [], empty: "Blocker 없음", tone: .amber)
+            readinessIssues("Warnings", issues: readiness?.warnings ?? [], empty: "Warning 없음", tone: .sky)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private func readinessIssues(
+        _ title: String,
+        issues: [RecorderCaptureIssue],
+        empty: String,
+        tone: OpenDesignRailBadgeTone
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            if issues.isEmpty {
+                Text(empty)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+            } else {
+                ForEach(issues) { issue in
+                    HStack(spacing: 8) {
+                        Image(systemName: tone == .amber ? "exclamationmark.triangle" : "info.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(tone == .amber ? OpenDesignOfficeHoursColor.amber : OpenDesignOfficeHoursColor.muted)
+                        Text(issue.message)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .lineLimit(2)
+                        Spacer(minLength: 0)
+                        if let state = issue.state, !state.isEmpty {
+                            founderReplayStatusPill(state, tone: tone)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 10)
+                    .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+            }
+        }
+    }
+
+    private var controlPermissionLadder: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Permission Ladder")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Spacer(minLength: 0)
+                Button(action: refreshPermissions) {
+                    Label(controlActionInFlight == "permission_probe" ? "확인 중" : "Check", systemImage: "checklist")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 28)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(controlBusy)
+                .accessibilityIdentifier("opendesign.founderReplay.control.permissions.check")
+            }
+            ForEach(permissionRows) { row in
+                permissionRow(row)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private func permissionRow(_ row: OpenDesignRecorderPermissionRow) -> some View {
+        let state = controlState?.permissions[row.id] ?? "unknown"
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Text(row.detail)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 10)
+            founderReplayStatusPill(state, tone: permissionTone(state))
+            if let settingsURL = row.settingsURL {
+                Button {
+                    openSystemSettings(settingsURL)
+                } label: {
+                    Label("설정", systemImage: "gearshape")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 28)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .accessibilityIdentifier("opendesign.founderReplay.control.permission.\(row.id)")
+            }
+        }
+        .padding(.vertical, 9)
+        .padding(.horizontal, 12)
+        .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var controlSensitivePolicy: some View {
+        let sensitive = controlState?.sensitiveCapture ?? RecorderSensitiveCapture()
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Sensitive Capture")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Spacer(minLength: 0)
+                founderReplayStatusPill("local only", tone: .accent)
+            }
+            HStack(spacing: 8) {
+                founderReplayStatusPill("clipboard \(sensitive.clipboardMode)", tone: sensitive.clipboardMode == "disabled" ? .sky : .amber)
+                founderReplayStatusPill("mic \(sensitive.microphone ? "on" : "off")", tone: sensitive.microphone ? .amber : .sky)
+                founderReplayStatusPill("system audio \(sensitive.systemAudio ? "on" : "off")", tone: sensitive.systemAudio ? .amber : .sky)
+                Spacer(minLength: 0)
+            }
+            Text("Raw frames, search hits, memories, and Pipe outputs remain evidence input only.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                .lineLimit(2)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private func permissionTone(_ state: String) -> OpenDesignRailBadgeTone {
+        switch state {
+        case "granted", "available", "enabled": return .accent
+        case "not_required", "disabled", "unknown": return .sky
+        default: return .amber
+        }
+    }
+
+    private func openSystemSettings(_ urlString: String) {
+        guard let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private var pipesSurface: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                pipesToolbar
+                if let lastError, !lastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    pipesNotice(text: lastError, tone: .amber)
+                }
+                if let lastSchedulerResult {
+                    pipesNotice(
+                        text: "queued \(lastSchedulerResult.queuedCount) · executed \(lastSchedulerResult.executedCount) · failed \(lastSchedulerResult.failedCount)",
+                        tone: lastSchedulerResult.failedCount > 0 ? .amber : .accent
+                    )
+                }
+                VStack(spacing: 10) {
+                    if sortedPipes.isEmpty {
+                        emptyPipesState
+                    } else {
+                        ForEach(sortedPipes) { pipe in
+                            pipeRow(pipe)
+                        }
+                    }
+                }
+                recentRunsSection
+            }
+            .padding(28)
+            .frame(maxWidth: 1180, alignment: .topLeading)
+        }
+        .accessibilityIdentifier("opendesign.founderReplay.pipes")
+    }
+
+    private var pipesToolbar: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Agentic30 Pipes")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Text("built-in · local DSL · proof off")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            }
+            Spacer(minLength: 12)
+            Button(action: refresh) {
+                Label(isRefreshing ? "새로고침 중" : "새로고침", systemImage: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: 30)
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle())
+            .disabled(isRefreshing)
+            .accessibilityIdentifier("opendesign.founderReplay.pipes.refresh")
+
+            Button(action: tickScheduler) {
+                Label(schedulerRunning ? "스케줄러 실행 중" : "스케줄러", systemImage: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: 30)
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle())
+            .disabled(schedulerRunning)
+            .accessibilityIdentifier("opendesign.founderReplay.pipes.scheduler")
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private var emptyPipesState: some View {
+        HStack(spacing: 12) {
+            Image(systemName: isRefreshing ? "arrow.clockwise" : "exclamationmark.triangle")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(isRefreshing ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.amber)
+            Text(isRefreshing ? "Pipe 상태를 불러오는 중" : "Pipe 정의가 아직 도착하지 않았습니다.")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private func pipeRow(_ pipe: RecorderPipeDefinition) -> some View {
+        let latest = latestRun(for: pipe.id)
+        let busy = actionInFlight.contains(pipe.id)
+        return HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(pipe.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                        .lineLimit(1)
+                    founderReplayStatusPill(pipe.enabled ? "enabled" : "disabled", tone: pipe.enabled ? .accent : .sky)
+                    founderReplayStatusPill(pipe.proofAcceptedByPipeDefinition ? "proof?" : "non-proof", tone: .amber)
+                }
+                Text("\(pipe.id) · \(pipe.schedule)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                if let latest {
+                    Text("latest \(runStatusLabel(latest.status)) · \(compactIsoTimestamp(latest.startedAt))")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 12)
+            Button {
+                runPipe(pipe.id)
+            } label: {
+                Label(busy ? "실행 중" : "실행", systemImage: busy ? "hourglass" : "play.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: 30)
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle())
+            .disabled(!pipe.enabled || busy)
+            .accessibilityIdentifier("opendesign.founderReplay.pipes.run.\(pipe.id)")
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private var recentRunsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("최근 실행")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                Spacer()
+                Text(activeRunIDs.isEmpty ? "active 0" : "active \(activeRunIDs.count)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            }
+            if sortedRuns.isEmpty {
+                Text("실행 기록 없음")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .background(OpenDesignOfficeHoursColor.surface.opacity(0.72))
+            } else {
+                ForEach(sortedRuns.prefix(8)) { run in
+                    runRow(run)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface.opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private func runRow(_ run: RecorderPipeRun) -> some View {
+        let canCancel = ["queued", "running"].contains(run.status)
+        let busy = actionInFlight.contains(run.id)
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(run.pipeId)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    .lineLimit(1)
+                Text("\(run.triggerReason) · \(compactIsoTimestamp(run.startedAt))")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                if let error = run.errorMessage, !error.isEmpty {
+                    Text(error)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 10)
+            founderReplayStatusPill(runStatusLabel(run.status), tone: runTone(run.status))
+            if canCancel {
+                Button {
+                    cancelRun(run.id)
+                } label: {
+                    Label(busy ? "취소 중" : "취소", systemImage: "xmark.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 28)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(busy)
+                .accessibilityIdentifier("opendesign.founderReplay.pipes.cancel.\(run.id)")
+            }
+        }
+        .padding(.vertical, 9)
+        .padding(.horizontal, 12)
+        .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func latestRun(for pipeId: String) -> RecorderPipeRun? {
+        sortedRuns.first { $0.pipeId == pipeId }
+    }
+
+    private func runStatusLabel(_ status: String) -> String {
+        switch status {
+        case "queued": return "queued"
+        case "running": return "running"
+        case "succeeded": return "done"
+        case "failed": return "failed"
+        case "timed_out": return "timeout"
+        case "cancelled": return "cancelled"
+        default: return status.isEmpty ? "unknown" : status
+        }
+    }
+
+    private func runTone(_ status: String) -> OpenDesignRailBadgeTone {
+        switch status {
+        case "succeeded": return .accent
+        case "failed", "timed_out", "cancelled": return .amber
+        case "queued", "running": return .amber
+        default: return .sky
+        }
+    }
+
+    private func compactIsoTimestamp(_ value: String) -> String {
+        guard value.count >= 16 else { return value.isEmpty ? "unknown" : value }
+        let start = value.index(value.startIndex, offsetBy: min(11, value.count))
+        let end = value.index(value.startIndex, offsetBy: min(16, value.count))
+        return String(value[start..<end])
+    }
+
+    private func pipesNotice(text: String, tone: OpenDesignRailBadgeTone) -> some View {
+        let color = tone == .amber ? OpenDesignOfficeHoursColor.amber : OpenDesignOfficeHoursColor.accent
+        return HStack(spacing: 8) {
+            Image(systemName: tone == .amber ? "exclamationmark.triangle" : "checkmark.circle")
+                .font(.system(size: 13, weight: .semibold))
+            Text(text)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(color)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(color.opacity(0.10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(color.opacity(0.28), lineWidth: 1)
+                )
+        )
+    }
+
+    private func founderReplayStatusPill(_ text: String, tone: OpenDesignRailBadgeTone = .accent) -> some View {
+        let color: Color = {
+            switch tone {
+            case .accent: return OpenDesignOfficeHoursColor.accent
+            case .amber: return OpenDesignOfficeHoursColor.amber
+            case .sky: return OpenDesignOfficeHoursColor.muted
+            }
+        }()
+        return Text(text)
+            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+            .foregroundStyle(color)
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(Capsule().fill(color.opacity(0.13)))
+            .overlay(Capsule().stroke(color.opacity(0.35), lineWidth: 1))
+    }
 }
 
 private struct OpenDesignStrategyPageView: View {
@@ -9980,7 +11975,7 @@ private struct OpenDesignRailView: View {
     }
 
     private var usesOfficeHoursPalette: Bool {
-        railSurfaceKind.isOfficeHours
+        railSurfaceKind.usesDay1WorkspacePalette
     }
 
     var body: some View {
