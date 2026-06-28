@@ -58,6 +58,9 @@ const BASE_EXTERNAL_PACKAGES = [
   // Bun-inlined zod can break @modelcontextprotocol/sdk import-time schemas
   // under the bundled Node runtime; keep one normal runtime copy instead.
   "zod",
+  // RecorderStore imports better-sqlite3 directly. Bundling its JS breaks the
+  // native binding lookup root, so keep the package layout intact.
+  "better-sqlite3",
   // Ships sqlite3 (native addon) in its dependency closure — must stay
   // unbundled and be copied with that closure intact (see
   // EXTERNAL_CLOSURE_PACKAGES).
@@ -68,6 +71,7 @@ const BASE_EXTERNAL_PACKAGES = [
 // bundle no longer provides once the package itself is external.
 const EXTERNAL_CLOSURE_PACKAGES = [
   "@cursor/sdk",
+  "better-sqlite3",
 ];
 const ARCH_EXTERNAL_PACKAGES = [
   "@anthropic-ai/claude-agent-sdk-darwin-arm64",
@@ -89,6 +93,9 @@ const EXTERNAL_PACKAGES = [
 ];
 const EXTERNAL_PACKAGE_SET = new Set(EXTERNAL_PACKAGES);
 const ARCH_EXTERNAL_PACKAGE_SET = new Set(ARCH_EXTERNAL_PACKAGES);
+const NATIVE_REBUILD_PACKAGES = [
+  "better-sqlite3",
+];
 
 // CLI packages invoked as standalone sidecars need their runtime dependency
 // closure copied because they are not bundled into the main entry points.
@@ -151,9 +158,13 @@ function normalizeBundleArch(value) {
   );
 }
 
-function run(cmd, args, cwd) {
+function run(cmd, args, cwd, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd, stdio: "inherit" });
+    const child = spawn(cmd, args, {
+      cwd,
+      stdio: "inherit",
+      env: options.env ?? process.env,
+    });
     child.on("error", reject);
     child.on("exit", (code) =>
       code === 0 ? resolve() : reject(new Error(`${cmd} exited with ${code}`))
@@ -277,6 +288,50 @@ async function ensureBundledNodeRuntime() {
     await cp(sourceNode, destinationNode, { dereference: true });
     await chmod(destinationNode, 0o755);
   }
+}
+
+async function rebuildNativePackagesForBundledNode() {
+  const packages = NATIVE_REBUILD_PACKAGES.filter((pkg) =>
+    existsSync(packagePath(DIST_NODE_MODULES, pkg))
+  );
+  if (packages.length === 0) return;
+  if (TARGET_ARCHES.length !== 1) {
+    throw new Error(
+      `native package rebuild requires a single AGENTIC30_BUNDLE_ARCH; got ${BUNDLE_ARCH}`
+    );
+  }
+
+  const arch = TARGET_ARCHES[0];
+  console.log(
+    `[build-sidecar] rebuilding native packages for Node ${NODE_RUNTIME_VERSION} (${arch}): ${packages.join(", ")}`
+  );
+  await run(
+    "npm",
+    [
+      "rebuild",
+      ...packages,
+      "--build-from-source",
+      `--target=${NODE_RUNTIME_VERSION}`,
+      "--runtime=node",
+      "--dist-url=https://nodejs.org/download/release",
+      `--arch=${arch}`,
+      "--platform=darwin",
+      "--prefix",
+      DIST_DIR,
+    ],
+    PACKAGE_ROOT,
+    {
+      env: {
+        ...process.env,
+        npm_config_build_from_source: "true",
+        npm_config_target: NODE_RUNTIME_VERSION,
+        npm_config_runtime: "node",
+        npm_config_disturl: "https://nodejs.org/download/release",
+        npm_config_arch: arch,
+        npm_config_platform: "darwin",
+      },
+    }
+  );
 }
 
 async function cachedNodeRuntimeArchive(runtime) {
@@ -410,6 +465,7 @@ async function computeBuildFingerprint() {
       sidecarCliPackages: SIDECAR_CLI_PACKAGES,
       nonDarwinPlatforms: NON_DARWIN_PLATFORMS,
       targetPrebuildPlatforms: TARGET_ARCHES.map((arch) => `darwin-${arch}`),
+      nativeRebuildPackages: NATIVE_REBUILD_PACKAGES,
       nativeBuildArtifactDirs: [...NATIVE_BUILD_ARTIFACT_DIRS],
       nativeBuildArtifactExtensions: [...NATIVE_BUILD_ARTIFACT_EXTENSIONS],
       nodeRuntimeVersion: NODE_RUNTIME_VERSION,
@@ -624,6 +680,8 @@ async function main() {
   await copyExternals();
   console.log("[build-sidecar] bundling Node.js runtime...");
   await ensureBundledNodeRuntime();
+  console.log("[build-sidecar] rebuilding native packages for bundled Node...");
+  await rebuildNativePackagesForBundledNode();
   console.log("[build-sidecar] stripping non-darwin native binaries...");
   await stripNonDarwinBinaries(DIST_NODE_MODULES);
   console.log("[build-sidecar] stripping native build artifacts...");
