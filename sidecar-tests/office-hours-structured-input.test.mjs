@@ -30,6 +30,7 @@ import {
   normalizeOfficeHoursUiCopyRequest,
 } from "../sidecar/office-hours-copy-rules.mjs";
 import {
+  buildCanonicalFirstCandidateCard,
   buildNoCandidateUnblockCard,
 } from "../sidecar/office-hours-first-candidate-host.mjs";
 
@@ -432,8 +433,30 @@ test("prepareOfficeHoursStructuredInputRequest accepts no-candidate unblock card
   assert.equal(prepared.generation.signalId, "get_users_first_candidate_unblock");
   assert.equal(question.allowFreeText, true);
   assert.equal(question.requiresFreeText, false);
-  assert.equal(question.primaryTextInput.required, true);
-  assert.match(question.primaryTextInput.validationMessage, /적어야 합니다/);
+  assert.equal(question.primaryTextInput.required, false);
+  assert.match(question.primaryTextInput.validationMessage, /입력하지 않아도 추천안으로 진행됩니다/);
+});
+
+test("prepareOfficeHoursStructuredInputRequest accepts first-customer value card as one-step default", () => {
+  const prepared = prepareOfficeHoursStructuredInputRequest(buildCanonicalFirstCandidateCard({
+    sessionId: "session_first_customer",
+    toolName: "agentic30_request_user_input",
+  }));
+
+  const question = prepared.questions[0];
+  assert.equal(prepared.generation.docType, "day1_step");
+  assert.equal(prepared.generation.signalId, "get_users_first_candidate");
+  assert.equal(prepared.generation.dimensionTotal, 1);
+  assert.equal(question.header, "첫 고객 도움 만들기");
+  assert.equal(question.allowFreeText, true);
+  assert.equal(question.requiresFreeText, false);
+  assert.equal(question.allowsEmptySubmit, true);
+  assert.equal(question.primaryTextInput.required, false);
+  assert.deepEqual(question.options.map((option) => option.label), ["첫 고객에게 줄 도움 만들기"]);
+  assert.ok(
+    question.options[0].autoTransitions.some((transition) => transition.type === "schedule_execution"),
+    "default first-customer value card should close the execution commitment without another visible card",
+  );
 });
 
 test("Office Hours Korean UI-copy humanizer preserves adaptive locked Day 1 get-users cards", () => {

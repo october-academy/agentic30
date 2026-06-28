@@ -801,6 +801,11 @@ function normalizeStructuredPromptQuestion(value = {}) {
     ...(typeof source.multiSelect === "boolean" ? { multiSelect: source.multiSelect } : {}),
     ...(typeof source.allowFreeText === "boolean" ? { allowFreeText: source.allowFreeText } : {}),
     ...(typeof source.requiresFreeText === "boolean" ? { requiresFreeText: source.requiresFreeText } : {}),
+    ...(typeof source.allowsEmptySubmit === "boolean"
+      ? { allowsEmptySubmit: source.allowsEmptySubmit }
+      : typeof source.allows_empty_submit === "boolean"
+        ? { allowsEmptySubmit: source.allows_empty_submit }
+        : {}),
     ...(nullableCleanString(source.freeTextPlaceholder ?? source.free_text_placeholder, 400) ? { freeTextPlaceholder: nullableCleanString(source.freeTextPlaceholder ?? source.free_text_placeholder, 400) } : {}),
     ...(normalizeStructuredPromptPrimaryTextInput(source.primaryTextInput ?? source.primary_text_input) ? { primaryTextInput: normalizeStructuredPromptPrimaryTextInput(source.primaryTextInput ?? source.primary_text_input) } : {}),
     ...(nullableCleanString(source.textMode ?? source.text_mode, 40) ? { textMode: nullableCleanString(source.textMode ?? source.text_mode, 40) } : {}),
@@ -840,10 +845,66 @@ function normalizeStructuredPromptOptions(value) {
         ...(nullableCleanString(source.evidenceTarget ?? source.evidence_target, MAX_LONG_TEXT) ? { evidenceTarget: nullableCleanString(source.evidenceTarget ?? source.evidence_target, MAX_LONG_TEXT) } : {}),
         ...(nullableCleanString(source.mapsTo ?? source.maps_to, 240) ? { mapsTo: nullableCleanString(source.mapsTo ?? source.maps_to, 240) } : {}),
         ...(nullableCleanString(source.failureMode ?? source.failure_mode, MAX_LONG_TEXT) ? { failureMode: nullableCleanString(source.failureMode ?? source.failure_mode, MAX_LONG_TEXT) } : {}),
+        ...normalizeStructuredPromptOptionAttemptFields(source),
       };
     })
     .filter(Boolean)
     .slice(0, 12);
+}
+
+function normalizeStructuredPromptOptionAttemptFields(source = {}) {
+  const output = {};
+  const copyText = (target, ...keys) => {
+    for (const key of keys) {
+      const value = nullableCleanString(source[key], MAX_LONG_TEXT);
+      if (value) {
+        output[target] = value;
+        return;
+      }
+    }
+  };
+  copyText("answerText", "answerText", "answer_text", "defaultAnswer", "default_answer");
+  copyText("activationDefinition", "activationDefinition", "activation_definition");
+  copyText("candidate", "candidate");
+  copyText("currentAlternative", "currentAlternative", "current_alternative");
+  copyText("externalAction", "externalAction", "external_action");
+  copyText("attemptThreshold", "attemptThreshold", "attempt_threshold");
+  copyText("successCondition", "successCondition", "success_condition");
+  copyText("expectedProofKind", "expectedProofKind", "expected_proof_kind");
+  copyText("evidenceLocation", "evidenceLocation", "evidence_location");
+  copyText("commitmentNote", "commitmentNote", "commitment_note");
+  const autoTransitions = normalizeStructuredPromptOptionAutoTransitions(
+    Array.isArray(source.autoTransitions) ? source.autoTransitions : source.auto_transitions,
+  );
+  if (autoTransitions.length) output.autoTransitions = autoTransitions;
+  return output;
+}
+
+function normalizeStructuredPromptOptionAutoTransitions(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const source = item && typeof item === "object" && !Array.isArray(item) ? item : null;
+      if (!source) return null;
+      const type = nullableCleanString(source.type ?? source.transition, 120);
+      if (!type) return null;
+      const fields = {};
+      const sourceFields = source.fields && typeof source.fields === "object" && !Array.isArray(source.fields)
+        ? source.fields
+        : {};
+      for (const [key, value] of Object.entries(sourceFields)) {
+        const cleanKey = cleanString(key, 120);
+        const cleanValue = nullableCleanString(value, MAX_LONG_TEXT);
+        if (cleanKey && cleanValue) fields[cleanKey] = cleanValue;
+      }
+      if (!Object.keys(fields).length && type !== "schedule_execution") return null;
+      const output = { type, fields };
+      const auditText = nullableCleanString(source.auditText ?? source.audit_text, MAX_LONG_TEXT);
+      if (auditText) output.auditText = auditText;
+      return output;
+    })
+    .filter(Boolean)
+    .slice(0, 4);
 }
 
 function normalizeStructuredPromptIntro(value) {

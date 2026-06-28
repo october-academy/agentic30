@@ -145,7 +145,8 @@ export const StructuredPromptQuestionOutputSchema = z.object({
       message: "Each structured output question needs choices, free text, or both.",
     });
   }
-  if (optionCount === 1) {
+  const allowsDefaultSubmit = question.allowsEmptySubmit === true || question.allows_empty_submit === true;
+  if (optionCount === 1 && !allowsDefaultSubmit) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Choice questions need at least two options.",
@@ -636,7 +637,8 @@ function refineStructuredPromptInputQuestion(question, context) {
       message: "Each structured input question needs choices, free text, or both.",
     });
   }
-  if (optionCount === 1) {
+  const allowsDefaultSubmit = question.allowsEmptySubmit === true || question.allows_empty_submit === true;
+  if (optionCount === 1 && !allowsDefaultSubmit) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Choice questions need at least two options.",

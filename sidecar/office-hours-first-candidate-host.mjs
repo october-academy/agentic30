@@ -86,16 +86,15 @@ export function hasRequiredFirstCandidatePrimaryTextInput(question = {}) {
 }
 
 // Canonical host-authored first_candidate card (EMPTY-hints path). Forces a named
-// free-text capture of an exact reachable person/handle/thread/source, plus EXACTLY
-// one explicit "아직 후보 없음" blocker that routes to an acquisition branch. Never
-// fabricates a name. The visible copy is honest and project-agnostic so it is safe
-// as a deterministic substitute when the model keeps emitting generic categories.
+// ICP/help direction capture plus EXACTLY one explicit "아직 후보 없음" blocker that
+// routes to an acquisition branch. It does not fabricate a person name; instead it
+// lets the founder pick the concrete ICP/value wedge Agentic30 should help with
+// first, with optional name/handle refinement when one exists.
 //
 // Contract-compatible: allowFreeText:true / requiresFreeText:false (the office-hours
 // structured-input contract mandates these), 2-4 options, explicit Korean header,
-// stable signalId. The placeholder + the first option label carry a specific-identity
-// instruction so classifyFirstCandidateCard reports forcesSpecificity:true and
-// genericOnly:false.
+// stable signalId. The placeholder/question still carry specific-identity language
+// so classifyFirstCandidateCard reports forcesSpecificity:true and genericOnly:false.
 export function buildCanonicalFirstCandidateCard({
   sessionId = "",
   provider = "codex",
@@ -104,43 +103,84 @@ export function buildCanonicalFirstCandidateCard({
 } = {}) {
   const question = {
     questionId: FIRST_CANDIDATE_SIGNAL_ID,
-    header: "첫 후보 확정",
+    header: "첫 고객 도움 만들기",
     question:
-      "오늘 실제로 연락하거나 글을 올릴 수 있는 첫 사람의 실명·핸들, 또는 구체적 스레드·모임·채널을 한 곳만 적어 주세요.",
-    helperText: "범주(지인·커뮤니티)가 아니라, 오늘 바로 닿을 수 있는 한 사람/한 스레드를 정확히 적어 주세요.",
-    freeTextPlaceholder: "예: 실명 또는 @핸들 — 오늘 DM·카톡으로 보낼 이 검증 요청 한 줄",
+      "Agentic30가 오늘 바로 도울 첫 고객 후보와 보낼 요청까지 만들까요?",
+    helperText: "기본안으로 바로 진행됩니다. 이미 떠오른 사람·채널·검색어가 있을 때만 한 줄로 바꾸세요.",
+    freeTextPlaceholder: "선택사항: 사람·채널·검색어·보낼 요청",
     options: [
       {
-        label: "오늘 연락할 실명·핸들을 직접 적기",
+        label: "첫 고객에게 줄 도움 만들기",
         description:
-          "지금 바로 닿을 수 있는 한 사람의 실명이나 @핸들, 또는 구체적 스레드/모임/채널을 자유 입력으로 적습니다.",
-        nextIntent: "named_reachable_candidate",
+          "후보 조건, 검색 경로, 보낼 요청, 15분 도움안, 남길 흔적을 Agentic30가 한 번에 묶습니다.",
+        answerText:
+          "오늘 Threads나 커뮤니티에서 AI/macOS 앱을 만들지만 첫 고객 후보와 첫 요청 문장이 막힌 전업 1인 개발자 1명을 찾고, 15분 실행 도움 요청을 보낸다",
+        candidate:
+          "AI/macOS 앱을 만들지만 첫 고객 후보와 첫 요청 문장이 막힌 전업 1인 개발자",
+        currentAlternative:
+          "커뮤니티 글, Threads 검색, 지인 조언을 훑지만 실제로 보낼 요청문까지 가지 못한다.",
+        externalAction:
+          "오늘 후보 1명에게 15분 실행 도움 요청을 보내고 Agentic30가 첫 고객 요청문 또는 작은 결과물을 만들어 준다.",
+        attemptThreshold: "후보 1명에게 도움 제안 1회",
+        successCondition: "상대가 요청문이나 결과물을 보고 다음 행동, 사용 가능 여부, 또는 거절 이유를 답한다.",
+        expectedProofKind: "screen_capture_with_note",
+        evidenceLocation: ".agentic30/day1-notes.md",
+        commitmentNote:
+          "오늘 첫 고객 후보 1명에게 도움 요청을 보내고 결과 화면 캡처와 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
+        nextIntent: "help_first_customer_with_value",
         recommended: true,
-        risk: "범주로 답하면 후보를 좁히지 못해 오늘 보낼 요청이 비어 있게 됩니다.",
-        evidenceTarget: "실명 또는 @핸들, 닿을 채널, 오늘 보낼 요청",
+        risk: "후보를 넓게 고민하면 오늘 줄 도움이 조언으로 흐릅니다.",
+        evidenceTarget: "후보 조건, 보낼 요청문, 실제 연락 흔적",
         mapsTo: "get_users_first_candidate",
-        failureMode: "이름 대신 범주를 적으면 후보 확정이 아니라 후보 찾기로 낮춥니다.",
-      },
-      {
-        label: "아직 후보 없음 — 오늘은 이름 찾기부터",
-        description:
-          "정직하게 비어 있으면 오늘 할 일은 후보 한 명의 실명·핸들을 찾는 행동을 정하는 것입니다.",
-        nextIntent: "no_candidate_yet",
-        risk: "후보가 계속 비면 검증이 시작되지 않습니다.",
-        evidenceTarget: "오늘 안에 후보 1명을 찾을 구체적 경로",
-        mapsTo: "get_users_first_candidate",
-        failureMode: "후보 찾기 행동조차 비우면 Day가 진전 없이 끝납니다.",
+        failureMode: "상대가 당장 얻을 결과가 없으면 고객 확보가 아니라 콘텐츠 소비로 끝납니다.",
+        autoTransitions: [
+          {
+            type: "record_alternative",
+            fields: {
+              currentAlternative:
+                "커뮤니티 글, Threads 검색, 지인 조언을 훑지만 실제로 보낼 요청문까지 가지 못한다.",
+            },
+          },
+          {
+            type: "define_action_contract",
+            fields: {
+              externalAction:
+                "오늘 후보 1명에게 15분 실행 도움 요청을 보내고 Agentic30가 첫 고객 요청문 또는 작은 결과물을 만들어 준다.",
+              attemptThreshold: "후보 1명에게 도움 제안 1회",
+              successCondition:
+                "상대가 요청문이나 결과물을 보고 다음 행동, 사용 가능 여부, 또는 거절 이유를 답한다.",
+            },
+            auditText: "후보 1명에게 바로 줄 도움을 실행안으로 둔다.",
+          },
+          {
+            type: "define_evidence_contract",
+            fields: {
+              expectedProofKind: "screen_capture_with_note",
+              evidenceLocation: ".agentic30/day1-notes.md",
+            },
+            auditText: "로컬 메모와 화면 캡처로 오늘 실행 흔적을 남긴다.",
+          },
+          {
+            type: "schedule_execution",
+            fields: {
+              commitmentNote:
+                "오늘 첫 고객 후보 1명에게 도움 요청을 보내고 결과 화면 캡처와 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
+            },
+            auditText: "추천 가치안 그대로 오늘 실행을 닫는다.",
+          },
+        ],
       },
     ],
     multiSelect: false,
     allowFreeText: true,
     requiresFreeText: false,
+    allowsEmptySubmit: true,
     primaryTextInput: {
-      label: "실명·핸들 또는 구체적 스레드",
-      placeholder: "예: 김OO 또는 @handle — 오늘 DM·카톡으로 보낼 검증 요청 한 줄",
-      required: true,
-      submitLabel: "첫 후보 확정",
-      validationMessage: "실명·핸들 또는 구체적 스레드와 오늘 보낼 요청을 입력해야 합니다.",
+      label: "필요하면 한 줄 수정",
+      placeholder: "선택사항: 사람·채널·검색어·보낼 요청",
+      required: false,
+      submitLabel: "추천안으로 진행",
+      validationMessage: "입력하지 않아도 추천안으로 진행됩니다.",
     },
     textMode: "short",
   };
@@ -153,7 +193,9 @@ export function buildCanonicalFirstCandidateCard({
       mode: "office_hours_inline",
       docType: "day1_step",
       signalId: FIRST_CANDIDATE_SIGNAL_ID,
-      signalLabel: "첫 후보 확정",
+      signalLabel: "첫 고객 도움",
+      dimensionStepIndex: 1,
+      dimensionTotal: 1,
       ...(attemptToken && typeof attemptToken === "object" ? attemptToken : {}),
     },
   };
@@ -167,49 +209,84 @@ export function buildNoCandidateUnblockCard({
 } = {}) {
   const question = {
     questionId: FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID,
-    header: "후보 확보",
+    header: "첫 고객 도움 만들기",
     question:
-      "아직 후보가 없다면 오늘 30분 안에 어느 채널에서 어떤 검색어·게시글·소개 요청으로 실명·핸들 1명을 찾고, 찾은 뒤 어떤 한 줄 요청을 보낼 건가요?",
+      "아직 후보가 없다면 Agentic30가 고객 후보 1명과 첫 도움 요청까지 바로 만들까요?",
     helperText:
-      "범주가 아니라 시간, 채널, 검색어 또는 게시 위치, 후보 조건, 보낼 요청까지 적습니다.",
+      "기본안으로 바로 진행됩니다. 이미 떠오른 사람·채널·검색어가 있을 때만 한 줄로 바꾸세요.",
     freeTextPlaceholder:
-      "예: 오늘 18:00까지 Threads에서 \"solo founder mac app\"으로 검색해 @handle 1명을 찾고, '이번 주 15분만 실제 프로젝트 연결을 봐달라'고 DM 보낸다",
+      "선택사항: 사람·채널·검색어가 있으면 한 줄 수정",
     options: [
       {
-        label: "스레드/커뮤니티에서 찾기",
-        description: "검색어, 게시 위치, 후보 조건, 보낼 요청을 한 줄로 적습니다.",
+        label: "후보 찾기와 첫 도움 요청 만들기",
+        description: "검색어, 후보 조건, 보낼 요청, 남길 흔적을 Agentic30가 한 번에 묶습니다.",
+        answerText:
+          "오늘 Threads에서 \"solo founder mac app\" 또는 \"AI로 앱 만들기\"로 검색해 전업 1인 개발자 1명을 찾고, 15분 실행 도움 DM을 보낸다",
+        candidate:
+          "Threads에서 \"solo founder mac app\" 또는 \"AI로 앱 만들기\"로 찾을 전업 1인 개발자 후보",
+        currentAlternative:
+          "후보가 비어 있어 고객 검증 대신 검색과 조언 소비에 머문다.",
+        externalAction:
+          "오늘 Threads나 커뮤니티에서 후보 1명을 찾고 15분 실행 도움 요청을 보낸다.",
+        attemptThreshold: "후보 1명 찾기와 도움 제안 1회",
+        successCondition: "상대가 도움 요청에 답하거나, 답이 없으면 보낸 요청과 내일 확인 시각이 남는다.",
+        expectedProofKind: "message_log",
+        evidenceLocation: ".agentic30/day1-notes.md",
+        commitmentNote:
+          "오늘 후보 1명을 찾고 첫 도움 요청 문장을 보내거나 발송 준비까지 마친 뒤 .agentic30/day1-notes.md에 남긴다.",
         nextIntent: "find_candidate_in_thread_or_community",
         recommended: true,
         evidenceTarget: "채널, 검색어/게시 위치, 후보 조건, 보낼 요청",
         mapsTo: FIRST_CANDIDATE_SIGNAL_ID,
-        failureMode: "채널만 적으면 실행 가능한 후보 확보 행동이 아닙니다.",
-      },
-      {
-        label: "기존 네트워크에서 소개 요청",
-        description: "누구에게 어떤 소개 문장을 보낼지 적습니다.",
-        nextIntent: "ask_network_for_intro",
-        evidenceTarget: "소개 요청 대상, 소개받을 후보 조건, 보낼 문장",
-        mapsTo: FIRST_CANDIDATE_SIGNAL_ID,
-        failureMode: "소개 요청 대상이 없으면 오늘 실행할 행동이 비어 있습니다.",
-      },
-      {
-        label: "사용자 흔적에서 찾기",
-        description: "GitHub, PostHog, Discord, 이메일 등 실제 흔적에서 누구를 찾을지 적습니다.",
-        nextIntent: "find_candidate_from_usage_signal",
-        evidenceTarget: "사용자 흔적 위치, 후보 조건, 보낼 요청",
-        mapsTo: FIRST_CANDIDATE_SIGNAL_ID,
-        failureMode: "흔적 위치가 없으면 후보 찾기가 추상적입니다.",
+        failureMode: "검색 후 바로 보낼 요청이 없으면 후보 찾기에서 멈춥니다.",
+        autoTransitions: [
+          {
+            type: "record_alternative",
+            fields: {
+              currentAlternative:
+                "후보가 비어 있어 고객 검증 대신 검색과 조언 소비에 머문다.",
+            },
+          },
+          {
+            type: "define_action_contract",
+            fields: {
+              externalAction:
+                "오늘 Threads나 커뮤니티에서 후보 1명을 찾고 15분 실행 도움 요청을 보낸다.",
+              attemptThreshold: "후보 1명 찾기와 도움 제안 1회",
+              successCondition:
+                "상대가 도움 요청에 답하거나, 답이 없으면 보낸 요청과 내일 확인 시각이 남는다.",
+            },
+            auditText: "후보 찾기와 첫 도움 요청을 오늘 실행안으로 둔다.",
+          },
+          {
+            type: "define_evidence_contract",
+            fields: {
+              expectedProofKind: "message_log",
+              evidenceLocation: ".agentic30/day1-notes.md",
+            },
+            auditText: "보낸 요청과 확인 시각을 로컬 메모로 남긴다.",
+          },
+          {
+            type: "schedule_execution",
+            fields: {
+              commitmentNote:
+                "오늘 후보 1명을 찾고 첫 도움 요청 문장을 보내거나 발송 준비까지 마친 뒤 .agentic30/day1-notes.md에 남긴다.",
+            },
+            auditText: "후보 찾기에서 멈추지 않고 첫 도움 요청까지 닫는다.",
+          },
+        ],
       },
     ],
     multiSelect: false,
     allowFreeText: true,
     requiresFreeText: false,
+    allowsEmptySubmit: true,
     primaryTextInput: {
-      label: "후보 확보 행동",
-      placeholder: "시간 + 채널 + 검색어/게시 위치 + 보낼 요청",
-      required: true,
-      submitLabel: "후보 찾기 행동 확정",
-      validationMessage: "시간, 채널, 찾는 방법, 보낼 요청을 적어야 합니다.",
+      label: "필요하면 한 줄 수정",
+      placeholder: "선택사항: 사람·채널·검색어·보낼 요청",
+      required: false,
+      submitLabel: "추천안으로 진행",
+      validationMessage: "입력하지 않아도 추천안으로 진행됩니다.",
     },
     textMode: "short",
   };
@@ -223,7 +300,9 @@ export function buildNoCandidateUnblockCard({
       mode: "office_hours",
       docType: "day1_candidate_unblock",
       signalId: FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID,
-      signalLabel: "후보 확보",
+      signalLabel: "첫 고객 도움",
+      dimensionStepIndex: 1,
+      dimensionTotal: 1,
       previousSignalId: FIRST_CANDIDATE_SIGNAL_ID,
     },
   };

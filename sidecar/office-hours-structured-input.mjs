@@ -284,8 +284,14 @@ export function assertOfficeHoursStructuredInputContract(request = {}) {
     throw officeHoursStructuredInputContractError("question.requiresFreeText must be false");
   }
   const options = Array.isArray(question.options) ? question.options : [];
-  if (options.length < 2 || options.length > 4) {
-    throw officeHoursStructuredInputContractError("question.options must contain 2-4 choices");
+  const allowsDefaultSubmit = question.allowsEmptySubmit === true || question.allows_empty_submit === true;
+  const minimumOptionCount = allowsDefaultSubmit ? 1 : 2;
+  if (options.length < minimumOptionCount || options.length > 4) {
+    throw officeHoursStructuredInputContractError(
+      allowsDefaultSubmit
+        ? "question.options must contain 1-4 choices when allowsEmptySubmit is true"
+        : "question.options must contain 2-4 choices",
+    );
   }
   if (options.some((option) => isOtherTextOptionLabel(option?.label))) {
     throw officeHoursStructuredInputContractError("direct-input choices are not allowed; use allowFreeText instead");
@@ -877,12 +883,67 @@ function normalizeOfficeHoursOptions(options) {
         ...(option?.failureMode || option?.failure_mode
           ? { failureMode: String(option.failureMode || option.failure_mode).trim().slice(0, 280) }
           : {}),
+        ...normalizeOfficeHoursOptionAttemptFields(option),
       };
     })
     .filter(Boolean)
     .slice(0, 7);
 
   return normalized;
+}
+
+function normalizeOfficeHoursOptionAttemptFields(option = {}) {
+  const output = {};
+  const copyText = (target, ...keys) => {
+    for (const key of keys) {
+      const value = String(option?.[key] ?? "").trim();
+      if (value) {
+        output[target] = value.slice(0, 1000);
+        return;
+      }
+    }
+  };
+  copyText("answerText", "answerText", "answer_text", "defaultAnswer", "default_answer");
+  copyText("activationDefinition", "activationDefinition", "activation_definition");
+  copyText("candidate", "candidate");
+  copyText("currentAlternative", "currentAlternative", "current_alternative");
+  copyText("externalAction", "externalAction", "external_action");
+  copyText("attemptThreshold", "attemptThreshold", "attempt_threshold");
+  copyText("successCondition", "successCondition", "success_condition");
+  copyText("expectedProofKind", "expectedProofKind", "expected_proof_kind");
+  copyText("evidenceLocation", "evidenceLocation", "evidence_location");
+  copyText("commitmentNote", "commitmentNote", "commitment_note");
+  const autoTransitions = normalizeOfficeHoursOptionAutoTransitions(
+    Array.isArray(option?.autoTransitions) ? option.autoTransitions : option?.auto_transitions,
+  );
+  if (autoTransitions.length) output.autoTransitions = autoTransitions;
+  return output;
+}
+
+function normalizeOfficeHoursOptionAutoTransitions(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const type = String(item.type || item.transition || "").trim();
+      if (!type) return null;
+      const fields = {};
+      const sourceFields = item.fields && typeof item.fields === "object" && !Array.isArray(item.fields)
+        ? item.fields
+        : {};
+      for (const [key, fieldValue] of Object.entries(sourceFields)) {
+        const cleanKey = String(key || "").trim();
+        const cleanValue = String(fieldValue ?? "").trim();
+        if (cleanKey && cleanValue) fields[cleanKey] = cleanValue.slice(0, 1000);
+      }
+      if (!Object.keys(fields).length && type !== "schedule_execution") return null;
+      const output = { type, fields };
+      const auditText = String(item.auditText || item.audit_text || "").trim();
+      if (auditText) output.auditText = auditText.slice(0, 1000);
+      return output;
+    })
+    .filter(Boolean)
+    .slice(0, 4);
 }
 
 function resolveOfficeHoursQuestionIntent({

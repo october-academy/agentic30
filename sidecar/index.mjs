@@ -532,7 +532,6 @@ import {
   classifyFirstCandidatePayload,
   buildCanonicalFirstCandidateCard,
   buildNoCandidateUnblockCard,
-  hasRequiredFirstCandidatePrimaryTextInput,
 } from "./office-hours-first-candidate-host.mjs";
 import { describeVendor as describeGstackVendor } from "./vendor-skill-loader.mjs";
 import {
@@ -563,6 +562,37 @@ import {
   buildFoundationSummaryCompletedEvent,
   shouldRunFoundationSummary,
 } from "./foundation-summary-integration.mjs";
+import { RecorderStore } from "./recorder-store.mjs";
+import { buildRecorderAuditSource } from "./recorder-audit-source.mjs";
+import { createRecorderRawApiServer } from "./recorder-raw-api-server.mjs";
+import { issueRecorderApiToken } from "./recorder-raw-api-auth.mjs";
+import {
+  assertPersistedRecorderMcpAccess,
+  grantRecorderMcpAccess,
+  listRecorderMcpGrants,
+  revokeRecorderMcpGrant,
+} from "./recorder-mcp-grants.mjs";
+import {
+  cancelRecorderPipeRun,
+  enqueueDueRecorderPipeRuns,
+  listRecorderPipeDefinitions,
+  listRecorderPipeRuns,
+  persistBuiltInRecorderPipes,
+  runBuiltInRecorderPipe,
+  runQueuedRecorderPipeRuns,
+} from "./recorder-pipes.mjs";
+import {
+  applyRecorderControlAction,
+  evaluateRecorderCaptureReadiness,
+  loadRecorderControlState,
+} from "./recorder-control-state.mjs";
+import { recordFrameCaptureEnvelope } from "./recorder-ingest.mjs";
+import { recordClipboardEvent } from "./recorder-clipboard.mjs";
+import { recordAudioChunk } from "./recorder-audio.mjs";
+import {
+  deleteRecorderFrameCapture,
+  deleteRecorderFrameCapturesInRange,
+} from "./recorder-delete.mjs";
 
 const sidecarProcessStartedAt = performance.now();
 const sidecarProcessStartedAtIso = new Date().toISOString();
@@ -639,6 +669,7 @@ const CHAT_BIP_EXTERNAL_DOC_MAX_CHARS = 12000;
 const CHAT_BIP_SHEET_MAX_ROWS = 25;
 const CHAT_BIP_EXTERNAL_CACHE_TTL_MS = 5 * 60 * 1000;
 const INSTANT_CHAT_COMPLETE_SLO_MS = 1_000;
+const RECORDER_PIPE_SCHEDULER_INTERVAL_MS = 60_000;
 const NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS = normalizeNewsMarketRadarProviderTimeout(
   process.env.AGENTIC30_NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS,
 );
@@ -704,6 +735,9 @@ const state = {
   integrationSettings: {
     exaApiKey: "",
   },
+  recorderStore: null,
+  recorderRawApiServer: null,
+  recorderPipeSchedulerTimer: null,
   workspaceSetupTelemetry: {
     root: "",
     started: false,
@@ -800,6 +834,15 @@ try {
   state.day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot });
   state.day1SurfaceReview = await loadDay1SurfaceReview({ workspaceRoot });
   state.dayProgress = await loadDayProgress({ workspaceRoot });
+  state.recorderStore = new RecorderStore({ appSupportRoot: appSupportPath }).open();
+  persistBuiltInRecorderPipes({
+    store: state.recorderStore,
+    now: new Date(),
+  });
+  state.recorderRawApiServer = await createRecorderRawApiServer({
+    store: state.recorderStore,
+  });
+  state.recorderPipeSchedulerTimer = startRecorderPipeScheduler();
   const detachedOfficeHoursFailed = await failDetachedOfficeHoursPendingSessions({
     emitEvents: false,
     reason: "bootstrap",
@@ -1161,6 +1204,8 @@ function registerAuthenticatedClient(socket) {
     day1GoalSelection: state.day1GoalSelection,
     day1SurfaceReview: state.day1SurfaceReview,
     dayProgress: state.dayProgress,
+    recorderRawApi: serializeRecorderRawApiStatus(),
+    recorder_raw_api: serializeRecorderRawApiStatus(),
   });
   void emitProgramNotificationSchedule(socket, workspaceRoot);
   scheduleQmdMemoryBootstrap();
@@ -1224,7 +1269,7 @@ wss.on("listening", () => {
     Math.round(readyPerf - sidecarProcessStartedAt),
   );
   process.stdout.write(
-    `${JSON.stringify({ type: "sidecar-ready", port, pid: process.pid, authToken: sidecarAuthToken })}\n`,
+    `${JSON.stringify({ type: "sidecar-ready", port, pid: process.pid, authToken: sidecarAuthToken, recorderRawApi: serializeRecorderRawApiStatus(), recorder_raw_api: serializeRecorderRawApiStatus() })}\n`,
   );
 });
 
@@ -1240,6 +1285,10 @@ async function shutdown() {
   clearInterval(parentProcessPoll);
   clearInterval(userInputPoll);
   clearInterval(workHistoryPoll);
+  if (state.recorderPipeSchedulerTimer) {
+    clearInterval(state.recorderPipeSchedulerTimer);
+    state.recorderPipeSchedulerTimer = null;
+  }
   for (const run of state.activeRuns.values()) {
     run.abortController.abort();
     await run.stop?.();
@@ -1250,6 +1299,10 @@ async function shutdown() {
   for (const run of state.providerAuthRuns.values()) {
     try { run.child.kill("SIGTERM"); } catch {}
   }
+  await state.recorderRawApiServer?.close?.().catch((error) => {
+    telemetry.captureException(error, { operation: "recorder_raw_api_server_close" });
+  });
+  state.recorderStore?.close?.();
   wss.close();
   process.exit(0);
 }
@@ -1313,6 +1366,86 @@ async function handleClientMessage(socket, payload) {
     case "list_sessions":
       send(socket, { type: "sessions_snapshot", sessions: serializeSessions() });
       return;
+    case "recorder_raw_api_status": {
+      send(socket, {
+        type: "recorder_raw_api_status",
+        recorderRawApi: serializeRecorderRawApiStatus(),
+        recorder_raw_api: serializeRecorderRawApiStatus(),
+      });
+      return;
+    }
+    case "recorder_audit_list": {
+      handleRecorderAuditList(socket, payload);
+      return;
+    }
+    case "recorder_control_state_get": {
+      await handleRecorderControlStateGet(socket);
+      return;
+    }
+    case "recorder_control_action": {
+      await handleRecorderControlAction(socket, payload);
+      return;
+    }
+    case "recorder_frame_capture_ingest": {
+      await handleRecorderFrameCaptureIngest(socket, payload);
+      return;
+    }
+    case "recorder_clipboard_event_record": {
+      await handleRecorderClipboardEventRecord(socket, payload);
+      return;
+    }
+    case "recorder_audio_chunk_record": {
+      await handleRecorderAudioChunkRecord(socket, payload);
+      return;
+    }
+    case "recorder_frame_capture_delete": {
+      await handleRecorderFrameCaptureDelete(socket, payload);
+      return;
+    }
+    case "recorder_frame_captures_delete_range": {
+      await handleRecorderFrameCapturesDeleteRange(socket, payload);
+      return;
+    }
+    case "recorder_frame_captures_list": {
+      handleRecorderFrameCapturesList(socket, payload);
+      return;
+    }
+    case "recorder_pipes_list": {
+      handleRecorderPipesList(socket, payload);
+      return;
+    }
+    case "recorder_pipe_run": {
+      await handleRecorderPipeRun(socket, payload);
+      return;
+    }
+    case "recorder_pipe_cancel": {
+      handleRecorderPipeCancel(socket, payload);
+      return;
+    }
+    case "recorder_pipe_scheduler_tick": {
+      await handleRecorderPipeSchedulerTick(socket, payload);
+      return;
+    }
+    case "recorder_raw_api_token_issue": {
+      handleRecorderRawApiTokenIssue(socket, payload);
+      return;
+    }
+    case "recorder_mcp_grants_list": {
+      await handleRecorderMcpGrantsList(socket);
+      return;
+    }
+    case "recorder_mcp_grant_create": {
+      await handleRecorderMcpGrantCreate(socket, payload);
+      return;
+    }
+    case "recorder_mcp_grant_revoke": {
+      await handleRecorderMcpGrantRevoke(socket, payload);
+      return;
+    }
+    case "recorder_mcp_access_check": {
+      await handleRecorderMcpAccessCheck(socket, payload);
+      return;
+    }
     case "curriculum_feature_surface": {
       const result = emitInlineHintTriggerForFeatureAppearance({
         state: state.curriculumInlineHintState,
@@ -1556,11 +1689,30 @@ async function handleClientMessage(socket, payload) {
         return;
       }
       if (session.pendingUserInput) {
-        if (isOfficeHoursStructuredInputMode(session.pendingUserInput?.generation?.mode)) {
+        if (isObsoleteRigidDay1GetUsersPendingRequest(session.pendingUserInput)) {
+          const obsoleteRequestId = String(session.pendingUserInput.requestId || "").trim();
+          if (obsoleteRequestId) {
+            await deleteUserInputArtifacts(appSupportPath, session.id, obsoleteRequestId).catch(() => {});
+            state.resolvedUserInputIds.add(obsoleteRequestId);
+            await clearOfficeHoursPendingQuestionForSession(
+              session,
+              obsoleteRequestId,
+              "obsolete_day1_get_users_pending_start",
+            );
+          }
+          session.pendingUserInput = null;
+          if (session.status === "awaiting_input") {
+            session.status = "idle";
+          }
+          session.error = null;
+          touch(session);
+          await persistSessions();
+        } else if (isOfficeHoursStructuredInputMode(session.pendingUserInput?.generation?.mode)) {
           await broadcastOfficeHoursStartNoop(session);
           return;
+        } else {
+          throw new Error("This session is waiting for structured input.");
         }
-        throw new Error("This session is waiting for structured input.");
       }
       if (
         session.runtime?.officeHours?.active === true
@@ -2063,7 +2215,11 @@ async function handleClientMessage(socket, payload) {
       // the response file is written, then the delivery is marked posted. No fail-open
       // catch: a commit failure rejects the submit. The pending generation carries the
       // {attemptId, expectedRevision, cardType, transition} stamped at promotion time.
-      const answeredGenerationAttemptId = String(answeredGeneration?.attemptId || "").trim();
+      let answeredGenerationAttemptId = String(answeredGeneration?.attemptId || "").trim();
+      let attemptCommitSignalId = answeredGeneration?.signalId || "";
+      let attemptCommitExpectedRevision = Number.isInteger(answeredGeneration?.expectedRevision)
+        ? answeredGeneration.expectedRevision
+        : Number.parseInt(String(answeredGeneration?.expectedRevision ?? ""), 10);
       let officeHoursAttemptProjectionAfterAnswer = null;
       // Non-get_users completion bookkeeping (count + Day-1 doc-readiness).
       let officeHoursProgressAfterAnswer = null;
@@ -2083,13 +2239,37 @@ async function handleClientMessage(socket, payload) {
             terminal: false,
           }),
         );
+        if (!answeredGenerationAttemptId && isDay1CandidateUnblockResponse) {
+          const ensured = await ensureOfficeHoursAttemptForSession(session, {
+            day: session.runtime?.officeHours?.day,
+            source: session.runtime?.officeHours?.source || "",
+          });
+          if (!ensured?.attemptId || !ensured?.projection) {
+            throw new Error("office hours candidate unblock answer cannot recover an active get_users attempt");
+          }
+          const action = nextAttemptAction(ensured.projection);
+          if (action?.kind !== "card" || action.cardType !== "candidate_selection") {
+            throw new Error(
+              `office hours candidate unblock answer cannot advance while attempt action is ${action?.kind || "(none)"}${action?.cardType ? `/${action.cardType}` : ""}`,
+            );
+          }
+          answeredGenerationAttemptId = ensured.attemptId;
+          attemptCommitSignalId = FIRST_CANDIDATE_SIGNAL_ID;
+          attemptCommitExpectedRevision = ensured.revision;
+        }
         if (answeredGenerationAttemptId) {
           // ── Locked get_users gather answer → commit-before-response ──────────────
+          if (session.runtime?.officeHours) {
+            session.runtime.officeHours.answerCommitInFlightRequestId = requestId;
+          }
+          if (hasNonBlockingOfficeHoursCardRun) {
+            await abortActiveOfficeHoursRunAtQuestionCap(session);
+          }
           const commitAt = new Date().toISOString();
           const command = buildAttemptCommandFromCard(
             pendingUserInput,
             response,
-            answeredGeneration?.signalId || "",
+            attemptCommitSignalId,
             {
               responseText: userResponseText,
               responseDescription: userResponseDescription,
@@ -2099,10 +2279,13 @@ async function handleClientMessage(socket, payload) {
           );
           if (!command) {
             throw new Error(
-              `office hours submit could not build an attempt command for signal ${answeredGeneration?.signalId || "(none)"}`,
+              `office hours submit could not build an attempt command for signal ${attemptCommitSignalId || "(none)"}`,
             );
           }
           if (command.type === "candidate_blocker") {
+            if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
+              delete session.runtime.officeHours.answerCommitInFlightRequestId;
+            }
             const snapshot = await projectAttempt({ workspaceRoot, attemptId: answeredGenerationAttemptId });
             if (!snapshot) {
               throw new Error(`office hours candidate blocker could not project attempt ${answeredGenerationAttemptId}`);
@@ -2178,13 +2361,18 @@ async function handleClientMessage(socket, payload) {
             broadcast({ type: "session_updated", session });
             return;
           }
-          const expectedRevision = Number.isInteger(answeredGeneration?.expectedRevision)
-            ? answeredGeneration.expectedRevision
-            : Number.parseInt(String(answeredGeneration?.expectedRevision ?? ""), 10);
+          const autoCommands = buildAutoAttemptCommandsFromCard(pendingUserInput, response, {
+            baseRequestId: requestId,
+            answeredSignalId: attemptCommitSignalId,
+            responseText: userResponseText,
+            responseDescription: userResponseDescription,
+            questionText: officeHoursStructuredQuestionText,
+            at: commitAt,
+          });
           const result = await commitAttemptEvent({
             workspaceRoot,
             attemptId: answeredGenerationAttemptId,
-            expectedRevision,
+            expectedRevision: attemptCommitExpectedRevision,
             event: {
               type: command.type,
               fields: command.fields,
@@ -2195,17 +2383,46 @@ async function handleClientMessage(socket, payload) {
             },
             responsePayload: { sessionId: session.id, requestId, response },
           });
+          let latestProjection = result.projection;
+          let latestRevision = result.revision;
+          for (const autoCommand of autoCommands) {
+            const autoResult = await commitAttemptEvent({
+              workspaceRoot,
+              attemptId: answeredGenerationAttemptId,
+              expectedRevision: latestRevision,
+              event: {
+                type: autoCommand.type,
+                fields: autoCommand.fields,
+                at: autoCommand.at,
+                requestId: autoCommand.requestId,
+                sessionId: session.id,
+                audit: autoCommand.audit,
+              },
+            });
+            latestProjection = autoResult.projection;
+            latestRevision = autoResult.revision;
+          }
           if (session.runtime?.officeHours) {
             session.runtime.officeHours.attemptId = answeredGenerationAttemptId;
-            session.runtime.officeHours.revision = result.revision;
-            const wireDTO = deriveOfficeHoursWireDTO(result.projection);
+            session.runtime.officeHours.revision = latestRevision;
+            const wireDTO = deriveOfficeHoursWireDTO(latestProjection);
             if (wireDTO) {
               session.runtime.officeHours.nextAction = wireDTO.nextAction;
               session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
               session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
             }
+            if (isDay1CandidateUnblockResponse) {
+              session.runtime.officeHours.candidateBlocker = {
+                ...(session.runtime.officeHours.candidateBlocker || {}),
+                unblockAnswer: userResponseText,
+                unblockAnswerDescription: userResponseDescription,
+                unblockRequestId: requestId,
+                updatedAt: commitAt,
+              };
+            }
           }
-          officeHoursAttemptProjectionAfterAnswer = result.projection;
+          officeHoursAttemptProjectionAfterAnswer = latestProjection;
+          state.resolvedUserInputIds.add(requestId);
           // Transcript turn (Mac history display only — NOT authority). Regenerable
           // from the committed event audit; appended best-effort.
           try {
@@ -2241,23 +2458,25 @@ async function handleClientMessage(socket, payload) {
               day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day) || 0,
             });
           });
-          // Commit succeeded → write the response file (atomic) THEN mark posted.
-          await writeUserInputResponse(appSupportPath, {
-            sessionId: session.id,
-            requestId,
-            response,
-          });
-          await markPosted({ workspaceRoot, attemptId: answeredGenerationAttemptId, eventId: requestId })
-            .catch((error) => {
-              telemetry.captureException(error, {
-                operation: "office_hours_attempt_mark_posted",
-                session_id: session.id,
-                request_id: requestId,
-              });
+          const writePostedAttemptResponse = async () => {
+            // Commit succeeded → write the response file (atomic) THEN mark posted.
+            await writeUserInputResponse(appSupportPath, {
+              sessionId: session.id,
+              requestId,
+              response,
             });
-          if (!hasBlockingActiveRun) {
-            await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
-          }
+            await markPosted({ workspaceRoot, attemptId: answeredGenerationAttemptId, eventId: requestId })
+              .catch((error) => {
+                telemetry.captureException(error, {
+                  operation: "office_hours_attempt_mark_posted",
+                  session_id: session.id,
+                  request_id: requestId,
+                });
+              });
+            if (!hasBlockingActiveRun) {
+              await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
+            }
+          };
           state.resolvedUserInputIds.add(requestId);
           session.pendingUserInput = null;
           const predicates = attemptCompletionPredicates(officeHoursAttemptProjectionAfterAnswer);
@@ -2278,12 +2497,13 @@ async function handleClientMessage(socket, payload) {
             response_count: Array.isArray(payload.responses) ? payload.responses.length : 0,
           });
           if (officeHoursGatherComplete) {
+            await writePostedAttemptResponse();
             emitOfficeHoursStatus(session, { stage: "completed", requestId });
             telemetry.captureEvent("mac_sidecar_office_hours_gather_complete", {
               session_id: session.id,
               provider: session.provider,
               attempt_id: answeredGenerationAttemptId,
-              revision: result.revision,
+              revision: latestRevision,
               source: session.runtime?.officeHours?.source || "",
             });
             // Funnel denominator: a completed gather = an eligible Day-1 commitment exists.
@@ -2292,6 +2512,25 @@ async function handleClientMessage(socket, payload) {
               transition: "schedule_execution",
               occurredAt: new Date().toISOString(),
             });
+            if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
+              delete session.runtime.officeHours.answerCommitInFlightRequestId;
+            }
+            broadcast({ type: "session_updated", session });
+            return;
+          }
+          await abortActiveOfficeHoursRunAtQuestionCap(session);
+          const attachedLockedGetUsersNextCard = await attachLockedGetUsersNextAttemptCard(session, {
+            projection: officeHoursAttemptProjectionAfterAnswer,
+            attemptId: answeredGenerationAttemptId,
+            revision: latestRevision,
+            previousRequestId: requestId,
+          });
+          if (attachedLockedGetUsersNextCard) {
+            await writePostedAttemptResponse();
+            if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
+              delete session.runtime.officeHours.answerCommitInFlightRequestId;
+            }
+            await persistSessions();
             broadcast({ type: "session_updated", session });
             return;
           }
@@ -2322,6 +2561,9 @@ async function handleClientMessage(socket, payload) {
             };
           }
           if (shouldQueueGetUsersContinuation) {
+            if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
+              delete session.runtime.officeHours.answerCommitInFlightRequestId;
+            }
             enqueueSilentPrompt(
               session,
               buildOfficeHoursStructuredInputContinuationPrompt({
@@ -2337,8 +2579,16 @@ async function handleClientMessage(socket, payload) {
             return;
           }
           if (!shouldRunGetUsersContinuation) {
+            await writePostedAttemptResponse();
+            if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
+              delete session.runtime.officeHours.answerCommitInFlightRequestId;
+            }
             broadcast({ type: "session_updated", session });
             return;
+          }
+          await writePostedAttemptResponse();
+          if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
+            delete session.runtime.officeHours.answerCommitInFlightRequestId;
           }
           await runPrompt(
             session,
@@ -2471,6 +2721,31 @@ async function handleClientMessage(socket, payload) {
       }
 
       if (isDay1CandidateUnblockResponse) {
+        try {
+          await appendOfficeHoursTurn({
+            workspaceRoot,
+            turn: {
+              day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day),
+              sessionId: session.id,
+              requestId,
+              mode: answeredGeneration?.mode || "office_hours_structured_input",
+              signalId: answeredGeneration?.signalId || "",
+              signalLabel: answeredGeneration?.signalLabel || "",
+              questionText: officeHoursStructuredQuestionText,
+              responseText: userResponseText,
+              responseDescription: userResponseDescription,
+              promptSnapshot: pendingUserInput,
+              submissions: response.responses,
+            },
+          });
+          await clearOfficeHoursPendingQuestionForSession(session, requestId, "answer_submitted");
+        } catch (error) {
+          telemetry.captureException(error, {
+            operation: "office_hours_candidate_unblock_turn_append",
+            session_id: session.id,
+            request_id: requestId,
+          });
+        }
         session.status = "idle";
         session.error = null;
         session.runtime = {
@@ -4076,6 +4351,604 @@ async function handleClientMessage(socket, payload) {
     });
       send(socket, { type: "error", message: `Unknown message type: ${payload.type}` });
   }
+}
+
+function serializeRecorderRawApiStatus() {
+  const server = state.recorderRawApiServer;
+  return {
+    enabled: Boolean(server),
+    host: server?.host || "",
+    port: server?.port || 0,
+    url: server?.url || "",
+    tokenIssuer: "sidecar_websocket",
+    token_issuer: "sidecar_websocket",
+    proofAcceptedByRawApi: false,
+    proof_accepted_by_raw_api: false,
+  };
+}
+
+function startRecorderPipeScheduler() {
+  const timer = setInterval(() => {
+    fireAndForget("recorderPipeSchedulerTick", runRecorderPipeSchedulerTick());
+  }, RECORDER_PIPE_SCHEDULER_INTERVAL_MS);
+  timer.unref?.();
+  fireAndForget("recorderPipeSchedulerBootTick", runRecorderPipeSchedulerTick());
+  return timer;
+}
+
+async function runRecorderPipeSchedulerTick() {
+  const store = state.recorderStore;
+  if (!store) {
+    throw new Error("ERR_RECORDER_PIPE_SCHEDULER_STORE_NOT_STARTED");
+  }
+  const now = new Date();
+  const controlState = await loadRecorderControlState({ appSupportRoot: appSupportPath, now });
+  const readiness = evaluateRecorderCaptureReadiness(controlState, { now });
+  if (!readiness.canRecord) {
+    return {
+      skipped: true,
+      reason: "recorder_capture_not_ready",
+      readiness,
+    };
+  }
+  const enqueueResult = enqueueDueRecorderPipeRuns({
+    store,
+    now,
+  });
+  const drainResult = await runQueuedRecorderPipeRuns({
+    store,
+    now,
+  });
+  if (enqueueResult.failedCount || drainResult.failedCount) {
+    telemetry.captureEvent("mac_recorder_pipe_scheduler_tick_failed", {
+      queued_count: enqueueResult.queuedCount,
+      skipped_count: enqueueResult.skippedCount,
+      executed_count: drainResult.executedCount,
+      failed_count: enqueueResult.failedCount + drainResult.failedCount,
+    });
+  }
+  return { enqueueResult, drainResult };
+}
+
+function handleRecorderRawApiTokenIssue(socket, payload = {}) {
+  const issue = normalizeRecorderRawApiTokenIssuePayload(payload);
+  const token = issueRecorderApiToken({
+    store: requireRecorderStore(),
+    clientId: issue.clientId,
+    clientName: issue.clientName,
+    actorType: "local_user",
+    scopes: issue.scopes,
+    issuedBy: "sidecar_websocket",
+    ttlMs: issue.ttlMs,
+    rawAdminConfirmed: issue.rawAdminConfirmed,
+    now: new Date(),
+  });
+  send(socket, {
+    type: "recorder_raw_api_token_issued",
+    recorderRawApi: serializeRecorderRawApiStatus(),
+    recorder_raw_api: serializeRecorderRawApiStatus(),
+    token,
+    proofAcceptedByRawApi: false,
+    proof_accepted_by_raw_api: false,
+  });
+}
+
+function handleRecorderAuditList(socket, payload = {}) {
+  const auditSource = buildRecorderAuditSource({
+    store: requireRecorderStore(),
+    workspaceId: payload.workspaceId ?? payload.workspace_id,
+    projectId: payload.projectId ?? payload.project_id,
+    endpoint: payload.endpoint,
+    accessLevel: payload.accessLevel ?? payload.access_level,
+    decision: payload.decision,
+    limit: payload.limit,
+    now: new Date(),
+  });
+  send(socket, {
+    type: "recorder_audit_events",
+    recorderAuditSource: auditSource,
+    recorder_audit_source: auditSource,
+    audit: auditSource.audit,
+    resultCount: auditSource.resultCount,
+    result_count: auditSource.result_count,
+    proofAcceptedByAuditSource: false,
+    proof_accepted_by_audit_source: false,
+  });
+}
+
+async function handleRecorderControlStateGet(socket) {
+  const controlState = await loadRecorderControlState({ appSupportRoot: appSupportPath, now: new Date() });
+  const readiness = evaluateRecorderCaptureReadiness(controlState, { now: new Date() });
+  send(socket, recorderControlStateEvent(controlState, readiness));
+}
+
+async function handleRecorderControlAction(socket, payload = {}) {
+  const action = payload.action && typeof payload.action === "object"
+    ? payload.action
+    : {
+      type: payload.actionType ?? payload.action_type ?? payload.type,
+      permission: payload.permission ?? payload.permissionId ?? payload.permission_id,
+      state: payload.state ?? payload.status,
+      reason: payload.reason,
+      visibleIndicatorAcknowledged: payload.visibleIndicatorAcknowledged,
+      visible_indicator_acknowledged: payload.visible_indicator_acknowledged,
+      sensitiveCapture: payload.sensitiveCapture ?? payload.sensitive_capture,
+    };
+  const controlState = await applyRecorderControlAction({
+    appSupportRoot: appSupportPath,
+    action,
+    now: new Date(),
+  });
+  const readiness = evaluateRecorderCaptureReadiness(controlState, { now: new Date() });
+  send(socket, recorderControlStateEvent(controlState, readiness));
+}
+
+function recorderControlStateEvent(controlState, readiness) {
+  return {
+    type: "recorder_control_state",
+    controlState,
+    control_state: controlState,
+    readiness,
+    proofAcceptedByRecorderControl: false,
+    proof_accepted_by_recorder_control: false,
+    proofAcceptedByCaptureReadiness: false,
+    proof_accepted_by_capture_readiness: false,
+  };
+}
+
+async function handleRecorderFrameCaptureIngest(socket, payload = {}) {
+  const now = new Date();
+  const controlState = await loadRecorderControlState({ appSupportRoot: appSupportPath, now });
+  const envelope = payload.envelope && typeof payload.envelope === "object"
+    ? payload.envelope
+    : payload.captureEnvelope ?? payload.capture_envelope;
+  const result = recordFrameCaptureEnvelope(requireRecorderStore(), envelope, {
+    now,
+    controlState,
+  });
+  send(socket, {
+    type: "recorder_frame_capture_ingested",
+    frame: recorderFrameIngestDto(result.frame),
+    mediaAsset: recorderMediaAssetIngestDto(result.mediaAsset),
+    media_asset: recorderMediaAssetIngestDto(result.mediaAsset),
+    proofAcceptedByRecorderIngest: false,
+    proof_accepted_by_recorder_ingest: false,
+    proofAcceptedByCaptureReadiness: false,
+    proof_accepted_by_capture_readiness: false,
+  });
+}
+
+async function handleRecorderClipboardEventRecord(socket, payload = {}) {
+  const now = new Date();
+  const controlState = await loadRecorderControlState({ appSupportRoot: appSupportPath, now });
+  const event = payload.event && typeof payload.event === "object"
+    ? payload.event
+    : payload.clipboardEvent ?? payload.clipboard_event;
+  const result = recordClipboardEvent(requireRecorderStore(), event, {
+    now,
+    controlState,
+  });
+  send(socket, {
+    type: "recorder_clipboard_event_recorded",
+    event: result.event,
+    clipboardEvent: result.clipboardEvent,
+    clipboard_event: result.clipboard_event,
+    proofAcceptedByClipboardEvent: false,
+    proof_accepted_by_clipboard_event: false,
+    proofLedgerWriteAllowed: false,
+    proof_ledger_write_allowed: false,
+  });
+}
+
+async function handleRecorderAudioChunkRecord(socket, payload = {}) {
+  const now = new Date();
+  const controlState = await loadRecorderControlState({ appSupportRoot: appSupportPath, now });
+  const audio = payload.audio && typeof payload.audio === "object"
+    ? payload.audio
+    : payload.audioChunk ?? payload.audio_chunk;
+  const result = recordAudioChunk(requireRecorderStore(), audio, {
+    now,
+    controlState,
+  });
+  send(socket, {
+    type: "recorder_audio_chunk_recorded",
+    audioChunk: result.audioChunk,
+    audio_chunk: result.audio_chunk,
+    transcriptSegments: result.transcriptSegments,
+    transcript_segments: result.transcript_segments,
+    mediaAsset: result.mediaAsset,
+    media_asset: result.media_asset,
+    rawAudioExposed: false,
+    raw_audio_exposed: false,
+    rawTranscriptExposed: false,
+    raw_transcript_exposed: false,
+    pathExposed: false,
+    path_exposed: false,
+    proofAcceptedByAudioChunk: false,
+    proof_accepted_by_audio_chunk: false,
+    proofLedgerWriteAllowed: false,
+    proof_ledger_write_allowed: false,
+  });
+}
+
+async function handleRecorderFrameCaptureDelete(socket, payload = {}) {
+  const frameId = payload.frameId ?? payload.frame_id ?? payload.id;
+  const result = await deleteRecorderFrameCapture(requireRecorderStore(), frameId, {
+    now: new Date(),
+  });
+  send(socket, {
+    type: "recorder_frame_capture_deleted",
+    deletion: recorderFrameDeleteDto(result),
+    proofAcceptedByRecorderDelete: false,
+    proof_accepted_by_recorder_delete: false,
+    proofLedgerWriteAllowed: false,
+    proof_ledger_write_allowed: false,
+  });
+}
+
+async function handleRecorderFrameCapturesDeleteRange(socket, payload = {}) {
+  if (payload.confirm !== true) {
+    const error = new Error("ERR_RECORDER_DELETE_CONFIRMATION_REQUIRED: range delete requires confirm=true");
+    error.code = "ERR_RECORDER_DELETE_CONFIRMATION_REQUIRED";
+    throw error;
+  }
+  const result = await deleteRecorderFrameCapturesInRange(requireRecorderStore(), {
+    startedAt: payload.startedAt ?? payload.started_at,
+    endedAt: payload.endedAt ?? payload.ended_at,
+    limit: payload.limit,
+    now: new Date(),
+  });
+  send(socket, {
+    type: "recorder_frame_captures_deleted",
+    deletionRange: recorderFrameRangeDeleteDto(result),
+    deletion_range: recorderFrameRangeDeleteDto(result),
+    proofAcceptedByRecorderDelete: false,
+    proof_accepted_by_recorder_delete: false,
+    proofLedgerWriteAllowed: false,
+    proof_ledger_write_allowed: false,
+  });
+}
+
+function handleRecorderFrameCapturesList(socket, payload = {}) {
+  const limit = Math.max(1, Math.min(100, Number.parseInt(String(payload.limit ?? 24), 10) || 24));
+  const frames = requireRecorderStore()
+    .listRecords("frames", { limit: Math.max(limit * 4, limit) })
+    .filter((frame) => !frame.deleted_at)
+    .sort((lhs, rhs) => String(rhs.captured_at || "").localeCompare(String(lhs.captured_at || "")))
+    .slice(0, limit)
+    .map((frame) => recorderFrameIngestDto(frame));
+  send(socket, {
+    type: "recorder_frame_captures",
+    frames,
+    proofAcceptedByRecorderFrames: false,
+    proof_accepted_by_recorder_frames: false,
+    proofLedgerWriteAllowed: false,
+    proof_ledger_write_allowed: false,
+  });
+}
+
+function recorderFrameDeleteDto(result = {}) {
+  return {
+    status: result.status,
+    frameId: result.frameId,
+    frame_id: result.frameId,
+    mediaAssetId: result.mediaAssetId,
+    media_asset_id: result.mediaAssetId,
+    mediaRemoved: Boolean(result.mediaRemoved),
+    media_removed: Boolean(result.mediaRemoved),
+    pathExposed: false,
+    path_exposed: false,
+    deletedAt: result.deletedAt,
+    deleted_at: result.deletedAt,
+  };
+}
+
+function recorderFrameRangeDeleteDto(result = {}) {
+  const frameIds = Array.isArray(result.frameIds ?? result.frame_ids)
+    ? (result.frameIds ?? result.frame_ids).map((id) => String(id || "")).filter(Boolean)
+    : [];
+  const mediaAssetIds = Array.isArray(result.mediaAssetIds ?? result.media_asset_ids)
+    ? (result.mediaAssetIds ?? result.media_asset_ids).map((id) => String(id || "")).filter(Boolean)
+    : [];
+  return {
+    status: result.status,
+    frameCount: Number.isFinite(Number(result.frameCount ?? result.frame_count))
+      ? Number(result.frameCount ?? result.frame_count)
+      : frameIds.length,
+    frame_count: Number.isFinite(Number(result.frameCount ?? result.frame_count))
+      ? Number(result.frameCount ?? result.frame_count)
+      : frameIds.length,
+    mediaRemovedCount: Number.isFinite(Number(result.mediaRemovedCount ?? result.media_removed_count))
+      ? Number(result.mediaRemovedCount ?? result.media_removed_count)
+      : mediaAssetIds.length,
+    media_removed_count: Number.isFinite(Number(result.mediaRemovedCount ?? result.media_removed_count))
+      ? Number(result.mediaRemovedCount ?? result.media_removed_count)
+      : mediaAssetIds.length,
+    frameIds,
+    frame_ids: frameIds,
+    mediaAssetIds,
+    media_asset_ids: mediaAssetIds,
+    pathExposed: false,
+    path_exposed: false,
+    deletedAt: result.deletedAt,
+    deleted_at: result.deletedAt,
+  };
+}
+
+function recorderFrameIngestDto(frame = {}) {
+  return {
+    id: frame.id,
+    capturedAt: frame.captured_at,
+    captured_at: frame.captured_at,
+    monitorId: frame.monitor_id,
+    monitor_id: frame.monitor_id,
+    captureTrigger: frame.capture_trigger,
+    capture_trigger: frame.capture_trigger,
+    appName: frame.app_name,
+    app_name: frame.app_name,
+    windowTitle: frame.window_title,
+    window_title: frame.window_title,
+    snapshotAssetId: frame.snapshot_asset_id,
+    snapshot_asset_id: frame.snapshot_asset_id,
+    snapshotSha256: frame.snapshot_sha256,
+    snapshot_sha256: frame.snapshot_sha256,
+    contentHash: frame.content_hash,
+    content_hash: frame.content_hash,
+    textSource: frame.text_source,
+    text_source: frame.text_source,
+    redactionStatus: frame.redaction_status,
+    redaction_status: frame.redaction_status,
+    privacyState: frame.privacy_state,
+    privacy_state: frame.privacy_state,
+    dataClass: frame.data_class,
+    data_class: frame.data_class,
+    safeForSearch: Boolean(frame.safe_for_search),
+    safe_for_search: Boolean(frame.safe_for_search),
+    safeForMemory: Boolean(frame.safe_for_memory),
+    safe_for_memory: Boolean(frame.safe_for_memory),
+    safeForExport: Boolean(frame.safe_for_export),
+    safe_for_export: Boolean(frame.safe_for_export),
+    proofAcceptedByRecorderIngest: false,
+    proof_accepted_by_recorder_ingest: false,
+  };
+}
+
+function recorderMediaAssetIngestDto(mediaAsset = {}) {
+  return {
+    id: mediaAsset.id,
+    assetType: mediaAsset.asset_type,
+    asset_type: mediaAsset.asset_type,
+    sha256: mediaAsset.sha256,
+    byteSize: mediaAsset.byte_size,
+    byte_size: mediaAsset.byte_size,
+    encrypted: Boolean(mediaAsset.encrypted),
+    pathExposed: false,
+    path_exposed: false,
+  };
+}
+
+function handleRecorderPipesList(socket, payload = {}) {
+  const store = requireRecorderStore();
+  const pipes = listRecorderPipeDefinitions({
+    store,
+    limit: payload.limit,
+  });
+  const runs = listRecorderPipeRuns({
+    store,
+    pipeId: payload.pipeId ?? payload.pipe_id,
+    limit: payload.runLimit ?? payload.run_limit ?? payload.limit,
+  });
+  send(socket, {
+    type: "recorder_pipes_state",
+    pipes,
+    runs,
+    resultCount: pipes.length,
+    result_count: pipes.length,
+    runCount: runs.length,
+    run_count: runs.length,
+    proofAcceptedByPipeDefinition: false,
+    proof_accepted_by_pipe_definition: false,
+    proofAcceptedByPipeRun: false,
+    proof_accepted_by_pipe_run: false,
+  });
+}
+
+async function handleRecorderPipeRun(socket, payload = {}) {
+  const result = await runBuiltInRecorderPipe({
+    store: requireRecorderStore(),
+    pipeId: payload.pipeId ?? payload.pipe_id,
+    workspaceId: payload.workspaceId ?? payload.workspace_id,
+    projectId: payload.projectId ?? payload.project_id,
+    startedAt: payload.startedAt ?? payload.started_at,
+    endedAt: payload.endedAt ?? payload.ended_at,
+    triggerReason: payload.triggerReason ?? payload.trigger_reason ?? "manual",
+    runId: payload.runId ?? payload.run_id,
+    limit: payload.limit,
+    timeoutMs: payload.timeoutMs ?? payload.timeout_ms,
+    now: new Date(),
+  });
+  const runs = listRecorderPipeRuns({
+    store: requireRecorderStore(),
+    limit: payload.runLimit ?? payload.run_limit ?? 50,
+  });
+  send(socket, {
+    type: "recorder_pipe_run_result",
+    pipeRun: result.pipeRun,
+    pipe_run: result.pipe_run,
+    outputManifest: result.outputManifest,
+    output_manifest: result.output_manifest,
+    runs,
+    proofAcceptedByPipeRun: false,
+    proof_accepted_by_pipe_run: false,
+  });
+}
+
+function handleRecorderPipeCancel(socket, payload = {}) {
+  const result = cancelRecorderPipeRun({
+    store: requireRecorderStore(),
+    runId: payload.runId ?? payload.run_id,
+    reason: payload.reason,
+    now: new Date(),
+  });
+  const runs = listRecorderPipeRuns({
+    store: requireRecorderStore(),
+    limit: payload.runLimit ?? payload.run_limit ?? 50,
+  });
+  send(socket, {
+    type: "recorder_pipe_cancel_result",
+    pipeRun: result.pipeRun,
+    pipe_run: result.pipe_run,
+    outputManifest: result.outputManifest,
+    output_manifest: result.output_manifest,
+    runs,
+    proofAcceptedByPipeRun: false,
+    proof_accepted_by_pipe_run: false,
+  });
+}
+
+async function handleRecorderPipeSchedulerTick(socket, payload = {}) {
+  const store = requireRecorderStore();
+  const enqueueResult = enqueueDueRecorderPipeRuns({
+    store,
+    workspaceId: payload.workspaceId ?? payload.workspace_id,
+    projectId: payload.projectId ?? payload.project_id,
+    limit: payload.limit,
+    now: new Date(),
+  });
+  const drainResult = payload.autoRun === false || payload.auto_run === false
+    ? null
+    : await runQueuedRecorderPipeRuns({
+      store,
+      maxRuns: payload.maxRuns ?? payload.max_runs,
+      timeoutMs: payload.timeoutMs ?? payload.timeout_ms,
+      now: new Date(),
+    });
+  const runs = listRecorderPipeRuns({
+    store,
+    limit: payload.runLimit ?? payload.run_limit ?? 50,
+  });
+  send(socket, {
+    type: "recorder_pipe_scheduler_tick_result",
+    scheduler: enqueueResult,
+    enqueueResult,
+    enqueue_result: enqueueResult,
+    drainResult,
+    drain_result: drainResult,
+    runs,
+    proofAcceptedByScheduler: false,
+    proof_accepted_by_scheduler: false,
+  });
+}
+
+async function handleRecorderMcpGrantsList(socket) {
+  const grants = await listRecorderMcpGrants({ appSupportPath, now: new Date() });
+  send(socket, {
+    type: "recorder_mcp_grants",
+    grants,
+    proofAcceptedByMcpGrant: false,
+    proof_accepted_by_mcp_grant: false,
+  });
+}
+
+async function handleRecorderMcpGrantCreate(socket, payload = {}) {
+  const grant = await grantRecorderMcpAccess({
+    appSupportPath,
+    toolName: payload.toolName ?? payload.tool_name,
+    accessLevels: payload.accessLevels ?? payload.access_levels ?? payload.scopes,
+    ttlMs: payload.ttlMs ?? payload.ttl_ms,
+    grantedBy: "sidecar_websocket",
+    reason: payload.reason,
+    rawAdminConfirmed: payload.rawAdminConfirmed === true || payload.raw_admin_confirmed === true,
+    now: new Date(),
+  });
+  send(socket, {
+    type: "recorder_mcp_grant_created",
+    grant,
+    proofAcceptedByMcpGrant: false,
+    proof_accepted_by_mcp_grant: false,
+  });
+}
+
+async function handleRecorderMcpGrantRevoke(socket, payload = {}) {
+  const grant = await revokeRecorderMcpGrant({
+    appSupportPath,
+    grantId: payload.grantId ?? payload.grant_id,
+    revokedBy: "sidecar_websocket",
+    now: new Date(),
+  });
+  send(socket, {
+    type: "recorder_mcp_grant_revoked",
+    grant,
+    proofAcceptedByMcpGrant: false,
+    proof_accepted_by_mcp_grant: false,
+  });
+}
+
+async function handleRecorderMcpAccessCheck(socket, payload = {}) {
+  const access = await assertPersistedRecorderMcpAccess({
+    appSupportPath,
+    toolName: payload.toolName ?? payload.tool_name,
+    accessLevel: payload.accessLevel ?? payload.access_level,
+    now: new Date(),
+  });
+  send(socket, {
+    type: "recorder_mcp_access_checked",
+    access,
+    proofAcceptedByMcpGrant: false,
+    proof_accepted_by_mcp_grant: false,
+  });
+}
+
+function requireRecorderStore() {
+  if (!state.recorderStore) {
+    failRecorderRawApiRuntime(
+      "ERR_RECORDER_RAW_API_STORE_NOT_STARTED",
+      "recorder raw API store is not started",
+    );
+  }
+  if (!state.recorderRawApiServer) {
+    failRecorderRawApiRuntime(
+      "ERR_RECORDER_RAW_API_SERVER_NOT_STARTED",
+      "recorder raw API server is not started",
+    );
+  }
+  return state.recorderStore;
+}
+
+function normalizeRecorderRawApiTokenIssuePayload(payload = {}) {
+  const scopes = payload.scopes ?? payload.accessLevels ?? payload.access_levels ?? ["summary"];
+  const ttlMs = normalizeRecorderRawApiTokenTtl(payload.ttlMs ?? payload.ttl_ms);
+  return {
+    clientId: cleanRecorderRawApiText(payload.clientId ?? payload.client_id, 180) || "agentic30-macos-app",
+    clientName: cleanRecorderRawApiText(payload.clientName ?? payload.client_name, 180) || "Agentic30 macOS app",
+    scopes: Array.isArray(scopes) ? scopes : [scopes],
+    ttlMs,
+    rawAdminConfirmed: payload.rawAdminConfirmed === true || payload.raw_admin_confirmed === true,
+  };
+}
+
+function normalizeRecorderRawApiTokenTtl(value) {
+  if (value === undefined || value === null || value === "") {
+    return 15 * 60 * 1000;
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    failRecorderRawApiRuntime(
+      "ERR_RECORDER_RAW_API_TOKEN_TTL_INVALID",
+      "raw API token TTL must be a positive number of milliseconds",
+    );
+  }
+  return parsed;
+}
+
+function cleanRecorderRawApiText(value = "", maxLength = 500) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function failRecorderRawApiRuntime(code, message) {
+  const error = new Error(`${code}: ${message}`);
+  error.code = code;
+  throw error;
 }
 
 function resolveDay1GoalWorkspaceRoot(payload = {}) {
@@ -6107,6 +6980,22 @@ async function runPrompt(
       throw officeHoursStructuredInputToolState.contractError;
     }
     if (officeHoursContext) {
+      if (isLockedDay1GetUsersContext(officeHoursContext) && officeHoursRuntimeGatherComplete(session)) {
+        assistantMessage.state = "final";
+        session.status = "idle";
+        session.error = null;
+        emitOfficeHoursStatus(session, {
+          stage: "completed",
+          messageId: assistantMessage.id,
+          elapsedMs: performance.now() - runStartedAt,
+        });
+        emitAgentEvent(session, assistantMessage.id, {
+          eventType: "run.completed",
+          provider: session.provider,
+          executionMode: route.executionMode,
+        });
+        return;
+      }
       await syncPendingUserInputRequests();
       assertOfficeHoursPendingUserInputAttached(session, officeHoursStructuredInputToolState);
     }
@@ -8635,6 +9524,234 @@ function resolveCandidateHintIdFromCard(pendingUserInput, response) {
   return "";
 }
 
+function snakeKey(key = "") {
+  return String(key || "").replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
+}
+
+function selectedOptionsFromResponse(response) {
+  const labels = [];
+  for (const entry of response?.responses || []) {
+    const selectedOptions = Array.isArray(entry?.selectedOptions) ? entry.selectedOptions : [];
+    for (const value of selectedOptions) {
+      const label = String(value || "").trim();
+      if (label && !isOtherTextOptionLabel(label)) labels.push(label);
+    }
+  }
+  return labels;
+}
+
+function selectedPromptOptions(pendingUserInput, response) {
+  const question = Array.isArray(pendingUserInput?.questions) ? pendingUserInput.questions[0] : null;
+  const options = Array.isArray(question?.options) ? question.options : [];
+  if (!options.length) return [];
+  const selectedLabels = new Set(selectedOptionsFromResponse(response));
+  if (!selectedLabels.size) return [];
+  return options.filter((option) => selectedLabels.has(String(option?.label || "").trim()));
+}
+
+function optionAnswerText(option = {}) {
+  if (!option || typeof option !== "object") return "";
+  return String(
+    option.answerText
+      || option.answer_text
+      || option.defaultAnswer
+      || option.default_answer
+      || option.value
+      || option.commitmentNote
+      || option.commitment_note
+      || "",
+  ).trim();
+}
+
+function selectedOptionAnswerText(pendingUserInput, response) {
+  const values = selectedPromptOptions(pendingUserInput, response)
+    .map(optionAnswerText)
+    .filter(Boolean);
+  return values.join("\n");
+}
+
+function selectedOptionAttemptFields(pendingUserInput, response, fieldNames = []) {
+  const fields = {};
+  const selected = selectedPromptOptions(pendingUserInput, response);
+  for (const option of selected) {
+    for (const key of fieldNames) {
+      const direct = option?.[key];
+      const snake = option?.[snakeKey(key)];
+      const value = direct != null ? direct : snake;
+      const text = String(value || "").trim();
+      if (text && !fields[key]) fields[key] = text;
+    }
+  }
+  return fields;
+}
+
+function selectedOptionAutoTransitions(pendingUserInput, response) {
+  const commands = [];
+  const selected = selectedPromptOptions(pendingUserInput, response);
+  for (const option of selected) {
+    const transitions = Array.isArray(option?.autoTransitions)
+      ? option.autoTransitions
+      : Array.isArray(option?.auto_transitions)
+        ? option.auto_transitions
+        : [];
+    for (const transition of transitions) {
+      commands.push({ option, transition });
+    }
+  }
+  return commands;
+}
+
+function buildFutureDueAt(at = "") {
+  const atMs = Date.parse(at);
+  const baseMs = Number.isFinite(atMs) ? atMs : Date.now();
+  return new Date(baseMs + 24 * 60 * 60 * 1000).toISOString();
+}
+
+function normalizeAutoAttemptFields(type = "", fields = {}, {
+  at = "",
+  fallbackAnswer = "",
+} = {}) {
+  const normalized = {};
+  if (fields && typeof fields === "object" && !Array.isArray(fields)) {
+    for (const [key, value] of Object.entries(fields)) {
+      const cleanKey = String(key || "").trim();
+      const cleanValue = String(value ?? "").trim();
+      if (cleanKey && cleanValue) normalized[cleanKey] = cleanValue;
+    }
+  }
+  if (type === "schedule_execution") {
+    if (!normalized.dueAt) normalized.dueAt = buildFutureDueAt(at);
+    if (!normalized.commitmentNote && fallbackAnswer) {
+      normalized.commitmentNote = fallbackAnswer;
+    }
+  }
+  return normalized;
+}
+
+function buildAutoAttemptCommandsFromCard(pendingUserInput, response, {
+  baseRequestId = "",
+  answeredSignalId = "",
+  responseText = "",
+  responseDescription = "",
+  questionText = "",
+  at = new Date().toISOString(),
+} = {}) {
+  const transitions = selectedOptionAutoTransitions(pendingUserInput, response);
+  const cardType = officeHoursCardTypeForSignal(answeredSignalId);
+  const fallbackAnswer = String(responseText || selectedOptionAnswerText(pendingUserInput, response) || "").trim();
+  if (!transitions.length) {
+    if (cardType === "activation_definition" && fallbackAnswer) {
+      transitions.push(
+        {
+          option: { answerText: fallbackAnswer },
+          transition: {
+            type: "select_candidate",
+            fields: { candidate: fallbackAnswer },
+            auditText: fallbackAnswer,
+          },
+        },
+        {
+          option: { answerText: fallbackAnswer },
+          transition: {
+            type: "record_alternative",
+            fields: {
+              currentAlternative: "아직 확인 전입니다. 오늘 작은 도움 제공 후 반응에서 실제 대안을 확인합니다.",
+            },
+            auditText: "선택 없이 직접 입력한 ICP 문장으로 후보와 현재 대안을 보강한다.",
+          },
+        },
+        {
+          option: { answerText: fallbackAnswer },
+          transition: {
+            type: "define_action_contract",
+            fields: {
+              externalAction: "오늘 ICP 후보 1명에게 실제 자료나 막힌 화면을 받아 Agentic30가 15분 안에 바로 쓸 수 있는 결과로 바꿔 준다.",
+              attemptThreshold: "후보 1명에게 도움 제안 1회 또는 실제 자료 1개 수신",
+              successCondition: "상대가 결과물을 확인하고 다음 행동, 사용 가능 여부, 또는 거절 이유를 답한다.",
+            },
+            auditText: "직접 입력한 ICP에 대해 오늘 줄 도움을 기본 실행안으로 잡는다.",
+          },
+        },
+        {
+          option: { answerText: fallbackAnswer },
+          transition: {
+            type: "define_evidence_contract",
+            fields: {
+              expectedProofKind: "screen_capture_with_note",
+              evidenceLocation: ".agentic30/day1-notes.md",
+            },
+            auditText: "실행 흔적은 화면 캡처와 로컬 메모로 남긴다.",
+          },
+        },
+        {
+          option: { answerText: fallbackAnswer },
+          transition: {
+            type: "schedule_execution",
+            fields: {
+              commitmentNote: "오늘 ICP 후보 1명에게 작은 실행 도움을 제안하고 결과 화면 캡처와 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
+            },
+            auditText: "오늘 줄 도움을 바로 실행하고 로컬 흔적으로 닫는다.",
+          },
+        },
+      );
+    } else if (cardType === "evidence_contract" && fallbackAnswer) {
+      transitions.push({
+        option: { answerText: fallbackAnswer },
+        transition: {
+          type: "schedule_execution",
+          fields: { commitmentNote: fallbackAnswer },
+          auditText: fallbackAnswer,
+        },
+      });
+    }
+  }
+  if (!transitions.length) return [];
+  const optionAnswer = selectedOptionAnswerText(pendingUserInput, response);
+  return transitions.map(({ option, transition }, index) => {
+    const type = String(transition?.type || transition?.transition || "").trim();
+    if (!type) {
+      throw new Error("office hours auto transition is missing type");
+    }
+    const fields = normalizeAutoAttemptFields(type, transition?.fields, {
+      at,
+      fallbackAnswer: optionAnswer || responseText,
+    });
+    if (!Object.keys(fields).length) {
+      throw new Error(`office hours auto transition ${type} has no fields`);
+    }
+    const auditText = String(
+      transition?.auditText
+        || transition?.audit_text
+        || optionAnswer
+        || responseText
+        || optionAnswerText(option)
+        || "",
+    ).trim();
+    return {
+      type,
+      fields,
+      at,
+      requestId: `${String(baseRequestId || "request").trim()}::auto:${index + 1}:${type}`,
+      audit: {
+        questionText: String(questionText || ""),
+        responseText: auditText,
+        responseDescription: String(responseDescription || ""),
+        promptSnapshot: pendingUserInput ?? null,
+        submissions: Array.isArray(response?.responses) ? response.responses : [],
+      },
+    };
+  });
+}
+
+function isDay1CandidateUnblockPrompt(pendingUserInput = {}) {
+  const generation = pendingUserInput?.generation || {};
+  if (String(generation.docType || generation.doc_type || "").trim() === "day1_candidate_unblock") {
+    return true;
+  }
+  const question = Array.isArray(pendingUserInput?.questions) ? pendingUserInput.questions[0] : null;
+  return structuredPromptQuestionId(question) === FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID;
+}
+
 function buildAttemptCommandFromCard(pendingUserInput, response, answeredSignalId, {
   responseText = "",
   responseDescription = "",
@@ -8649,8 +9766,10 @@ function buildAttemptCommandFromCard(pendingUserInput, response, answeredSignalI
     ? primaryTextInputResponseText(pendingUserInput, response)
     : "";
   const isCandidateBlocker = card.transition === "select_candidate"
+    && !isDay1CandidateUnblockPrompt(pendingUserInput)
     && hasNoCandidateBlockerResponse(pendingUserInput, response);
-  const answer = primaryTextAnswer || String(responseText || "").trim();
+  const optionAnswer = selectedOptionAnswerText(pendingUserInput, response);
+  const answer = primaryTextAnswer || optionAnswer || String(responseText || "").trim();
   if (!answer && !isCandidateBlocker) return null;
   const required = Array.isArray(card.requiredFields) ? card.requiredFields : [];
   const fields = {};
@@ -8661,13 +9780,12 @@ function buildAttemptCommandFromCard(pendingUserInput, response, answeredSignalI
     fields.nextUnblockAction = "오늘 바로 연락할 수 있는 전업 1인 개발자 1명의 실명·핸들 또는 특정 스레드 URL을 찾는다.";
   } else if (card.transition === "schedule_execution") {
     // dueAt must parse AND be strictly future relative to `at` (contract guard).
-    const atMs = Date.parse(at);
-    const baseMs = Number.isFinite(atMs) ? atMs : Date.now();
-    fields.dueAt = new Date(baseMs + 24 * 60 * 60 * 1000).toISOString();
+    fields.dueAt = buildFutureDueAt(at);
     fields.commitmentNote = answer;
   } else {
+    const optionFields = selectedOptionAttemptFields(pendingUserInput, response, required);
     for (const key of required) {
-      fields[key] = answer;
+      fields[key] = optionFields[key] || answer;
     }
   }
   // Step 2 (additive): thread a grounded candidate hint id through select_candidate
@@ -8749,6 +9867,49 @@ function deriveOfficeHoursWireDTO(projection) {
   };
 }
 
+function stampLockedGetUsersAttemptProjection(session = null, {
+  attemptId = "",
+  revision = 0,
+  projection = null,
+} = {}) {
+  if (!session?.runtime?.officeHours || !attemptId || !projection) return null;
+  session.runtime.officeHours.attemptId = attemptId;
+  session.runtime.officeHours.revision = revision;
+  const wireDTO = deriveOfficeHoursWireDTO(projection);
+  if (wireDTO) {
+    session.runtime.officeHours.nextAction = wireDTO.nextAction;
+    session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
+    session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
+  }
+  return wireDTO;
+}
+
+async function recoverLockedGetUsersAttemptForSession(session = null) {
+  if (!session?.runtime?.officeHours) return null;
+  const existingId = String(session.runtime.officeHours.attemptId || "").trim();
+  if (existingId) {
+    const snapshot = await projectAttempt({ workspaceRoot, attemptId: existingId });
+    if (snapshot) {
+      return {
+        attemptId: existingId,
+        revision: snapshot.revision,
+        projection: snapshot.projection,
+        snapshot,
+      };
+    }
+  }
+  const recovered = await findOpenGetUsersAttempt(session.id) || await findOpenGetUsersAttempt();
+  if (!recovered?.attemptId) return null;
+  const snapshot = await projectAttempt({ workspaceRoot, attemptId: recovered.attemptId });
+  if (!snapshot) return null;
+  return {
+    attemptId: recovered.attemptId,
+    revision: snapshot.revision,
+    projection: snapshot.projection,
+    snapshot,
+  };
+}
+
 // Resolve (or fabricate) the ValidationAttempt for a session in the locked Day-1
 // get_users flow. NO legacy turn-log migration: (a) reuse the session's pointer;
 // (b) recover the pointer from the store (daemon restart / prior session) by
@@ -8798,8 +9959,12 @@ async function ensureOfficeHoursAttemptForSession(session, {
     return { attemptId: record.attemptId, revision: record.revision, projection: snapshot.projection };
   } catch (error) {
     if (error?.code === "ERR_ATTEMPT_ALREADY_OPEN") {
-      // A concurrent caller opened one between our scan and startAttempt: re-scan.
-      const raced = await findOpenGetUsersAttempt(session.id);
+      // A concurrent caller opened one between our scan and startAttempt, or a
+      // restored pending card was rebound to a fresh session id while the durable
+      // attempt still belongs to the original session. The attempt store enforces a
+      // single non-terminal get_users attempt per workspace, so the workspace-wide
+      // fallback is the same authority startAttempt refused to duplicate.
+      const raced = await findOpenGetUsersAttempt(session.id) || await findOpenGetUsersAttempt();
       if (raced) {
         session.runtime.officeHours.attemptId = raced.attemptId;
         session.runtime.officeHours.revision = raced.revision;
@@ -8885,6 +10050,13 @@ function officeHoursRuntimeGatherComplete(session = null) {
 function attachOfficeHoursRuntime(runtime = {}, officeHours = null) {
   if (!officeHours) return runtime || {};
   const prior = runtime?.officeHours;
+  const priorRevision = Number.parseInt(String(prior?.revision ?? ""), 10);
+  const incomingRevision = Number.parseInt(String(officeHours?.revision ?? ""), 10);
+  const preserveLockedGetUsersProjection = isLockedDay1GetUsersContext(
+    prior?.context || officeHours?.context || "",
+  )
+    && Number.isFinite(priorRevision)
+    && (!Number.isFinite(incomingRevision) || priorRevision > incomingRevision);
   return {
     ...(runtime || {}),
     officeHours: {
@@ -8902,6 +10074,16 @@ function attachOfficeHoursRuntime(runtime = {}, officeHours = null) {
       ...(prior?.terminalAnswered === true ? { terminalAnswered: true } : {}),
       ...(prior?.documentReadiness ? { documentReadiness: prior.documentReadiness } : {}),
       ...officeHours,
+      ...(preserveLockedGetUsersProjection
+        ? {
+          attemptId: prior.attemptId,
+          revision: prior.revision,
+          nextAction: prior.nextAction,
+          gatherProgress: prior.gatherProgress,
+          acceptableDay1Close: prior.acceptableDay1Close,
+          candidateBlocker: prior.candidateBlocker,
+        }
+        : {}),
       active: true,
     },
   };
@@ -9640,6 +10822,16 @@ function officeHoursPendingQuestionAlreadyAnswered(turnLog = null, day = null, r
   });
 }
 
+function officeHoursPendingRequestIdAlreadyAnswered(turnLog = null, day = null, requestId = "") {
+  const dayNumber = normalizeOfficeHoursDay(day);
+  const id = String(requestId || "").trim();
+  if (!dayNumber || !id) return false;
+  return (Array.isArray(turnLog?.turns) ? turnLog.turns : []).some((turn) =>
+    normalizeOfficeHoursDay(turn?.day) === dayNumber
+      && String(turn?.requestId || "").trim() === id
+  );
+}
+
 function formatOfficeHoursPendingStateFailure(reason = "", { requestId = "" } = {}) {
   const suffix = requestId ? ` (${requestId})` : "";
   switch (reason) {
@@ -9847,6 +11039,18 @@ async function clearOfficeHoursPendingQuestionForSession(session = null, request
   }
 }
 
+function isObsoleteRigidDay1GetUsersPendingRequest(request = null) {
+  if (!isOfficeHoursStructuredRequest(request)) return false;
+  const generation = request?.generation || {};
+  const signalId = String(generation.signalId || generation.signal_id || "").trim();
+  if (!signalId.startsWith("get_users_")) return false;
+  const question = Array.isArray(request.questions) ? request.questions[0] : null;
+  const primaryInput = question?.primaryTextInput || question?.primary_text_input || {};
+  if (primaryInput?.required === true || question?.requiresFreeText === true) return true;
+  const dimensionTotal = Number(generation.dimensionTotal ?? generation.dimension_total ?? 0);
+  return dimensionTotal === 6;
+}
+
 function shouldFailDetachedOfficeHoursPendingSession(session = null) {
   if (!session?.id) return false;
   if (session.pendingUserInput) return false;
@@ -9858,6 +11062,43 @@ function shouldFailDetachedOfficeHoursPendingSession(session = null) {
   // detached failure — its close is carried by the projection-derived runtime.
   if (officeHoursRuntimeGatherComplete(session)) return false;
   return Boolean(normalizeOfficeHoursDay(officeHours.day));
+}
+
+async function shouldKeepOfficeHoursPendingWithoutInputArtifact(session = null, pending = null) {
+  if (!session?.id || !isOfficeHoursStructuredRequest(pending)) return false;
+  const day = normalizeOfficeHoursDay(session.runtime?.officeHours?.day);
+  if (!day) return false;
+  const requestId = String(pending.requestId || "").trim();
+  if (!requestId) return false;
+  if (isObsoleteRigidDay1GetUsersPendingRequest(pending)) {
+    await clearOfficeHoursPendingQuestionForSession(
+      session,
+      requestId,
+      "obsolete_day1_get_users_pending_without_artifact",
+    );
+    return false;
+  }
+  try {
+    const [savedPending, turnLog] = await Promise.all([
+      loadOfficeHoursPendingQuestion({ workspaceRoot, day }),
+      loadOfficeHoursTurnLog({ workspaceRoot }),
+    ]);
+    if (String(savedPending?.request?.requestId || "").trim() !== requestId) {
+      return false;
+    }
+    if (officeHoursPendingRequestIdAlreadyAnswered(turnLog, day, requestId)) {
+      return false;
+    }
+    return true;
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "office_hours_pending_artifact_keep_check",
+      session_id: session.id,
+      request_id: requestId,
+      day,
+    });
+    return false;
+  }
 }
 
 async function failDetachedOfficeHoursPendingSession(session = null, {
@@ -9878,6 +11119,31 @@ async function failDetachedOfficeHoursPendingSession(session = null, {
     });
   }
   const requestId = String(pending?.request?.requestId || "").trim();
+  if (requestId) {
+    try {
+      const [turnLog, dayProgress] = await Promise.all([
+        loadOfficeHoursTurnLog({ workspaceRoot }),
+        Promise.resolve(state.dayProgress ?? loadDayProgress({ workspaceRoot })),
+      ]);
+      const answeredPending = officeHoursPendingRequestIdAlreadyAnswered(turnLog, day, requestId);
+      if (answeredPending && isOfficeHoursInterviewActiveForDay(dayProgress, day)) {
+        await clearOfficeHoursPendingQuestionForSession(
+          session,
+          requestId,
+          "answered_pending_snapshot",
+        );
+        return false;
+      }
+    } catch (error) {
+      telemetry.captureException(error, {
+        operation: "office_hours_detached_answered_pending_check",
+        session_id: session.id,
+        request_id: requestId,
+        day,
+        reason,
+      });
+    }
+  }
   if (!requestId) {
     try {
       const [turnLog, dayProgress] = await Promise.all([
@@ -9999,6 +11265,23 @@ async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
     return false;
   }
 
+  if (isObsoleteRigidDay1GetUsersPendingRequest(pending.request)) {
+    const obsoleteRequestId = String(pending?.request?.requestId || "").trim();
+    await clearOfficeHoursPendingQuestion({
+      workspaceRoot,
+      day,
+      requestId: obsoleteRequestId,
+    });
+    telemetry.captureEvent("mac_sidecar_office_hours_obsolete_day1_pending_cleared", {
+      session_id: session.id,
+      provider: session.provider,
+      request_id: obsoleteRequestId,
+      day,
+      source,
+    });
+    return false;
+  }
+
   if (!isOfficeHoursInterviewActiveForDay(dayProgress, day)) {
     await failOfficeHoursPendingQuestionState(session, {
       runKey,
@@ -10058,6 +11341,67 @@ async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
   }
 
   if (officeHoursPendingQuestionAlreadyAnswered(turnLog, day, request)) {
+    const answeredAttemptId = String(
+      request?.generation?.attemptId
+        || request?.generation?.attempt_id
+        || "",
+    ).trim();
+    if (isLockedDay1GetUsersContext(context) && answeredAttemptId) {
+      const snapshot = await projectAttempt({ workspaceRoot, attemptId: answeredAttemptId });
+      if (snapshot) {
+        const restoredRuntime = buildOfficeHoursRuntime(context, source, day, selectedSources, runtimeMetadata);
+        const expected = parseExpectedOfficeHoursQuestionCount(restoredRuntime.context);
+        if (expected > 0) {
+          restoredRuntime.expectedQuestionCount = expected;
+        }
+        restoredRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
+          resumeTurns,
+          session.id,
+        );
+        restoredRuntime.promptSnapshots = buildOfficeHoursRuntimePromptSnapshots(
+          session,
+          resumeTurns,
+          day,
+        );
+        session.runtime = attachOfficeHoursRuntime(session.runtime, restoredRuntime);
+        stampLockedGetUsersAttemptProjection(session, {
+          attemptId: answeredAttemptId,
+          revision: snapshot.revision,
+          projection: snapshot.projection,
+        });
+        const action = nextAttemptAction(snapshot.projection);
+        if (action?.kind === "card") {
+          await attachLockedGetUsersNextAttemptCard(session, {
+            projection: snapshot.projection,
+            attemptId: answeredAttemptId,
+            revision: snapshot.revision,
+            previousRequestId: request.requestId,
+          });
+          const seeded = seedOfficeHoursTranscriptFromTurns(session, resumeTurns);
+          await persistSessions();
+          broadcast({ type: "session_updated", session });
+          telemetry.captureEvent("mac_sidecar_office_hours_answered_pending_regenerated", {
+            session_id: session.id,
+            provider: session.provider,
+            stale_request_id: request.requestId,
+            attempt_id: answeredAttemptId,
+            revision: snapshot.revision,
+            next_card_type: action.cardType || "",
+            seeded,
+          });
+          return true;
+        }
+        await clearOfficeHoursPendingQuestionForSession(session, request.requestId, "answered_pending_gather_complete");
+        session.pendingUserInput = null;
+        session.status = "idle";
+        session.error = null;
+        touch(session);
+        await persistSessions();
+        emitOfficeHoursStatus(session, { stage: "completed", requestId: request.requestId });
+        broadcast({ type: "session_updated", session });
+        return true;
+      }
+    }
     await failOfficeHoursPendingQuestionState(session, {
       runKey,
       day,
@@ -10150,6 +11494,8 @@ async function abortActiveOfficeHoursRunAtQuestionCap(session) {
       operation: "office_hours_question_cap_abort",
       session_id: session?.id || "",
     });
+  } finally {
+    state.activeRuns.delete(session.id);
   }
 }
 
@@ -10331,6 +11677,17 @@ function isOfficeHoursStructuredRequest(request = null) {
   return String(request.title || "").trim().toLowerCase() === "office hours";
 }
 
+function officeHoursStructuredRequestSignalId(request = null) {
+  if (!request || typeof request !== "object") return "";
+  const generation = request.generation && typeof request.generation === "object" && !Array.isArray(request.generation)
+    ? request.generation
+    : {};
+  const signalId = String(generation.signalId || generation.signal_id || "").trim();
+  if (signalId) return signalId;
+  const firstQuestion = Array.isArray(request.questions) ? request.questions[0] : null;
+  return structuredPromptQuestionId(firstQuestion);
+}
+
 function normalizeDay1CandidateUnblockRequest(request = null) {
   if (!request || typeof request !== "object") return null;
   const generation = request.generation && typeof request.generation === "object" && !Array.isArray(request.generation)
@@ -10397,6 +11754,12 @@ function recordOfficeHoursStructuredInputToolEvent(toolState, event = {}) {
 
 function assertOfficeHoursPendingUserInputAttached(session, toolState) {
   if (!toolState?.pendingOutputSeen || session?.pendingUserInput) return;
+  if (
+    isLockedDay1GetUsersContext(String(session?.runtime?.officeHours?.context || ""))
+    && officeHoursRuntimeGatherComplete(session)
+  ) {
+    return;
+  }
   throw new Error("structured input tool returned pending_user_input but no pending request was attachable");
 }
 
@@ -10429,20 +11792,413 @@ async function isDurableLockedGetUsersLane(session = null, { root = workspaceRoo
 function officeHoursLockedGetUsersSignalLabel(signalId = "") {
   switch (String(signalId || "").trim()) {
     case "get_users_active_user_definition":
-      return "활성 사용자 기준";
+      return "첫 고객과 첫 가치";
     case "get_users_first_candidate":
-      return "첫 후보 확정";
+      return "첫 고객 보강";
     case "get_users_current_alternative":
-      return "현재 대안";
+      return "현재 방식 보강";
     case "get_users_today_request":
-      return "오늘 요청";
+      return "오늘 줄 도움";
     case "get_users_evidence_format":
-      return "증거 형식";
+      return "흔적과 마감";
     case "get_users_day1_commitment":
-      return "오늘 약속";
+      return "오늘 실행";
     default:
       return "";
   }
+}
+
+function lockedGetUsersVisibleDimension(cardType = "") {
+  switch (String(cardType || "").trim()) {
+    case "activation_definition":
+      return { dimensionStepIndex: 1, dimensionTotal: 1 };
+    case "candidate_selection":
+    case "current_alternative":
+      return { dimensionStepIndex: 1, dimensionTotal: 3 };
+    case "action_request":
+      return { dimensionStepIndex: 2, dimensionTotal: 3 };
+    case "evidence_contract":
+    case "commitment":
+      return { dimensionStepIndex: 3, dimensionTotal: 3 };
+    default:
+      return { dimensionStepIndex: 1, dimensionTotal: 3 };
+  }
+}
+
+function lockedGetUsersHostCardSpec(cardType = "") {
+  switch (String(cardType || "").trim()) {
+    case "activation_definition":
+      return {
+        question:
+          "Agentic30가 오늘 첫 고객 후보 1명에게 바로 줄 도움을 만들까요?",
+        helperText: "기본안으로 바로 진행됩니다. 다른 후보·채널·요청이 이미 있을 때만 한 줄로 바꾸세요.",
+        freeTextPlaceholder: "선택사항: 다른 후보·채널·요청문이 있으면 한 줄 수정",
+        allowsEmptySubmit: true,
+        primaryTextInput: {
+          label: "필요하면 한 줄 수정",
+          placeholder: "선택사항: 다른 후보·채널·요청문",
+          required: false,
+          submitLabel: "추천안으로 진행",
+          validationMessage: "입력하지 않아도 추천안으로 진행됩니다.",
+        },
+        options: [
+          {
+            label: "첫 고객에게 줄 도움 만들기",
+            description: "후보 찾기, 첫 요청문, 15분 도움 제공안, 남길 흔적까지 Agentic30가 한 번에 묶습니다.",
+            answerText: "전업 1인 개발자가 Agentic30 도움으로 오늘 연락할 첫 고객 후보와 보낼 요청을 확정하면 첫 가치 사용자로 본다.",
+            activationDefinition: "전업 1인 개발자가 Agentic30 도움으로 오늘 연락할 첫 고객 후보와 보낼 요청을 확정하면 첫 가치 사용자로 본다.",
+            candidate: "AI/macOS 앱을 만들었지만 첫 고객 후보와 첫 요청 문장이 막힌 전업 1인 개발자",
+            currentAlternative: "커뮤니티 글, Threads 검색, 지인 조언을 훑지만 실제로 보낼 요청문까지 가지 못한다.",
+            externalAction: "오늘 후보 1명에게 도움 요청을 보내고 Agentic30가 첫 고객 요청문 또는 15분 실행 결과물을 만들어 준다.",
+            attemptThreshold: "후보 1명에게 도움 제안 1회",
+            successCondition: "상대가 요청문이나 결과물을 보고 다음 행동, 사용 가능 여부, 또는 거절 이유를 답한다.",
+            expectedProofKind: "screen_capture_with_note",
+            evidenceLocation: ".agentic30/day1-notes.md",
+            commitmentNote: "오늘 첫 고객 후보 1명에게 도움 요청을 보내고 결과 화면 캡처와 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
+            recommended: true,
+            evidenceTarget: "후보 조건, 보낼 요청문, 실제 연락 흔적",
+            autoTransitions: [
+              {
+                type: "select_candidate",
+                fields: {
+                  candidate: "AI/macOS 앱을 만들었지만 첫 고객 후보와 첫 요청 문장이 막힌 전업 1인 개발자",
+                },
+                auditText: "첫 고객을 못 찾는 AI 앱 개발자를 ICP 후보로 둔다.",
+              },
+              {
+                type: "record_alternative",
+                fields: {
+                  currentAlternative: "커뮤니티 글, Threads 검색, 지인 조언을 훑지만 실제로 보낼 요청문까지 가지 못한다.",
+                },
+                auditText: "현재는 커뮤니티/검색/조언을 훑지만 고객 요청까지 못 가는 상태로 본다.",
+              },
+              {
+                type: "define_action_contract",
+                fields: {
+                  externalAction: "오늘 후보 1명에게 도움 요청을 보내고 Agentic30가 첫 고객 요청문 또는 15분 실행 결과물을 만들어 준다.",
+                  attemptThreshold: "후보 1명에게 도움 제안 1회",
+                  successCondition: "상대가 요청문이나 결과물을 보고 다음 행동, 사용 가능 여부, 또는 거절 이유를 답한다.",
+                },
+                auditText: "후보 1명에게 바로 줄 도움을 실행안으로 둔다.",
+              },
+              {
+                type: "define_evidence_contract",
+                fields: {
+                  expectedProofKind: "screen_capture_with_note",
+                  evidenceLocation: ".agentic30/day1-notes.md",
+                },
+                auditText: "로컬 메모와 화면 캡처로 오늘 실행 흔적을 남긴다.",
+              },
+              {
+                type: "schedule_execution",
+                fields: {
+                  commitmentNote: "오늘 첫 고객 후보 1명에게 도움 요청을 보내고 결과 화면 캡처와 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
+                },
+                auditText: "추천 가치안 그대로 오늘 실행을 닫는다.",
+              },
+            ],
+          },
+        ],
+      };
+    case "current_alternative":
+      return {
+        question: "이 ICP가 지금 억지로 버티는 일을 Agentic30가 무엇부터 덜어줄까요?",
+        helperText: "현재 대안 자체를 맞히는 것보다, 오늘 줄 도움의 형태를 고릅니다.",
+        freeTextPlaceholder: "선택사항: 실제로 쓰는 도구나 반복 작업을 알면 보강",
+        primaryTextInput: {
+          label: "버티는 방식 보강",
+          placeholder: "선택사항: 도구/방법 + 불편함",
+          required: false,
+          submitLabel: "선택한 도움으로 진행",
+          validationMessage: "보강 입력은 선택사항입니다.",
+        },
+        options: [
+          {
+            label: "수동 정리 시간을 줄여줌",
+            description: "노트, 문서, 스프레드시트에 흩어진 맥락을 실행안으로 압축해 줍니다.",
+            answerText: "노트·문서·스프레드시트에 흩어진 맥락을 직접 정리하느라 시간을 쓰고 있어 Agentic30가 실행안으로 압축해 준다.",
+            recommended: true,
+            evidenceTarget: "도구 이름과 반복되는 수동 작업",
+          },
+          {
+            label: "AI 채팅 반복 설명을 줄여줌",
+            description: "매번 긴 맥락을 설명하지 않게 오늘 할 일과 요청문을 대신 정리합니다.",
+            answerText: "ChatGPT, Claude, Codex에 매번 맥락을 다시 설명하며 버티고 있어 Agentic30가 오늘 할 일과 요청문을 대신 정리한다.",
+            evidenceTarget: "반복 입력되는 맥락과 결과물",
+          },
+          {
+            label: "사람에게 묻기 전 초안을 만들어줌",
+            description: "멘토·커뮤니티에 물어보기 전에 보낼 질문과 판단 기준을 먼저 만듭니다.",
+            answerText: "멘토, 동료, 커뮤니티에 방향을 묻고 있어 Agentic30가 먼저 보낼 질문과 판단 기준을 만들어 준다.",
+            evidenceTarget: "물어보는 채널과 빈도",
+          },
+          {
+            label: "아직 모름 — 도움 반응으로 확인",
+            description: "대안을 묻는 인터뷰 대신 작은 도움을 먼저 주고 반응에서 대안을 확인합니다.",
+            answerText: "현재 대안은 아직 모르므로 작은 실행 도움을 먼저 제공하고 반응에서 실제 대안을 확인한다.",
+            evidenceTarget: "오늘 물어볼 대안 질문",
+          },
+        ],
+      };
+    case "action_request":
+      return {
+        question: "오늘 이 ICP에게 Agentic30가 어떤 도움을 바로 제공할까요?",
+        helperText: "방법보다 상대가 오늘 얻는 결과를 고릅니다. 선택만 해도 실행 계약이 만들어집니다.",
+        freeTextPlaceholder: "선택사항: 특정 채널, 시간, 보낼 문장을 알고 있으면 보강",
+        primaryTextInput: {
+          label: "도움 방식 보강",
+          placeholder: "선택사항: 시간, 채널, 보낼 문장",
+          required: false,
+          submitLabel: "선택한 도움 제공",
+          validationMessage: "보강 입력은 선택사항입니다.",
+        },
+        options: [
+          {
+            label: "15분 실행 결과물 만들어주기",
+            description: "상대의 문서·코드·메모 하나를 받아 바로 쓸 수 있는 결과로 바꿔 줍니다.",
+            answerText: "오늘 ICP에게 실제 자료 1개를 보내 달라고 요청하고 Agentic30가 15분 안에 바로 쓸 수 있는 결과로 바꿔 준다.",
+            externalAction: "실제 자료 1개를 받아 Agentic30가 15분 안에 바로 쓸 수 있는 결과로 바꿔 준다.",
+            attemptThreshold: "자료 1개와 15분 실행",
+            successCondition: "상대가 결과물을 확인하고 다음 행동 또는 사용 가능 여부를 답한다.",
+            recommended: true,
+            evidenceTarget: "사용한 자료와 완료 화면",
+          },
+          {
+            label: "고객 요청 DM을 대신 완성해주기",
+            description: "상대가 오늘 실제 고객에게 보낼 한 줄 요청을 바로 보낼 수 있게 만듭니다.",
+            answerText: "오늘 ICP가 실제 고객에게 보낼 한 줄 요청을 Agentic30가 완성해 주고, 상대가 그대로 보내거나 수정해 보낸다.",
+            externalAction: "실제 고객에게 보낼 한 줄 요청을 완성해 준다.",
+            attemptThreshold: "오늘 보낼 요청문 1개",
+            successCondition: "상대가 요청문을 보내거나 보낼 수 없는 이유를 답한다.",
+            evidenceTarget: "시간·빈도·비용 답변",
+          },
+          {
+            label: "막힌 화면을 보고 다음 행동 정리",
+            description: "화면 공유나 캡처를 받아 막힌 지점과 바로 할 다음 행동을 정리합니다.",
+            answerText: "오늘 ICP에게 막힌 화면 캡처나 짧은 화면 공유를 요청하고 Agentic30가 다음 행동 1개를 정리해 준다.",
+            externalAction: "막힌 화면 캡처나 짧은 화면 공유를 받아 다음 행동 1개를 정리해 준다.",
+            attemptThreshold: "막힌 화면 1개 또는 15분 화면 공유",
+            successCondition: "상대가 다음 행동을 이해하고 실행 가능하다고 답한다.",
+            evidenceTarget: "막힌 화면과 원인 메모",
+          },
+        ],
+      };
+    case "evidence_contract":
+      return {
+        question: "도움을 줬다는 흔적과 오늘 마감은 무엇이면 충분할까요?",
+        helperText: "내일 다시 판단할 수 있는 가장 단순한 흔적을 고릅니다. 선택하면 Day 1 실행안이 닫힙니다.",
+        freeTextPlaceholder: "선택사항: 저장 위치나 파일명을 알고 있으면 보강",
+        primaryTextInput: {
+          label: "흔적 보강",
+          placeholder: "선택사항: 캡처/답장/메모 위치",
+          required: false,
+          submitLabel: "선택한 흔적으로 Day 1 닫기",
+          validationMessage: "보강 입력은 선택사항입니다.",
+        },
+        options: [
+          {
+            label: "로컬 메모 + 화면 캡처로 닫기",
+            description: "도움을 준 결과 화면과 짧은 판단 메모만 남깁니다.",
+            answerText: "결과 화면 캡처와 짧은 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
+            expectedProofKind: "screen_capture_with_note",
+            evidenceLocation: ".agentic30/day1-notes.md",
+            recommended: true,
+            evidenceTarget: "화면 캡처와 로컬 메모 위치",
+            autoTransitions: [
+              {
+                type: "schedule_execution",
+                fields: {
+                  commitmentNote: "오늘 ICP 후보 1명에게 선택한 도움을 제공하고 결과 화면 캡처와 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
+                },
+                auditText: "로컬 메모와 화면 캡처로 오늘 실행을 닫는다.",
+              },
+            ],
+          },
+          {
+            label: "DM/댓글 답장만 남기기",
+            description: "상대가 보인 반응, 거절, 다음 약속을 그대로 남깁니다.",
+            answerText: "DM 또는 댓글 답장 캡처와 거절/수락 이유를 .agentic30/day1-notes.md에 남긴다.",
+            expectedProofKind: "message_reply_capture",
+            evidenceLocation: ".agentic30/day1-notes.md",
+            evidenceTarget: "답장 캡처와 거절 이유",
+            autoTransitions: [
+              {
+                type: "schedule_execution",
+                fields: {
+                  commitmentNote: "오늘 ICP 후보 1명에게 도움 요청을 보내고 DM/댓글 답장이나 거절 이유를 .agentic30/day1-notes.md에 남긴다.",
+                },
+                auditText: "DM/댓글 답장이나 거절 이유로 오늘 실행을 닫는다.",
+              },
+            ],
+          },
+          {
+            label: "보낸 요청문과 내일 확인 시각 고정",
+            description: "오늘 실행이 발송까지라면 요청문, 채널, 내일 확인 시각만 남깁니다.",
+            answerText: "오늘 보낸 요청문, 보낸 채널, 내일 확인 시각을 .agentic30/day1-notes.md에 남긴다.",
+            expectedProofKind: "message_log",
+            evidenceLocation: ".agentic30/day1-notes.md",
+            evidenceTarget: "요청문, 채널, 확인 시각",
+            autoTransitions: [
+              {
+                type: "schedule_execution",
+                fields: {
+                  commitmentNote: "오늘 ICP 후보 1명에게 도움 요청을 보내고 요청문, 채널, 내일 확인 시각을 .agentic30/day1-notes.md에 남긴다.",
+                },
+                auditText: "보낸 요청문과 내일 확인 시각으로 오늘 실행을 닫는다.",
+              },
+            ],
+          },
+        ],
+      };
+    case "commitment":
+      return {
+        question: "오늘 어떤 도움 실행으로 끝낼까요?",
+        helperText: "선택하면 그 실행안으로 Day 1을 닫습니다. 세부 이름이나 시간은 있으면 보강하세요.",
+        freeTextPlaceholder: "선택사항: 정확한 사람, 시간, 채널을 알고 있으면 보강",
+        primaryTextInput: {
+          label: "실행 세부 보강",
+          placeholder: "선택사항: 시간 + 후보 + 채널",
+          required: false,
+          submitLabel: "선택한 실행으로 Day 1 닫기",
+          validationMessage: "보강 입력은 선택사항입니다.",
+        },
+        options: [
+          {
+            label: "오늘 DM 보내고 15분 도움 제공",
+            description: "후보에게 작은 실행 도움을 제안하고 답장/결과를 로컬에 남깁니다.",
+            answerText: "오늘 후보 1명에게 DM으로 15분 실행 도움을 제안하고 답장 또는 결과 화면을 .agentic30/day1-notes.md에 남긴다.",
+            recommended: true,
+            evidenceTarget: "DM 캡처와 로컬 노트",
+          },
+          {
+            label: "막힌 화면 캡처를 받아 다음 행동 제공",
+            description: "후보의 막힌 화면을 받아 바로 다음 행동 하나를 정리해 줍니다.",
+            answerText: "오늘 후보에게 막힌 화면 캡처를 요청하고 Agentic30가 다음 행동 하나를 정리해 .agentic30/day1-notes.md에 남긴다.",
+            evidenceTarget: "화면 공유 요청과 응답",
+          },
+          {
+            label: "후보 1명 찾고 첫 요청까지 작성",
+            description: "후보가 약하면 찾기와 첫 요청 작성을 오늘 실행으로 둡니다.",
+            answerText: "오늘 후보 1명을 찾고 첫 도움 요청 문장을 작성해 발송 준비 또는 발송 캡처를 .agentic30/day1-notes.md에 남긴다.",
+            evidenceTarget: "새 후보와 연락 경로",
+          },
+          {
+            label: "오늘은 초안만 만들고 내일 발송",
+            description: "지금 발송이 어렵다면 내일 보낼 사람/문장/흔적 위치만 고정합니다.",
+            answerText: "오늘은 내일 보낼 후보 1명과 도움 요청 문장을 확정하고 .agentic30/day1-notes.md에 남긴다.",
+            evidenceTarget: "이월 사유와 다음 시각",
+          },
+        ],
+      };
+    default:
+      return null;
+  }
+}
+
+function buildLockedGetUsersHostCard(session, {
+  attemptId = "",
+  expectedRevision = 0,
+  cardType = "",
+  transition = "",
+} = {}) {
+  const card = cardDefinition(cardType);
+  const signalId = card?.legacySignalId || "";
+  if (!signalId) {
+    throw new Error(`locked get_users host card could not resolve signal for card ${cardType || "(empty)"}`);
+  }
+  const attemptToken = {
+    attemptId: String(attemptId || ""),
+    expectedRevision: Number(expectedRevision) || 0,
+    cardType: String(cardType || ""),
+    transition: String(transition || card?.transition || ""),
+  };
+  if (String(cardType || "") === "candidate_selection") {
+    return buildCanonicalFirstCandidateCard({
+      sessionId: session?.id || "",
+      provider: session?.provider || "codex",
+      toolName: CODEX_STRUCTURED_INPUT_TOOL,
+      attemptToken,
+    });
+  }
+  const spec = lockedGetUsersHostCardSpec(cardType);
+  if (!spec) {
+    throw new Error(`locked get_users host card missing copy for card ${cardType || "(empty)"}`);
+  }
+  const label = officeHoursLockedGetUsersSignalLabel(signalId);
+  return {
+    sessionId: String(session?.id || ""),
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: "Office Hours",
+    questions: [
+      {
+        questionId: signalId,
+        header: label,
+        question: spec.question,
+        helperText: spec.helperText,
+        freeTextPlaceholder: spec.freeTextPlaceholder,
+        options: spec.options,
+        multiSelect: false,
+        allowFreeText: true,
+        requiresFreeText: false,
+        ...(spec.allowsEmptySubmit === true ? { allowsEmptySubmit: true } : {}),
+        primaryTextInput: spec.primaryTextInput,
+        textMode: "short",
+      },
+    ],
+    generation: {
+      mode: "office_hours_inline",
+      docType: "day1_step",
+      signalId,
+      signalLabel: label,
+      ...lockedGetUsersVisibleDimension(cardType),
+      ...attemptToken,
+    },
+  };
+}
+
+async function attachLockedGetUsersNextAttemptCard(session, {
+  projection = null,
+  attemptId = "",
+  revision = 0,
+  previousRequestId = "",
+} = {}) {
+  const action = nextAttemptAction(projection);
+  if (action?.kind !== "card") return null;
+  const card = cardDefinition(action.cardType);
+  if (!card?.legacySignalId) {
+    throw new Error(`locked get_users next action references unknown card ${action.cardType || "(empty)"}`);
+  }
+  const payload = buildLockedGetUsersHostCard(session, {
+    attemptId,
+    expectedRevision: revision,
+    cardType: action.cardType,
+    transition: card.transition,
+  });
+  const request = await createUserInputRequest(
+    appSupportPath,
+    prepareOfficeHoursStructuredInputRequest(payload),
+  );
+  session.pendingUserInput = request;
+  session.status = "awaiting_input";
+  session.error = null;
+  touch(session);
+  await persistOfficeHoursPendingQuestion(session, request, "locked_get_users_next_card");
+  emitOfficeHoursStatus(session, {
+    stage: "question_ready",
+    requestId: request.requestId,
+    progressText: `${officeHoursLockedGetUsersSignalLabel(card.legacySignalId) || "다음 질문"} 준비 완료`,
+  });
+  telemetry.captureEvent("mac_sidecar_office_hours_locked_get_users_host_card_created", {
+    session_id: session.id,
+    provider: session.provider,
+    previous_request_id: previousRequestId,
+    request_id: request.requestId,
+    attempt_id: attemptId,
+    revision,
+    card_type: action.cardType,
+    signal_id: card.legacySignalId,
+  });
+  return request;
 }
 
 async function prepareOfficeHoursStructuredInputRequestForSession(session, request, {
@@ -10475,7 +12231,11 @@ async function prepareOfficeHoursStructuredInputRequestForSession(session, reque
   }
   const action = nextAttemptAction(snapshot.projection);
   if (action.kind !== "card") {
-    throw new Error(`locked get_users ${source} received a structured card while attempt action is ${action.kind}`);
+    const error = new Error(`locked get_users ${source} received a structured card while attempt action is ${action.kind}`);
+    error.code = "ERR_LOCKED_GET_USERS_STALE_CARD_AFTER_WAIT";
+    error.actionKind = action.kind;
+    error.action_kind = action.kind;
+    throw error;
   }
   const card = cardDefinition(action.cardType);
   const canonicalSignalId = card?.legacySignalId || "";
@@ -10489,35 +12249,38 @@ async function prepareOfficeHoursStructuredInputRequestForSession(session, reque
     cardType: action.cardType,
     transition: card?.transition || "",
   };
+  const hostPayload = buildLockedGetUsersHostCard(session, {
+    attemptId: ensured.attemptId,
+    expectedRevision: snapshot.revision,
+    cardType: action.cardType,
+    transition: card?.transition || "",
+  });
   let prepared = {
-    ...request,
+    ...hostPayload,
+    requestId: request.requestId,
+    createdAt: request.createdAt,
+    toolName: request.toolName || hostPayload.toolName,
     generation: {
-      ...(request.generation || {}),
-      mode: request.generation?.mode || "office_hours_tool",
-      docType: request.generation?.docType || "day1_step",
+      ...(hostPayload.generation || {}),
+      mode: request.generation?.mode || hostPayload.generation?.mode || "office_hours_tool",
+      docType: request.generation?.docType || hostPayload.generation?.docType || "day1_step",
       signalId: canonicalSignalId,
       signalLabel: officeHoursLockedGetUsersSignalLabel(canonicalSignalId)
-        || request.generation?.signalLabel
+        || hostPayload.generation?.signalLabel
         || "",
+      ...lockedGetUsersVisibleDimension(action.cardType),
       ...attemptToken,
     },
-    questions: (Array.isArray(request.questions) ? request.questions : []).map((question, index) => index === 0
-      ? {
-          ...question,
-          questionId: canonicalSignalId,
-          header: question.header || officeHoursLockedGetUsersSignalLabel(canonicalSignalId),
-        }
-      : question),
   };
 
   if (shouldValidateFirstCandidatePayload(prepared, context)) {
     const firstQuestion = Array.isArray(prepared.questions) ? prepared.questions[0] : null;
     const classification = classifyFirstCandidatePayload(prepared);
-    if (!classification || classification.genericOnly || !hasRequiredFirstCandidatePrimaryTextInput(firstQuestion)) {
+    if (!classification || classification.genericOnly || !classification.forcesSpecificity) {
       telemetry.captureEvent("mac_sidecar_office_hours_first_candidate_rejected", {
         session_id: session.id,
         provider: session.provider,
-        reason: !classification ? "no_question" : classification.genericOnly ? "generic_only" : "not_text_first",
+        reason: !classification ? "no_question" : classification.genericOnly ? "generic_only" : "not_specific",
         source,
       });
       prepared = buildCanonicalFirstCandidateCard({
@@ -10640,7 +12403,7 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
   if (shouldValidateFirstCandidatePayload(payload, context)) {
     const classification = classifyFirstCandidatePayload(payload);
     const firstQuestion = Array.isArray(payload.questions) ? payload.questions[0] : null;
-    if (!classification || classification.genericOnly || !hasRequiredFirstCandidatePrimaryTextInput(firstQuestion)) {
+    if (!classification || classification.genericOnly || !classification.forcesSpecificity) {
       const fallback = buildCanonicalFirstCandidateCard({
         sessionId: session.id,
         provider: session.provider,
@@ -10657,7 +12420,7 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
       telemetry.captureEvent("mac_sidecar_office_hours_first_candidate_rejected", {
         session_id: session.id,
         provider: session.provider,
-        reason: !classification ? "no_question" : classification.genericOnly ? "generic_only" : "not_text_first",
+        reason: !classification ? "no_question" : classification.genericOnly ? "generic_only" : "not_specific",
         source,
       });
       payload = fallback;
@@ -11175,7 +12938,8 @@ async function runOfficeHours(session, {
     // terminal route a relaunch would re-run the provider on a finished
     // interview.
     const officeHoursResumeTerminal = hasOfficeHoursTerminalResumeTurn(officeHoursResumeTurns);
-    const officeHoursResumeWrapUp = officeHoursResumeTerminal
+    const officeHoursResumeIsGetUsers = isLockedDay1GetUsersContext(officeHoursRuntime.context);
+    let officeHoursResumeWrapUp = officeHoursResumeTerminal
       || (officeHoursExpectedQuestionCount > 0
         && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount);
     if (officeHoursResumeTurns.length) {
@@ -11200,6 +12964,80 @@ async function runOfficeHours(session, {
         officeHoursResumeTurns,
         runtimeDay,
       );
+      if (officeHoursResumeIsGetUsers) {
+        session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
+        if (!session.title || session.title === "New Session") {
+          session.title = "Office Hours";
+        }
+        const recoveredAttempt = await recoverLockedGetUsersAttemptForSession(session);
+        if (recoveredAttempt?.projection) {
+          const wireDTO = stampLockedGetUsersAttemptProjection(session, recoveredAttempt);
+          const predicates = attemptCompletionPredicates(recoveredAttempt.projection);
+          officeHoursResumeWrapUp = predicates.gatherComplete;
+          if (!predicates.gatherComplete) {
+            const action = wireDTO?.nextAction || nextAttemptAction(recoveredAttempt.projection);
+            const expectedSignalId = action?.kind === "card"
+              ? cardDefinition(action.cardType)?.legacySignalId || ""
+              : "";
+            if (
+              expectedSignalId
+              && isOfficeHoursStructuredRequest(session.pendingUserInput)
+              && officeHoursStructuredRequestSignalId(session.pendingUserInput) === expectedSignalId
+            ) {
+              const request = await writeUserInputRequest(
+                appSupportPath,
+                prepareOfficeHoursStructuredInputRequest({
+                  ...session.pendingUserInput,
+                  sessionId: session.id,
+                }),
+              );
+              session.pendingUserInput = request;
+              session.status = "awaiting_input";
+              session.error = null;
+              touch(session);
+              await persistOfficeHoursPendingQuestion(session, request, "locked_get_users_resume_existing_card");
+              await persistSessions();
+              broadcast({ type: "session_updated", session });
+              emitOfficeHoursStatus(session, {
+                stage: "question_ready",
+                requestId: request.requestId,
+                progressText: `${officeHoursLockedGetUsersSignalLabel(expectedSignalId) || "다음 질문"} 준비 완료`,
+              });
+              telemetry.captureEvent("mac_sidecar_office_hours_locked_get_users_resume_card_restored", {
+                session_id: session.id,
+                provider: session.provider,
+                request_id: request.requestId,
+                attempt_id: recoveredAttempt.attemptId,
+                revision: recoveredAttempt.revision,
+                signal_id: expectedSignalId,
+                source: String(source || ""),
+              });
+              const resumeCardRun = state.activeRuns.get(session.id);
+              if (resumeCardRun?.runKey === runKey) {
+                state.activeRuns.delete(session.id);
+              }
+              return;
+            }
+
+            const attached = await attachLockedGetUsersNextAttemptCard(session, {
+              projection: recoveredAttempt.projection,
+              attemptId: recoveredAttempt.attemptId,
+              revision: recoveredAttempt.revision,
+              previousRequestId: officeHoursRuntime.promptSnapshots?.at(-1)?.requestId || "",
+            });
+            if (!attached) {
+              throw new Error("locked get_users resume could not attach the next pending card");
+            }
+            await persistSessions();
+            broadcast({ type: "session_updated", session });
+            const resumeCardRun = state.activeRuns.get(session.id);
+            if (resumeCardRun?.runKey === runKey) {
+              state.activeRuns.delete(session.id);
+            }
+            return;
+          }
+        }
+      }
       telemetry.captureEvent("mac_sidecar_office_hours_resumed", {
         session_id: session.id,
         provider: session.provider,
@@ -11214,7 +13052,7 @@ async function runOfficeHours(session, {
         // Skip the provider run: a wrap-up prompt would re-bill on every relaunch
         // until the interview step closes. Settle the session idle with the seeded
         // transcript; the commitment bar carries the close from here.
-        const wrapUpIsGetUsers = isLockedDay1GetUsersContext(officeHoursRuntime.context);
+        const wrapUpIsGetUsers = officeHoursResumeIsGetUsers;
         const officeHoursResumeCapReached = officeHoursExpectedQuestionCount > 0
           && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount;
         if (!wrapUpIsGetUsers && officeHoursResumeTerminal) {
@@ -19951,7 +21789,28 @@ async function suppressOfficeHoursRequestAfterQuestionCap(session, request, acti
   );
   let countProgress = null;
   if (isGetUsers) {
-    if (!officeHoursRuntimeGatherComplete(session)) return false;
+    const attemptId = String(
+      session?.runtime?.officeHours?.attemptId
+        || request?.generation?.attemptId
+        || request?.generation?.attempt_id
+        || "",
+    ).trim();
+    let gatherComplete = officeHoursRuntimeGatherComplete(session);
+    if (!gatherComplete && attemptId) {
+      const snapshot = await projectAttempt({ workspaceRoot, attemptId });
+      if (snapshot) {
+        const action = nextAttemptAction(snapshot.projection);
+        gatherComplete = Boolean(action) && action.kind !== "card";
+        if (gatherComplete) {
+          stampLockedGetUsersAttemptProjection(session, {
+            attemptId,
+            revision: snapshot.revision,
+            projection: snapshot.projection,
+          });
+        }
+      }
+    }
+    if (!gatherComplete) return false;
   } else {
     if (isDay1DocumentReadinessFollowupRequest(request)) {
       return false;
@@ -20009,8 +21868,49 @@ async function syncPendingUserInputRequests() {
     if (state.resolvedUserInputIds.has(request.requestId)) continue;
     const session = state.sessions.get(request.sessionId);
     if (!session) continue;
+    if (
+      session.runtime?.officeHours?.active === true
+      && isObsoleteRigidDay1GetUsersPendingRequest(request)
+    ) {
+      await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId).catch(() => {});
+      state.resolvedUserInputIds.add(request.requestId);
+      activeRequestIds.delete(request.requestId);
+      if (session.pendingUserInput?.requestId === request.requestId) {
+        session.pendingUserInput = null;
+      }
+      await clearOfficeHoursPendingQuestionForSession(
+        session,
+        request.requestId,
+        "obsolete_day1_get_users_pending_artifact",
+      );
+      if (session.status === "awaiting_input") {
+        session.status = "idle";
+      }
+      session.error = null;
+      touch(session);
+      changedSessions.add(session.id);
+      continue;
+    }
     if (await suppressOfficeHoursRequestAfterQuestionCap(session, request, activeRequestIds)) {
       changedSessions.add(session.id);
+      continue;
+    }
+    const lockedGetUsersAnswerCommitInFlightRequestId = session.runtime?.officeHours?.active === true
+      && isLockedDay1GetUsersContext(String(session.runtime.officeHours.context || ""))
+      ? String(session.runtime.officeHours.answerCommitInFlightRequestId || "")
+      : "";
+    if (lockedGetUsersAnswerCommitInFlightRequestId) {
+      if (request.requestId !== lockedGetUsersAnswerCommitInFlightRequestId) {
+        await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId);
+        state.resolvedUserInputIds.add(request.requestId);
+        activeRequestIds.delete(request.requestId);
+        await clearOfficeHoursPendingQuestionForSession(
+          session,
+          request.requestId,
+          "locked_get_users_answer_commit_in_flight",
+        );
+        changedSessions.add(session.id);
+      }
       continue;
     }
     if (
@@ -20031,6 +21931,20 @@ async function syncPendingUserInputRequests() {
       continue;
     }
     const pendingAlreadyAttached = session.pendingUserInput?.requestId === request.requestId;
+    if (
+      session.runtime?.officeHours?.active === true
+      && isLockedDay1GetUsersContext(String(session.runtime.officeHours.context || ""))
+      && session.pendingUserInput?.requestId
+      && activeRequestIds.has(session.pendingUserInput.requestId)
+      && !pendingAlreadyAttached
+      && isOfficeHoursStructuredRequest(session.pendingUserInput)
+    ) {
+      await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId);
+      state.resolvedUserInputIds.add(request.requestId);
+      activeRequestIds.delete(request.requestId);
+      changedSessions.add(session.id);
+      continue;
+    }
 
     let nextRequest = request;
     if (session.runtime?.officeHours?.active === true) {
@@ -20048,6 +21962,34 @@ async function syncPendingUserInputRequests() {
           }
         }
       } catch (error) {
+        if (
+          error?.code === "ERR_LOCKED_GET_USERS_STALE_CARD_AFTER_WAIT"
+          && session.runtime?.officeHours?.active === true
+          && isLockedDay1GetUsersContext(activeOfficeHoursContext(session))
+        ) {
+          await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId).catch(() => {});
+          state.resolvedUserInputIds.add(request.requestId);
+          activeRequestIds.delete(request.requestId);
+          if (session.pendingUserInput?.requestId === request.requestId) {
+            session.pendingUserInput = null;
+          }
+          await clearOfficeHoursPendingQuestionForSession(
+            session,
+            request.requestId,
+            "locked_get_users_stale_card_after_wait",
+          );
+          session.status = "idle";
+          session.error = null;
+          await abortActiveOfficeHoursRunAtQuestionCap(session);
+          touch(session);
+          changedSessions.add(session.id);
+          emitOfficeHoursStatus(session, {
+            stage: "completed",
+            requestId: request.requestId,
+            detail: "locked_get_users_stale_card_after_wait",
+          });
+          continue;
+        }
         const message = formatError(error);
         await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId).catch(() => {});
         state.resolvedUserInputIds.add(request.requestId);
@@ -20078,6 +22020,25 @@ async function syncPendingUserInputRequests() {
         continue;
       }
     } else if (pendingAlreadyAttached) {
+      continue;
+    }
+    if (
+      session.runtime?.officeHours?.active === true
+      && isLockedDay1GetUsersContext(activeOfficeHoursContext(session))
+      && session.pendingUserInput?.requestId
+      && session.pendingUserInput.requestId !== request.requestId
+      && isOfficeHoursStructuredRequest(session.pendingUserInput)
+      && isOfficeHoursStructuredRequest(request)
+    ) {
+      await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId);
+      state.resolvedUserInputIds.add(request.requestId);
+      activeRequestIds.delete(request.requestId);
+      await clearOfficeHoursPendingQuestionForSession(
+        session,
+        request.requestId,
+        "locked_get_users_stale_request_suppressed",
+      );
+      changedSessions.add(session.id);
       continue;
     }
     if (
@@ -20139,6 +22100,9 @@ async function syncPendingUserInputRequests() {
       continue;
     }
     if (!pending || activeRequestIds.has(pending.requestId)) continue;
+    if (await shouldKeepOfficeHoursPendingWithoutInputArtifact(session, pending)) {
+      continue;
+    }
 
     session.pendingUserInput = null;
     if (session.status === "awaiting_input") {
@@ -20164,7 +22128,7 @@ async function syncPendingUserInputRequests() {
 
   await persistSessions();
   for (const sessionId of changedSessions) {
-  broadcast({ type: "session_updated", session: state.sessions.get(sessionId) });
+    broadcast({ type: "session_updated", session: state.sessions.get(sessionId) });
   }
 }
 
@@ -20173,15 +22137,21 @@ function normalizeUserInputResponse(promptRequest, payload) {
   const questions = Array.isArray(promptRequest.questions) ? promptRequest.questions : [];
   const answers = {};
   const annotations = {};
+  const normalizedResponses = [];
 
   for (const [index, question] of questions.entries()) {
     const match = matchingUserInputResponseEntry(responses, question, index, questions.length);
-    const selectedOptions = Array.isArray(match?.selectedOptions)
+    let selectedOptions = Array.isArray(match?.selectedOptions)
       ? match.selectedOptions
           .map((value) => String(value).trim())
           .filter(Boolean)
       : [];
     const freeText = typeof match?.freeText === "string" ? match.freeText.trim() : "";
+    if (!selectedOptions.length && !freeText && questionAllowsEmptySubmit(question)) {
+      const defaultOption = defaultStructuredPromptOption(question);
+      const label = String(defaultOption?.label || "").trim();
+      if (label) selectedOptions = [label];
+    }
     const selectedAsOther = selectedOptions.some((value) => isOtherTextOptionLabel(value));
     const answerValue = freeText && selectedAsOther
       ? freeText
@@ -20201,20 +22171,30 @@ function normalizeUserInputResponse(promptRequest, payload) {
         ...(freeText ? { notes: freeText } : match?.notes ? { notes: String(match.notes) } : {}),
     };
     }
+    normalizedResponses.push({
+      question: String(match?.question || question.question || ""),
+      selectedOptions,
+      freeText,
+    });
   }
 
   return {
     questions,
     answers,
     annotations,
-    responses: responses.map((entry) => ({
-      question: String(entry?.question || ""),
-      selectedOptions: Array.isArray(entry?.selectedOptions)
-        ? entry.selectedOptions.map((value) => String(value))
-        : [],
-      freeText: typeof entry?.freeText === "string" ? entry.freeText : "",
-    })),
+    responses: normalizedResponses,
   };
+}
+
+function questionAllowsEmptySubmit(question = {}) {
+  return question?.allowsEmptySubmit === true
+    || question?.allows_empty_submit === true;
+}
+
+function defaultStructuredPromptOption(question = {}) {
+  const options = Array.isArray(question?.options) ? question.options : [];
+  if (!options.length) return null;
+  return options.find((option) => option?.recommended === true) || options[0] || null;
 }
 
 function matchingUserInputResponseEntry(responses = [], question = {}, index = 0, questionCount = 0) {
@@ -20252,10 +22232,7 @@ function structuredPromptQuestionId(question = {}) {
 }
 
 function officeHoursQuestionRequiresPrimaryFreeText(question = {}) {
-  if (normalizeResponsePrimaryTextInput(question)?.required === true) return true;
-  const questionId = structuredPromptQuestionId(question);
-  return questionId === FIRST_CANDIDATE_SIGNAL_ID
-    || questionId === FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID;
+  return normalizeResponsePrimaryTextInput(question)?.required === true;
 }
 
 function officeHoursRequiredFreeTextValidationMessage(question = {}, fallback = "") {

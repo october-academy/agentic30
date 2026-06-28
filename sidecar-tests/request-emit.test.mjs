@@ -1066,7 +1066,7 @@ test("office_hours Codex-style MCP request waits for submit before continuation"
   }
 });
 
-test("Office Hours Day 1 get_users no-candidate answer asks unblock instead of completing", async () => {
+test("Office Hours Day 1 get_users free-text value card completes without follow-up cards", async () => {
   const harness = await spawnSidecar({
     extraEnv: {
       AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
@@ -1123,153 +1123,81 @@ test("Office Hours Day 1 get_users no-candidate answer asks unblock instead of c
     const activationPrompt = await waitForPendingOfficeHoursPrompt(ws, created.session.id);
     assert.equal(activationPrompt.generation?.signalId, "get_users_active_user_definition");
     assert.ok(activationPrompt.generation?.attemptId, "locked get_users prompt must carry an attempt token");
+    const marker = ws.events.length;
     submitStructuredAnswer(ws, created.session.id, activationPrompt, {
       selectedOptions: [],
       freeText: "프로젝트를 연결하고 오늘의 고객 검증 행동을 정리한 1명",
     });
 
-    const candidatePrompt = await waitForPendingOfficeHoursPrompt(
-      ws,
-      created.session.id,
-      activationPrompt.requestId,
-    );
-    assert.equal(candidatePrompt.generation?.signalId, "get_users_first_candidate");
-    assert.ok(candidatePrompt.generation?.attemptId, "candidate prompt must remain bound to the attempt");
-    const noCandidateOption = candidatePrompt.questions[0].options.find((option) =>
-      /아직 후보 없음/.test(option.label || "")
-    );
-    assert.ok(noCandidateOption, "candidate card must expose the explicit no-candidate blocker");
-
-    const marker = ws.events.length;
-    submitStructuredAnswer(ws, created.session.id, candidatePrompt, {
-      selectedOptions: [noCandidateOption.label],
-      freeText: "",
-    });
-
-    const unblock = await waitForEvent(ws.events, (event) =>
+    const completed = await waitForEvent(ws.events, (event) =>
       ws.events.indexOf(event) >= marker
-        && event.type === "session_updated"
-        && event.session?.id === created.session.id
-        && event.session?.status === "awaiting_input"
-        && event.session?.pendingUserInput?.generation?.docType === "day1_candidate_unblock"
-    );
-    const prompt = unblock.session.pendingUserInput;
-    assert.equal(prompt.generation.signalId, "get_users_first_candidate_unblock");
-    assert.equal(prompt.generation.attemptId, undefined);
-    assert.equal(unblock.session.runtime.officeHours.nextAction.kind, "card");
-    assert.equal(unblock.session.runtime.officeHours.nextAction.cardType, "candidate_selection");
-    assert.equal(unblock.session.runtime.officeHours.gatherProgress.answered, 1);
-    assert.equal(unblock.session.runtime.officeHours.candidateBlocker.blockerReason, "아직 후보 없음");
-    assert.equal(prompt.questions[0].requiresFreeText, false);
-    assert.equal(prompt.questions[0].primaryTextInput.required, true);
-    const savedUnblock = await loadOfficeHoursPendingQuestion({
-      workspaceRoot: harness.workspacePath,
-      day: 1,
-    });
-    assert.equal(
-      savedUnblock?.request?.questions?.[0]?.primaryTextInput?.required,
-      true,
-      "persisted unblock snapshot must preserve the primary text requirement",
-    );
-
-    const unblockOption = prompt.questions[0].options.find((option) =>
-      option.label === "스레드/커뮤니티에서 찾기"
-    );
-    assert.ok(unblockOption, "unblock card must expose the community search route");
-
-    const validationMarker = ws.events.length;
-    submitStructuredAnswer(ws, created.session.id, prompt, {
-      selectedOptions: [unblockOption.label],
-      freeText: "",
-    });
-
-    const validation = await waitForEvent(ws.events, (event) =>
-      ws.events.indexOf(event) >= validationMarker
-        && event.type === "session_updated"
-        && event.session?.id === created.session.id
-        && event.session?.status === "awaiting_input"
-        && event.session?.pendingUserInput?.requestId
-        && event.session.pendingUserInput.requestId !== prompt.requestId
-        && event.session.pendingUserInput.generation?.signalId === "get_users_first_candidate_unblock"
-    );
-    const retryPrompt = validation.session.pendingUserInput;
-    assert.equal(retryPrompt.generation.signalId, "get_users_first_candidate_unblock");
-    assert.equal(retryPrompt.questions[0].primaryTextInput.required, true);
-    assert.equal(
-      ws.events.slice(validationMarker).some((event) =>
-        event.type === "office_hours_status"
-          && event.sessionId === created.session.id
-          && event.stage === "validation_error"
-          && event.requestId === retryPrompt.requestId
-      ),
-      true,
-      "selection-only unblock answer must reissue a fresh editable request with validation status",
-    );
-    const retryRequests = await listUserInputRequests(harness.appSupportPath);
-    assert.equal(
-      retryRequests.some((request) => request.requestId === prompt.requestId),
-      false,
-      "stale submitted request must be removed so the Mac cannot keep showing it as submitted",
-    );
-    assert.equal(
-      retryRequests.some((request) => request.requestId === retryPrompt.requestId),
-      true,
-      "retry prompt must exist as a fresh user-input request",
-    );
-    await waitForEventSettle();
-    assert.equal(
-      ws.events.slice(validationMarker).some((event) =>
-        event.type === "office_hours_status"
-          && event.sessionId === created.session.id
-          && event.stage === "provider_starting"
-      ),
-      false,
-      "selection-only unblock answer must not run Codex continuation",
-    );
-    assert.equal(
-      ws.events.slice(validationMarker).some((event) =>
-        event.type === "error"
-          && event.sessionId === created.session.id
-          && /pending_user_input but no pending request was attachable/.test(event.message || "")
-      ),
-      false,
-      "selection-only unblock answer must stay attached instead of tripping the pending request assertion",
-    );
-
-    const concreteMarker = ws.events.length;
-    submitStructuredAnswer(ws, created.session.id, retryPrompt, {
-      selectedOptions: [unblockOption.label],
-      freeText: "오늘 18:00까지 Threads에서 \"solo founder mac app\"으로 검색해 @handle 1명을 찾고 실제 프로젝트 연결을 봐달라고 DM 보낸다",
-    });
-
-    const recorded = await waitForEvent(ws.events, (event) =>
-      ws.events.indexOf(event) >= concreteMarker
         && event.type === "session_updated"
         && event.session?.id === created.session.id
         && event.session?.status === "idle"
         && !event.session?.pendingUserInput
-        && /오늘 18:00까지 Threads/.test(event.session?.runtime?.officeHours?.candidateBlocker?.unblockAnswer || "")
+        && event.session?.runtime?.officeHours?.nextAction?.kind === "wait"
     );
-    assert.equal(recorded.session.runtime.officeHours.nextAction.kind, "card");
-    assert.equal(recorded.session.runtime.officeHours.nextAction.cardType, "candidate_selection");
+    assert.equal(completed.session.runtime.officeHours.gatherProgress.answered, 6);
+    assert.equal(completed.session.runtime.officeHours.gatherProgress.total, 6);
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "validation_error"
+      ),
+      false,
+      "free-text activation answer must not reissue a validation prompt",
+    );
+    const retryRequests = await listUserInputRequests(harness.appSupportPath);
+    assert.equal(
+      retryRequests.some((request) => request.requestId === activationPrompt.requestId),
+      false,
+      "stale submitted request must be removed so the Mac cannot keep showing it as submitted",
+    );
+    assert.equal(
+      retryRequests.some((request) => request.sessionId === created.session.id),
+      false,
+      "single value-card answer must not leave a follow-up user-input request",
+    );
     await waitForEventSettle();
     assert.equal(
-      ws.events.slice(concreteMarker).some((event) =>
+      ws.events.slice(marker).some((event) =>
         event.type === "office_hours_status"
           && event.sessionId === created.session.id
           && event.stage === "provider_starting"
       ),
       false,
-      "concrete unblock answer is host-owned and must not ask Codex for a follow-up card",
+      "free-text activation answer must attach the host card without running Codex continuation",
     );
     assert.equal(
-      ws.events.slice(concreteMarker).some((event) =>
+      ws.events.slice(marker).some((event) =>
         event.type === "error"
           && event.sessionId === created.session.id
           && /pending_user_input but no pending request was attachable/.test(event.message || "")
       ),
       false,
-      "concrete unblock answer must not trip the pending request assertion",
+      "free-text activation answer must stay attached instead of tripping the pending request assertion",
+    );
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "session_updated"
+          && event.session?.id === created.session.id
+          && event.session?.pendingUserInput?.generation?.signalId === "get_users_first_candidate_unblock"
+      ),
+      false,
+      "free-text activation answer must not issue the unblock card",
+    );
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "session_updated"
+          && event.session?.id === created.session.id
+          && ["get_users_first_candidate", "get_users_current_alternative"].includes(
+            event.session?.pendingUserInput?.generation?.signalId,
+          )
+      ),
+      false,
+      "free-text value answer must not expose hidden candidate/alternative cards",
     );
 
     await waitForEventSettle();
@@ -1280,8 +1208,8 @@ test("Office Hours Day 1 get_users no-candidate answer asks unblock instead of c
           && event.sessionId === created.session.id
           && event.stage === "completed"
       ),
-      false,
-      "no-candidate answer must not complete the Day 1 interview",
+      true,
+      "free-text value answer must complete the Day 1 interview",
     );
     assert.equal(
       after.some((event) =>
@@ -1290,7 +1218,7 @@ test("Office Hours Day 1 get_users no-candidate answer asks unblock instead of c
           && event.session?.pendingUserInput?.generation?.docType === "day1_document_readiness"
       ),
       false,
-      "no-candidate answer must not expose document readiness",
+      "activation answer must not expose document readiness",
     );
     assert.equal(
       after.some((event) =>
@@ -1299,7 +1227,582 @@ test("Office Hours Day 1 get_users no-candidate answer asks unblock instead of c
           && /cannot start a new attempt while another is open/.test(event.message || "")
       ),
       false,
-      "no-candidate unblock must not start another attempt while the current one remains open",
+      "free-text activation must not start another attempt while the current one remains open",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("Office Hours Day 1 get_users default value card completes with empty submission", async () => {
+  const firstHarness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+    },
+  });
+  let firstWs;
+  let secondHarness;
+  let secondWs;
+  let firstHarnessClosed = false;
+  const context = [
+    "DAY1_LOCKED_GOAL",
+    "Flow contract: locked Day 1 goal interview.",
+    "Office Hours mode: Startup",
+    "Expected question count: 6",
+    "Goal lane: get_users / 활성 사용자 100명 모으기",
+    "Goal text: 30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+    "Customer: 전업 1인 개발자(macOS 사용)",
+    "Problem: 문제 quote 근거 부족",
+    "Validation action: 오늘 연락 가능한 후보 1명에게 실제 프로젝트 연결을 요청한다",
+  ].join("\n");
+  try {
+    await initGitRepo(firstHarness.workspacePath);
+    await saveDay1GoalSelection({
+      workspaceRoot: firstHarness.workspacePath,
+      selection: {
+        goalType: "get_users",
+        goalText: "1인 개발자 100명이 Agentic30에서 핵심 행동을 완료하게 한다",
+        customer: "퇴근 후 제품을 만드는 전업 1인 개발자",
+        problem: "고객 검증보다 기능 빌드로 도망간다",
+        validationAction: "오늘 연락 가능한 후보 1명에게 실제 프로젝트 연결을 요청한다",
+        proofSink: "local",
+      },
+      now: new Date("2026-06-16T00:00:00.000Z"),
+    });
+    firstWs = await connectAndCollect(firstHarness);
+
+    firstWs.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const firstCreated = await waitForEvent(firstWs.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    firstWs.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: firstCreated.session.id,
+      context,
+      visiblePrompt: "Test Day 1 get_users restored value card",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    }));
+
+    const activationPrompt = await waitForPendingOfficeHoursPrompt(firstWs, firstCreated.session.id);
+    assert.equal(activationPrompt.generation?.signalId, "get_users_active_user_definition");
+    assert.equal(activationPrompt.questions[0].allowsEmptySubmit, true);
+    const marker = firstWs.events.length;
+    submitStructuredAnswer(firstWs, firstCreated.session.id, activationPrompt, {
+      selectedOptions: [],
+      freeText: "",
+    });
+
+    const completed = await waitForEvent(firstWs.events, (event) =>
+      firstWs.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === firstCreated.session.id
+        && event.session?.status === "idle"
+        && !event.session?.pendingUserInput
+        && event.session?.runtime?.officeHours?.nextAction?.kind === "wait"
+    );
+    assert.equal(completed.session.runtime.officeHours.gatherProgress.answered, 6);
+    assert.equal(completed.session.runtime.officeHours.gatherProgress.total, 6);
+    const savedRequestPrompt = await loadOfficeHoursPendingQuestion({
+      workspaceRoot: firstHarness.workspacePath,
+      day: 1,
+    });
+    assert.equal(savedRequestPrompt, null);
+    const defaultTurnLog = await loadOfficeHoursTurnLog({ workspaceRoot: firstHarness.workspacePath });
+    const defaultTurn = defaultTurnLog.turns.find((turn) =>
+      turn.day === 1
+        && turn.sessionId === firstCreated.session.id
+        && turn.requestId === activationPrompt.requestId
+    );
+    assert.ok(
+      defaultTurn,
+      `empty submission should record a visible turn: ${JSON.stringify(defaultTurnLog.turns)}`,
+    );
+    assert.deepEqual(
+      defaultTurn.submissions?.[0]?.selectedOptions,
+      ["첫 고객에게 줄 도움 만들기"],
+      "empty submission should be normalized to the recommended default value plan",
+    );
+    return;
+
+    firstWs.close();
+    firstWs = null;
+    await firstHarness.close({ cleanup: false });
+    firstHarnessClosed = true;
+
+    secondHarness = await spawnSidecar({
+      workspacePath: firstHarness.workspacePath,
+      appSupportPath: firstHarness.appSupportPath,
+      tempRoot: firstHarness.tempRoot,
+      extraEnv: {
+        AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+      },
+    });
+    secondWs = await connectAndCollect(secondHarness);
+
+    secondWs.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const secondCreated = await waitForEvent(secondWs.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    const restoreMarker = secondWs.events.length;
+    secondWs.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: secondCreated.session.id,
+      context,
+      visiblePrompt: "Test Day 1 get_users restored value card",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    }));
+
+    const restored = await waitForEvent(secondWs.events, (event) =>
+      secondWs.events.indexOf(event) >= restoreMarker
+        && event.type === "session_updated"
+        && event.session?.id === secondCreated.session.id
+        && event.session?.status === "awaiting_input"
+        && event.session.pendingUserInput.generation?.signalId === "get_users_today_request"
+        && event.session.pendingUserInput.generation?.attemptId === requestPrompt.generation?.attemptId
+    );
+    const restoredPrompt = restored.session.pendingUserInput;
+    assert.ok(restoredPrompt.generation?.attemptId, "restored value card should preserve the attempt token");
+
+    const submitMarker = secondWs.events.length;
+    submitStructuredAnswer(secondWs, secondCreated.session.id, restoredPrompt, {
+      selectedOptions: [],
+      freeText: "오늘 18:00까지 최근 문서 1개로 실행해보고 완료 화면을 캡처해달라고 DM 보낸다",
+    });
+
+    const advanced = await waitForEvent(secondWs.events, (event) =>
+      secondWs.events.indexOf(event) >= submitMarker
+        && event.type === "session_updated"
+        && event.session?.id === secondCreated.session.id
+        && event.session?.status === "awaiting_input"
+        && event.session?.pendingUserInput?.requestId
+        && event.session.pendingUserInput.requestId !== restoredPrompt.requestId
+        && event.session.pendingUserInput.generation?.signalId === "get_users_evidence_format"
+    );
+    assert.ok(advanced.session.runtime.officeHours.attemptId, "submit should recover the durable attempt id");
+    assert.equal(advanced.session.runtime.officeHours.nextAction.kind, "card");
+    assert.equal(advanced.session.runtime.officeHours.nextAction.cardType, "evidence_contract");
+    assert.equal(advanced.session.runtime.officeHours.gatherProgress.answered, 4);
+    await waitForEventSettle();
+    assert.equal(
+      secondWs.events.slice(submitMarker).some((event) =>
+        event.type === "session_updated"
+          && event.session?.id === secondCreated.session.id
+          && event.session?.pendingUserInput?.generation?.signalId === "get_users_first_candidate_unblock"
+          && event.session.pendingUserInput.requestId !== restoredPrompt.requestId
+      ),
+      false,
+      "restored selection-only unblock answer must not issue a fresh copy of the same unblock card",
+    );
+    const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot: secondHarness.workspacePath });
+    assert.equal(
+      turnLog.turns.some((turn) =>
+        turn.day === 1
+          && turn.sessionId === secondCreated.session.id
+          && turn.requestId === restoredPrompt.requestId
+          && /오늘 18:00까지/.test(turn.responseText)
+      ),
+      true,
+      "restored value-card answer must be written to the Office Hours turn log",
+    );
+  } finally {
+    firstWs?.close();
+    secondWs?.close();
+    if (secondHarness) {
+      await secondHarness.close();
+    } else if (firstHarnessClosed) {
+      await fs.rm(firstHarness.tempRoot, { recursive: true, force: true });
+    } else {
+      await firstHarness.close();
+    }
+  }
+});
+
+test("Office Hours Day 1 get_users start clears obsolete rigid pending card", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+    },
+  });
+  let ws;
+  const context = [
+    "DAY1_LOCKED_GOAL",
+    "Flow contract: locked Day 1 goal interview.",
+    "Office Hours mode: Startup",
+    "Expected question count: 6",
+    "Goal lane: get_users / 활성 사용자 100명 모으기",
+    "Goal text: 30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+    "Customer: 전업 1인 개발자(macOS 사용)",
+    "Problem: 문제 quote 근거 부족",
+    "Validation action: 오늘 연락 가능한 후보 1명에게 실제 프로젝트 연결을 요청한다",
+  ].join("\n");
+  const obsoleteRequestId = "obsolete-day1-get-users-commitment";
+  try {
+    await initGitRepo(harness.workspacePath);
+    await seedDay1ActiveProgress(harness.workspacePath);
+    await saveDay1GoalSelection({
+      workspaceRoot: harness.workspacePath,
+      selection: {
+        goalType: "get_users",
+        goalText: "1인 개발자 100명이 Agentic30에서 핵심 행동을 완료하게 한다",
+        customer: "퇴근 후 제품을 만드는 전업 1인 개발자",
+        problem: "고객 검증보다 기능 빌드로 도망간다",
+        validationAction: "오늘 연락 가능한 후보 1명에게 실제 프로젝트 연결을 요청한다",
+        proofSink: "local",
+      },
+      now: new Date("2026-06-16T00:00:00.000Z"),
+    });
+    const obsoletePrompt = makeOfficeHoursPromptSnapshot({
+      sessionId: "stale-session",
+      requestId: obsoleteRequestId,
+      questionId: "get_users_day1_commitment",
+      question: "오늘 몇 시까지 어떤 후보에게 어떤 요청을 보내고 어디에 증거를 남길 건가요?",
+      createdAt: "2026-06-16T02:44:55.074Z",
+    });
+    obsoletePrompt.questions[0] = {
+      ...obsoletePrompt.questions[0],
+      header: "오늘 약속",
+      primaryTextInput: {
+        label: "오늘 실행 약속",
+        placeholder: "시간 + 후보 + 요청 + 증거 위치",
+        required: true,
+      },
+    };
+    obsoletePrompt.generation = {
+      mode: "office_hours_inline",
+      docType: "day1_step",
+      signalId: "get_users_day1_commitment",
+      signalLabel: "오늘 약속",
+      attemptId: "obsolete-attempt",
+      expectedRevision: 5,
+      cardType: "commitment",
+      transition: "schedule_execution",
+      dimensionStepIndex: 6,
+      dimensionTotal: 6,
+    };
+    await saveOfficeHoursPendingQuestion({
+      workspaceRoot: harness.workspacePath,
+      day: 1,
+      source: "day1_interview_goal_locked",
+      request: obsoletePrompt,
+      turnLog: await loadOfficeHoursTurnLog({ workspaceRoot: harness.workspacePath }),
+    });
+
+    ws = await connectAndCollect(harness);
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context,
+      visiblePrompt: "Test stale Day 1 get_users pending cleanup",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    }));
+
+    const prompt = await waitForPendingOfficeHoursPrompt(ws, created.session.id);
+    assert.notEqual(prompt.requestId, obsoleteRequestId);
+    assert.equal(prompt.generation?.signalId, "get_users_active_user_definition");
+    assert.equal(prompt.questions[0].allowsEmptySubmit, true);
+    assert.deepEqual(prompt.questions[0].options.map((option) => option.label), [
+      "첫 고객에게 줄 도움 만들기",
+    ]);
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "session_updated"
+          && event.session?.id === created.session.id
+          && event.session?.pendingUserInput?.requestId === obsoleteRequestId
+      ),
+      false,
+      "obsolete rigid Day 1 card must not be restored",
+    );
+    const savedPending = await loadOfficeHoursPendingQuestion({
+      workspaceRoot: harness.workspacePath,
+      day: 1,
+    });
+    assert.notEqual(savedPending?.request?.requestId, obsoleteRequestId);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("Office Hours Day 1 get_users selected value card completes without follow-up cards", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+    },
+  });
+  let ws;
+  const context = [
+    "DAY1_LOCKED_GOAL",
+    "Flow contract: locked Day 1 goal interview.",
+    "Office Hours mode: Startup",
+    "Expected question count: 6",
+    "Goal lane: get_users / 활성 사용자 100명 모으기",
+    "Goal text: 30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+    "Customer: 전업 1인 개발자(macOS 사용)",
+    "Problem: 문제 quote 근거 부족",
+    "Validation action: 오늘 연락 가능한 후보 1명에게 실제 프로젝트 연결을 요청한다",
+  ].join("\n");
+  const waitForSignal = async (sessionId, signalId, previousRequestId = "") => {
+    const prior = String(previousRequestId || "");
+    const event = await waitForEvent(ws.events, (candidate) =>
+      candidate.type === "session_updated"
+        && candidate.session?.id === sessionId
+        && candidate.session?.status === "awaiting_input"
+        && candidate.session?.pendingUserInput?.requestId
+        && candidate.session.pendingUserInput.requestId !== prior
+        && candidate.session.pendingUserInput.generation?.signalId === signalId
+    );
+    return event.session.pendingUserInput;
+  };
+
+  try {
+    await initGitRepo(harness.workspacePath);
+    await seedDay1ActiveProgress(harness.workspacePath);
+    await saveDay1GoalSelection({
+      workspaceRoot: harness.workspacePath,
+      selection: {
+        goalType: "get_users",
+        goalText: "1인 개발자 100명이 Agentic30에서 핵심 행동을 완료하게 한다",
+        customer: "퇴근 후 제품을 만드는 전업 1인 개발자",
+        problem: "고객 검증보다 기능 빌드로 도망간다",
+        validationAction: "오늘 연락 가능한 후보 1명에게 실제 프로젝트 연결을 요청한다",
+        proofSink: "local",
+      },
+      now: new Date("2026-06-16T00:00:00.000Z"),
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context,
+      visiblePrompt: "Test Day 1 get_users evidence completes",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    }));
+
+    const activationPrompt = await waitForSignal(created.session.id, "get_users_active_user_definition");
+    const activationMarker = ws.events.length;
+    submitStructuredAnswer(ws, created.session.id, activationPrompt, {
+      selectedOptions: [activationPrompt.questions[0].options[0].label],
+      freeText: "제품 안에서 첫 유의미한 결과를 끝낸 전업 1인 개발자 1명",
+    });
+
+    const completed = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= activationMarker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "idle"
+        && !event.session?.pendingUserInput
+        && event.session?.runtime?.officeHours?.nextAction?.kind === "wait"
+    );
+    assert.equal(completed.session.error, null);
+    assert.equal(completed.session.runtime.officeHours.gatherProgress.answered, 6);
+    assert.equal(completed.session.runtime.officeHours.gatherProgress.total, 6);
+
+    const savedPending = await loadOfficeHoursPendingQuestion({
+      workspaceRoot: harness.workspacePath,
+      day: 1,
+    });
+    assert.equal(savedPending, null);
+
+    await waitForEventSettle();
+    assert.equal(
+      ws.events.slice(activationMarker).some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "provider_starting"
+      ),
+      false,
+      "single value-card answer must not ask Codex to generate another card",
+    );
+    assert.equal(
+      ws.events.slice(activationMarker).some((event) =>
+        event.type === "error"
+          && event.sessionId === created.session.id
+          && /유효한 질문 카드|valid question card|pending_user_input but no pending request was attachable/.test(event.message || "")
+      ),
+      false,
+      "host-completed value answer must not expose provider card-generation failures",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("Office Hours Day 1 get_users free-text value path completes through one visible card", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+    },
+  });
+  let ws;
+  const context = [
+    "DAY1_LOCKED_GOAL",
+    "Flow contract: locked Day 1 goal interview.",
+    "Office Hours mode: Startup",
+    "Expected question count: 6",
+    "Goal lane: get_users / 활성 사용자 100명 모으기",
+    "Goal text: 30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+    "Customer: 전업 1인 개발자(macOS 사용)",
+    "Problem: 문제 quote 근거 부족",
+    "Validation action: 오늘 연락 가능한 후보 1명에게 실제 프로젝트 연결을 요청한다",
+  ].join("\n");
+  const waitForSignalAfter = async (sessionId, signalId, marker, previousRequestId = "") => {
+    const prior = String(previousRequestId || "");
+    const event = await waitForEvent(ws.events, (candidate) =>
+      ws.events.indexOf(candidate) >= marker
+        && candidate.type === "session_updated"
+        && candidate.session?.id === sessionId
+        && candidate.session?.status === "awaiting_input"
+        && candidate.session?.pendingUserInput?.requestId
+        && candidate.session.pendingUserInput.requestId !== prior
+        && candidate.session.pendingUserInput.generation?.signalId === signalId
+    );
+    return event.session.pendingUserInput;
+  };
+  try {
+    await initGitRepo(harness.workspacePath);
+    await seedDay1ActiveProgress(harness.workspacePath);
+    await saveDay1GoalSelection({
+      workspaceRoot: harness.workspacePath,
+      selection: {
+        goalType: "get_users",
+        goalText: "1인 개발자 100명이 Agentic30에서 핵심 행동을 완료하게 한다",
+        customer: "퇴근 후 제품을 만드는 전업 1인 개발자",
+        problem: "고객 검증보다 기능 빌드로 도망간다",
+        validationAction: "오늘 연락 가능한 후보 1명에게 실제 프로젝트 연결을 요청한다",
+        proofSink: "local",
+      },
+      now: new Date("2026-06-16T00:00:00.000Z"),
+    });
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context,
+      visiblePrompt: "Test Day 1 get_users free-text value path",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    }));
+
+    const activationPrompt = await waitForPendingOfficeHoursPrompt(ws, created.session.id);
+    assert.equal(activationPrompt.generation?.signalId, "get_users_active_user_definition");
+    const activationMarker = ws.events.length;
+    submitStructuredAnswer(ws, created.session.id, activationPrompt, {
+      selectedOptions: [],
+      freeText: "제품 안에서 첫 유의미한 결과를 끝낸 전업 1인 개발자 1명",
+    });
+
+    const completed = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= activationMarker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "idle"
+        && !event.session?.pendingUserInput
+        && event.session?.runtime?.officeHours?.nextAction?.kind === "wait"
+    );
+    assert.equal(completed.session.error, null);
+    assert.equal(completed.session.runtime.officeHours.gatherProgress.answered, 6);
+    assert.equal(completed.session.runtime.officeHours.gatherProgress.total, 6);
+
+    const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot: harness.workspacePath });
+    assert.equal(
+      turnLog.turns.filter((turn) => turn.day === 1).length,
+      1,
+      "visible transcript turns should stay to the single rendered value card; internal auto-commits must not add fake prompt turns",
+    );
+    assert.equal(
+      ws.events.slice(activationMarker).some((event) =>
+        event.type === "session_updated"
+          && event.session?.id === created.session.id
+          && ["get_users_first_candidate", "get_users_first_candidate_unblock", "get_users_current_alternative"].includes(
+            event.session?.pendingUserInput?.generation?.signalId,
+          )
+      ),
+      false,
+      "free-text ICP/value answer must not fall back to hidden candidate/alternative cards",
+    );
+
+    await waitForEventSettle();
+    const afterEvidence = ws.events.slice(activationMarker);
+    assert.equal(
+      afterEvidence.some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "completed"
+      ),
+      true,
+      "single value-card answer should close the gather without asking follow-up cards",
+    );
+    assert.equal(
+      afterEvidence.some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "provider_starting"
+      ),
+      false,
+      "host-completed value answer must not re-run Codex",
+    );
+    assert.deepEqual(
+      afterEvidence
+        .filter((event) => event.type === "error" && event.sessionId === created.session.id)
+        .map((event) => event.message || event.error || ""),
+      [],
+      "host-completed value answer must not hard-fail",
     );
   } finally {
     ws?.close();
@@ -5394,12 +5897,17 @@ async function waitForEvent(events, predicate, timeoutMs = 10_000) {
     if (found) return found;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  const summary = events.map((event) => {
-    if (event.type === "error") return `error:${event.message || ""}`;
-    if (event.type === "office_hours_status") return `office_hours_status:${event.stage || ""}`;
-    if (event.type === "session_updated") return `session_updated:${event.session?.status || ""}`;
-    return event.type;
-  });
+	  const summary = events.map((event) => {
+	    if (event.type === "error") return `error:${event.message || ""}`;
+	    if (event.type === "office_hours_status") return `office_hours_status:${event.stage || ""}`;
+	    if (event.type === "session_updated") {
+	      const signal = event.session?.pendingUserInput?.generation?.signalId
+	        || event.session?.pendingUserInput?.generation?.docType
+	        || "";
+	      return `session_updated:${event.session?.status || ""}${signal ? `:${signal}` : ""}`;
+	    }
+	    return event.type;
+	  });
   throw new Error(`Timed out waiting for event. Saw: ${summary.join(", ")}`);
 }
 
