@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { atomicWriteJson, withFileLock } from "./atomic-store.mjs";
 import { resolveAgentic30MemoryDir } from "./news-market-radar.mjs";
+import { buildBuilderJourneyDoc, deriveBuilderJourneyInputs } from "./office-hours-builder-journey.mjs";
 import {
   OFFICE_HOURS_RESOLUTION_REASONS,
   classifyStaleCommitments,
@@ -55,6 +56,39 @@ const EVIDENCE_KINDS = new Set(["url", "screenshot", "commit", "payment"]);
 
 export function resolveOfficeHoursMemoryPath(workspaceRoot) {
   return path.join(resolveAgentic30MemoryDir(workspaceRoot), "office-hours-ledger.json");
+}
+
+export const OFFICE_HOURS_BUILDER_JOURNEY_DOC_FILE = "builder-journey.md";
+
+export function resolveBuilderJourneyDocPath(workspaceRoot) {
+  return path.join(resolveAgentic30MemoryDir(workspaceRoot), OFFICE_HOURS_BUILDER_JOURNEY_DOC_FILE);
+}
+
+// SPEC v3 §2 deliverable: the cumulative 30-day builder-journey document, regenerated after
+// each cycle closes from the (already-updated) ledger. Pure-data in, one markdown file out;
+// fail-open — it must never block the interview-close flow. Returns the written path, or ""
+// when there is no closed cycle yet or on any error. Inputs come from deriveBuilderJourneyInputs,
+// so cycle.note (the avoidance-confession slot) is never rendered as a design title.
+export async function writeBuilderJourneyDoc({
+  workspaceRoot,
+  now = new Date(),
+  fsImpl = fs,
+  loadMemory = loadOfficeHoursMemory,
+} = {}) {
+  try {
+    assertWorkspace(workspaceRoot, "office_hours_builder_journey_doc");
+    const memory = await loadMemory({ workspaceRoot, now });
+    const cycles = Array.isArray(memory?.cycles) ? memory.cycles : [];
+    if (cycles.length < 1) return "";
+    const inputs = deriveBuilderJourneyInputs(memory, { sessionInProgress: false });
+    const markdown = buildBuilderJourneyDoc({ ...inputs, now: now.toISOString() });
+    const filePath = resolveBuilderJourneyDocPath(workspaceRoot);
+    await fsImpl.mkdir(path.dirname(filePath), { recursive: true });
+    await fsImpl.writeFile(filePath, `${markdown}\n`, "utf8");
+    return filePath;
+  } catch {
+    return "";
+  }
 }
 
 // ── Load / save ──────────────────────────────────────────────────────────────

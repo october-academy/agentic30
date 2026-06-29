@@ -4,6 +4,7 @@ import {
   resolveBuilderJourneyTier,
   buildOfficeHoursBuilderJourneyContext,
   buildBuilderJourneyDoc,
+  deriveBuilderJourneyInputs,
   BUILDER_JOURNEY_TIERS,
   AGENTIC_GARAGE_URL,
   AGENTIC30_BLOG_URL,
@@ -71,4 +72,37 @@ test("buildBuilderJourneyDoc writes a second-person narrative arc, not a data ta
   assert.match(doc, /내일 결제 요청 발송/);
   // narrative arc, not a markdown table.
   assert.doesNotMatch(doc, /\|---/);
+});
+
+test("deriveBuilderJourneyInputs sources designTitles from success commitments, never cycle.note confessions", () => {
+  const memory = {
+    cycles: [
+      { outcome: "success", lastAssignment: "조은성에게 결제 요청 보내기", note: "" },
+      { outcome: "blocked", lastAssignment: "", note: "청구가 무서워 미뤘다" },
+      { outcome: "success", lastAssignment: "support lead Slack 알림 만들기", note: "" },
+    ],
+    compiledTruth: { text: "구체 사용자 2회 명명" },
+  };
+  const inputs = deriveBuilderJourneyInputs(memory, { sessionInProgress: false });
+  assert.deepEqual(inputs.designTitles, ["조은성에게 결제 요청 보내기", "support lead Slack 알림 만들기"]);
+  assert.ok(!inputs.designTitles.some((title) => title.includes("청구가 무서워")), "a confession (cycle.note) is never a design title");
+  assert.equal(inputs.accumulatedSignals, "구체 사용자 2회 명명");
+});
+
+test("deriveBuilderJourneyInputs sessionCount: +1 while in progress, raw count after a close", () => {
+  const memory = { cycles: [{ outcome: "success", lastAssignment: "A" }, { outcome: "success", lastAssignment: "B" }] };
+  assert.equal(deriveBuilderJourneyInputs(memory, { sessionInProgress: true }).sessionCount, 3);
+  assert.equal(deriveBuilderJourneyInputs(memory, { sessionInProgress: false }).sessionCount, 2);
+  assert.equal(deriveBuilderJourneyInputs({ cycles: [] }).sessionCount, 1); // default in-progress, first session
+});
+
+test("deriveBuilderJourneyInputs lastAssignment is the most recent cycle only (empty on a trailing confession)", () => {
+  const memory = {
+    cycles: [
+      { outcome: "success", lastAssignment: "오래된 약속" },
+      { outcome: "blocked", lastAssignment: "", note: "고백" },
+    ],
+  };
+  const inputs = deriveBuilderJourneyInputs(memory, { sessionInProgress: false });
+  assert.equal(inputs.lastAssignment, "", "a trailing confession leaves lastAssignment empty, not resurfacing the older commitment");
 });

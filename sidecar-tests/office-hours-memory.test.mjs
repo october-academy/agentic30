@@ -11,6 +11,8 @@ import {
   MAX_CYCLE_LEDGER,
   ABANDONED_THREAD_CYCLES,
   resolveOfficeHoursMemoryPath,
+  resolveBuilderJourneyDocPath,
+  writeBuilderJourneyDoc,
   loadOfficeHoursMemory,
   makeDefaultOfficeHoursMemory,
   normalizeOfficeHoursMemory,
@@ -874,5 +876,44 @@ test("summarizeOfficeHoursMemory surfaces calibrationLine + pendingPrediction en
   summary = summarizeOfficeHoursMemory(mem, { currentCycle: 10 });
   assert.match(summary.calibrationLine, /예측 적중 0\/1/);
   assert.equal(summary.pendingPrediction, "");
+  await fs.rm(ws, { recursive: true, force: true });
+});
+
+test("writeBuilderJourneyDoc regenerates the cumulative journey doc after a close, never leaking a confession", async () => {
+  const ws = await tempWorkspace();
+  // Realistic ledger: success, a blocked confession (note=confession, lastAssignment=""), success.
+  await appendCycle({ workspaceRoot: ws, cycle: 1, day: 1, step: "interview", outcome: "success", lastAssignment: "조은성에게 결제 요청 보내기", now: NOW });
+  await appendCycle({ workspaceRoot: ws, cycle: 2, day: 2, step: "interview", outcome: "blocked", note: "청구가 무서워 미뤘다", lastAssignment: "", now: NOW });
+  await appendCycle({ workspaceRoot: ws, cycle: 3, day: 3, step: "interview", outcome: "success", lastAssignment: "support lead Slack 알림 만들기", now: NOW });
+  await recompileCompiledTruth({ workspaceRoot: ws, now: NOW });
+
+  const written = await writeBuilderJourneyDoc({ workspaceRoot: ws, now: NOW });
+  assert.equal(written, resolveBuilderJourneyDocPath(ws));
+  const doc = await fs.readFile(resolveBuilderJourneyDocPath(ws), "utf8");
+  assert.match(doc, /# Builder Journey/);
+  // honest trajectory drawn from success commitments (first -> latest)
+  assert.match(doc, /조은성에게 결제 요청 보내기/);
+  assert.match(doc, /support lead Slack 알림 만들기/);
+  // the avoidance confession (cycle.note) must NEVER appear in the persisted artifact
+  assert.ok(!doc.includes("청구가 무서워"), "confession (cycle.note) must not leak into the builder-journey doc");
+  await fs.rm(ws, { recursive: true, force: true });
+});
+
+test("writeBuilderJourneyDoc is a no-op (no file) for a workspace with no closed cycles", async () => {
+  const ws = await tempWorkspace();
+  const written = await writeBuilderJourneyDoc({ workspaceRoot: ws, now: NOW });
+  assert.equal(written, "");
+  await assert.rejects(fs.readFile(resolveBuilderJourneyDocPath(ws), "utf8"));
+  await fs.rm(ws, { recursive: true, force: true });
+});
+
+test("writeBuilderJourneyDoc fails open (returns empty) when the memory load throws", async () => {
+  const ws = await tempWorkspace();
+  const written = await writeBuilderJourneyDoc({
+    workspaceRoot: ws,
+    now: NOW,
+    loadMemory: async () => { throw new Error("boom"); },
+  });
+  assert.equal(written, "");
   await fs.rm(ws, { recursive: true, force: true });
 });

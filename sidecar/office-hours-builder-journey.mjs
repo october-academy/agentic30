@@ -29,6 +29,26 @@ export function resolveBuilderJourneyTier(sessionCount = 1) {
   return "inner_circle";
 }
 
+// Pure: derive builder-journey inputs from office-hours memory with an HONEST mapping.
+// `sessionInProgress` true during a live interview (the cycle is not yet appended, so the
+// current session is cycles.length + 1); false right after a cycle closes (cycles.length is
+// the just-completed session number). designTitles is the arc of real COMMITMENTS — only
+// success cycles' lastAssignment — and NEVER cycle.note (the avoidance-confession slot), so
+// a confession is never reframed as design progress.
+export function deriveBuilderJourneyInputs(memory = {}, { sessionInProgress = true } = {}) {
+  const cycles = Array.isArray(memory?.cycles) ? memory.cycles : [];
+  const lastCycle = cycles[cycles.length - 1] || {};
+  return {
+    sessionCount: cycles.length + (sessionInProgress ? 1 : 0),
+    designTitles: cycles
+      .filter((cycle) => cycle?.outcome === "success")
+      .map((cycle) => String(cycle?.lastAssignment || "").trim())
+      .filter(Boolean),
+    lastAssignment: String(lastCycle.lastAssignment || "").trim(),
+    accumulatedSignals: String(memory?.compiledTruth?.text || "").trim(),
+  };
+}
+
 function cleanText(value) {
   return String(value ?? "").replace(/[ \t]+/g, " ").trim();
 }
