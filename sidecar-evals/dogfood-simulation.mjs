@@ -346,56 +346,32 @@ async function submitBootstrapInput({ ws, events, sessionId, scenario, transcrip
 }
 
 async function scanWorkspaceDocs({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset, workspaceRoot }) {
-  const previousFinalAssistantCount = countFinalAssistantMessages(latestSession(events, sessionId));
   ws.send(JSON.stringify({
     type: "scan_workspace",
     root: workspaceRoot,
     sessionId,
     prompt: scenario.prompt,
   }));
-  let visibleAnswer = null;
-  try {
-    visibleAnswer = await waitForAssistantAnswer({
-      events,
-      sessionId,
-      eventOffset,
-      previousFinalAssistantCount,
-      timeoutMs: 5_000,
-      startedAt,
-    });
-  } catch {
-    visibleAnswer = null;
-  }
+  // The Day-1 scan surfaces progress + a structured workspace_scan_result rather
+  // than a chat assistant message, so first-visible-value is the first scan
+  // progress event and the "answer" is the structured docs result. Do not wait
+  // on a chat answer the structured-output design never emits.
+  const firstProgress = await waitForEventAfter(
+    events,
+    eventOffset,
+    (event) =>
+      (event.type === "workspace_scan_progress" || event.type === "workspace_scan_started")
+        && (!event.scanRoot || event.scanRoot === workspaceRoot),
+    10_000,
+  ).catch(() => null);
   const completed = await waitForEventAfter(events, eventOffset, (event) => event.type === "workspace_scan_result", 100_000);
-  if (!visibleAnswer) {
-    try {
-      visibleAnswer = await waitForAssistantAnswer({
-        events,
-        sessionId,
-        eventOffset,
-        previousFinalAssistantCount,
-        timeoutMs: 5_000,
-        startedAt,
-      });
-    } catch {
-      visibleAnswer = null;
-    }
-  }
-  const fallbackSession = latestSession(events, sessionId);
-  const fallbackAssistant = countFinalAssistantMessages(fallbackSession) > previousFinalAssistantCount
-    ? latestAssistantMessage(fallbackSession)?.content || ""
-    : "";
-  const assistant = visibleAnswer?.content || fallbackAssistant;
-  transcript.push(`USER: ${scenario.prompt}`);
-  if (assistant) {
-    transcript.push(`ASSISTANT: ${assistant}`);
-  }
-  transcript.push(`SYSTEM: workspace scan found ICP=${completed.icp}, VALUES=${completed.values}, GOAL=${completed.goal}, SPEC=${completed.spec}`);
+  const firstVisibleMs = firstProgress ? eventElapsed(firstProgress, startedAt) : eventElapsed(completed, startedAt);
   const operationCompleteMs = eventElapsed(completed, startedAt);
-  const visibleLatency = visibleAnswer?.latency_ms
-    || (assistant ? latencyFromSession(fallbackSession, startedAt).latency_ms : elapsedLatency(startedAt));
+  transcript.push(`USER: ${scenario.prompt}`);
+  transcript.push(`SYSTEM: workspace scan found ICP=${completed.icp}, VALUES=${completed.values}, GOAL=${completed.goal}, SPEC=${completed.spec}`);
   const latency = {
-    ...visibleLatency,
+    first_visible_value: firstVisibleMs,
+    first_visible_value_ms: firstVisibleMs,
     operation_complete: operationCompleteMs,
     operation_complete_ms: operationCompleteMs,
     final_response: operationCompleteMs,
@@ -403,7 +379,7 @@ async function scanWorkspaceDocs({ ws, events, sessionId, scenario, transcript, 
   return {
     latency_ms: latency,
     observed: {
-      assistantMessages: assistant ? [assistant] : [],
+      assistantMessages: [],
       systemOutcomes: ["workspace scan completed"],
       workspaceScan: {
         scanRoot: workspaceRoot,

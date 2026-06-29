@@ -331,6 +331,10 @@ function buildSmokeChecks({ scenario, observed, events, eventTypeSet }) {
       checks.assistant_output_observed = hasAssistantOutput(observed);
       break;
     case "workspace-docs-scan":
+      // The Day-1 scan surfaces a structured workspace_scan_result (doc paths +
+      // readiness) rendered in the Day-1 UI, not a chat assistant message. The
+      // structured checks below ARE this scenario's visible output, so do not
+      // require assistant_output_observed here.
       checks.workspace_scan_result = eventTypeSet.has("workspace_scan_result") || eventTypeSet.has("workspace_scan_completed");
       checks.fixture_docs_found = Boolean(
         observed.workspaceScan?.icp
@@ -339,9 +343,6 @@ function buildSmokeChecks({ scenario, observed, events, eventTypeSet }) {
           && observed.workspaceScan?.spec,
       );
       checks.fixture_workspace_scanned = String(observed.workspaceScan?.scanRoot || "").includes("agentic30-dogfood-workspace-");
-      if (requiresVisibleOutput) {
-        checks.assistant_output_observed = hasAssistantOutput(observed);
-      }
       break;
     case "bip-mission-partial-setup":
       checks.mission_generation_completed = eventTypeSet.has("bip_coach_generation_completed");
