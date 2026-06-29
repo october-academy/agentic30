@@ -102,7 +102,7 @@ test("computeOfficeHoursEffectorContext injects the Phase 6 builder-journey clos
     ],
     compiledTruth: { text: "구체 사용자 2회 명명" },
   });
-  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory, isHandoffTurn: true });
   assert.match(context, /Phase 6 builder-journey/);
   // 2 closed cycles -> sessionCount 3 -> welcome_back tier
   assert.match(context, /tier: welcome_back/);
@@ -126,7 +126,7 @@ test("builder-journey close never reframes an avoidance confession (cycle.note) 
     ],
     compiledTruth: { text: "결제 요청 아직 미발송" },
   });
-  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory, isHandoffTurn: true });
   // The confession must NEVER surface in the relationship close.
   assert.ok(!context.includes("청구가 무서워"), "cycle.note (a confession) must not leak into builder-journey");
   // The latest cycle is a confession (lastAssignment ""), so an older success commitment
@@ -148,7 +148,7 @@ test("builder-journey regular tier draws its trajectory from compiledTruth, not 
     ],
     compiledTruth: { text: "누적 신호 요약 라인" },
   });
-  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory, isHandoffTurn: true });
   assert.match(context, /tier: regular/);
   assert.ok(!context.includes("첫 회피 고백"), "regular-tier trajectory must not render cycle.note (confession) as a design title");
   assert.ok(!context.includes("둘째 회피 고백"), "regular-tier trajectory must not render cycle.note (confession) as a design title");
@@ -158,13 +158,30 @@ test("builder-journey regular tier draws its trajectory from compiledTruth, not 
 test("computeOfficeHoursEffectorContext omits builder-journey for a first-time builder (no closed cycles)", async () => {
   const loadSnapshot = async () => ({ cards: [] });
   const loadMemory = async () => ({ cycles: [], compiledTruth: { text: "" } });
-  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
+  // isHandoffTurn true so this asserts the no-closed-cycles gate, not the handoff gate.
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory, isHandoffTurn: true });
   assert.equal(context, "");
 });
 
 test("computeOfficeHoursEffectorContext stays graceful when memory load throws", async () => {
   const loadSnapshot = async () => ({ cards: [] });
   const loadMemory = async () => { throw new Error("memory unreadable"); };
-  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory, isHandoffTurn: true });
   assert.equal(context, "");
+});
+
+test("computeOfficeHoursEffectorContext omits the Phase 6 close when it is not the handoff turn", async () => {
+  const loadSnapshot = async () => ({ cards: [] });
+  // Same returning-builder ledger; the only difference is whether this is the handoff turn.
+  const loadMemory = async () => ({
+    cycles: [
+      { cycle: 1, outcome: "success", lastAssignment: "조은성에게 결제 요청 보내기", note: "" },
+      { cycle: 2, outcome: "success", lastAssignment: "support lead Slack 알림 만들기", note: "" },
+    ],
+    compiledTruth: { text: "구체 사용자 2회 명명" },
+  });
+  const midInterview = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory, isHandoffTurn: false });
+  assert.ok(!midInterview.includes("Phase 6 builder-journey"), "no Phase 6 close mid-interview");
+  const atHandoff = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory, isHandoffTurn: true });
+  assert.match(atHandoff, /Phase 6 builder-journey/, "the Phase 6 close appears on the handoff turn");
 });

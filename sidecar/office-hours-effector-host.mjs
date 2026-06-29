@@ -107,7 +107,12 @@ async function loadLandscapeLines({ workspaceRoot, now, loadSnapshot = loadNewsM
 // Only emits for a RETURNING builder (>=1 closed cycle) — a brand-new first interview has
 // no journey arc to reflect yet, so a fresh workspace keeps an empty effector context
 // (introduction-tier wiring for the very first session is deferred).
-async function loadBuilderJourneyContext({ workspaceRoot, now, loadMemory }) {
+async function loadBuilderJourneyContext({ workspaceRoot, now, loadMemory, isHandoffTurn = false }) {
+  // SPEC v3 §7 classifies Phase 6 (Handoff) as the OUTPUT turn: emit the close ONLY when the
+  // interview has actually completed this turn (officeHoursRuntimeGatherComplete at the call
+  // site), never mid-interview. Short-circuiting before the memory read also means non-handoff
+  // turns pay zero extra I/O.
+  if (!isHandoffTurn) return "";
   let memory = null;
   try {
     memory = await loadMemory({ workspaceRoot, now });
@@ -151,6 +156,10 @@ export async function computeOfficeHoursEffectorContext({
   budgetExceeded = false,
   externalContext = "",
   alternatives = [],
+  // SPEC v3 §7: true only on the actual interview-completion (handoff/output) turn — the
+  // caller computes it from the reducer runtime (officeHoursRuntimeGatherComplete). When
+  // false the Phase 6 builder-journey close is not emitted at all.
+  isHandoffTurn = false,
   loadSnapshot = loadNewsMarketRadarSnapshot,
   loadMemory = loadOfficeHoursMemory,
   runProvider = runProviderStream,
@@ -170,7 +179,7 @@ export async function computeOfficeHoursEffectorContext({
     }
   }
 
-  const builderJourney = await loadBuilderJourneyContext({ workspaceRoot, now, loadMemory })
+  const builderJourney = await loadBuilderJourneyContext({ workspaceRoot, now, loadMemory, isHandoffTurn })
     .catch(() => "");
 
   return buildOfficeHoursEffectorContext({

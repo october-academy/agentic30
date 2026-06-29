@@ -5859,6 +5859,8 @@ async function runPrompt(
       const officeHoursEffectorContext = await computeOfficeHoursEffectorContext({
         workspaceRoot,
         context: officeHoursContext,
+        // §7: only emit the Phase 6 close on the actual interview-completion turn.
+        isHandoffTurn: officeHoursRuntimeGatherComplete(session),
       }).catch(() => "");
       systemPromptOverride = buildOfficeHoursChatSystemPrompt(workspaceRoot, {
         specialistInjection: officeHoursSpecialistInjection,
@@ -11385,6 +11387,8 @@ async function runOfficeHours(session, {
       computeOfficeHoursEffectorContext({
         workspaceRoot,
         context: officeHoursRuntime.context,
+        // §7: only emit the Phase 6 close on the actual interview-completion turn.
+        isHandoffTurn: officeHoursRuntimeGatherComplete(session),
       }),
     ]);
     const result = await runOfficeHoursQuestionProviderWithDeadline({
