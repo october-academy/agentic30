@@ -399,7 +399,7 @@ export async function runProviderStream({
         docType: sessionRuntime?.iddPendingAdaptiveContinuation?.docType || "",
       });
     }
-    await delayTestStubProviderIfNeeded();
+    await delayTestStubProviderIfNeeded(abortController?.signal);
     onRunEvent?.({ phase: "provider.stub_response", provider });
     return { runtime: sessionRuntime };
   }
@@ -3010,13 +3010,47 @@ async function delayTestStubOfficeHoursMcpRequestIfNeeded() {
   await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, 5_000)));
 }
 
-async function delayTestStubProviderIfNeeded() {
+async function delayTestStubProviderIfNeeded(abortSignal = null) {
   const delayMs = Number.parseInt(
     String(process.env.AGENTIC30_TEST_STUB_PROVIDER_DELAY_MS || ""),
     10,
   );
   if (!Number.isFinite(delayMs) || delayMs <= 0) return;
-  await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, 5_000)));
+  const boundedMs = Math.min(delayMs, 5_000);
+  // Default (and historical) behavior: a fixed sleep that ignores the abort
+  // signal — this models a provider SDK that does NOT honor abortController,
+  // so the workspace-scan hard deadline must force-return the run.
+  // Opt-in via AGENTIC30_TEST_STUB_PROVIDER_ABORTABLE=1: the sleep honors the
+  // abort signal and rejects with an AbortError when aborted, letting a sidecar
+  // test drive the real soft-timeout -> abortController.abort() path instead of
+  // the instant forcedProviderTestError throw.
+  const abortable = process.env.AGENTIC30_TEST_STUB_PROVIDER_ABORTABLE === "1";
+  if (!abortable || !abortSignal) {
+    await new Promise((resolve) => setTimeout(resolve, boundedMs));
+    return;
+  }
+  await new Promise((resolve, reject) => {
+    if (abortSignal.aborted) {
+      reject(makeTestStubProviderAbortError());
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(makeTestStubProviderAbortError());
+    };
+    const timer = setTimeout(() => {
+      abortSignal.removeEventListener("abort", onAbort);
+      resolve();
+    }, boundedMs);
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function makeTestStubProviderAbortError() {
+  const error = new Error("Test stub provider run aborted by workspace-scan timeout");
+  error.name = "AbortError";
+  error.code = "aborted";
+  return error;
 }
 
 function extractStubContextFiles(prompt) {
