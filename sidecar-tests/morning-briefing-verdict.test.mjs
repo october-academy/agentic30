@@ -272,33 +272,45 @@ test("buildMorningBriefingVerdictContext fails without required user context", (
   );
 });
 
-test("buildMorningBriefingVerdictContext converts missing required source evidence to a gap claim", () => {
-  const digest = digestFixture();
-  digest.sources = digest.sources.filter((source) => source.id !== "posthog");
-  const briefing = briefingFixture();
-  briefing.cards = briefing.cards.filter((card) => card.id !== "posthog");
-  briefing.drilldowns = {};
-  briefing.evidenceFunnel.steps = briefing.evidenceFunnel.steps.filter((step) => step.source !== "PostHog");
-  const context = buildContext({ digest, briefing });
-  assert.equal(context.evidenceBundle.requirements.requiredSourceGapCount, 1);
-  const sourceGap = context.evidenceBundle.claims.find((claim) => claim.id === "source_posthog_gap");
-  assert.equal(sourceGap.sourceId, "posthog");
-  assert.equal(sourceGap.tier, "instrumentation_gap");
-  assert.equal(sourceGap.customerEvidence, false);
-  assert.equal(sourceGap.supportsHealthy, false);
-  assert.match(sourceGap.summary, /PostHog aggregate source missing or unavailable/);
-  assert.ok(context.contextRefs.includes("posthog"));
-  const verdict = normalizeMorningBriefingLlmVerdict({
-    state: "instrumentation_gap",
-    title: "PostHog 집계 근거가 비어 있어요.",
-    body: "고객 행동 판단 전에 PostHog 수집 상태부터 복구해야 합니다.",
-    primaryActionId: "task",
-    evidence: [
-      "posthog PostHog aggregate source missing or unavailable missing 집계가 있습니다.",
-      "GitHub commits 7 집계가 있습니다.",
-    ],
-  }, { context, provider: "codex", generatedAt: "2026-06-16T00:00:00.000Z" });
-  assert.equal(verdict.state, "instrumentation_gap");
+test("buildMorningBriefingVerdictContext converts missing required source evidence to gap claims", () => {
+  const cases = [
+    { id: "cloudflare", sourceIds: ["cloudflare"], label: "Cloudflare", title: "Cloudflare 집계 근거가 비어 있어요." },
+    { id: "github", sourceIds: ["github", "git", "gh_cli"], label: "GitHub", title: "GitHub 집계 근거가 비어 있어요." },
+    { id: "posthog", sourceIds: ["posthog"], label: "PostHog", title: "PostHog 집계 근거가 비어 있어요." },
+  ];
+
+  for (const sourceCase of cases) {
+    const removedSourceIds = new Set(sourceCase.sourceIds);
+    const digest = digestFixture();
+    digest.sources = digest.sources.filter((source) => !removedSourceIds.has(source.id));
+    const briefing = briefingFixture();
+    briefing.cards = briefing.cards.filter((card) => card.id !== sourceCase.id);
+    delete briefing.drilldowns[sourceCase.id];
+    briefing.evidenceFunnel.steps = briefing.evidenceFunnel.steps.filter((step) => step.source !== sourceCase.label);
+
+    const context = buildContext({ digest, briefing });
+
+    assert.equal(context.evidenceBundle.requirements.requiredSourceGapCount, 1);
+    const sourceGap = context.evidenceBundle.claims.find((claim) => claim.id === `source_${sourceCase.id}_gap`);
+    assert.equal(sourceGap.sourceId, sourceCase.id);
+    assert.equal(sourceGap.tier, "instrumentation_gap");
+    assert.equal(sourceGap.customerEvidence, false);
+    assert.equal(sourceGap.supportsHealthy, false);
+    assert.match(sourceGap.summary, new RegExp(`${sourceCase.label} aggregate source missing or unavailable`));
+    assert.ok(context.contextRefs.includes(sourceCase.id));
+
+    const verdict = normalizeMorningBriefingLlmVerdict({
+      state: "instrumentation_gap",
+      title: sourceCase.title,
+      body: "고객 행동 판단 전에 집계 수집 상태부터 복구해야 합니다.",
+      primaryActionId: "task",
+      evidence: [
+        `${sourceCase.id} ${sourceCase.label} aggregate source missing or unavailable missing 집계가 있습니다.`,
+        "Office Hours Day 3: 설치 링크를 보낸 뒤 scan 완료 증거를 확인한다.",
+      ],
+    }, { context, provider: "codex", generatedAt: "2026-06-16T00:00:00.000Z" });
+    assert.equal(verdict.state, "instrumentation_gap");
+  }
 });
 
 test("buildMorningBriefingVerdictPrompt includes aggregate context and redacts raw identifiers", () => {

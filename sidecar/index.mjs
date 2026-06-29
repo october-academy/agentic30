@@ -119,6 +119,7 @@ import {
 } from "./active-users-snapshot.mjs";
 import { createTelemetryClient } from "./telemetry.mjs";
 import { reportError, setTelemetryClient as setSharedTelemetryClient, swallow } from "./error-telemetry.mjs";
+import { setAiGenerationTelemetrySink } from "./ai-generation-telemetry.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
 import { collectLocalDiscovery } from "./local-discovery.mjs";
 import {
@@ -753,6 +754,9 @@ function currentBipSetupGate() {
 
 const telemetry = createTelemetryClient({ appSupportPath, workspaceRoot });
 setSharedTelemetryClient(telemetry);
+// Route provider-runner's $ai_generation events through the same PostHog ingest
+// pipeline so LLM cost/token/latency/error analytics light up.
+setAiGenerationTelemetrySink((event, properties) => telemetry.captureEvent(event, properties));
 let fatalSidecarWriteInProgress = false;
 let fatalSidecarHandlersInstalled = false;
 installFatalSidecarErrorHandlers();
