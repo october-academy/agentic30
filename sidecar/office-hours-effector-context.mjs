@@ -142,6 +142,7 @@ export function buildOfficeHoursEffectorContext({
   secondOpinion = null,
   externalContext = "",
   alternatives = [],
+  builderJourney = "",
 } = {}) {
   const sections = [];
 
@@ -164,6 +165,18 @@ export function buildOfficeHoursEffectorContext({
       "### 대안 후보 (alternatives — 참고만, 카드 선택은 reducer)",
       ...alternativeLines.map((line) => `- ${line}`),
     ].join("\n"));
+  }
+
+  // Phase 6 builder-journey close (self-headed READ-ONLY guidance built by the host).
+  // It is injected on every turn, so it carries an explicit gate: apply ONLY when the
+  // interview has actually ended. The reducer still owns progression — this closing COPY
+  // must never short-circuit the forcing questions mid-session.
+  if (typeof builderJourney === "string" && builderJourney.trim()) {
+    sections.push([
+      "> 아래 Phase 6 마무리 가이드는 인터뷰가 실제로 끝나 세션을 닫을 때만 적용한다."
+        + " 진행 중에는 다음 forcing question을 계속하고, 마무리 문구나 권유를 미리 노출하지 않는다.",
+      builderJourney.trim(),
+    ].join("\n\n"));
   }
 
   if (!sections.length) return "";

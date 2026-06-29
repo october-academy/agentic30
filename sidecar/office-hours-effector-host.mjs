@@ -23,6 +23,8 @@ import {
   parseOfficeHoursSecondOpinion,
   OFFICE_HOURS_SECOND_OPINION_EXECUTION_MODE,
 } from "./office-hours-effector-context.mjs";
+import { buildOfficeHoursBuilderJourneyContext } from "./office-hours-builder-journey.mjs";
+import { loadOfficeHoursMemory } from "./office-hours-memory.mjs";
 
 export const OFFICE_HOURS_SECOND_OPINION_UNAVAILABLE_DEBT = "second_opinion_unavailable";
 
@@ -99,10 +101,44 @@ async function loadLandscapeLines({ workspaceRoot, now, loadSnapshot = loadNewsM
   }
 }
 
+// Phase 6 builder-journey (SPEC v3 §12) — the relationship-closing handoff, ported from
+// the gstack 4-tier handoff into the OA Partner voice. Host precomputed READ-ONLY context:
+// the tier follows the closed-cycle count and the model writes the actual closing prose.
+// Only emits for a RETURNING builder (>=1 closed cycle) — a brand-new first interview has
+// no journey arc to reflect yet, so a fresh workspace keeps an empty effector context
+// (introduction-tier wiring for the very first session is deferred).
+async function loadBuilderJourneyContext({ workspaceRoot, now, loadMemory }) {
+  let memory = null;
+  try {
+    memory = await loadMemory({ workspaceRoot, now });
+  } catch {
+    return "";
+  }
+  const cycles = Array.isArray(memory?.cycles) ? memory.cycles : [];
+  if (cycles.length < 1) return "";
+  const lastCycle = cycles[cycles.length - 1] || {};
+  return buildOfficeHoursBuilderJourneyContext({
+    sessionCount: cycles.length + 1,
+    // The cycle ledger has NO per-cycle "design title" field. `cycle.note` is the
+    // avoidance-CONFESSION slot (only blocked cycles write it; see the index.mjs cycle
+    // writer "the confession is the note, NOT the next assignment"). Sourcing a design
+    // trajectory from it would reframe a builder's confession as progress — the exact
+    // anti-pattern this product confronts. Omit titles; compiledTruth carries the real
+    // accumulated narrative via accumulatedSignals below.
+    designTitles: [],
+    // The MOST RECENT cycle's assignment only — honestly empty when the latest cycle was
+    // a confession (blocked → lastAssignment ""), rather than reverse-scanning past it and
+    // resurfacing an older success commitment as if it were the open one.
+    lastAssignment: String(lastCycle.lastAssignment || "").trim(),
+    accumulatedSignals: String(memory?.compiledTruth?.text || "").trim(),
+  });
+}
+
 // The single host entry point. Loads read-only inputs, runs the gated second
-// opinion when summary + marker + guardrail allow, and returns the PURE effector
-// context string ("" when there is nothing to inject — sim / empty workspaces
-// degrade cleanly). `debtSink` (optional) collects fail-open debt markers.
+// opinion when summary + marker + guardrail allow, folds in the Phase 6
+// builder-journey close, and returns the PURE effector context string ("" when there
+// is nothing to inject — sim / empty workspaces degrade cleanly). `debtSink`
+// (optional) collects fail-open debt markers.
 export async function computeOfficeHoursEffectorContext({
   workspaceRoot = process.cwd(),
   context = "",
@@ -116,6 +152,7 @@ export async function computeOfficeHoursEffectorContext({
   externalContext = "",
   alternatives = [],
   loadSnapshot = loadNewsMarketRadarSnapshot,
+  loadMemory = loadOfficeHoursMemory,
   runProvider = runProviderStream,
   debtSink = null,
 } = {}) {
@@ -133,5 +170,10 @@ export async function computeOfficeHoursEffectorContext({
     }
   }
 
-  return buildOfficeHoursEffectorContext({ landscape, secondOpinion, externalContext, alternatives });
+  const builderJourney = await loadBuilderJourneyContext({ workspaceRoot, now, loadMemory })
+    .catch(() => "");
+
+  return buildOfficeHoursEffectorContext({
+    landscape, secondOpinion, externalContext, alternatives, builderJourney,
+  });
 }

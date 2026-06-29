@@ -87,6 +87,84 @@ test("computeOfficeHoursEffectorContext runs + injects a gated second opinion an
 
 test("computeOfficeHoursEffectorContext is graceful when the landscape snapshot fails", async () => {
   const loadSnapshot = async () => { throw new Error("no cache"); };
-  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot });
+  const loadMemory = async () => ({ cycles: [] });
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
+  assert.equal(context, "");
+});
+
+test("computeOfficeHoursEffectorContext injects the Phase 6 builder-journey close for a returning builder", async () => {
+  const loadSnapshot = async () => ({ cards: [] });
+  // Realistic ledger shape: success cycles carry lastAssignment and NO note.
+  const loadMemory = async () => ({
+    cycles: [
+      { cycle: 1, outcome: "success", lastAssignment: "오래된 약속", note: "" },
+      { cycle: 2, outcome: "success", lastAssignment: "조은성에게 결제 요청 보내기", note: "" },
+    ],
+    compiledTruth: { text: "구체 사용자 2회 명명" },
+  });
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
+  assert.match(context, /Phase 6 builder-journey/);
+  // 2 closed cycles -> sessionCount 3 -> welcome_back tier
+  assert.match(context, /tier: welcome_back/);
+  // lastAssignment comes from the MOST RECENT cycle, not an older one.
+  assert.ok(context.includes("조은성에게 결제 요청 보내기"), "surfaces the latest cycle's assignment");
+  assert.ok(!context.includes("오래된 약속"), "does not resurface an older cycle's assignment");
+  assert.ok(context.includes("luma.com/agentic_garage"), "invites Agentic Garage");
+  assert.ok(context.includes("agentic30.app/blog"), "shares the builder blog");
+  assert.match(context, /YC, Y Combinator, Garry Tan, ycombinator\.com은 절대 언급하지 않는다/);
+  // The close guidance must be gated to the actual end of the interview.
+  assert.match(context, /인터뷰가 실제로 끝나 세션을 닫을 때만 적용/);
+});
+
+test("builder-journey close never reframes an avoidance confession (cycle.note) as progress", async () => {
+  const loadSnapshot = async () => ({ cards: [] });
+  // Realistic blocked cycle: the avoidance CONFESSION lives in note; lastAssignment is "".
+  const loadMemory = async () => ({
+    cycles: [
+      { cycle: 1, outcome: "success", lastAssignment: "조은성에게 결제 요청 보내기", note: "" },
+      { cycle: 2, outcome: "blocked", lastAssignment: "", note: "청구가 무서워 미팅으로 미뤘다" },
+    ],
+    compiledTruth: { text: "결제 요청 아직 미발송" },
+  });
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
+  // The confession must NEVER surface in the relationship close.
+  assert.ok(!context.includes("청구가 무서워"), "cycle.note (a confession) must not leak into builder-journey");
+  // The latest cycle is a confession (lastAssignment ""), so an older success commitment
+  // must not be resurfaced as the open "last assignment".
+  assert.ok(!context.includes("조은성에게 결제 요청 보내기"), "stale older commitment must not resurface");
+});
+
+test("builder-journey regular tier draws its trajectory from compiledTruth, not cycle.note", async () => {
+  const loadSnapshot = async () => ({ cards: [] });
+  // 3 closed cycles -> sessionCount 4 -> regular tier (the only tier that renders a
+  // first->latest trajectory). TWO distinct blocked confessions exercise the exact defect
+  // path (firstTitle !== lastTitle): the pre-fix mapping would render them as
+  // `처음엔 "첫 회피 고백", 지금은 "둘째 회피 고백"`.
+  const loadMemory = async () => ({
+    cycles: [
+      { cycle: 1, outcome: "blocked", lastAssignment: "", note: "첫 회피 고백" },
+      { cycle: 2, outcome: "success", lastAssignment: "진짜 커밋", note: "" },
+      { cycle: 3, outcome: "blocked", lastAssignment: "", note: "둘째 회피 고백" },
+    ],
+    compiledTruth: { text: "누적 신호 요약 라인" },
+  });
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
+  assert.match(context, /tier: regular/);
+  assert.ok(!context.includes("첫 회피 고백"), "regular-tier trajectory must not render cycle.note (confession) as a design title");
+  assert.ok(!context.includes("둘째 회피 고백"), "regular-tier trajectory must not render cycle.note (confession) as a design title");
+  assert.ok(context.includes("누적 신호 요약 라인"), "regular tier surfaces accumulatedSignals from compiledTruth");
+});
+
+test("computeOfficeHoursEffectorContext omits builder-journey for a first-time builder (no closed cycles)", async () => {
+  const loadSnapshot = async () => ({ cards: [] });
+  const loadMemory = async () => ({ cycles: [], compiledTruth: { text: "" } });
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
+  assert.equal(context, "");
+});
+
+test("computeOfficeHoursEffectorContext stays graceful when memory load throws", async () => {
+  const loadSnapshot = async () => ({ cards: [] });
+  const loadMemory = async () => { throw new Error("memory unreadable"); };
+  const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
   assert.equal(context, "");
 });
