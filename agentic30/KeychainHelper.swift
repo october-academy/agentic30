@@ -6,8 +6,10 @@ enum KeychainHelper {
     private static let service = "com.agentic30"
     private static let settingsAccount = "com.agentic30.all-settings"
     private static let macAuthAccount = "com.agentic30.mac-auth"
+    private static let recorderMediaKeyAccount = "com.agentic30.recorder-media-key-v1"
     private static var cachedSettings: Settings?
     private static var cachedMacAuthSession: MacAuthSession?
+    private static var cachedRecorderMediaKey: Data?
     private static var didLoadMacAuthSession = false
 
     /// DEBUG builds bypass macOS Keychain entirely so that ad-hoc-signed dev runs
@@ -528,6 +530,28 @@ enum KeychainHelper {
         delete(account: macAuthAccount)
     }
 
+    static func loadOrCreateRecorderMediaKey() throws -> Data {
+        if let cachedRecorderMediaKey {
+            guard cachedRecorderMediaKey.count == 32 else {
+                throw KeychainError.invalidRecorderMediaKey
+            }
+            return cachedRecorderMediaKey
+        }
+
+        if let key = loadData(account: recorderMediaKeyAccount) {
+            guard key.count == 32 else {
+                throw KeychainError.invalidRecorderMediaKey
+            }
+            cachedRecorderMediaKey = key
+            return key
+        }
+
+        let key = try generateRecorderMediaKey()
+        try saveData(key, account: recorderMediaKeyAccount)
+        cachedRecorderMediaKey = key
+        return key
+    }
+
     typealias LocalDataResetReport = Agentic30LocalDataResetReport
 
     static func resetAgentic30LocalData(
@@ -622,7 +646,10 @@ enum KeychainHelper {
 
     private static func saveCodable<T: Encodable>(_ value: T, account: String) throws {
         guard let data = try? JSONEncoder().encode(value) else { return }
+        try saveData(data, account: account)
+    }
 
+    private static func saveData(_ data: Data, account: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -652,6 +679,18 @@ enum KeychainHelper {
         }
     }
 
+    private static func generateRecorderMediaKey() throws -> Data {
+        var data = Data(count: 32)
+        let status = data.withUnsafeMutableBytes { buffer -> OSStatus in
+            guard let baseAddress = buffer.baseAddress else { return errSecAllocate }
+            return SecRandomCopyBytes(kSecRandomDefault, 32, baseAddress)
+        }
+        guard status == errSecSuccess else {
+            throw KeychainError.unhandledError(status: status)
+        }
+        return data
+    }
+
     private static func delete(account: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -672,10 +711,12 @@ enum KeychainHelper {
     static func resetKeychainStorageForLocalDataReset() {
         cachedSettings = nil
         cachedMacAuthSession = nil
+        cachedRecorderMediaKey = nil
         didLoadMacAuthSession = true
 
         deleteSettings()
         deleteMacAuthSession()
+        delete(account: recorderMediaKeyAccount)
         deleteAllServiceEntries()
     }
 
@@ -792,11 +833,14 @@ enum KeychainHelper {
 
     enum KeychainError: LocalizedError {
         case unhandledError(status: OSStatus)
+        case invalidRecorderMediaKey
 
         var errorDescription: String? {
             switch self {
             case .unhandledError(let status):
                 return "Keychain error: \(status)"
+            case .invalidRecorderMediaKey:
+                return "Recorder media encryption key is invalid."
             }
         }
     }

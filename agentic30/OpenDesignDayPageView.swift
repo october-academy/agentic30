@@ -4613,6 +4613,9 @@ struct OpenDesignDayPageView: View {
     let recorderFrameImagePreview: RecorderFrameImagePreview?
     let recorderFrameImageLoadingID: String?
     let recorderFrameImageLastError: String?
+    let recorderAuditSource: RecorderAuditSource?
+    let recorderAuditRefreshing: Bool
+    let recorderAuditLastError: String?
     let recorderAutoCaptureRunning: Bool
     let recorderAutoCaptureLastTrigger: String?
     let recorderAutoCaptureLastError: String?
@@ -4632,8 +4635,12 @@ struct OpenDesignDayPageView: View {
     let prepareRecorderFrameCaptures: () -> Void
     let loadRecorderFrameImage: (String) -> Void
     let prepareRecorderFrameImage: (String?) -> Void
+    let refreshRecorderAuditEvents: () -> Void
     let startRecorderAutoCapture: () -> Void
     let stopRecorderAutoCapture: () -> Void
+    let setRecorderClipboardMode: (String) -> Void
+    let setRecorderMicrophoneCapture: (Bool) -> Void
+    let setRecorderSystemAudioCapture: (Bool) -> Void
     let recorderPipes: [RecorderPipeDefinition]
     let recorderPipeRuns: [RecorderPipeRun]
     let recorderPipesRefreshing: Bool
@@ -4735,6 +4742,9 @@ struct OpenDesignDayPageView: View {
         recorderFrameImagePreview: RecorderFrameImagePreview? = nil,
         recorderFrameImageLoadingID: String? = nil,
         recorderFrameImageLastError: String? = nil,
+        recorderAuditSource: RecorderAuditSource? = nil,
+        recorderAuditRefreshing: Bool = false,
+        recorderAuditLastError: String? = nil,
         recorderAutoCaptureRunning: Bool = false,
         recorderAutoCaptureLastTrigger: String? = nil,
         recorderAutoCaptureLastError: String? = nil,
@@ -4754,8 +4764,12 @@ struct OpenDesignDayPageView: View {
         prepareRecorderFrameCaptures: @escaping () -> Void = {},
         loadRecorderFrameImage: @escaping (String) -> Void = { _ in },
         prepareRecorderFrameImage: @escaping (String?) -> Void = { _ in },
+        refreshRecorderAuditEvents: @escaping () -> Void = {},
         startRecorderAutoCapture: @escaping () -> Void = {},
         stopRecorderAutoCapture: @escaping () -> Void = {},
+        setRecorderClipboardMode: @escaping (String) -> Void = { _ in },
+        setRecorderMicrophoneCapture: @escaping (Bool) -> Void = { _ in },
+        setRecorderSystemAudioCapture: @escaping (Bool) -> Void = { _ in },
         recorderPipes: [RecorderPipeDefinition] = [],
         recorderPipeRuns: [RecorderPipeRun] = [],
         recorderPipesRefreshing: Bool = false,
@@ -4842,6 +4856,9 @@ struct OpenDesignDayPageView: View {
         self.recorderFrameImagePreview = recorderFrameImagePreview
         self.recorderFrameImageLoadingID = recorderFrameImageLoadingID
         self.recorderFrameImageLastError = recorderFrameImageLastError
+        self.recorderAuditSource = recorderAuditSource
+        self.recorderAuditRefreshing = recorderAuditRefreshing
+        self.recorderAuditLastError = recorderAuditLastError
         self.recorderAutoCaptureRunning = recorderAutoCaptureRunning
         self.recorderAutoCaptureLastTrigger = recorderAutoCaptureLastTrigger
         self.recorderAutoCaptureLastError = recorderAutoCaptureLastError
@@ -4861,8 +4878,12 @@ struct OpenDesignDayPageView: View {
         self.prepareRecorderFrameCaptures = prepareRecorderFrameCaptures
         self.loadRecorderFrameImage = loadRecorderFrameImage
         self.prepareRecorderFrameImage = prepareRecorderFrameImage
+        self.refreshRecorderAuditEvents = refreshRecorderAuditEvents
         self.startRecorderAutoCapture = startRecorderAutoCapture
         self.stopRecorderAutoCapture = stopRecorderAutoCapture
+        self.setRecorderClipboardMode = setRecorderClipboardMode
+        self.setRecorderMicrophoneCapture = setRecorderMicrophoneCapture
+        self.setRecorderSystemAudioCapture = setRecorderSystemAudioCapture
         self.recorderPipes = recorderPipes
         self.recorderPipeRuns = recorderPipeRuns
         self.recorderPipesRefreshing = recorderPipesRefreshing
@@ -4977,6 +4998,9 @@ struct OpenDesignDayPageView: View {
                     recorderFrameImagePreview: recorderFrameImagePreview,
                     recorderFrameImageLoadingID: recorderFrameImageLoadingID,
                     recorderFrameImageLastError: recorderFrameImageLastError,
+                    recorderAuditSource: recorderAuditSource,
+                    recorderAuditRefreshing: recorderAuditRefreshing,
+                    recorderAuditLastError: recorderAuditLastError,
                     recorderAutoCaptureRunning: recorderAutoCaptureRunning,
                     recorderAutoCaptureLastTrigger: recorderAutoCaptureLastTrigger,
                     recorderAutoCaptureLastError: recorderAutoCaptureLastError,
@@ -4996,8 +5020,12 @@ struct OpenDesignDayPageView: View {
                     prepareRecorderFrameCaptures: prepareRecorderFrameCaptures,
                     loadRecorderFrameImage: loadRecorderFrameImage,
                     prepareRecorderFrameImage: prepareRecorderFrameImage,
+                    refreshRecorderAuditEvents: refreshRecorderAuditEvents,
                     startRecorderAutoCapture: startRecorderAutoCapture,
                     stopRecorderAutoCapture: stopRecorderAutoCapture,
+                    setRecorderClipboardMode: setRecorderClipboardMode,
+                    setRecorderMicrophoneCapture: setRecorderMicrophoneCapture,
+                    setRecorderSystemAudioCapture: setRecorderSystemAudioCapture,
                     recorderPipes: recorderPipes,
                     recorderPipeRuns: recorderPipeRuns,
                     recorderPipesRefreshing: recorderPipesRefreshing,
@@ -5720,6 +5748,9 @@ struct OpenDesignDayShell: View {
     let recorderFrameImagePreview: RecorderFrameImagePreview?
     let recorderFrameImageLoadingID: String?
     let recorderFrameImageLastError: String?
+    let recorderAuditSource: RecorderAuditSource?
+    let recorderAuditRefreshing: Bool
+    let recorderAuditLastError: String?
     let recorderAutoCaptureRunning: Bool
     let recorderAutoCaptureLastTrigger: String?
     let recorderAutoCaptureLastError: String?
@@ -5739,8 +5770,12 @@ struct OpenDesignDayShell: View {
     let prepareRecorderFrameCaptures: () -> Void
     let loadRecorderFrameImage: (String) -> Void
     let prepareRecorderFrameImage: (String?) -> Void
+    let refreshRecorderAuditEvents: () -> Void
     let startRecorderAutoCapture: () -> Void
     let stopRecorderAutoCapture: () -> Void
+    let setRecorderClipboardMode: (String) -> Void
+    let setRecorderMicrophoneCapture: (Bool) -> Void
+    let setRecorderSystemAudioCapture: (Bool) -> Void
     let recorderPipes: [RecorderPipeDefinition]
     let recorderPipeRuns: [RecorderPipeRun]
     let recorderPipesRefreshing: Bool
@@ -5861,6 +5896,9 @@ struct OpenDesignDayShell: View {
         recorderFrameImagePreview: RecorderFrameImagePreview?,
         recorderFrameImageLoadingID: String?,
         recorderFrameImageLastError: String?,
+        recorderAuditSource: RecorderAuditSource?,
+        recorderAuditRefreshing: Bool,
+        recorderAuditLastError: String?,
         recorderAutoCaptureRunning: Bool,
         recorderAutoCaptureLastTrigger: String?,
         recorderAutoCaptureLastError: String?,
@@ -5880,8 +5918,12 @@ struct OpenDesignDayShell: View {
         prepareRecorderFrameCaptures: @escaping () -> Void,
         loadRecorderFrameImage: @escaping (String) -> Void,
         prepareRecorderFrameImage: @escaping (String?) -> Void,
+        refreshRecorderAuditEvents: @escaping () -> Void,
         startRecorderAutoCapture: @escaping () -> Void,
         stopRecorderAutoCapture: @escaping () -> Void,
+        setRecorderClipboardMode: @escaping (String) -> Void,
+        setRecorderMicrophoneCapture: @escaping (Bool) -> Void,
+        setRecorderSystemAudioCapture: @escaping (Bool) -> Void,
         recorderPipes: [RecorderPipeDefinition],
         recorderPipeRuns: [RecorderPipeRun],
         recorderPipesRefreshing: Bool,
@@ -5978,6 +6020,9 @@ struct OpenDesignDayShell: View {
         self.recorderFrameImagePreview = recorderFrameImagePreview
         self.recorderFrameImageLoadingID = recorderFrameImageLoadingID
         self.recorderFrameImageLastError = recorderFrameImageLastError
+        self.recorderAuditSource = recorderAuditSource
+        self.recorderAuditRefreshing = recorderAuditRefreshing
+        self.recorderAuditLastError = recorderAuditLastError
         self.recorderAutoCaptureRunning = recorderAutoCaptureRunning
         self.recorderAutoCaptureLastTrigger = recorderAutoCaptureLastTrigger
         self.recorderAutoCaptureLastError = recorderAutoCaptureLastError
@@ -5997,8 +6042,12 @@ struct OpenDesignDayShell: View {
         self.prepareRecorderFrameCaptures = prepareRecorderFrameCaptures
         self.loadRecorderFrameImage = loadRecorderFrameImage
         self.prepareRecorderFrameImage = prepareRecorderFrameImage
+        self.refreshRecorderAuditEvents = refreshRecorderAuditEvents
         self.startRecorderAutoCapture = startRecorderAutoCapture
         self.stopRecorderAutoCapture = stopRecorderAutoCapture
+        self.setRecorderClipboardMode = setRecorderClipboardMode
+        self.setRecorderMicrophoneCapture = setRecorderMicrophoneCapture
+        self.setRecorderSystemAudioCapture = setRecorderSystemAudioCapture
         self.recorderPipes = recorderPipes
         self.recorderPipeRuns = recorderPipeRuns
         self.recorderPipesRefreshing = recorderPipesRefreshing
@@ -6254,6 +6303,9 @@ struct OpenDesignDayShell: View {
                         frameImagePreview: recorderFrameImagePreview,
                         frameImageLoadingID: recorderFrameImageLoadingID,
                         frameImageLastError: recorderFrameImageLastError,
+                        auditSource: recorderAuditSource,
+                        auditRefreshing: recorderAuditRefreshing,
+                        auditLastError: recorderAuditLastError,
                         autoCaptureRunning: recorderAutoCaptureRunning,
                         autoCaptureLastTrigger: recorderAutoCaptureLastTrigger,
                         autoCaptureLastError: recorderAutoCaptureLastError,
@@ -6273,8 +6325,12 @@ struct OpenDesignDayShell: View {
                         prepareFrameCaptures: prepareRecorderFrameCaptures,
                         loadFrameImage: loadRecorderFrameImage,
                         prepareFrameImage: prepareRecorderFrameImage,
+                        refreshAudit: refreshRecorderAuditEvents,
                         startAutoCapture: startRecorderAutoCapture,
                         stopAutoCapture: stopRecorderAutoCapture,
+                        setClipboardMode: self.setRecorderClipboardMode,
+                        setMicrophoneCapture: self.setRecorderMicrophoneCapture,
+                        setSystemAudioCapture: self.setRecorderSystemAudioCapture,
                         pipes: recorderPipes,
                         runs: recorderPipeRuns,
                         isRefreshing: recorderPipesRefreshing,
@@ -8544,6 +8600,11 @@ private struct OpenDesignRecorderPermissionRow: Identifiable {
     let settingsURL: String?
 }
 
+private struct OpenDesignClipboardPolicyOption: Identifiable {
+    let id: String
+    let title: String
+}
+
 private struct OpenDesignFounderReplayPageView: View {
     let controlState: RecorderControlState?
     let readiness: RecorderCaptureReadiness?
@@ -8562,6 +8623,9 @@ private struct OpenDesignFounderReplayPageView: View {
     let frameImagePreview: RecorderFrameImagePreview?
     let frameImageLoadingID: String?
     let frameImageLastError: String?
+    let auditSource: RecorderAuditSource?
+    let auditRefreshing: Bool
+    let auditLastError: String?
     let autoCaptureRunning: Bool
     let autoCaptureLastTrigger: String?
     let autoCaptureLastError: String?
@@ -8581,8 +8645,12 @@ private struct OpenDesignFounderReplayPageView: View {
     let prepareFrameCaptures: () -> Void
     let loadFrameImage: (String) -> Void
     let prepareFrameImage: (String?) -> Void
+    let refreshAudit: () -> Void
     let startAutoCapture: () -> Void
     let stopAutoCapture: () -> Void
+    let setClipboardMode: (String) -> Void
+    let setMicrophoneCapture: (Bool) -> Void
+    let setSystemAudioCapture: (Bool) -> Void
     let pipes: [RecorderPipeDefinition]
     let runs: [RecorderPipeRun]
     let isRefreshing: Bool
@@ -8606,6 +8674,11 @@ private struct OpenDesignFounderReplayPageView: View {
         .init(id: "review", time: "요약", action: "Day Memory Review", workState: "DTO 준비", decision: "Swift 렌더링 필요"),
         .init(id: "evidence", time: "증거", action: "Evidence Inbox", workState: "후보 승인 전", decision: "proof ledger 기준 유지"),
     ]
+    private let clipboardPolicyOptions: [OpenDesignClipboardPolicyOption] = [
+        .init(id: "trigger_only", title: "Trigger"),
+        .init(id: "content_opt_in", title: "Content"),
+        .init(id: "blocked", title: "Blocked"),
+    ]
 
     init(
         controlState: RecorderControlState? = nil,
@@ -8625,6 +8698,9 @@ private struct OpenDesignFounderReplayPageView: View {
         frameImagePreview: RecorderFrameImagePreview? = nil,
         frameImageLoadingID: String? = nil,
         frameImageLastError: String? = nil,
+        auditSource: RecorderAuditSource? = nil,
+        auditRefreshing: Bool = false,
+        auditLastError: String? = nil,
         autoCaptureRunning: Bool = false,
         autoCaptureLastTrigger: String? = nil,
         autoCaptureLastError: String? = nil,
@@ -8644,8 +8720,12 @@ private struct OpenDesignFounderReplayPageView: View {
         prepareFrameCaptures: @escaping () -> Void = {},
         loadFrameImage: @escaping (String) -> Void = { _ in },
         prepareFrameImage: @escaping (String?) -> Void = { _ in },
+        refreshAudit: @escaping () -> Void = {},
         startAutoCapture: @escaping () -> Void = {},
         stopAutoCapture: @escaping () -> Void = {},
+        setClipboardMode: @escaping (String) -> Void = { _ in },
+        setMicrophoneCapture: @escaping (Bool) -> Void = { _ in },
+        setSystemAudioCapture: @escaping (Bool) -> Void = { _ in },
         pipes: [RecorderPipeDefinition] = [],
         runs: [RecorderPipeRun] = [],
         isRefreshing: Bool = false,
@@ -8676,6 +8756,9 @@ private struct OpenDesignFounderReplayPageView: View {
         self.frameImagePreview = frameImagePreview
         self.frameImageLoadingID = frameImageLoadingID
         self.frameImageLastError = frameImageLastError
+        self.auditSource = auditSource
+        self.auditRefreshing = auditRefreshing
+        self.auditLastError = auditLastError
         self.autoCaptureRunning = autoCaptureRunning
         self.autoCaptureLastTrigger = autoCaptureLastTrigger
         self.autoCaptureLastError = autoCaptureLastError
@@ -8695,8 +8778,12 @@ private struct OpenDesignFounderReplayPageView: View {
         self.prepareFrameCaptures = prepareFrameCaptures
         self.loadFrameImage = loadFrameImage
         self.prepareFrameImage = prepareFrameImage
+        self.refreshAudit = refreshAudit
         self.startAutoCapture = startAutoCapture
         self.stopAutoCapture = stopAutoCapture
+        self.setClipboardMode = setClipboardMode
+        self.setMicrophoneCapture = setMicrophoneCapture
+        self.setSystemAudioCapture = setSystemAudioCapture
         self.pipes = pipes
         self.runs = runs
         self.isRefreshing = isRefreshing
@@ -9337,6 +9424,7 @@ private struct OpenDesignFounderReplayPageView: View {
                 controlFrameCapturePanel
                 controlPermissionLadder
                 controlSensitivePolicy
+                controlAuditPanel
             }
             .padding(28)
             .frame(maxWidth: 1180, alignment: .topLeading)
@@ -9654,6 +9742,8 @@ private struct OpenDesignFounderReplayPageView: View {
 
     private var controlSensitivePolicy: some View {
         let sensitive = controlState?.sensitiveCapture ?? RecorderSensitiveCapture()
+        let consentGranted = controlState?.consent.status == "granted"
+        let policyDisabled = controlBusy || !consentGranted
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Sensitive Capture")
@@ -9663,11 +9753,51 @@ private struct OpenDesignFounderReplayPageView: View {
                 founderReplayStatusPill("local only", tone: .accent)
             }
             HStack(spacing: 8) {
-                founderReplayStatusPill("clipboard \(sensitive.clipboardMode)", tone: sensitive.clipboardMode == "disabled" ? .sky : .amber)
+                founderReplayStatusPill("clipboard \(sensitive.clipboardMode)", tone: clipboardModeTone(sensitive.clipboardMode))
                 founderReplayStatusPill("mic \(sensitive.microphone ? "on" : "off")", tone: sensitive.microphone ? .amber : .sky)
                 founderReplayStatusPill("system audio \(sensitive.systemAudio ? "on" : "off")", tone: sensitive.systemAudio ? .amber : .sky)
                 Spacer(minLength: 0)
             }
+            HStack(alignment: .center, spacing: 12) {
+                Text("Clipboard")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .frame(width: 84, alignment: .leading)
+                Picker("Clipboard", selection: Binding(
+                    get: { sensitive.clipboardMode },
+                    set: { setClipboardMode($0) }
+                )) {
+                    ForEach(clipboardPolicyOptions) { option in
+                        Text(option.title).tag(option.id)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 420)
+                .disabled(policyDisabled)
+                .accessibilityIdentifier("opendesign.founderReplay.control.sensitive.clipboardMode")
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 16) {
+                sensitiveAudioToggle(
+                    title: "Microphone",
+                    enabledImage: "mic.fill",
+                    disabledImage: "mic.slash",
+                    isEnabled: sensitive.microphone,
+                    setEnabled: setMicrophoneCapture
+                )
+                .accessibilityIdentifier("opendesign.founderReplay.control.sensitive.microphone")
+
+                sensitiveAudioToggle(
+                    title: "System Audio",
+                    enabledImage: "speaker.wave.2.fill",
+                    disabledImage: "speaker.slash",
+                    isEnabled: sensitive.systemAudio,
+                    setEnabled: setSystemAudioCapture
+                )
+                .accessibilityIdentifier("opendesign.founderReplay.control.sensitive.systemAudio")
+            }
+            .disabled(policyDisabled)
             Text("Raw frames, search hits, memories, and Pipe outputs remain evidence input only.")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(OpenDesignOfficeHoursColor.muted)
@@ -9682,6 +9812,102 @@ private struct OpenDesignFounderReplayPageView: View {
                         .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
                 )
         )
+    }
+
+    private func clipboardModeTone(_ mode: String) -> OpenDesignRailBadgeTone {
+        mode == "content_opt_in" ? .amber : .sky
+    }
+
+    private func sensitiveAudioToggle(
+        title: String,
+        enabledImage: String,
+        disabledImage: String,
+        isEnabled: Bool,
+        setEnabled: @escaping (Bool) -> Void
+    ) -> some View {
+        Toggle(isOn: Binding(
+            get: { isEnabled },
+            set: { setEnabled($0) }
+        )) {
+            Label(title, systemImage: isEnabled ? enabledImage : disabledImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+        }
+        .toggleStyle(.switch)
+    }
+
+    private var controlAuditPanel: some View {
+        let rows = auditSource.map { Array($0.audit.prefix(5)) } ?? []
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Raw API Audit")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Spacer(minLength: 0)
+                founderReplayStatusPill("\(auditSource?.resultCount ?? 0) rows", tone: .sky)
+                founderReplayStatusPill("non-proof", tone: .amber)
+                Button(action: refreshAudit) {
+                    Label(auditRefreshing ? "불러오는 중" : "Refresh", systemImage: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 28)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(auditRefreshing)
+                .accessibilityIdentifier("opendesign.founderReplay.control.audit.refresh")
+            }
+            if let auditLastError, !auditLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(auditLastError)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                    .lineLimit(2)
+            }
+            if rows.isEmpty {
+                Text(auditRefreshing ? "Audit loading" : "No raw API audit rows")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            } else {
+                ForEach(rows) { row in
+                    auditEventRow(row)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private func auditEventRow(_ row: RecorderAuditEvent) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(row.endpoint.isEmpty ? "unknown endpoint" : row.endpoint)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                        .lineLimit(1)
+                    founderReplayStatusPill(row.accessLevel.isEmpty ? "unknown" : row.accessLevel, tone: .sky)
+                    founderReplayStatusPill(row.decision.isEmpty ? "unknown" : row.decision, tone: row.decision == "accepted" ? .accent : .amber)
+                }
+                Text(row.reason.isEmpty ? row.requestId : row.reason)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            Text(compactIsoTimestamp(row.createdAt))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                .lineLimit(1)
+        }
+        .padding(.vertical, 9)
+        .padding(.horizontal, 12)
+        .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func permissionTone(_ state: String) -> OpenDesignRailBadgeTone {

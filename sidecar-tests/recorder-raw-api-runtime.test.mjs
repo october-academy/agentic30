@@ -88,7 +88,22 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
       }, "recorder_control_state");
     }
     assert.equal(captureReadyControl.readiness.canRecord, true);
+    assert.equal(captureReadyControl.readiness.state, "degraded");
+    assert.equal(captureReadyControl.readiness.expandedMedia.metadata.browserMetadata.status, "probe_unverified");
+    for (const permission of ["browserMetadata", "documentMetadata"]) {
+      captureReadyControl = await sendBridgeRequest(ws, {
+        type: "recorder_control_action",
+        action: {
+          type: "record_metadata_probe",
+          permission,
+          status: "available",
+          source: "runtime_test_probe",
+        },
+      }, "recorder_control_state");
+    }
     assert.equal(captureReadyControl.readiness.state, "ready");
+    assert.equal(captureReadyControl.readiness.expandedMedia.metadata.browserMetadata.status, "available");
+    assert.equal(captureReadyControl.readiness.expandedMedia.metadata.documentMetadata.status, "available");
     assert.equal(captureReadyControl.controlState.permissions.screenRecording, "granted");
     assert.equal(captureReadyControl.controlState.permissions.accessibility, "granted");
 
@@ -113,6 +128,38 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     assert.equal(resumedControl.controlState.mode, "active");
     assert.equal(resumedControl.readiness.canRecord, true);
     assert.doesNotMatch(JSON.stringify(resumedControl), /token_hash|a30_recorder_/);
+
+    const unencryptedAutoFrameMarker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "recorder_frame_capture_ingest",
+      automatic: true,
+      envelope: {
+        id: "frame-runtime-auto-unencrypted",
+        capturedAt: "2026-06-28T08:59:00.000Z",
+        monitorId: "display-1",
+        captureTrigger: "auto_runtime_test",
+        appName: "Agentic30",
+        windowTitle: "Founder Replay",
+        contentHash: "runtime-content-hash-auto",
+        textSource: "screen_capture",
+        accessibilityText: "automatic raw frame must not persist",
+        redactionStatus: "not_redacted",
+        safeForSearch: false,
+        safeForMemory: false,
+        safeForExport: false,
+        snapshot: {
+          id: "asset-runtime-auto-unencrypted",
+          relativePath: "media/frames/2026-06-28/frame-runtime-auto-unencrypted.jpg",
+          sha256: "4".repeat(64),
+          byteSize: 42,
+          encrypted: false,
+        },
+      },
+    }));
+    const deniedAutoFrame = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= unencryptedAutoFrameMarker && event.type === "error"
+    );
+    assert.match(deniedAutoFrame.message, /ERR_RECORDER_MEDIA_ENCRYPTION_REQUIRED/);
 
     const ingestMarker = ws.events.length;
     ws.send(JSON.stringify({
@@ -196,6 +243,33 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     assert.equal(audioPolicyControl.controlState.sensitiveCapture.microphone, true);
     assert.equal(audioPolicyControl.readiness.expandedMedia.audio.microphone.canCapture, true);
 
+    const unencryptedBackgroundAudioMarker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "recorder_audio_chunk_record",
+      captureMode: "background",
+      audio: {
+        id: "audio-runtime-background-unencrypted",
+        startedAt: "2026-06-28T09:00:15.000Z",
+        endedAt: "2026-06-28T09:00:18.000Z",
+        source: "microphone",
+        transcriptStatus: "not_requested",
+        redactionStatus: "redacted",
+        privacyState: "raw_local",
+        audioAsset: {
+          id: "asset-audio-runtime-background-unencrypted",
+          relativePath: "media/audio/2026-06-28/audio-runtime-background-unencrypted.m4a",
+          sha256: "5".repeat(64),
+          byteSize: 1024,
+          encrypted: false,
+        },
+        transcriptSegments: [],
+      },
+    }));
+    const deniedBackgroundAudio = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= unencryptedBackgroundAudioMarker && event.type === "error"
+    );
+    assert.match(deniedBackgroundAudio.message, /ERR_RECORDER_MEDIA_ENCRYPTION_REQUIRED/);
+
     const audioMarker = ws.events.length;
     ws.send(JSON.stringify({
       type: "recorder_audio_chunk_record",
@@ -205,6 +279,9 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
         endedAt: "2026-06-28T09:01:20.000Z",
         source: "microphone",
         transcriptStatus: "local_complete",
+        rawAudioIndicatorState: "visible_indicator_active",
+        localTranscriberName: "agentic30-local-transcriber-test",
+        localTranscriberVersion: "0.0.0-test",
         redactionStatus: "redacted",
         privacyState: "raw_local",
         audioAsset: {
@@ -220,6 +297,7 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
             startedAt: "2026-06-28T09:00:25.000Z",
             endedAt: "2026-06-28T09:00:55.000Z",
             speakerLabel: "founder",
+            speakerLabelProvenance: "local_transcriber",
             text: "raw spoken text token=secret must not echo",
             redactedText: "founder described activation friction",
             redactionStatus: "redacted",
@@ -611,6 +689,10 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
       assert.equal(typeof mediaRow?.deleted_at, "string");
       const audioRow = runtimeStore.getRecord("audio_chunks", "audio-runtime-1");
       assert.equal(audioRow?.audio_asset_id, "asset-audio-runtime-1");
+      assert.equal(runtimeStore.getRecord("frames", "frame-runtime-auto-unencrypted"), null);
+      assert.equal(runtimeStore.getRecord("media_assets", "asset-runtime-auto-unencrypted"), null);
+      assert.equal(runtimeStore.getRecord("audio_chunks", "audio-runtime-background-unencrypted"), null);
+      assert.equal(runtimeStore.getRecord("media_assets", "asset-audio-runtime-background-unencrypted"), null);
       const transcriptRow = runtimeStore.getRecord("transcript_segments", "segment-runtime-1");
       assert.equal(transcriptRow?.redacted_text, "founder described activation friction");
       assert.equal(transcriptRow?.text, "raw spoken text token=secret must not echo");

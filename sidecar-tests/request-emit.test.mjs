@@ -73,6 +73,85 @@ async function writeStrictDay1EvidenceDocs(workspacePath) {
   );
 }
 
+function cleanWarmupTestText(value = "", maxLength = 500) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function cleanWarmupTestValidationAction(value = "") {
+  return cleanWarmupTestText(value)
+    .replace(/^\s*(?:활성\s*행동|활성\s*신호|검증\s*행동|확인할\s*행동)\s*[:：]\s*/u, "")
+    .trim();
+}
+
+function stableWarmupTestHash(value = "") {
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of Buffer.from(String(value || ""), "utf8")) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
+function warmupTestEvidenceRefs(plan = null, scanResult = null) {
+  const refs = [];
+  const push = (value) => {
+    const text = cleanWarmupTestText(value, 260);
+    if (text) refs.push(text);
+  };
+  for (const rows of Object.values(plan?.readiness?.fieldEvidence || {})) {
+    for (const row of Array.isArray(rows) ? rows : []) push(row?.path);
+  }
+  for (const ref of plan?.signals?.evidenceRefs || []) push(ref?.path);
+  for (const ref of plan?.components?.icp?.evidence || []) push(ref);
+  for (const ref of plan?.components?.painPoint?.evidence || []) push(ref);
+  for (const ref of plan?.components?.outcome?.evidence || []) push(ref);
+  for (const doc of Array.isArray(scanResult?.docs) ? scanResult.docs : []) push(doc?.path || doc);
+  const seen = new Set();
+  return refs.filter((ref) => {
+    const key = ref.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 12);
+}
+
+function warmupTestGoalSourceFingerprint(scanResult = {}) {
+  const plan = scanResult.day1AlignmentPlan || {};
+  const customer = cleanWarmupTestText(
+    plan.signalDigest?.rows?.find((row) => row?.key === "icp")?.value
+      || plan.signals?.currentIcpGuess
+      || plan.signals?.likelyUsers?.[0]
+      || plan.alignmentStatement?.icp
+      || plan.components?.icp?.statement
+      || "",
+    300,
+  );
+  const problem = cleanWarmupTestText(
+    plan.signals?.problem
+      || plan.alignmentStatement?.painPoint
+      || plan.components?.painPoint?.statement
+      || "",
+  );
+  const validationAction = cleanWarmupTestValidationAction(
+    plan.components?.outcome?.statement
+      || plan.alignmentStatement?.outcome
+      || "",
+  );
+  const evidenceRefs = warmupTestEvidenceRefs(plan, scanResult);
+  return stableWarmupTestHash([
+    "day1_goal_lane_v1",
+    plan.projectGoal,
+    customer,
+    problem,
+    validationAction,
+    evidenceRefs.join("|"),
+    scanResult.onboardingHypothesis?.goal,
+  ]
+    .map((part) => cleanWarmupTestText(part, 1000))
+    .filter(Boolean)
+    .join("\u001f"));
+}
+
 test("workspace setup request_emit envelopes are host-routed and completion waits for first input", async () => {
   const harness = await spawnSidecar();
   let ws;
@@ -98,6 +177,8 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
     assert.equal(scanStarted?.stage, "local");
     assert.equal(scanStarted?.stepIndex, 1);
     assert.equal(scanStarted?.totalSteps, 3);
+    assert.equal(scanStarted?.elapsedMs, 0);
+    assert.equal(typeof scanResult.elapsedMs, "number");
     const scanStartedIndex = ws.events.findIndex((event) => event === scanStarted);
     const verifyingIndex = ws.events.findIndex((event) =>
       event.type === "workspace_scan_progress"
@@ -112,11 +193,13 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
         && event.stepIndex === 3
         && event.totalSteps === 3
     );
-    assert.notEqual(verifyingIndex, -1, "local-only scan should emit structured verifying progress");
+    assert.notEqual(verifyingIndex, -1, "provider-verified scan should emit structured verifying progress");
     assert.notEqual(composingIndex, -1, "scan_workspace should emit structured composing progress");
+    assert.equal(typeof ws.events[verifyingIndex].elapsedMs, "number");
+    assert.equal(typeof ws.events[composingIndex].elapsedMs, "number");
     assert.ok(
       scanStartedIndex < verifyingIndex && verifyingIndex < composingIndex,
-      "local-only scan progress should move from 1/3 to 2/3 to 3/3",
+      "provider-verified scan progress should move from 1/3 to 2/3 to 3/3",
     );
     assert.equal(
       ws.events.some((event) =>
@@ -169,7 +252,7 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
       "scan success alone must not complete workspace setup",
     );
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(ws.events, (event) =>
       event.type === "session_created" && event.session?.pendingUserInput?.requestId,
     );
@@ -268,7 +351,7 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 2,
     }));
@@ -342,6 +425,17 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
     assert.equal(questionReadyStatus.title, "첫 질문 준비 완료");
     assert.equal(questionReadyStatus.progressText, "첫 질문 준비 완료");
     assert.equal(typeof providerStatus.elapsedMs, "number");
+    assert.equal(questionReadyStatus.questionIndex, 1);
+    assert.equal(questionReadyStatus.answeredQuestionCount, 0);
+    assert.equal(typeof questionReadyStatus.questionElapsedMs, "number");
+    assert.equal(typeof questionReadyStatus.requestReadyLatencyMs, "number");
+    assert.equal(providerStatus.contextMetrics.rawLength, officeHoursStartPayload.context.length);
+    assert.equal(providerStatus.contextMetrics.contextLength, started.session.runtime.officeHours.context.length);
+    assert.equal(providerStatus.contextMetrics.clamped, false);
+    assert.equal(providerStatus.contextMetrics.hasLockedDay1Goal, false);
+    assert.equal(providerStatus.contextMetrics.hasGoalLane, false);
+    assert.equal(providerStatus.contextMetrics.expectedQuestionCount, 0);
+    assert.equal(providerStatus.contextMetrics.day, 2);
     assert.equal(
       ws.events.some((event) =>
         event.type === "error"
@@ -369,6 +463,7 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
     assert.equal(started.session.runtime.officeHours.source, "office_hours_day_2");
     assert.equal(started.session.runtime.officeHours.day, 2);
     assert.match(started.session.runtime.officeHours.context, /Revenue analytics dashboard/);
+    assert.equal(started.session.runtime.officeHours.contextMetrics.day, 2);
     assert.equal(
       started.session.messages.filter((message) =>
         message.role === "user" && message.content === "Test Office Hours on current project",
@@ -428,6 +523,84 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
   }
 });
 
+test("office_hours Codex pending result tolerates fast answer before run close", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST_DELAY_MS: "500",
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_PENDING_RESULT: "1",
+    },
+  });
+  let ws;
+  try {
+    await initGitRepo(harness.workspacePath);
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.5",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 2,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: "Workspace: fast answer race. ICP: B2B founders. Problem: activation drop-off.",
+      visiblePrompt: "Test fast Office Hours answer race",
+      source: "office_hours_day_2",
+      day: 2,
+    }));
+
+    const firstPending = await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput?.requestId
+    );
+    const firstRequest = firstPending.session.pendingUserInput;
+    const firstQuestion = firstRequest.questions[0];
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "submit_user_input",
+      sessionId: created.session.id,
+      requestId: firstRequest.requestId,
+      responses: [
+        {
+          question: firstQuestion.question,
+          selectedOptions: [firstQuestion.options[0].label],
+          freeText: "오늘 18시까지 실명 후보 3명에게 유료 파일럿 조건을 묻는다.",
+        },
+      ],
+    }));
+
+    const secondPending = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput?.requestId
+        && event.session.pendingUserInput.requestId !== firstRequest.requestId,
+      30_000,
+    );
+    assert.equal(secondPending.session.status, "awaiting_input");
+    assert.notEqual(secondPending.session.pendingUserInput.requestId, firstRequest.requestId);
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "error"
+          && event.sessionId === created.session.id
+          && /pending_user_input but no pending request was attachable/.test(event.message || "")
+      ),
+      false,
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("worked Office Hours routing uses worked day while preserving calendar metadata", async () => {
   const harness = await spawnSidecar({
     extraEnv: { AGENTIC30_LOCAL_DEV_FAST_DAYS: "1" },
@@ -444,7 +617,7 @@ test("worked Office Hours routing uses worked day while preserving calendar meta
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
     }));
     const created = await waitForEvent(ws.events, (event) =>
@@ -495,7 +668,7 @@ test("worked Office Hours resolution failure fails explicitly without calendar f
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
     }));
     const created = await waitForEvent(ws.events, (event) =>
@@ -927,7 +1100,7 @@ test("office_hours_start reports provider auth preflight failures as recoverable
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 1,
     }));
@@ -975,7 +1148,7 @@ test("office_hours Codex-style MCP request waits for submit before continuation"
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 1,
     }));
@@ -1093,7 +1266,7 @@ test("Office Hours Day 1 get_users uses generic LLM card path after first answer
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 1,
     }));
@@ -1181,7 +1354,7 @@ test("office_hours Day 3 answer persists to memory before the next Codex card", 
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 3,
     }));
@@ -1264,7 +1437,7 @@ test("office_hours_start restores a pending Day 3 card from workspace memory aft
     firstWs.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 3,
     }));
@@ -1352,7 +1525,7 @@ test("office_hours_start restores a pending Day 3 card from workspace memory aft
     secondWs.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 3,
     }));
@@ -1496,7 +1669,7 @@ test("office_hours boot fails explicitly for detached pending card without recov
             id: sessionId,
             title: "Office Hours · Day 3",
             provider: "codex",
-            model: "gpt-5.1-codex-mini",
+            model: "gpt-5.5",
             status: "idle",
             error: null,
             createdAt: "2026-06-16T15:20:00.000Z",
@@ -1595,7 +1768,7 @@ test("office_hours_start resumes a stranded active Day 3 session from answered t
             id: sessionId,
             title: "Office Hours · Day 3",
             provider: "codex",
-            model: "gpt-5.1-codex-mini",
+            model: "gpt-5.5",
             status: "idle",
             error: null,
             createdAt: "2026-06-16T15:20:00.000Z",
@@ -1731,7 +1904,7 @@ test("office_hours_start fails explicitly when a pending Day 3 snapshot is stale
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 3,
     }));
@@ -1830,7 +2003,7 @@ test("office_hours_start fails explicitly when pending Day 3 snapshot points at 
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 3,
     }));
@@ -1919,7 +2092,7 @@ test("office_hours_start continues from answered Day 3 turns when pending snapsh
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 3,
     }));
@@ -1997,7 +2170,7 @@ test("office_hours pending Codex tool result without request transport fails exp
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 3,
     }));
@@ -2046,7 +2219,7 @@ test("Office Hours Day 1 asks handoff clarity instead of document readiness for 
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 1,
     }));
@@ -2220,7 +2393,7 @@ export async function load(url, context, nextLoad) {
             id: sessionId,
             title: "Office Hours · Day 3",
             provider: "codex",
-            model: "gpt-5.1-codex-mini",
+            model: "gpt-5.5",
             status: "idle",
             error: null,
             createdAt: "2026-06-16T15:20:00.000Z",
@@ -2318,7 +2491,7 @@ test("office_hours_start hydrates completed Day 1 interview without provider run
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 1,
     }));
@@ -2409,7 +2582,7 @@ test("office_hours_start blocks Day 2+ when no live source exists", async () => 
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 2,
     }));
@@ -3028,7 +3201,7 @@ test("office_hours_start skips Day 2+ source gate in local dev fast-days mode", 
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 2,
     }));
@@ -3812,6 +3985,233 @@ test("day1_goal_save/get persists goal state and hydrates scan/project context",
         && event.day1GoalSelection?.goalType === "make_money",
     );
     assert.equal(scanResult.day1GoalSelection.customer, "B2B support leads");
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("workspace scan warms Day 1 Q1 cards and goal start consumes the cached card", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+    },
+  });
+  let ws;
+  try {
+    await fs.writeFile(path.join(harness.workspacePath, "README.md"), "# SupportLens\n");
+    await writeStrictDay1EvidenceDocs(harness.workspacePath);
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "scan_workspace",
+      root: harness.workspacePath,
+      prompt: "scan before Day 1 Q1 warmup",
+      preferredProvider: "codex",
+    }));
+    const scanResult = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_result"
+        && event.scanRoot === harness.workspacePath
+        && event.day1AlignmentPlan,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const sourcePlanFingerprint = warmupTestGoalSourceFingerprint(scanResult);
+
+    const selection = {
+      goalType: "get_users",
+      goalText: "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+      customer: "B2B support leads",
+      problem: "Slack escalations are missed during handoff.",
+      validationAction: "Ask three support leads for a paid pilot.",
+      evidenceRefs: ["README.md", ".agentic30/docs/ICP.md"],
+      proofSink: "local",
+      sourcePlanFingerprint,
+    };
+    ws.send(JSON.stringify({
+      type: "day1_goal_save",
+      workspaceRoot: harness.workspacePath,
+      selection,
+    }));
+    await waitForEvent(ws.events, (event) =>
+      event.type === "day1_goal_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.day1GoalSelection?.goalType === "get_users",
+    );
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.5",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      source: "day1_interview_goal_locked",
+      day: 1,
+      visiblePrompt: "Office Hours",
+      context: [
+        "Office Hours screen context",
+        `Workspace: ${harness.workspacePath}`,
+        "Office Hours day: 1",
+        `Day 1 goal: ${selection.goalText}`,
+        "DAY1_LOCKED_GOAL",
+        "Flow contract: locked Day 1 goal interview.",
+        "Goal lane: get_users / 유저 확보",
+        `Goal text: ${selection.goalText}`,
+        `Goal source fingerprint: ${selection.sourcePlanFingerprint}`,
+        "Active user contract: 활성 사용자 1명은 선택한 ICP가 제품의 핵심 activation action을 완료한 고유 사람/계정입니다.",
+        `Customer: ${selection.customer}`,
+        `Problem: ${selection.problem}`,
+        `Validation action: ${selection.validationAction}`,
+        "Office Hours mode: Startup",
+        "Expected question count: 6",
+        "Instruction: Run the Day 1 interview only against DAY1_LOCKED_GOAL. The first response must be exactly one structured input card. Ask one question at a time.",
+      ].join("\n"),
+    }));
+
+    const ready = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput?.requestId,
+    );
+
+    assert.equal(ready.session.status, "awaiting_input");
+    assert.equal(ready.session.pendingUserInput.generation?.signalId, "get_users_active_user_definition");
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "tool_event" && event.sessionId === created.session.id
+      ),
+      false,
+      "selected Day 1 goal start should attach the warmed card instead of starting a provider/tool run",
+    );
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "office_hours_status" && event.stage === "office_hours_warmup_miss"
+      ),
+      false,
+      "matching Day 1 warmup fingerprint must not emit a miss status",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("workspace scan Q1 warmup fingerprint mismatch reports miss and starts live path", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_REQUEST: "1",
+    },
+  });
+  let ws;
+  try {
+    await fs.writeFile(path.join(harness.workspacePath, "README.md"), "# SupportLens\n");
+    await writeStrictDay1EvidenceDocs(harness.workspacePath);
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "scan_workspace",
+      root: harness.workspacePath,
+      prompt: "scan before Day 1 Q1 warmup mismatch",
+      preferredProvider: "codex",
+    }));
+    await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_result"
+        && event.scanRoot === harness.workspacePath
+        && event.day1AlignmentPlan,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const selection = {
+      goalType: "get_users",
+      goalText: "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+      customer: "B2B support leads",
+      problem: "Slack escalations are missed during handoff.",
+      validationAction: "Ask three support leads for a paid pilot.",
+      evidenceRefs: ["README.md", ".agentic30/docs/ICP.md"],
+      proofSink: "local",
+      sourcePlanFingerprint: "ffffffffffffffff",
+    };
+    ws.send(JSON.stringify({
+      type: "day1_goal_save",
+      workspaceRoot: harness.workspacePath,
+      selection,
+    }));
+    await waitForEvent(ws.events, (event) =>
+      event.type === "day1_goal_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.day1GoalSelection?.goalType === "get_users",
+    );
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.5",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      source: "day1_interview_goal_locked",
+      day: 1,
+      visiblePrompt: "Office Hours",
+      context: [
+        "Office Hours screen context",
+        `Workspace: ${harness.workspacePath}`,
+        "Office Hours day: 1",
+        `Day 1 goal: ${selection.goalText}`,
+        "DAY1_LOCKED_GOAL",
+        "Flow contract: locked Day 1 goal interview.",
+        "Goal lane: get_users / 유저 확보",
+        `Goal text: ${selection.goalText}`,
+        `Goal source fingerprint: ${selection.sourcePlanFingerprint}`,
+        "Active user contract: 활성 사용자 1명은 선택한 ICP가 제품의 핵심 activation action을 완료한 고유 사람/계정입니다.",
+        `Customer: ${selection.customer}`,
+        `Problem: ${selection.problem}`,
+        `Validation action: ${selection.validationAction}`,
+        "Office Hours mode: Startup",
+        "Expected question count: 6",
+        "Instruction: Run the Day 1 interview only against DAY1_LOCKED_GOAL. The first response must be exactly one structured input card. Ask one question at a time.",
+      ].join("\n"),
+    }));
+
+    const missStatus = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "office_hours_warmup_miss",
+    );
+    assert.match(missStatus.detail, /goal fingerprint mismatch/i);
+    await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "provider_starting",
+    );
+
+    const ready = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput?.requestId,
+    );
+
+    assert.equal(ready.session.status, "awaiting_input");
+    assert.equal(ready.session.pendingUserInput.generation?.signalId, "get_users_active_user_definition");
   } finally {
     ws?.close();
     await harness.close();
@@ -5379,7 +5779,7 @@ export async function load(url, context, nextLoad) {
             id: sessionId,
             title: "Office Hours · Day 1",
             provider: "codex",
-            model: "gpt-5.1-codex-mini",
+            model: "gpt-5.5",
             status: "idle",
             error: null,
             createdAt: "2026-06-25T00:41:50.000Z",

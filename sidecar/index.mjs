@@ -167,6 +167,7 @@ import { assessIcpFitConditions, buildIcpFitDiagnosisLines, buildNamedCustomerNe
 import {
   buildDay1GoalProjectContext,
   loadDay1GoalSelection,
+  normalizeDay1GoalSelection,
   saveDay1GoalSelection,
 } from "./day1-goal-state.mjs";
 import {
@@ -242,6 +243,7 @@ import {
   loadOfficeHoursMemory,
   recompileCompiledTruth,
   summarizeOfficeHoursMemory,
+  writeBuilderJourneyDoc,
 } from "./office-hours-memory.mjs";
 import {
   buildAuthEnv,
@@ -582,15 +584,15 @@ const sidecarAuthToken = randomBytes(32).toString("base64url");
 const BIP_TEMPLATE_DOC_ID = process.env.AGENTIC30_BIP_TEMPLATE_DOC_ID || "1EoQIaByJd5Aq8ENbgEfxHKKJsZsup7d5gJxcT7uqNeA";
 const BIP_TEMPLATE_SHEET_ID = process.env.AGENTIC30_BIP_TEMPLATE_SHEET_ID || "16NkGIe8K9NZiLy4O81zyXKVeQ72nvBGSZ0YBQaBr0sA";
 const WORKSPACE_SCAN_CLAUDE_MODEL = "claude-sonnet-4-6";
-// gpt-5.1-codex-mini는 ChatGPT 인증 Codex 서버 카탈로그에서 제거돼 400 거부됨.
-// 동급 저비용 모델인 gpt-5.4-mini로 대체 (2026-06-10 `codex debug models` 기준).
-const WORKSPACE_SCAN_CODEX_MODEL = "gpt-5.4-mini";
+const CURRENT_CODEX_MODEL = "gpt-5.5";
+const WORKSPACE_SCAN_CODEX_MODEL = process.env.AGENTIC30_WORKSPACE_SCAN_CODEX_MODEL || CURRENT_CODEX_MODEL;
 const WORKSPACE_SCAN_GEMINI_MODEL = "gemini-3.5-flash";
 const DAY1_CHOICE_CLAUDE_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CLAUDE_MODEL || "claude-opus-4-8";
-const DAY1_CHOICE_CODEX_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CODEX_MODEL || "gpt-5.5";
+const DAY1_CHOICE_CODEX_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CODEX_MODEL || CURRENT_CODEX_MODEL;
 const DAY1_CHOICE_GEMINI_MODEL = process.env.AGENTIC30_DAY1_CHOICE_GEMINI_MODEL || "gemini-3.5-flash";
 const DAY1_CHOICE_CURSOR_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CURSOR_MODEL || "composer-2.5";
 const DAY1_CHOICE_PROVIDER_TIMEOUT_MS = 45_000;
+const DAY1_OFFICE_HOURS_Q1_WARMUP_PROMPT_VERSION = "day1-office-hours-q1-warmup-v1";
 // Provider→model maps for the agent-backed workspace scan and Day 1 alignment
 // synthesis. selectScanProviderTargets() narrows these to the single provider
 // the user picked in settings (preferredProvider), falling back to the full set
@@ -603,8 +605,8 @@ const WORKSPACE_SCAN_MODEL_BY_PROVIDER = {
 // Workspace scan agent wall-clock bounds. ABORT asks the provider SDK to stop;
 // HARD_DEADLINE force-returns the scan even if the SDK ignores the abort, so a
 // stuck provider run can never hang the Day-1 scan UI for several minutes.
-// The defaults still need enough room for real Codex CLI scans on this repo;
-// override via env for unusually slow machines / very large repos.
+// Keep the onboarding scan bounded: a slow agent should fail explicitly instead
+// of holding the Day-1 UI for minutes or falling back to local-only context.
 const WORKSPACE_SCAN_AGENT_ABORT_MS = Number.parseInt(
   process.env.AGENTIC30_WORKSPACE_SCAN_ABORT_MS || "",
   10,
@@ -613,6 +615,24 @@ const WORKSPACE_SCAN_AGENT_HARD_DEADLINE_MS = Number.parseInt(
   process.env.AGENTIC30_WORKSPACE_SCAN_HARD_DEADLINE_MS || "",
   10,
 ) || 150_000;
+// Wall-clock budget for an explicit, user-initiated "다시 시도" after a timeout
+// abort. The first attempt now already budgets for a real Claude Code CLI
+// cold-start scan (120s/150s), so a deliberate retry keeps the same generous
+// bound rather than a shorter one — it must never be tighter than the first
+// attempt. A second timeout escalates to switch-provider in the UI (the Mac
+// side stops offering same-provider retry past retryAttempt 1).
+const WORKSPACE_SCAN_AGENT_RETRY_ABORT_MS = Number.parseInt(
+  process.env.AGENTIC30_WORKSPACE_SCAN_RETRY_ABORT_MS || "",
+  10,
+) || 120_000;
+const WORKSPACE_SCAN_AGENT_RETRY_HARD_DEADLINE_MS = Number.parseInt(
+  process.env.AGENTIC30_WORKSPACE_SCAN_RETRY_HARD_DEADLINE_MS || "",
+  10,
+) || 150_000;
+const OFFICE_HOURS_QUESTION_HARD_DEADLINE_MS = Number.parseInt(
+  process.env.AGENTIC30_OFFICE_HOURS_QUESTION_HARD_DEADLINE_MS || "",
+  10,
+) || 60_000;
 const DAY1_CHOICE_MODEL_BY_PROVIDER = {
   claude: DAY1_CHOICE_CLAUDE_MODEL,
   codex: DAY1_CHOICE_CODEX_MODEL,
@@ -654,12 +674,13 @@ const ALLOWED_REQUEST_EMIT_EVENTS = new Set([
 const state = {
   sessions: new Map(),
   activeRuns: new Map(),
-  warmRuns: new Map(),
   mcpOauthConnectRuns: new Map(),
   integrationStatusSnapshot: null,
   promptQueues: new Map(),
   clients: new Set(),
   resolvedUserInputIds: new Set(),
+  submittingUserInputIds: new Set(),
+  officeHoursQuestionWarmups: new Map(),
   sessionStoreWarnings: [],
   bipCoach: null,
   iddSetup: null,
@@ -1212,9 +1233,6 @@ async function shutdown() {
     run.abortController.abort();
     await run.stop?.();
   }
-  for (const run of state.warmRuns.values()) {
-    run.abortController.abort();
-  }
   for (const run of state.providerAuthRuns.values()) {
     try { run.child.kill("SIGTERM"); } catch {}
   }
@@ -1428,7 +1446,6 @@ async function handleClientMessage(socket, payload) {
     case "delete_session": {
       const session = getSession(payload.sessionId);
       await stopSession(session.id);
-      cancelWarmSession(session.id);
       state.sessions.delete(session.id);
       await persistSessions();
       await syncAndBroadcastBipCoachSessionState();
@@ -1442,7 +1459,6 @@ async function handleClientMessage(socket, payload) {
     case "archive_session": {
       const session = getSession(payload.sessionId);
       await stopSession(session.id);
-      cancelWarmSession(session.id);
       session.archivedAt = typeof payload.archivedAt === "string"
         ? payload.archivedAt
         : new Date().toISOString();
@@ -1471,7 +1487,6 @@ async function handleClientMessage(socket, payload) {
       const nextProvider = normalizeSessionProvider(payload.provider);
       if (session.provider !== nextProvider) {
         await stopSession(session.id);
-        cancelWarmSession(session.id);
         session.provider = nextProvider;
         // Provider changed: drop the now-invalid model so the runner resolves
         // the new provider's default (mirrors index.mjs provider!==resolved -> "").
@@ -1491,7 +1506,6 @@ async function handleClientMessage(socket, payload) {
     case "stop_session": {
       const session = getSession(payload.sessionId);
       await stopSession(session.id);
-      cancelWarmSession(session.id);
     session.status = "idle";
       session.error = null;
     touch(session);
@@ -1501,15 +1515,6 @@ async function handleClientMessage(socket, payload) {
         provider: session.provider,
     });
     broadcast({ type: "session_updated", session });
-      return;
-    }
-    case "warm_session": {
-      const session = getSession(payload.sessionId);
-      fireAndForget("warmSession", warmSession(session, payload), {
-        session_id: session.id,
-        provider: session.provider,
-        purpose: normalizeWarmSessionPurpose(payload.purpose) || "",
-    });
       return;
     }
     case "send_prompt": {
@@ -1579,7 +1584,6 @@ async function handleClientMessage(socket, payload) {
           });
           return;
         }
-        cancelWarmSession(session.id);
         await runUnifiedFoundationChat(session, prompt, {
           day: dayDescriptor.day,
           dynamicVariables: payload.dynamicVariables,
@@ -1595,7 +1599,6 @@ async function handleClientMessage(socket, payload) {
         });
         return;
     }
-      cancelWarmSession(session.id);
       await runPrompt(session, prompt, {
         executionIntent,
     });
@@ -1653,13 +1656,23 @@ async function handleClientMessage(socket, payload) {
         await broadcastOfficeHoursStartNoop(session);
         return;
       }
-      cancelWarmSession(session.id);
+      const source = payload.source || "manual";
+      const selectedSources = payload.selectedSources;
+      if (await attachDay1OfficeHoursWarmupIfAvailable(session, {
+        context: [context, interventionContext].filter(Boolean).join("\n\n"),
+        source,
+        day,
+        selectedSources,
+        model: session.model,
+      })) {
+        return;
+      }
       await runOfficeHours(session, {
         context: [context, interventionContext].filter(Boolean).join("\n\n"),
         originalPrompt: visiblePrompt,
-        source: payload.source || "manual",
+        source,
         day,
-        selectedSources: payload.selectedSources,
+        selectedSources,
       });
       return;
     }
@@ -1687,7 +1700,6 @@ async function handleClientMessage(socket, payload) {
         await stopSession(session.id);
       }
       state.promptQueues.delete(session.id);
-      cancelWarmSession(session.id);
 
       const response = normalizeUserInputResponse(promptRequest, payload);
       const missingRequiredFreeText = findMissingRequiredFreeTextQuestion(response);
@@ -1915,7 +1927,6 @@ async function handleClientMessage(socket, payload) {
         });
         return;
     }
-      cancelWarmSession(session.id);
       await runUnifiedFoundationChat(session, prompt, {
         day: dayDescriptor.day,
         dynamicVariables: payload.dynamicVariables,
@@ -1930,8 +1941,9 @@ async function handleClientMessage(socket, payload) {
       const requestId = String(payload.requestId || "").trim();
       if (!requestId || session.pendingUserInput?.requestId !== requestId) {
         throw new Error("No matching structured input request is waiting for this session.");
-    }
+      }
       const pendingUserInput = session.pendingUserInput;
+      state.submittingUserInputIds.add(requestId);
       const pendingIddContinuation = session.runtime?.pendingIddContinuation;
       const pendingIddContinuationDocType = pendingIddContinuation?.requestId === requestId
         ? String(pendingIddContinuation.docType || "")
@@ -2136,11 +2148,12 @@ async function handleClientMessage(socket, payload) {
         requestId,
         response,
       });
+      state.resolvedUserInputIds.add(requestId);
+      state.submittingUserInputIds.delete(requestId);
       if (!hasBlockingActiveRun) {
         await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
       }
 
-      state.resolvedUserInputIds.add(requestId);
       session.pendingUserInput = null;
       if (officeHoursCompletionClarityAfterAnswer) {
         await abortActiveOfficeHoursRunAtQuestionCap(session);
@@ -3479,6 +3492,7 @@ async function handleClientMessage(socket, payload) {
           stepIndex: 1,
           totalSteps: 3,
           foundCount: 0,
+          elapsedMs: 0,
         });
         return;
     }
@@ -3490,11 +3504,13 @@ async function handleClientMessage(socket, payload) {
         stepIndex: 1,
         totalSteps: 3,
         etaSeconds: 45,
+        elapsedMs: 0,
     });
       runWorkspaceScan(root, {
         sessionId: payload.sessionId,
         prompt: payload.prompt,
         preferredProvider: payload.preferredProvider,
+        retryAttempt: Number.parseInt(payload.retryAttempt, 10) || 0,
     });
       return;
     }
@@ -3851,6 +3867,8 @@ async function handleRecorderControlAction(socket, payload = {}) {
       visibleIndicatorAcknowledged: payload.visibleIndicatorAcknowledged,
       visible_indicator_acknowledged: payload.visible_indicator_acknowledged,
       sensitiveCapture: payload.sensitiveCapture ?? payload.sensitive_capture,
+      metadataProbe: payload.metadataProbe ?? payload.metadata_probe,
+      metadataType: payload.metadataType ?? payload.metadata_type,
     };
   const controlState = await applyRecorderControlAction({
     appSupportRoot: appSupportPath,
@@ -3877,9 +3895,10 @@ function recorderControlStateEvent(controlState, readiness) {
 async function handleRecorderFrameCaptureIngest(socket, payload = {}) {
   const now = new Date();
   const controlState = await loadRecorderControlState({ appSupportRoot: appSupportPath, now });
-  const envelope = payload.envelope && typeof payload.envelope === "object"
+  const envelopeSource = payload.envelope && typeof payload.envelope === "object"
     ? payload.envelope
     : payload.captureEnvelope ?? payload.capture_envelope;
+  const envelope = mergeRecorderMediaCaptureHints(envelopeSource, payload);
   const result = recordFrameCaptureEnvelope(requireRecorderStore(), envelope, {
     now,
     controlState,
@@ -3921,9 +3940,10 @@ async function handleRecorderClipboardEventRecord(socket, payload = {}) {
 async function handleRecorderAudioChunkRecord(socket, payload = {}) {
   const now = new Date();
   const controlState = await loadRecorderControlState({ appSupportRoot: appSupportPath, now });
-  const audio = payload.audio && typeof payload.audio === "object"
+  const audioSource = payload.audio && typeof payload.audio === "object"
     ? payload.audio
     : payload.audioChunk ?? payload.audio_chunk;
+  const audio = mergeRecorderMediaCaptureHints(audioSource, payload);
   const result = recordAudioChunk(requireRecorderStore(), audio, {
     now,
     controlState,
@@ -3947,6 +3967,25 @@ async function handleRecorderAudioChunkRecord(socket, payload = {}) {
     proofLedgerWriteAllowed: false,
     proof_ledger_write_allowed: false,
   });
+}
+
+function mergeRecorderMediaCaptureHints(source, payload = {}) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return source;
+  const hints = {};
+  const captureMode = source.captureMode ?? source.capture_mode
+    ?? payload.captureMode ?? payload.capture_mode
+    ?? payload.mediaCaptureMode ?? payload.media_capture_mode;
+  const captureTrigger = source.captureTrigger ?? source.capture_trigger
+    ?? payload.captureTrigger ?? payload.capture_trigger;
+  const automatic = source.automatic ?? source.automaticCapture ?? source.automatic_capture
+    ?? payload.automatic ?? payload.automaticCapture ?? payload.automatic_capture;
+  const background = source.background ?? source.backgroundCapture ?? source.background_capture
+    ?? payload.background ?? payload.backgroundCapture ?? payload.background_capture;
+  if (captureMode !== undefined) hints.captureMode = captureMode;
+  if (captureTrigger !== undefined) hints.captureTrigger = captureTrigger;
+  if (automatic !== undefined) hints.automatic = automatic;
+  if (background !== undefined) hints.background = background;
+  return Object.keys(hints).length > 0 ? { ...source, ...hints } : source;
 }
 
 async function handleRecorderFrameCaptureDelete(socket, payload = {}) {
@@ -5523,6 +5562,13 @@ async function handleDayProgressPatch(socket, payload = {}) {
         });
       }
     }
+    // SPEC v3 §2: regenerate the cumulative builder-journey document now that the cycle is
+    // appended and compiledTruth is recompiled. Fail-open — never block the close flow.
+    if ((gate.mode === "commit" || gate.mode === "confess") && cycleNo) {
+      await writeBuilderJourneyDoc({ workspaceRoot: root }).catch((error) => {
+        telemetry.captureException(error, { operation: "builder_journey_doc_write_after_close" });
+      });
+    }
     telemetry.captureEvent("mac_sidecar_day_progress_updated", {
       day: Number(day) || null,
       step_id: String(stepId ?? ""),
@@ -5752,6 +5798,7 @@ async function runPrompt(
   state.activeRuns.set(session.id, {
     abortController,
     stop: null,
+    startedAtMs: runStartedAt,
   });
 
   let officeHoursContext = "";
@@ -5883,18 +5930,10 @@ async function runPrompt(
     emitChatRunPhase(session, assistantMessage.id, route.contextSummary);
     emitChatRunPhase(session, assistantMessage.id, `provider=${session.provider} model=${session.model || "default"} starting_stream`);
     if (officeHoursContext) {
-      const warmSpec = buildOfficeHoursWarmSpec(session, {
-        context: officeHoursContext,
-        source: officeHoursRuntimeForRun?.source,
-        day: officeHoursRuntimeForRun?.day,
-        selectedSources: officeHoursRuntimeForRun?.selectedSources,
-      });
-      assertOfficeHoursWarmIsNotStale(session, warmSpec);
       telemetry.captureEvent("mac_sidecar_office_hours_question_provider_starting", {
         session_id: session.id,
         provider: session.provider,
         execution_mode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
-        warmup_used: isOfficeHoursWarmRuntimeReady(session.runtime, warmSpec),
         continuation: true,
       });
       emitOfficeHoursStatus(session, {
@@ -6059,7 +6098,7 @@ async function runPrompt(
         return;
       }
       await syncPendingUserInputRequests();
-      assertOfficeHoursPendingUserInputAttached(session, officeHoursStructuredInputToolState);
+      await assertOfficeHoursPendingUserInputAttached(session, officeHoursStructuredInputToolState);
     }
     assistantMessage.state = "final";
     session.status = session.pendingUserInput ? "awaiting_input" : "idle";
@@ -6798,238 +6837,6 @@ async function runUnifiedFoundationChat(
   }
 }
 
-function normalizeWarmSessionPurpose(value = "") {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === OFFICE_HOURS_QUESTION_EXECUTION_MODE || normalized === "office_hours") {
-    return OFFICE_HOURS_QUESTION_EXECUTION_MODE;
-  }
-  return "";
-}
-
-function sha256Short(value = "") {
-  return createHash("sha256").update(String(value || "")).digest("hex").slice(0, 16);
-}
-
-function buildOfficeHoursWarmSpec(session, payload = {}) {
-  const officeHours = session?.runtime?.officeHours || {};
-  const context = clampOfficeHoursContext(
-    payload.context ?? officeHours.context ?? "",
-  );
-  const selectedSources = normalizeOfficeHoursSelectedSources(payload.selectedSources ?? officeHours.selectedSources ?? []);
-  const day = normalizeOfficeHoursDay(payload.day ?? payload.officeHoursDay ?? officeHours.day);
-  const source = String(payload.source ?? officeHours.source ?? "office_hours_screen").trim() || "office_hours_screen";
-  return {
-    purpose: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
-    executionMode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
-    model: session?.model || "",
-    workspaceRoot,
-    day,
-    source,
-    selectedSources,
-    selectedSourcesFingerprint: sha256Short(JSON.stringify(selectedSources)),
-    contextFingerprint: context ? sha256Short(context) : null,
-    context,
-  };
-}
-
-function warmSpecMatches(warm = {}, spec = {}) {
-  if (!warm || !spec) return false;
-  return warm.state === "ready"
-    && warm.purpose === spec.purpose
-    && warm.executionMode === spec.executionMode
-    && warm.workspaceRoot === spec.workspaceRoot
-    && (warm.model || "") === (spec.model || "")
-    && (warm.day || null) === (spec.day || null)
-    && (warm.source || "") === (spec.source || "")
-    && (warm.selectedSourcesFingerprint || "") === (spec.selectedSourcesFingerprint || "")
-    && (warm.contextFingerprint || null) === (spec.contextFingerprint || null);
-}
-
-function isOfficeHoursWarmRuntimeReady(runtime = {}, spec = {}) {
-  const warm = runtime?.codexWarm;
-  const meta = runtime?.codexThreadMeta || {};
-  return Boolean(
-    runtime?.codexThreadId
-      && warmSpecMatches(warm, spec)
-      && meta.workspaceRoot === spec.workspaceRoot
-      && meta.executionMode === spec.executionMode,
-  );
-}
-
-function assertOfficeHoursWarmIsNotStale(session, spec = {}) {
-  const warm = session?.runtime?.codexWarm;
-  if (!warm || warm.purpose !== OFFICE_HOURS_QUESTION_EXECUTION_MODE) return;
-  if (warm.state === "warming") {
-    throw new Error("Office Hours question warm-up is still running; refusing to fall back to a cold run.");
-  }
-  if (
-    (warm.state === "failed" || warm.state === "cancelled")
-    && warm.contextFingerprint
-    && warm.contextFingerprint === spec.contextFingerprint
-  ) {
-    throw new Error(`Office Hours question warm-up ${warm.state}; refusing to fall back to a cold run.`);
-  }
-  if (warm.state === "ready" && !isOfficeHoursWarmRuntimeReady(session.runtime, spec)) {
-    throw new Error("Office Hours question warm-up metadata is stale or mismatched; refusing to fall back to a cold run.");
-  }
-}
-
-async function warmSession(session, payload = {}) {
-  if (!session || session.provider !== "codex") return;
-  if (process.env.AGENTIC30_DISABLE_CODEX_WARMUP === "1") return;
-  if (state.activeRuns.has(session.id) || state.warmRuns.has(session.id)) return;
-
-  const purpose = normalizeWarmSessionPurpose(payload.purpose)
-    || (session.runtime?.officeHours ? OFFICE_HOURS_QUESTION_EXECUTION_MODE : "");
-  if (purpose !== OFFICE_HOURS_QUESTION_EXECUTION_MODE) return;
-
-  const warmSpec = buildOfficeHoursWarmSpec(session, payload);
-  if (!warmSpec.contextFingerprint) {
-    setCodexWarmRuntime(session, {
-      ...warmSpec,
-      state: "failed",
-      error: "Office Hours question warm-up requires an explicit context fingerprint.",
-      failedAt: new Date().toISOString(),
-    });
-    await persistSessions();
-    broadcast({ type: "session_updated", session });
-    return;
-  }
-
-  if (isOfficeHoursWarmRuntimeReady(session.runtime, warmSpec)) return;
-
-  const authState = getProviderAuthState(session.provider);
-  if (!authState.available) {
-    setCodexWarmRuntime(session, {
-      ...warmSpec,
-      state: "failed",
-      error: authState.message,
-    });
-  await persistSessions();
-  broadcast({ type: "session_updated", session });
-    return;
-  }
-
-  const abortController = new AbortController();
-  const startedAt = performance.now();
-  state.warmRuns.set(session.id, { abortController, startedAt });
-  setCodexWarmRuntime(session, {
-    ...warmSpec,
-    state: "warming",
-    startedAt: new Date().toISOString(),
-  });
-  touch(session);
-  await persistSessions();
-  broadcast({ type: "session_updated", session });
-
-  const timings = [];
-  try {
-    const result = await runProviderStream({
-      provider: session.provider,
-      sessionRuntime: session.runtime,
-      prompt: [
-        "Prepare this Agentic30 Office Hours question session.",
-        "Start the provider thread for the Office Hours question-generation mode.",
-        "Do not answer the user yet.",
-        "Do not inspect files, call tools, or generate the first question.",
-      ].join("\n"),
-      model: session.model,
-    workspaceRoot,
-      abortController,
-      sessionIdForMcp: session.id,
-      executionMode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
-      stopAfterCodexThreadStarted: true,
-      onTextDelta: () => {},
-      onTextReplace: () => {},
-      onToolEvent: () => {},
-      onRuntimeUpdate: async (nextRuntime) => {
-        session.runtime = {
-          ...(session.runtime || {}),
-          ...(nextRuntime || {}),
-          codexWarm: session.runtime?.codexWarm,
-        };
-        touch(session);
-        await persistSessions();
-        broadcast({ type: "session_updated", session });
-      },
-      onRunEvent: (event) => {
-        timings.push({
-          phase: event.phase,
-          elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
-          details: Object.fromEntries(
-            Object.entries(event).filter(([key]) => key !== "phase" && key !== "once"),
-          ),
-        });
-      },
-    });
-
-    if (result.runtime?.codexThreadId) {
-      session.runtime = {
-        ...(session.runtime || {}),
-        ...(result.runtime || {}),
-      };
-      setCodexWarmRuntime(session, {
-        ...warmSpec,
-        state: "ready",
-        startedAt: session.runtime?.codexWarm?.startedAt,
-        completedAt: new Date().toISOString(),
-        elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
-        timings,
-    });
-      telemetry.captureEvent("mac_sidecar_office_hours_warmup_completed", {
-        session_id: session.id,
-        provider: session.provider,
-        execution_mode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
-        elapsed_ms: session.runtime.codexWarm.elapsedMs,
-      });
-    }
-  } catch (error) {
-    if (abortController.signal.aborted) {
-      setCodexWarmRuntime(session, {
-        ...warmSpec,
-        state: "cancelled",
-        elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
-      });
-    } else {
-      setCodexWarmRuntime(session, {
-        ...warmSpec,
-        state: "failed",
-        failedAt: new Date().toISOString(),
-        elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
-        error: formatError(error),
-        timings,
-      });
-      telemetry.captureException(error, {
-        operation: "warmSession",
-        session_id: session.id,
-        provider: session.provider,
-      });
-    }
-  } finally {
-    state.warmRuns.delete(session.id);
-    touch(session);
-  await persistSessions();
-  broadcast({ type: "session_updated", session });
-  }
-}
-
-function cancelWarmSession(sessionId) {
-  const run = state.warmRuns.get(sessionId);
-  if (!run) return;
-  run.abortController.abort();
-  state.warmRuns.delete(sessionId);
-}
-
-function setCodexWarmRuntime(session, warm) {
-  session.runtime = {
-    ...(session.runtime || {}),
-    codexWarm: {
-      ...(session.runtime?.codexWarm || {}),
-      ...warm,
-    },
-  };
-}
-
 async function enqueuePrompt(session, prompt, { executionIntent = "chat" } = {}) {
   const userMessage = makeMessage({
     role: "user",
@@ -7118,6 +6925,47 @@ function normalizeOfficeHoursDay(value) {
   return number;
 }
 
+function buildOfficeHoursContextMetrics({
+  rawContext = "",
+  context = "",
+  day = null,
+} = {}) {
+  const raw = String(rawContext || "");
+  const normalized = String(context || "");
+  const current = normalized || raw;
+  const rawLength = raw.length;
+  const contextLength = current.length;
+  return {
+    rawLength,
+    contextLength,
+    clamped: rawLength > contextLength,
+    hasLockedDay1Goal: isOfficeHoursLockedDay1GoalContext(current),
+    hasGoalLane: /Goal lane:/i.test(current),
+    expectedQuestionCount: parseExpectedOfficeHoursQuestionCount(current),
+    day: normalizeOfficeHoursDay(day),
+  };
+}
+
+function refreshOfficeHoursRuntimeContextMetrics(runtime = null, { rawContext = null } = {}) {
+  if (!runtime) return null;
+  const currentContext = String(runtime.context || "");
+  const previous = runtime.contextMetrics || {};
+  const sourceRawContext = rawContext == null ? "" : String(rawContext || "");
+  const rawLength = rawContext == null
+    ? (Number.isFinite(previous.rawLength) ? previous.rawLength : currentContext.length)
+    : sourceRawContext.length;
+  runtime.contextMetrics = {
+    ...buildOfficeHoursContextMetrics({
+      rawContext: sourceRawContext,
+      context: currentContext,
+      day: runtime.day,
+    }),
+    rawLength,
+  };
+  runtime.contextMetrics.clamped = runtime.contextMetrics.rawLength > runtime.contextMetrics.contextLength;
+  return runtime.contextMetrics;
+}
+
 function isDay2PlusOfficeHoursDay(day = null) {
   const normalized = normalizeOfficeHoursDay(day);
   return Number.isFinite(normalized) && normalized >= 2;
@@ -7181,13 +7029,19 @@ function sendOfficeHoursSourceGate(socket, { sessionId = null, gate } = {}) {
 
 function buildOfficeHoursRuntime(context = "", source = "manual", day = null, selectedSources = [], metadata = {}) {
   const normalizedDay = normalizeOfficeHoursDay(day);
+  const strippedContext = stripOfficeHoursResumePreambleBlocks(context);
   const runtime = {
     active: true,
     source: String(source || "manual"),
     startedAt: new Date().toISOString(),
-    context: clampOfficeHoursContext(stripOfficeHoursResumePreambleBlocks(context)),
+    context: clampOfficeHoursContext(strippedContext),
   };
   if (normalizedDay) runtime.day = normalizedDay;
+  runtime.contextMetrics = buildOfficeHoursContextMetrics({
+    rawContext: strippedContext,
+    context: runtime.context,
+    day: normalizedDay,
+  });
   const calendarDay = normalizeOfficeHoursDay(metadata.calendarDay);
   if (calendarDay) runtime.calendarDay = calendarDay;
   const workedDayReason = String(metadata.workedDayReason || "").trim();
@@ -9382,7 +9236,6 @@ async function reissueOfficeHoursMissingFreeTextPrompt(session = null, pendingUs
     await stopSession(session.id);
   }
   state.promptQueues.delete(session.id);
-  cancelWarmSession(session.id);
   const staleSessionIds = new Set([
     session.id,
     String(pendingUserInput.sessionId || "").trim(),
@@ -9832,6 +9685,12 @@ function emitOfficeHoursStatus(session, {
   messageId = null,
   requestId = null,
   elapsedMs = null,
+  contextMetrics = null,
+  questionIndex = null,
+  answeredQuestionCount = null,
+  expectedQuestionCount = null,
+  questionElapsedMs = null,
+  requestReadyLatencyMs = null,
 } = {}) {
   if (!session?.id || !stage) return;
   // Resolve against the caller-selected table only — no cross-table fallback.
@@ -9842,6 +9701,9 @@ function emitOfficeHoursStatus(session, {
   const resolvedDetail = clampOfficeHoursStatusText(detail || stageCopy.detail || "", 240);
   const resolvedProgressText = clampOfficeHoursStatusText(progressText || stageCopy.progressText || resolvedDetail || resolvedTitle, 240);
   if (!resolvedTitle && !resolvedDetail && !resolvedProgressText) return;
+  const resolvedContextMetrics = contextMetrics
+    || refreshOfficeHoursRuntimeContextMetrics(session.runtime?.officeHours)
+    || null;
   broadcast({
     type: "office_hours_status",
     sessionId: session.id,
@@ -9852,7 +9714,50 @@ function emitOfficeHoursStatus(session, {
     ...(messageId ? { messageId } : {}),
     ...(requestId ? { requestId } : {}),
     ...(Number.isFinite(elapsedMs) ? { elapsedMs: Math.max(0, Math.round(elapsedMs)) } : {}),
+    ...(resolvedContextMetrics ? { contextMetrics: resolvedContextMetrics } : {}),
+    ...(Number.isFinite(questionIndex) ? { questionIndex: Math.max(0, Math.round(questionIndex)) } : {}),
+    ...(Number.isFinite(answeredQuestionCount) ? { answeredQuestionCount: Math.max(0, Math.round(answeredQuestionCount)) } : {}),
+    ...(Number.isFinite(expectedQuestionCount) ? { expectedQuestionCount: Math.max(0, Math.round(expectedQuestionCount)) } : {}),
+    ...(Number.isFinite(questionElapsedMs) ? { questionElapsedMs: Math.max(0, Math.round(questionElapsedMs)) } : {}),
+    ...(Number.isFinite(requestReadyLatencyMs) ? { requestReadyLatencyMs: Math.max(0, Math.round(requestReadyLatencyMs)) } : {}),
   });
+}
+
+async function buildOfficeHoursQuestionTiming(session, {
+  context = "",
+  requestId = "",
+  questionElapsedMs = null,
+  requestReadyLatencyMs = null,
+} = {}) {
+  const progress = await getOfficeHoursQuestionProgress(session, {
+    context,
+    currentRequestId: requestId,
+  });
+  const answered = Number.isFinite(progress?.answered) ? Math.max(0, Math.round(progress.answered)) : null;
+  const expected = Number.isFinite(progress?.expected) && progress.expected > 0
+    ? Math.max(0, Math.round(progress.expected))
+    : null;
+  const currentQuestionNumber = answered === null
+    ? null
+    : expected
+      ? Math.min(answered, expected)
+      : answered;
+  const answeredBeforeCurrent = Number.isFinite(currentQuestionNumber)
+    ? Math.max(0, currentQuestionNumber - 1)
+    : null;
+  const normalizedQuestionElapsedMs = Number.isFinite(questionElapsedMs)
+    ? Math.max(0, Math.round(questionElapsedMs))
+    : null;
+  const normalizedRequestReadyLatencyMs = Number.isFinite(requestReadyLatencyMs)
+    ? Math.max(0, Math.round(requestReadyLatencyMs))
+    : null;
+  return {
+    ...(Number.isFinite(currentQuestionNumber) ? { questionIndex: currentQuestionNumber } : {}),
+    ...(Number.isFinite(answeredBeforeCurrent) ? { answeredQuestionCount: answeredBeforeCurrent } : {}),
+    ...(Number.isFinite(expected) ? { expectedQuestionCount: expected } : {}),
+    ...(Number.isFinite(normalizedQuestionElapsedMs) ? { questionElapsedMs: normalizedQuestionElapsedMs } : {}),
+    ...(Number.isFinite(normalizedRequestReadyLatencyMs) ? { requestReadyLatencyMs: normalizedRequestReadyLatencyMs } : {}),
+  };
 }
 
 // Detects an interview run that ended with no question card on deck while the
@@ -9972,6 +9877,7 @@ function isOfficeHoursStructuredRequest(request = null) {
 function createOfficeHoursStructuredInputToolState() {
   return {
     pendingOutputSeen: false,
+    pendingRequestIds: new Set(),
     contractError: null,
   };
 }
@@ -9989,15 +9895,48 @@ function recordOfficeHoursStructuredInputToolEvent(toolState, event = {}) {
   }
   if (isPendingCodexStructuredInputToolOutput(output)) {
     toolState.pendingOutputSeen = true;
-    return { kind: "pending", output };
+    const requestId = String(output.requestId || "").trim();
+    if (requestId) {
+      toolState.pendingRequestIds.add(requestId);
+    }
+    return { kind: "pending", output, requestId };
   }
   return { kind: "unhandled", output };
 }
 
-function assertOfficeHoursPendingUserInputAttached(session, toolState) {
-  void session;
-  if (!toolState?.pendingOutputSeen || session?.pendingUserInput) return;
-  throw new Error("structured input tool returned pending_user_input but no pending request was attachable");
+async function assertOfficeHoursPendingUserInputAttached(session, toolState) {
+  if (!toolState?.pendingOutputSeen) return;
+  const pendingIds = toolState.pendingRequestIds instanceof Set
+    ? [...toolState.pendingRequestIds].filter(Boolean)
+    : [];
+  const unresolvedPendingIds = pendingIds.filter((requestId) =>
+    !state.resolvedUserInputIds.has(requestId)
+    && !state.submittingUserInputIds.has(requestId)
+  );
+  if (pendingIds.length > 0 && unresolvedPendingIds.length === 0) return;
+  const attachedRequestId = String(session?.pendingUserInput?.requestId || "").trim();
+  if (
+    attachedRequestId
+    && (
+      unresolvedPendingIds.length === 0
+      || unresolvedPendingIds.includes(attachedRequestId)
+    )
+  ) {
+    return;
+  }
+  if (unresolvedPendingIds.length > 0) {
+    const requests = await listUserInputRequests(appSupportPath);
+    if (requests.some((request) =>
+      request.sessionId === session?.id
+        && unresolvedPendingIds.includes(request.requestId)
+    )) {
+      return;
+    }
+  }
+  const details = pendingIds.length > 0
+    ? ` requestIds=${pendingIds.join(",")} resolved=${pendingIds.filter((requestId) => state.resolvedUserInputIds.has(requestId)).join(",")} submitting=${pendingIds.filter((requestId) => state.submittingUserInputIds.has(requestId)).join(",")}`
+    : " requestIds=<none>";
+  throw new Error(`structured input tool returned pending_user_input but no pending request was attachable;${details}`);
 }
 
 async function prepareOfficeHoursStructuredInputRequestForSession(session, request, {
@@ -10079,6 +10018,55 @@ function isStructuredInputResponseRunEvent(event = {}) {
   });
 }
 
+async function runOfficeHoursQuestionProviderWithDeadline(runProviderArgs = {}, {
+  abortController,
+  session,
+  runStartedAt,
+} = {}) {
+  let deadlineFired = false;
+  let deadlineTimer = null;
+  const deadline = new Promise((_, reject) => {
+    deadlineTimer = setTimeout(() => {
+      deadlineFired = true;
+      try { abortController?.abort?.(); } catch { /* already aborted */ }
+      const error = new Error(
+        `Office Hours question provider exceeded hard deadline (${OFFICE_HOURS_QUESTION_HARD_DEADLINE_MS}ms).`,
+      );
+      error.code = "ERR_OFFICE_HOURS_QUESTION_TIMEOUT";
+      reject(error);
+    }, OFFICE_HOURS_QUESTION_HARD_DEADLINE_MS);
+  });
+
+  try {
+    return await Promise.race([
+      runProviderStream(runProviderArgs),
+      deadline,
+    ]);
+  } catch (error) {
+    if (deadlineFired) {
+      const elapsedMs = Number.isFinite(runStartedAt)
+        ? Math.max(0, Math.round(performance.now() - runStartedAt))
+        : null;
+      captureSidecarLog("office hours question provider timed out", "error", {
+        operation: "runOfficeHours",
+        session_id: session?.id || "",
+        provider: session?.provider || "",
+        timeout_ms: OFFICE_HOURS_QUESTION_HARD_DEADLINE_MS,
+        ...(Number.isFinite(elapsedMs) ? { elapsed_ms: elapsedMs } : {}),
+      });
+      telemetry.captureEvent("mac_sidecar_office_hours_question_timeout", {
+        session_id: session?.id || "",
+        provider: session?.provider || "",
+        timeout_ms: OFFICE_HOURS_QUESTION_HARD_DEADLINE_MS,
+        ...(Number.isFinite(elapsedMs) ? { elapsed_ms: elapsedMs } : {}),
+      });
+    }
+    throw error;
+  } finally {
+    clearTimeout(deadlineTimer);
+  }
+}
+
 function selectOfficeHoursSpecialist({ context = "", lastAnswer = "" } = {}) {
   return selectSpecialist({
     bipSetupGate: currentBipSetupGate(),
@@ -10096,6 +10084,634 @@ function scheduleQueuedPromptRun(session) {
       provider: session.provider,
     });
   });
+}
+
+const DAY1_OFFICE_HOURS_WARMUP_GOAL_TYPES = Object.freeze(["make_money", "get_users", "build_product"]);
+
+function day1OfficeHoursWarmupWorkspaceKey(root = workspaceRoot) {
+  return path.resolve(root || workspaceRoot);
+}
+
+function cleanDay1WarmupText(value = "", maxLength = 500) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function cleanDay1WarmupValidationAction(value = "") {
+  return cleanDay1WarmupText(value)
+    .replace(/^\s*(?:활성\s*행동|활성\s*신호|검증\s*행동|확인할\s*행동)\s*[:：]\s*/u, "")
+    .trim();
+}
+
+function stableDay1WarmupHash(value = "") {
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of Buffer.from(String(value || ""), "utf8")) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
+function sha256WarmupKey(value = {}) {
+  return createHash("sha256")
+    .update(JSON.stringify(value))
+    .digest("hex");
+}
+
+function day1WarmupGoalSourceFingerprint({
+  day1AlignmentPlan = null,
+  onboardingHypothesis = null,
+  customer = "",
+  problem = "",
+  validationAction = "",
+  evidenceRefs = [],
+} = {}) {
+  return stableDay1WarmupHash([
+    "day1_goal_lane_v1",
+    day1AlignmentPlan?.projectGoal,
+    customer,
+    problem,
+    validationAction,
+    Array.isArray(evidenceRefs) ? evidenceRefs.join("|") : "",
+    onboardingHypothesis?.goal,
+  ]
+    .map((part) => cleanDay1WarmupText(part, 1000))
+    .filter(Boolean)
+    .join("\u001f"));
+}
+
+function day1WarmupScanFingerprint({
+  scanResult = null,
+  onboardingHypothesis = null,
+  day1AlignmentPlan = null,
+  day1SituationSummary = null,
+} = {}) {
+  return sha256WarmupKey({
+    schema: "agentic30.day1_q1_warmup.scan.v1",
+    docs: [
+      scanResult?.icp,
+      scanResult?.spec,
+      scanResult?.values,
+      scanResult?.designSystem,
+      scanResult?.adr,
+      scanResult?.goal,
+      scanResult?.sheet,
+    ].filter(Boolean),
+    onboardingGoal: cleanDay1WarmupText(onboardingHypothesis?.goal, 1000),
+    projectGoal: cleanDay1WarmupText(day1AlignmentPlan?.projectGoal, 1000),
+    alignmentStatement: cleanDay1WarmupText(day1AlignmentPlan?.alignmentStatement?.statement, 1000),
+    readinessStatus: cleanDay1WarmupText(day1AlignmentPlan?.readiness?.status, 120),
+    situationProject: cleanDay1WarmupText(day1SituationSummary?.project?.name, 300),
+  });
+}
+
+function day1WarmupModelForProvider(provider = "", model = "") {
+  return cleanDay1WarmupText(model, 160)
+    || cleanDay1WarmupText(DAY1_CHOICE_MODEL_BY_PROVIDER[normalizeProviderName(provider)] || "", 160);
+}
+
+function day1WarmupCacheKey({
+  workspaceKey = "",
+  provider = "",
+  model = "",
+  promptVersion = DAY1_OFFICE_HOURS_Q1_WARMUP_PROMPT_VERSION,
+  scanFingerprint = "",
+  goalType = "",
+  sourcePlanFingerprint = "",
+} = {}) {
+  return sha256WarmupKey({
+    workspaceKey,
+    provider: normalizeProviderName(provider),
+    model: day1WarmupModelForProvider(provider, model),
+    promptVersion,
+    scanFingerprint,
+    goalType,
+    sourcePlanFingerprint,
+  });
+}
+
+function collectDay1WarmupEvidenceRefs(plan = null, scanResult = null) {
+  const refs = [];
+  const push = (value) => {
+    const text = cleanDay1WarmupText(value, 260);
+    if (text) refs.push(text);
+  };
+  for (const rows of Object.values(plan?.readiness?.fieldEvidence || {})) {
+    for (const row of Array.isArray(rows) ? rows : []) push(row?.path);
+  }
+  for (const ref of plan?.signals?.evidenceRefs || []) push(ref?.path);
+  for (const ref of plan?.components?.icp?.evidence || []) push(ref);
+  for (const ref of plan?.components?.painPoint?.evidence || []) push(ref);
+  for (const ref of plan?.components?.outcome?.evidence || []) push(ref);
+  for (const doc of Array.isArray(scanResult?.docs) ? scanResult.docs : []) {
+    push(doc?.path || doc);
+  }
+  const seen = new Set();
+  return refs.filter((ref) => {
+    const key = ref.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 12);
+}
+
+function buildDay1OfficeHoursWarmupSelections({
+  scanResult = null,
+  onboardingHypothesis = null,
+  day1AlignmentPlan = null,
+} = {}) {
+  const customer = cleanDay1WarmupText(
+    day1AlignmentPlan?.signalDigest?.rows?.find((row) => row?.key === "icp")?.value
+      || day1AlignmentPlan?.signals?.currentIcpGuess
+      || day1AlignmentPlan?.signals?.likelyUsers?.[0]
+      || day1AlignmentPlan?.alignmentStatement?.icp
+      || day1AlignmentPlan?.components?.icp?.statement
+      || "",
+    300,
+  );
+  const problem = cleanDay1WarmupText(
+    day1AlignmentPlan?.signals?.problem
+      || day1AlignmentPlan?.alignmentStatement?.painPoint
+      || day1AlignmentPlan?.components?.painPoint?.statement
+      || "",
+  );
+  const validationAction = cleanDay1WarmupValidationAction(
+    day1AlignmentPlan?.components?.outcome?.statement
+      || day1AlignmentPlan?.alignmentStatement?.outcome
+      || "",
+  );
+  const evidenceRefs = collectDay1WarmupEvidenceRefs(day1AlignmentPlan, scanResult);
+  return DAY1_OFFICE_HOURS_WARMUP_GOAL_TYPES
+    .map((goalType) => normalizeDay1GoalSelection({
+      goalType,
+      customer,
+      problem,
+      validationAction,
+      evidenceRefs,
+      proofSink: "local",
+      sourcePlanFingerprint: day1WarmupGoalSourceFingerprint({
+        day1AlignmentPlan,
+        onboardingHypothesis,
+        customer,
+        problem,
+        validationAction,
+        evidenceRefs,
+      }),
+    }))
+    .filter(Boolean);
+}
+
+function buildDay1OfficeHoursWarmupContext({
+  scanRoot,
+  scanResult = null,
+  onboardingHypothesis = null,
+  day1AlignmentPlan = null,
+  day1SituationSummary = null,
+  selection,
+} = {}) {
+  const lines = [
+    "Office Hours screen context",
+    `Workspace: ${scanRoot}`,
+    "Office Hours day: 1",
+    `Day 1 goal: ${selection.goalText}`,
+    "Day 1 phase: 첫 인터뷰",
+    "DAY1_LOCKED_GOAL",
+    "Flow contract: locked Day 1 goal interview.",
+    `Goal lane: ${selection.goalType}`,
+    `Goal text: ${selection.goalText}`,
+  ];
+  if (selection.goalType === "get_users") {
+    lines.push("Active user contract: 활성 사용자 1명은 선택한 ICP가 제품의 핵심 activation action을 완료한 고유 사람/계정입니다.");
+    lines.push("Active user anti-counts: 가입, waitlist, 페이지뷰, 좋아요, 팔로워, 관심 표현만으로는 활성 사용자로 세지 않습니다.");
+  }
+  if (selection.customer) lines.push(`Customer: ${selection.customer}`);
+  if (selection.problem) lines.push(`Problem: ${selection.problem}`);
+  if (selection.validationAction) lines.push(`Validation action: ${selection.validationAction}`);
+  if (selection.evidenceRefs?.length) lines.push(`Evidence refs: ${selection.evidenceRefs.join(", ")}`);
+  lines.push("Proof sink: local");
+  lines.push("Public evidence log status: not configured; continue with local evidence only.");
+  if (onboardingHypothesis?.goal) lines.push(`Onboarding goal: ${onboardingHypothesis.goal}`);
+  if (onboardingHypothesis?.stage) lines.push(`Onboarding stage: ${onboardingHypothesis.stage}`);
+  if (onboardingHypothesis?.businessDescription) lines.push(`Onboarding business: ${onboardingHypothesis.businessDescription}`);
+  lines.push("Office Hours mode: Startup");
+  lines.push("Mode goal: 증거, 현재 대안, 가장 작은 유료 진입점을 묻는다.");
+  lines.push("Expected question count: 6");
+  const artifacts = [
+    scanResult?.icp,
+    scanResult?.spec,
+    scanResult?.values,
+    scanResult?.designSystem,
+    scanResult?.adr,
+    scanResult?.goal,
+    scanResult?.sheet,
+  ].filter(Boolean);
+  if (artifacts.length) lines.push(`Scan artifacts: ${artifacts.join(", ")}`);
+  if (day1SituationSummary?.project) {
+    lines.push(`Project: ${day1SituationSummary.project.name} - ${day1SituationSummary.project.oneLine}`);
+    lines.push(`Customer: ${day1SituationSummary.project.customer}`);
+    lines.push(`Problem: ${day1SituationSummary.project.problem}`);
+  }
+  if (day1AlignmentPlan?.projectGoal) lines.push(`Project goal: ${day1AlignmentPlan.projectGoal}`);
+  if (day1AlignmentPlan?.alignmentStatement?.statement) lines.push(`Alignment statement: ${day1AlignmentPlan.alignmentStatement.statement}`);
+  lines.push("Instruction: Run the Day 1 interview only against DAY1_LOCKED_GOAL. The first response must be exactly one structured input card. Ask one question at a time. Do not write files, create docs, publish posts, or edit project files unless the user explicitly approves later.");
+  return lines.filter((line) => cleanDay1WarmupText(line)).join("\n");
+}
+
+function extractDay1GoalTypeFromOfficeHoursContext(context = "") {
+  const text = String(context || "");
+  const lane = text.match(/Goal lane:\s*(make_money|get_users|build_product)\b/i)?.[1];
+  if (lane) return lane.toLowerCase();
+  if (/30일 안에 첫 유료 결제 1건/u.test(text)) return "make_money";
+  if (/30일 안에 핵심 활성 행동을 끝낸 사용자 100명/u.test(text)) return "get_users";
+  if (/30일 안에 핵심 흐름 완주율 10%/u.test(text)) return "build_product";
+  return "";
+}
+
+function extractDay1GoalSourceFingerprintFromOfficeHoursContext(context = "") {
+  return String(context || "").match(/Goal source fingerprint:\s*([a-f0-9]{16,128})\b/i)?.[1]?.toLowerCase() || "";
+}
+
+function emitDay1OfficeHoursWarmupStatus(session, {
+  stage = "office_hours_warmup_failed",
+  goalType = "",
+  reason = "unknown",
+  detail = "",
+  cacheKey = "",
+} = {}) {
+  const message = detail || `Day 1 Q1 warmup unavailable: ${reason}`;
+  emitOfficeHoursStatus(session, {
+    stage,
+    title: "첫 질문 warmup 사용 안 함",
+    detail: message,
+    progressText: "미리 만든 질문을 쓰지 못해 live provider 경로로 이어갑니다.",
+  });
+  telemetry.captureEvent("mac_sidecar_office_hours_q1_warmup_miss", {
+    session_id: session?.id || "",
+    provider: session?.provider || "",
+    goal_type: goalType,
+    reason,
+    cache_key: cacheKey,
+  });
+}
+
+async function buildDay1OfficeHoursProviderContext(context, goalType, root = workspaceRoot) {
+  let nextContext = clampOfficeHoursContext(context);
+  const activeUserPreamble = goalType === "get_users"
+    ? await buildGetUsersActiveUserDefinitionPreamble({ workspaceRoot: root, context: nextContext })
+    : "";
+  if (activeUserPreamble) {
+    nextContext = clampOfficeHoursContext(`${nextContext}\n\n${activeUserPreamble}`);
+  }
+  const dayClosePolicy = await loadOfficeHoursDayClosePolicy(root, 1);
+  nextContext = clampOfficeHoursContext(`${nextContext}\n\n${formatOfficeHoursDayClosePolicyForPrompt(dayClosePolicy)}`);
+  return { context: nextContext, dayClosePolicy };
+}
+
+function scheduleDay1OfficeHoursQuestionWarmups({
+  scanRoot,
+  scanResult,
+  onboardingHypothesis,
+  day1AlignmentPlan,
+  day1SituationSummary,
+  preferredProvider = "",
+} = {}) {
+  const provider = normalizeProviderName(preferredProvider) || "codex";
+  const model = day1WarmupModelForProvider(provider);
+  const promptVersion = DAY1_OFFICE_HOURS_Q1_WARMUP_PROMPT_VERSION;
+  const workspaceKey = day1OfficeHoursWarmupWorkspaceKey(scanRoot);
+  const scanFingerprint = day1WarmupScanFingerprint({
+    scanResult,
+    onboardingHypothesis,
+    day1AlignmentPlan,
+    day1SituationSummary,
+  });
+  const selections = buildDay1OfficeHoursWarmupSelections({
+    scanResult,
+    onboardingHypothesis,
+    day1AlignmentPlan,
+  });
+  if (!selections.length) return;
+  const run = {
+    provider,
+    model,
+    promptVersion,
+    scanFingerprint,
+    createdAt: new Date().toISOString(),
+    entries: new Map(),
+  };
+  state.officeHoursQuestionWarmups.set(workspaceKey, run);
+  for (const selection of selections) {
+    const cacheKey = day1WarmupCacheKey({
+      workspaceKey,
+      provider,
+      model,
+      promptVersion,
+      scanFingerprint,
+      goalType: selection.goalType,
+      sourcePlanFingerprint: selection.sourcePlanFingerprint,
+    });
+    const entry = {
+      goalType: selection.goalType,
+      sourcePlanFingerprint: selection.sourcePlanFingerprint,
+      cacheKey,
+      model,
+      promptVersion,
+      scanFingerprint,
+      status: "running",
+      request: null,
+      error: null,
+      startedAtMs: performance.now(),
+      elapsedMs: null,
+    };
+    run.entries.set(selection.goalType, entry);
+    entry.promise = generateDay1OfficeHoursWarmupQuestion({
+      scanRoot,
+      provider,
+      scanResult,
+      onboardingHypothesis,
+      day1AlignmentPlan,
+      day1SituationSummary,
+      selection,
+      model,
+      cacheKey,
+      promptVersion,
+      scanFingerprint,
+    }).then((request) => {
+      entry.status = "ready";
+      entry.request = request;
+      entry.elapsedMs = Math.max(0, Math.round(performance.now() - entry.startedAtMs));
+      telemetry.captureEvent("mac_sidecar_office_hours_q1_warmup_ready", {
+        provider,
+        model,
+        goal_type: selection.goalType,
+        cache_key: cacheKey,
+        elapsed_ms: entry.elapsedMs,
+      });
+      return request;
+    }).catch((error) => {
+      entry.status = "failed";
+      entry.error = error;
+      entry.elapsedMs = Math.max(0, Math.round(performance.now() - entry.startedAtMs));
+      telemetry.captureException(error, {
+        operation: "office_hours_q1_warmup",
+        provider,
+        model,
+        goal_type: selection.goalType,
+        cache_key: cacheKey,
+        workspace_root: scanRoot,
+      });
+      throw error;
+    });
+    entry.promise.catch(() => {});
+  }
+}
+
+async function generateDay1OfficeHoursWarmupQuestion({
+  scanRoot,
+  provider,
+  scanResult,
+  onboardingHypothesis,
+  day1AlignmentPlan,
+  day1SituationSummary,
+  selection,
+  model = "",
+  cacheKey = "",
+  promptVersion = DAY1_OFFICE_HOURS_Q1_WARMUP_PROMPT_VERSION,
+  scanFingerprint = "",
+} = {}) {
+  const warmupSessionId = `warmup-${randomUUID()}`;
+  const rawContext = buildDay1OfficeHoursWarmupContext({
+    scanRoot,
+    scanResult,
+    onboardingHypothesis,
+    day1AlignmentPlan,
+    day1SituationSummary,
+    selection,
+  });
+  const providerContext = await buildDay1OfficeHoursProviderContext(rawContext, selection.goalType, scanRoot);
+  const runtime = attachOfficeHoursRuntime({}, buildOfficeHoursRuntime(
+    providerContext.context,
+    "day1_interview_goal_locked",
+    1,
+    [],
+    {},
+  ));
+  runtime.officeHours.dayClosePolicy = providerContext.dayClosePolicy;
+  const officeHoursSelection = selectOfficeHoursSpecialist({
+    context: providerContext.context,
+    lastAnswer: "Office Hours",
+  });
+  const [projectContextBrief, effectorContext] = await Promise.all([
+    buildOfficeHoursProjectContextBrief(scanRoot),
+    computeOfficeHoursEffectorContext({
+      workspaceRoot: scanRoot,
+      context: providerContext.context,
+    }),
+  ]);
+  const abortController = new AbortController();
+  await runOfficeHoursQuestionProviderWithDeadline({
+    provider,
+    sessionRuntime: runtime,
+    prompt: buildOfficeHoursChatPrompt({ context: providerContext.context }),
+    model: day1WarmupModelForProvider(provider, model),
+    workspaceRoot: scanRoot,
+    abortController,
+    sessionIdForMcp: warmupSessionId,
+    executionMode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
+    approvedToolExecution: false,
+    specialist: null,
+    systemPromptOverride: buildOfficeHoursChatSystemPrompt(scanRoot, {
+      specialistInjection: buildSpecialistInjection(officeHoursSelection, { provider }),
+      context: providerContext.context,
+      provider,
+      projectContextBrief,
+      effectorContext,
+    }),
+  }, {
+    abortController,
+    session: { id: warmupSessionId, provider },
+    runStartedAt: performance.now(),
+  });
+  const requests = await listUserInputRequests(appSupportPath);
+  const request = requests.find((candidate) => candidate.sessionId === warmupSessionId);
+  if (!request) {
+    throw new Error(`Office Hours Q1 warmup did not create a pending request for ${selection.goalType}.`);
+  }
+  await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId);
+  state.resolvedUserInputIds.add(request.requestId);
+  return {
+    ...request,
+    sessionId: "",
+    requestId: "",
+    createdAt: "",
+    warmup: {
+      cacheKey,
+      promptVersion,
+      model: day1WarmupModelForProvider(provider, model),
+      scanFingerprint,
+      sourcePlanFingerprint: selection.sourcePlanFingerprint,
+    },
+  };
+}
+
+async function attachDay1OfficeHoursWarmupIfAvailable(session, {
+  context = "",
+  source = "",
+  day = null,
+  selectedSources = [],
+  model = "",
+} = {}) {
+  const runtimeDay = normalizeOfficeHoursDay(day);
+  const normalizedSource = String(source || "").trim();
+  if (runtimeDay !== 1 || normalizedSource !== "day1_interview_goal_locked") return false;
+  const goalType = extractDay1GoalTypeFromOfficeHoursContext(context);
+  if (!goalType) return false;
+  const requestedModel = day1WarmupModelForProvider(session.provider, model || session.model);
+  const requestedSourcePlanFingerprint = extractDay1GoalSourceFingerprintFromOfficeHoursContext(context);
+  const warmup = state.officeHoursQuestionWarmups.get(day1OfficeHoursWarmupWorkspaceKey(workspaceRoot));
+  if (!warmup?.entries?.has(goalType)) {
+    emitDay1OfficeHoursWarmupStatus(session, {
+      stage: "office_hours_warmup_miss",
+      goalType,
+      reason: "cache_miss",
+      detail: `Day 1 Q1 warmup cache miss for ${goalType}.`,
+    });
+    return false;
+  }
+  if (warmup.provider && warmup.provider !== session.provider) {
+    emitDay1OfficeHoursWarmupStatus(session, {
+      stage: "office_hours_warmup_miss",
+      goalType,
+      reason: "provider_mismatch",
+      detail: `Day 1 Q1 warmup provider mismatch: warmup=${warmup.provider}, session=${session.provider}.`,
+    });
+    return false;
+  }
+  const entry = warmup.entries.get(goalType);
+  if (entry.promptVersion && entry.promptVersion !== DAY1_OFFICE_HOURS_Q1_WARMUP_PROMPT_VERSION) {
+    emitDay1OfficeHoursWarmupStatus(session, {
+      stage: "office_hours_warmup_miss",
+      goalType,
+      reason: "prompt_version_mismatch",
+      detail: `Day 1 Q1 warmup prompt version mismatch: warmup=${entry.promptVersion}, current=${DAY1_OFFICE_HOURS_Q1_WARMUP_PROMPT_VERSION}.`,
+      cacheKey: entry.cacheKey,
+    });
+    return false;
+  }
+  if (entry.model && requestedModel && entry.model !== requestedModel) {
+    emitDay1OfficeHoursWarmupStatus(session, {
+      stage: "office_hours_warmup_miss",
+      goalType,
+      reason: "model_mismatch",
+      detail: `Day 1 Q1 warmup model mismatch: warmup=${entry.model}, session=${requestedModel}.`,
+      cacheKey: entry.cacheKey,
+    });
+    return false;
+  }
+  if (
+    requestedSourcePlanFingerprint
+    && entry.sourcePlanFingerprint
+    && requestedSourcePlanFingerprint !== entry.sourcePlanFingerprint
+  ) {
+    emitDay1OfficeHoursWarmupStatus(session, {
+      stage: "office_hours_warmup_miss",
+      goalType,
+      reason: "goal_fingerprint_mismatch",
+      detail: `Day 1 Q1 warmup goal fingerprint mismatch for ${goalType}.`,
+      cacheKey: entry.cacheKey,
+    });
+    return false;
+  }
+  if (entry.status === "failed") {
+    emitDay1OfficeHoursWarmupStatus(session, {
+      goalType,
+      reason: "provider_failed",
+      detail: `Day 1 Q1 warmup failed for ${goalType}: ${formatError(entry.error)}`,
+      cacheKey: entry.cacheKey,
+    });
+    return false;
+  }
+  let cachedRequest = entry.request;
+  if (!cachedRequest) {
+    session.status = "running";
+    session.error = null;
+    touch(session);
+    await persistSessions();
+    broadcast({ type: "session_updated", session });
+    emitOfficeHoursStatus(session, {
+      stage: "provider_starting",
+      progressText: "scan 이후 미리 준비한 Day 1 첫 질문을 연결 중",
+    });
+    try {
+      cachedRequest = await entry.promise;
+    } catch (error) {
+      emitDay1OfficeHoursWarmupStatus(session, {
+        goalType,
+        reason: "provider_failed",
+        detail: `Day 1 Q1 warmup failed for ${goalType}: ${formatError(error)}`,
+        cacheKey: entry.cacheKey,
+      });
+      return false;
+    }
+  }
+  if (!cachedRequest?.questions?.length) {
+    emitDay1OfficeHoursWarmupStatus(session, {
+      goalType,
+      reason: "empty_request",
+      detail: `Day 1 Q1 warmup for ${goalType} is missing a structured question.`,
+      cacheKey: entry.cacheKey,
+    });
+    return false;
+  }
+  const providerContext = await buildDay1OfficeHoursProviderContext(context, goalType);
+  const officeHoursRuntime = buildOfficeHoursRuntime(
+    providerContext.context,
+    normalizedSource,
+    1,
+    selectedSources,
+    {},
+  );
+  officeHoursRuntime.dayClosePolicy = providerContext.dayClosePolicy;
+  session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
+  if (!session.title || session.title === "New Session") {
+    session.title = "Office Hours";
+  }
+  const request = await createUserInputRequest(
+    appSupportPath,
+    prepareOfficeHoursStructuredInputRequest({
+      sessionId: session.id,
+      toolName: cachedRequest.toolName,
+      title: cachedRequest.title,
+      intro: cachedRequest.intro ?? null,
+      resources: cachedRequest.resources ?? null,
+      generation: cachedRequest.generation ?? null,
+      questions: cachedRequest.questions,
+    }),
+  );
+  session.pendingUserInput = attachIddAdaptiveContinuationToRequest(session, request);
+  session.status = "awaiting_input";
+  session.error = null;
+  touch(session);
+  await persistOfficeHoursPendingQuestion(session, session.pendingUserInput, "day1_q1_warmup");
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
+  const questionTiming = await buildOfficeHoursQuestionTiming(session, {
+    context: officeHoursRuntime.context,
+    requestId: request.requestId,
+    questionElapsedMs: entry.elapsedMs ?? 0,
+    requestReadyLatencyMs: 0,
+  });
+  emitOfficeHoursStatus(session, {
+    stage: "question_ready",
+    requestId: request.requestId,
+    ...questionTiming,
+  });
+  telemetry.captureEvent("mac_sidecar_office_hours_q1_warmup_hit", {
+    session_id: session.id,
+    provider: session.provider,
+    goal_type: goalType,
+    warmup_elapsed_ms: entry.elapsedMs ?? null,
+  });
+  return true;
 }
 
 async function runOfficeHours(session, {
@@ -10445,6 +11061,7 @@ async function runOfficeHours(session, {
     runKey,
     abortController,
     stop: null,
+    startedAtMs: runStartedAt,
   });
 
   try {
@@ -10751,26 +11368,22 @@ async function runOfficeHours(session, {
       messageId: assistantMessage.id,
       elapsedMs: performance.now() - runStartedAt,
     });
-    const warmSpec = buildOfficeHoursWarmSpec(session, {
-      context: officeHoursRuntime.context,
-      source: officeHoursRuntime.source,
-      day: officeHoursRuntime.day,
-      selectedSources: officeHoursRuntime.selectedSources,
-    });
-    assertOfficeHoursWarmIsNotStale(session, warmSpec);
-    const officeHoursWarmUsed = isOfficeHoursWarmRuntimeReady(session.runtime, warmSpec);
     telemetry.captureEvent("mac_sidecar_office_hours_question_provider_starting", {
       session_id: session.id,
       provider: session.provider,
       execution_mode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
-      warmup_used: officeHoursWarmUsed,
     });
-    const officeHoursProjectContextBrief = await buildOfficeHoursProjectContextBrief(workspaceRoot);
-    const officeHoursEffectorContext = await computeOfficeHoursEffectorContext({
-      workspaceRoot,
-      context: officeHoursRuntime.context,
-    }).catch(() => "");
-    const result = await runProviderStream({
+    const [
+      officeHoursProjectContextBrief,
+      officeHoursEffectorContext,
+    ] = await Promise.all([
+      buildOfficeHoursProjectContextBrief(workspaceRoot),
+      computeOfficeHoursEffectorContext({
+        workspaceRoot,
+        context: officeHoursRuntime.context,
+      }),
+    ]);
+    const result = await runOfficeHoursQuestionProviderWithDeadline({
       provider: session.provider,
       sessionRuntime: session.runtime,
       prompt: buildOfficeHoursChatPrompt({ context: officeHoursRuntime.context }),
@@ -10858,6 +11471,10 @@ async function runOfficeHours(session, {
           });
         }
       },
+    }, {
+      abortController,
+      session,
+      runStartedAt,
     });
 
     session.runtime = attachOfficeHoursRuntime(
@@ -10868,7 +11485,7 @@ async function runOfficeHours(session, {
       throw officeHoursStructuredInputToolState.contractError;
     }
     await syncPendingUserInputRequests();
-    assertOfficeHoursPendingUserInputAttached(session, officeHoursStructuredInputToolState);
+    await assertOfficeHoursPendingUserInputAttached(session, officeHoursStructuredInputToolState);
     assistantMessage.state = "final";
     session.status = session.pendingUserInput ? "awaiting_input" : "idle";
     session.error = null;
@@ -10934,14 +11551,30 @@ async function runOfficeHours(session, {
       });
       return;
     }
+    const readyElapsedMs = performance.now() - runStartedAt;
+    const readyRequest = request || session.pendingUserInput || null;
+    const readyRequestId = readyRequest?.requestId || null;
+    const readyRequestCreatedAtMs = Date.parse(readyRequest?.createdAt || "");
+    const readyRequestLatencyMs = Number.isFinite(readyRequestCreatedAtMs)
+      ? Math.max(0, Date.now() - readyRequestCreatedAtMs)
+      : null;
+    const questionTiming = session.pendingUserInput
+      ? await buildOfficeHoursQuestionTiming(session, {
+          context: officeHoursRuntime.context,
+          requestId: readyRequestId,
+          questionElapsedMs: readyElapsedMs,
+          requestReadyLatencyMs: readyRequestLatencyMs,
+        })
+      : {};
     emitInterviewOfficeHoursStatus({
       stage: session.pendingUserInput ? "question_ready" : "completed",
       messageId: assistantMessage.id,
-      requestId: request?.requestId || session.pendingUserInput?.requestId || null,
-      elapsedMs: performance.now() - runStartedAt,
+      requestId: readyRequestId,
+      elapsedMs: readyElapsedMs,
+      ...questionTiming,
     });
   } catch (error) {
-    if (abortController.signal.aborted) {
+    if (abortController.signal.aborted && error?.code !== "ERR_OFFICE_HOURS_QUESTION_TIMEOUT") {
       telemetry.captureEvent("mac_sidecar_office_hours_aborted", {
         session_id: session.id,
         provider: session.provider,
@@ -12519,7 +13152,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
       || (normalizeSessionProvider(provider) === provider ? provider : state.bipCoach.config.provider);
     // Single explicit provider — no provider fallback. If this provider is
     // unavailable or generation fails, the error is surfaced (no alternate
-    // provider attempt and no local deterministic fallback).
+    // provider attempt and no local completion fallback).
     const providers = [preferredProvider];
     const failures = [];
     const today = todayKey();
@@ -14932,16 +15565,7 @@ async function inspectAgentic30GitignoreForBridge(scanRoot) {
   return normalizeAgentic30GitignoreResult(scanRoot, result);
 }
 
-/**
- * Builds the non-blocking degraded-scan notice attached to a fail-open
- * workspace_scan_result. It carries the same provider-readiness / next-provider
- * / local-findings shape the blocked notice does, so the Mac side can reuse its
- * existing recovery UI to render "provider not connected — local-only scan,
- * reconnect for a precise scan". Unlike broadcastWorkspaceScanBlocked this does
- * NOT mark the workspace setup failed and does NOT broadcast a blocked event —
- * the scan succeeded on local signals; the notice is advisory only.
- */
-function buildWorkspaceScanDegradedNotice(scanRoot, { provider, model, reason, message }, { evidenceBundle = null } = {}) {
+function buildWorkspaceScanBlockedNotice(scanRoot, { provider, model, reason, message }, { evidenceBundle = null } = {}) {
   const { nextProvider, availableProviders } = selectNextScanProvider(
     provider,
     (candidate) => getProviderScanReadiness(candidate).scanReady,
@@ -14966,7 +15590,7 @@ function buildWorkspaceScanDegradedNotice(scanRoot, { provider, model, reason, m
   };
 }
 
-async function buildWorkspaceScanInsufficientEvidenceDegradedNotice(scanRoot, {
+async function buildWorkspaceScanInsufficientEvidenceBlockedNotice(scanRoot, {
   provider = "codex",
   model = "",
   day1AlignmentPlan = null,
@@ -14991,7 +15615,7 @@ async function buildWorkspaceScanInsufficientEvidenceDegradedNotice(scanRoot, {
   );
   const localFindings = summarizeWorkspaceScanLocalFindings(bundle || {});
   return {
-    ...buildWorkspaceScanDegradedNotice(scanRoot, {
+    ...buildWorkspaceScanBlockedNotice(scanRoot, {
       provider,
       model,
       reason: "insufficient_evidence",
@@ -15008,253 +15632,56 @@ async function buildWorkspaceScanInsufficientEvidenceDegradedNotice(scanRoot, {
 }
 
 /**
- * Completes a workspace scan on local-only deterministic signals and broadcasts
- * a workspace_scan_result so onboarding advances to Day 1. Shared by two
- * callers:
- *   1. the path-lookup fast path (local docs already answer the user's "where
- *      is X" prompt — provider verification is intentionally skipped), and
- *   2. the fail-OPEN degraded path (provider verification was attempted but
- *      could not run; we proceed on local signals rather than stall onboarding).
- *
- * When `degraded` is supplied the broadcast additionally carries additive
- * `degraded`/`degradedReason`/`degradedProvider`/`scanBlockedNotice` fields so
- * the Mac side surfaces a non-blocking "local-only scan" warning. All other
- * behavior (telemetry, day-loop advance, project-context refresh) is identical
- * to a normal local completion, so existing decoders stay unaffected.
+ * Tracks scan timing for progress and explicit blocked/failure events. Workspace
+ * scan completion must come from the adaptive provider path, not local-only
+ * fallback.
  */
-async function completeWorkspaceScanFromLocalSignals({
-  scanRoot,
-  localResult,
-  localOnboardingHypothesis,
-  localDiscovery,
-  agentHistory,
-  localFoundCount,
-  preferredProvider = "",
-  evidenceBundle = null,
-  fallbackProvider = "",
-  fallbackModel = "",
-  degraded = null,
-}) {
-  state.workspaceOnboardingHypothesis = localOnboardingHypothesis;
-  telemetry.captureEvent("mac_sidecar_workspace_scan_completed", {
-    scan_root: scanRoot,
-    found_count: localFoundCount,
-    onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
-    scan_provider: normalizeProviderName(preferredProvider) || "frontier",
-    agent_result_count: 0,
-    provider_verification_skipped: true,
-    ...(degraded
-      ? { scan_degraded: true, scan_degraded_reason: degraded.reason, scan_degraded_provider: degraded.provider }
-      : {}),
-  });
-  markWorkspaceSetupScanSucceeded(scanRoot, {
-    found_count: localFoundCount,
-    onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
-    agent_result_count: 0,
-    provider_verification_skipped: true,
-    ...(degraded ? { scan_degraded: true, scan_degraded_reason: degraded.reason } : {}),
-  });
-  broadcastWorkspaceScanProgress(
-    scanRoot,
-    degraded
-      ? `scan.degraded · 로컬 근거 ${localFoundCount}개로 Day 1을 구성 중 (AI 정밀 스캔 미적용)`
-      : `scan.verify · 로컬 근거 ${localFoundCount}개를 Day 1 질문 재료로 확인 중`,
-    {
-      stage: "verifying",
-      stepIndex: 2,
-      totalSteps: 3,
-      etaSeconds: 20,
-      foundCount: localFoundCount,
-    },
-  );
-  broadcastWorkspaceScanProgress(scanRoot, "scan.compose · Day 1 질문 세트를 구성 중", {
-    stage: "composing",
-    stepIndex: 3,
-    totalSteps: 3,
-    etaSeconds: 10,
-    foundCount: localFoundCount,
-  });
-  const day1AlignmentPlan = await generateDay1AlignmentPlan({
-    workspaceRoot: scanRoot,
-    scanResult: localResult,
-    onboardingHypothesis: localOnboardingHypothesis,
-    localDiscovery,
-  });
-  const day1IcpPlan = await generateDay1IcpPlan({
-    workspaceRoot: scanRoot,
-    scanResult: localResult,
-    onboardingHypothesis: localOnboardingHypothesis,
-    localDiscovery,
-  });
-  const day1SituationSummary = await buildDay1SituationSummary({
-    workspaceRoot: scanRoot,
-    scanResult: localResult,
-    onboardingHypothesis: localOnboardingHypothesis,
-    agentHistory,
-    localDiscovery,
-  }).catch(() => null);
-  if (!day1AlignmentPlanReadyForWorkspaceScan(day1AlignmentPlan)) {
-    const notice = await buildWorkspaceScanInsufficientEvidenceDegradedNotice(scanRoot, {
-      provider: degraded?.provider || fallbackProvider || normalizeProviderName(preferredProvider) || "codex",
-      model: degraded?.model || fallbackModel || "",
-      day1AlignmentPlan,
-      evidenceBundle,
-      scanResult: localResult,
-      foundCount: localFoundCount,
-    });
-    degraded = {
-      reason: "insufficient_evidence",
-      provider: notice.provider || degraded?.provider || fallbackProvider || normalizeProviderName(preferredProvider) || "codex",
-      model: notice.model || degraded?.model || fallbackModel || "",
-      notice,
-    };
-    const missingFields = Array.isArray(notice.missingFields) ? notice.missingFields : [];
-    captureSidecarLog("workspace scan degraded: insufficient evidence", "warn", {
-      operation: "completeWorkspaceScanFromLocalSignals",
-      scan_root: scanRoot,
-      reason: "insufficient_evidence",
-      missing_fields: missingFields,
-      root_cause: truncateTelemetryString(notice.rootCause || notice.message || ""),
-      local_found_count: notice.localFoundCount || localFoundCount,
-    });
-    telemetry.captureEvent("mac_sidecar_workspace_scan_degraded", {
-      scan_root: scanRoot,
-      reason: "insufficient_evidence",
-      missing_fields: missingFields,
-      local_found_count: notice.localFoundCount || localFoundCount,
-    });
-    broadcastWorkspaceScanProgress(
-      scanRoot,
-      missingFields.length
-        ? `scan.degraded · ${missingFields.map(workspaceScanMissingFieldLabel).join(", ")} 근거가 부족하지만 Day 1 질문을 구성했습니다`
-        : "scan.degraded · 근거 품질이 낮지만 Day 1 질문을 구성했습니다",
-      {
-        stage: "composing",
-        stepIndex: 3,
-        totalSteps: 3,
-        foundCount: notice.localFoundCount || localFoundCount,
-        missingFields,
-        rootCause: notice.rootCause || notice.message || "",
-      },
-    );
-  }
-  const day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot: scanRoot });
-  if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
-    state.day1GoalSelection = day1GoalSelection;
-  }
-  // Scan complete: anchor challenge start, then advance the day loop to `goal`.
-  let dayProgress = null;
-  try {
-    if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
-      const seeded = await ensureChallengeStart({ workspaceRoot: scanRoot });
-      const currentDay = computeDayNumber({ challengeStartedAt: seeded.challengeStartedAt });
-      dayProgress = currentDay
-        ? await setDayActiveStep({
-            workspaceRoot: scanRoot,
-            day: currentDay,
-            stepId: "goal",
-            goalText: currentDay === 1 ? day1GoalSelection?.goalText : undefined,
-          })
-        : seeded;
-    } else {
-      dayProgress = await loadDayProgress({ workspaceRoot: scanRoot });
-    }
-  } catch {
-    dayProgress = await loadDayProgress({ workspaceRoot: scanRoot }).catch(() => null);
-  }
-  if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
-    state.dayProgress = dayProgress;
-  }
-  const projectContext = await refreshProjectContextCache({
-    workspaceRoot: scanRoot,
-    reason: "workspace_scan",
-    scanResult: localResult,
-    onboardingHypothesis: localOnboardingHypothesis,
-  });
-  broadcastWorkspaceScanProgress(scanRoot, "scan.merged · 폴더 신호를 Day 1 질문 세트에 붙였습니다", {
-    stage: "merged",
-    stepIndex: 3,
-    totalSteps: 3,
-    foundCount: localFoundCount,
-  });
-  broadcast({
-    type: "project_context_updated",
-    workspaceRoot: scanRoot,
-    reason: "workspace_scan",
-    completedDay: projectContext.lastCompletedDay,
-    projectContext,
-  });
-  const scanCurrentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
-  const agentic30Gitignore = await inspectAgentic30GitignoreForBridge(scanRoot);
-  broadcast({
-    type: "workspace_scan_result",
-    scanRoot,
-    foundCount: localFoundCount,
-    icp: localResult.icp || null,
-    spec: localResult.spec || null,
-    values: localResult.values || null,
-    designSystem: localResult.designSystem || null,
-    adr: localResult.adr || null,
-    goal: localResult.goal || null,
-    docs: localResult.docs || null,
-    sheet: localResult.sheet || null,
-    onboardingHypothesis: localOnboardingHypothesis,
-    day1AlignmentPlan,
-    day1IcpPlan,
-    day1SituationSummary,
-    day1GoalSelection,
-    dayProgress,
-    dayReviews: await loadOfficeHoursDayReviews(scanRoot, dayProgress, scanCurrentDay),
-    evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
-    agentic30Gitignore,
-    ...(degraded
-      ? {
-          degraded: true,
-          degradedReason: degraded.reason,
-          degradedProvider: degraded.provider,
-          scanBlockedNotice: degraded.notice || null,
-        }
-      : {}),
-  });
-  await emitProgramNotificationSchedule(null, scanRoot, { broadcastToAll: true });
-  triggerDay1AlignmentPlanBroadcast({
-    scanRoot,
-    deterministicPlan: day1AlignmentPlan,
-    compatibilityIcpPlan: day1IcpPlan,
-    preferredProvider,
-  });
+function workspaceScanElapsedMs(startedAtMs = null) {
+  if (!Number.isFinite(startedAtMs)) return null;
+  return Math.max(0, Math.round(performance.now() - startedAtMs));
 }
 
-async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferredProvider = "" } = {}) {
+function workspaceScanProgress(progress = {}, startedAtMs = null) {
+  const elapsedMs = workspaceScanElapsedMs(startedAtMs);
+  return Number.isFinite(elapsedMs) ? { ...progress, elapsedMs } : progress;
+}
+
+async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferredProvider = "", retryAttempt = 0 } = {}) {
+  // First attempt is fail-fast (45s/60s). A deliberate user retry (retryAttempt
+  // >= 1, sent by the Mac side's timeout-recovery button) gets the one-shot
+  // extended budget so a slow-but-completable scan can finish. The Mac side
+  // stops offering same-provider retry past attempt 1, so this never compounds.
+  const isExtendedRetry = Number.isFinite(retryAttempt) && retryAttempt >= 1;
+  const scanAbortMs = isExtendedRetry
+    ? WORKSPACE_SCAN_AGENT_RETRY_ABORT_MS
+    : WORKSPACE_SCAN_AGENT_ABORT_MS;
+  const scanHardDeadlineMs = isExtendedRetry
+    ? WORKSPACE_SCAN_AGENT_RETRY_HARD_DEADLINE_MS
+    : WORKSPACE_SCAN_AGENT_HARD_DEADLINE_MS;
+  const scanStartedAtMs = performance.now();
   try {
-    broadcastWorkspaceScanProgress(scanRoot, "scan.local · 로컬 문서 후보를 읽는 중", {
+    broadcastWorkspaceScanProgress(scanRoot, "scan.local · 로컬 문서 후보를 읽는 중", workspaceScanProgress({
       stage: "local",
       stepIndex: 1,
       totalSteps: 3,
       etaSeconds: 45,
-    });
+    }, scanStartedAtMs));
     const localResult = await findWorkspaceDocsLocally(scanRoot);
     const workspaceScanEvidenceBundle = await buildWorkspaceScanEvidenceBundle({
       workspaceRoot: scanRoot,
       scanResult: localResult,
     });
     const localFindings = summarizeWorkspaceScanLocalFindings(workspaceScanEvidenceBundle);
-    // Stage-3 deterministic local signals — git activity, project shape,
-    // runway hints. Pure read; absorbs all errors so a non-git folder still
+    // Local read-only signals: git activity, project shape, runway hints.
+    // Pure read; absorbs all errors so a non-git folder still
     // produces a stable shape.
     const localDiscovery = await collectLocalDiscovery(scanRoot);
     // Recent agent work (~/.claude + ~/.codex). Kicked off concurrently and
-    // awaited only at hypothesis time so it never delays the first visible
-    // answer (the <500ms first-visible-value budget). Redacted + bounded.
+    // awaited at hypothesis time. If this fails, the scan fails explicitly
+    // instead of silently dropping session context.
     const agentHistoryPromise = collectAgentWorkHistory({
       workspaceRoot: scanRoot,
       enabled: process.env.AGENTIC30_DISABLE_AGENT_HISTORY !== "1",
-    }).catch(() => null);
-    await appendWorkspaceScanVisibleAnswer({
-      sessionId,
-      prompt,
-      scanRoot,
-      result: localResult,
     });
     const agentHistory = await agentHistoryPromise;
     const localOnboardingHypothesis = await deriveWorkspaceOnboardingHypothesisLocally(scanRoot, {
@@ -15265,31 +15692,18 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       countWorkspaceScanResults(localResult),
       localFindings.localFoundCount,
     );
-    if (isWorkspacePathLookupPrompt(prompt) && localFoundCount > 0) {
-      await completeWorkspaceScanFromLocalSignals({
-        scanRoot,
-        localResult,
-        localOnboardingHypothesis,
-        localDiscovery,
-        agentHistory,
-        localFoundCount,
-        preferredProvider,
-        evidenceBundle: workspaceScanEvidenceBundle,
-      });
-      return;
-    }
     broadcastWorkspaceScanProgress(
       scanRoot,
       localFoundCount > 0
         ? `scan.verify · 로컬 근거 ${localFoundCount}개를 Day 1 질문 재료로 확인 중`
         : "scan.agent · 로컬 근거가 부족해 workspace 맥락을 확인 중",
-      {
+      workspaceScanProgress({
         stage: "verifying",
         stepIndex: 2,
         totalSteps: 3,
         etaSeconds: 30,
         foundCount: localFoundCount,
-      },
+      }, scanStartedAtMs),
     );
     const scanTargets = selectScanProviderTargets(preferredProvider, WORKSPACE_SCAN_MODEL_BY_PROVIDER);
     const agentResults = await Promise.allSettled(
@@ -15299,6 +15713,9 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
           model,
           scanRoot,
           evidenceBundle: workspaceScanEvidenceBundle,
+          startedAtMs: scanStartedAtMs,
+          abortMs: scanAbortMs,
+          hardDeadlineMs: scanHardDeadlineMs,
         }),
       ),
     );
@@ -15309,34 +15726,24 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       .filter((outcome) => outcome.ok)
       .map((outcome) => outcome.result);
     if (!parsedAgentResults.length) {
-      // Provider verification failed (usage limit / no auth / run error).
-      // Continue with deterministic workspace context and label the result as
-      // degraded so Day 1 can ask for the missing customer/problem/action facts.
+    // Provider verification failed (usage limit / no auth / run error). Do not
+    // turn local context into a successful scan.
       const failure = agentOutcomes.find((outcome) => !outcome.ok) || {
         provider: scanTargets[0]?.provider || "codex",
         model: scanTargets[0]?.model || "",
         reason: "error",
         message: "",
       };
-      const degradedNotice = buildWorkspaceScanDegradedNotice(scanRoot, failure, {
+      broadcastWorkspaceScanBlocked(scanRoot, failure, {
         evidenceBundle: workspaceScanEvidenceBundle,
-      });
-      await completeWorkspaceScanFromLocalSignals({
-        scanRoot,
-        localResult,
-        localOnboardingHypothesis,
-        localDiscovery,
-        agentHistory,
-        localFoundCount,
-        preferredProvider,
-        evidenceBundle: workspaceScanEvidenceBundle,
-        fallbackProvider: failure.provider || scanTargets[0]?.provider || "codex",
-        fallbackModel: failure.model || scanTargets[0]?.model || "",
-        degraded: {
-          reason: failure.reason || "error",
-          provider: failure.provider || "",
-          model: failure.model || "",
-          notice: degradedNotice,
+        startedAtMs: scanStartedAtMs,
+        payload: {
+          foundCount: localFoundCount,
+          error: failure.message || `workspace scan provider failed: ${failure.reason || "error"}`,
+          // Echo the attempt number so the Mac side stops offering same-provider
+          // retry once an extended-budget retry (>= 1) has already failed and
+          // escalates to switch-provider instead.
+          ...(retryAttempt ? { retryAttempt } : {}),
         },
       });
       return;
@@ -15358,6 +15765,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       countWorkspaceScanResults(merged),
       localFindings.localFoundCount,
     );
+    const scanVerifiedElapsedMs = workspaceScanElapsedMs(scanStartedAtMs);
 
     telemetry.captureEvent("mac_sidecar_workspace_scan_completed", {
       scan_root: scanRoot,
@@ -15365,19 +15773,21 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
       scan_provider: normalizeProviderName(preferredProvider) || "frontier",
       agent_result_count: parsedAgentResults.length,
+      elapsed_ms: scanVerifiedElapsedMs,
     });
     markWorkspaceSetupScanSucceeded(scanRoot, {
       found_count: foundCount,
       onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
       agent_result_count: parsedAgentResults.length,
+      elapsed_ms: scanVerifiedElapsedMs,
     });
-    broadcastWorkspaceScanProgress(scanRoot, "scan.compose · Day 1 질문 세트를 구성 중", {
+    broadcastWorkspaceScanProgress(scanRoot, "scan.compose · Day 1 질문 세트를 구성 중", workspaceScanProgress({
       stage: "composing",
       stepIndex: 3,
       totalSteps: 3,
       etaSeconds: 10,
       foundCount,
-    });
+    }, scanStartedAtMs));
     const day1AlignmentPlan = await generateDay1AlignmentPlan({
       workspaceRoot: scanRoot,
       scanResult: merged,
@@ -15398,10 +15808,9 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       agentSituationSignals,
       localDiscovery,
     }).catch(() => null);
-    let degraded = null;
     if (!day1AlignmentPlanReadyForWorkspaceScan(day1AlignmentPlan)) {
       const selectedTarget = scanTargets[0] || {};
-      const notice = await buildWorkspaceScanInsufficientEvidenceDegradedNotice(scanRoot, {
+      const notice = await buildWorkspaceScanInsufficientEvidenceBlockedNotice(scanRoot, {
         provider: selectedTarget.provider || normalizeProviderName(preferredProvider) || "codex",
         model: selectedTarget.model || "",
         day1AlignmentPlan,
@@ -15409,41 +15818,55 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         scanResult: merged,
         foundCount,
       });
-      degraded = {
-        reason: "insufficient_evidence",
-        provider: notice.provider || selectedTarget.provider || normalizeProviderName(preferredProvider) || "codex",
-        model: notice.model || selectedTarget.model || "",
-        notice,
-      };
       const missingFields = Array.isArray(notice.missingFields) ? notice.missingFields : [];
-      captureSidecarLog("workspace scan degraded: insufficient evidence", "warn", {
+      captureSidecarLog("workspace scan blocked: insufficient evidence", "warn", {
         operation: "runWorkspaceScan",
         scan_root: scanRoot,
         reason: "insufficient_evidence",
         missing_fields: missingFields,
         root_cause: truncateTelemetryString(notice.rootCause || notice.message || ""),
         local_found_count: notice.localFoundCount || foundCount,
+        elapsed_ms: workspaceScanElapsedMs(scanStartedAtMs),
       });
-      telemetry.captureEvent("mac_sidecar_workspace_scan_degraded", {
+      telemetry.captureEvent("mac_sidecar_workspace_scan_blocked_insufficient_evidence", {
         scan_root: scanRoot,
         reason: "insufficient_evidence",
         missing_fields: missingFields,
         local_found_count: notice.localFoundCount || foundCount,
+        elapsed_ms: workspaceScanElapsedMs(scanStartedAtMs),
       });
-      broadcastWorkspaceScanProgress(
-        scanRoot,
-        missingFields.length
-          ? `scan.degraded · ${missingFields.map(workspaceScanMissingFieldLabel).join(", ")} 근거가 부족하지만 Day 1 질문을 구성했습니다`
-          : "scan.degraded · 근거 품질이 낮지만 Day 1 질문을 구성했습니다",
-        {
-          stage: "composing",
-          stepIndex: 3,
-          totalSteps: 3,
+      broadcastWorkspaceScanBlocked(scanRoot, {
+        provider: notice.provider || selectedTarget.provider || normalizeProviderName(preferredProvider) || "codex",
+        model: notice.model || selectedTarget.model || "",
+        reason: "insufficient_evidence",
+        message: notice.rootCause || notice.message || "",
+      }, {
+        evidenceBundle: workspaceScanEvidenceBundle,
+        startedAtMs: scanStartedAtMs,
+        payload: {
           foundCount: notice.localFoundCount || foundCount,
+          icp: merged.icp || null,
+          spec: merged.spec || null,
+          values: merged.values || null,
+          designSystem: merged.designSystem || null,
+          adr: merged.adr || null,
+          goal: merged.goal || null,
+          docs: merged.docs || null,
+          sheet: merged.sheet || null,
+          onboardingHypothesis,
+          day1AlignmentPlan,
+          day1IcpPlan,
+          day1SituationSummary,
+          agentic30Gitignore: await inspectAgentic30GitignoreForBridge(scanRoot),
           missingFields,
           rootCause: notice.rootCause || notice.message || "",
+          day1AlignmentReadiness: notice.day1AlignmentReadiness || null,
+          localFoundCount: notice.localFoundCount || foundCount,
+          localFindings: notice.localFindings,
+          error: notice.rootCause || notice.message || "",
         },
-      );
+      });
+      return;
     }
     const day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot: scanRoot });
     if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
@@ -15478,12 +15901,12 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       scanResult: merged,
       onboardingHypothesis,
     });
-    broadcastWorkspaceScanProgress(scanRoot, "scan.merged · 폴더 신호를 Day 1 질문 세트에 붙였습니다", {
+    broadcastWorkspaceScanProgress(scanRoot, "scan.merged · 폴더 신호를 Day 1 질문 세트에 붙였습니다", workspaceScanProgress({
       stage: "merged",
       stepIndex: 3,
       totalSteps: 3,
       foundCount,
-    });
+    }, scanStartedAtMs));
     broadcast({
       type: "project_context_updated",
       workspaceRoot: scanRoot,
@@ -15497,6 +15920,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       type: "workspace_scan_result",
       scanRoot,
       foundCount,
+      elapsedMs: workspaceScanElapsedMs(scanStartedAtMs),
       icp: merged.icp || null,
       spec: merged.spec || null,
       values: merged.values || null,
@@ -15514,14 +15938,14 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       dayReviews: await loadOfficeHoursDayReviews(scanRoot, dayProgress, scanCurrentDay),
       evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
       agentic30Gitignore,
-      ...(degraded
-        ? {
-            degraded: true,
-            degradedReason: degraded.reason,
-            degradedProvider: degraded.provider,
-            scanBlockedNotice: degraded.notice || null,
-          }
-        : {}),
+    });
+    scheduleDay1OfficeHoursQuestionWarmups({
+      scanRoot,
+      scanResult: merged,
+      onboardingHypothesis,
+      day1AlignmentPlan,
+      day1SituationSummary,
+      preferredProvider,
     });
     await emitProgramNotificationSchedule(null, scanRoot, { broadcastToAll: true });
     triggerDay1AlignmentPlanBroadcast({
@@ -15549,6 +15973,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       stepIndex: 3,
       totalSteps: 3,
       foundCount: 0,
+      elapsedMs: workspaceScanElapsedMs(scanStartedAtMs),
       agentic30Gitignore: await inspectAgentic30GitignoreForBridge(scanRoot),
     });
   }
@@ -15572,36 +15997,6 @@ function normalizeWorkspaceRootInput(value, { cwd = process.cwd(), env = process
   return path.resolve(cwd, text);
 }
 
-async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", scanRoot = "", result = {} } = {}) {
-  if (!sessionId) return;
-  const wantsPath = /(어디|위치|경로|path|where|location|file|문서)/i.test(String(prompt || ""));
-  const found = [
-    ["ICP.md", result.icp],
-    ["VALUES.md", result.values],
-    ["GOAL.md", result.goal],
-    ["SPEC.md", result.spec],
-  ].filter(([, docPath]) => docPath);
-  if (!wantsPath && found.length === 0) return;
-  const workspaceEvidence = await extractWorkspaceEvidence(scanRoot, {
-    scanPaths: result,
-    includeSource: true,
-  }).catch(() => null);
-  const summaryLines = workspaceEvidenceSummaryLines(workspaceEvidence);
-
-  const lines = found.length
-    ? [
-        "로컬 workspace에서 바로 찾은 문서 경로입니다.",
-        ...found.map(([label, docPath]) => `- ${label}: ${docPath}`),
-        ...summaryLines,
-        "다음 액션: 이 경로들을 BIP 설정에 반영하고 Day 1 판단은 확인된 근거 기준으로 이어가면 됩니다.",
-      ]
-    : [
-        "로컬 workspace에서 ICP/VALUES/GOAL/SPEC 문서를 아직 찾지 못했습니다.",
-        `다음 액션: \`${projectDocPath("icp")}\` 하나부터 만들고 Day 1 판단 기준을 적으세요.`,
-      ];
-  await appendVisibleAssistantMessage(sessionId, lines.join("\n"));
-}
-
 /**
  * Runs the single agent-backed verification pass of the workspace scan.
  * Always resolves to a structured outcome — never throws, never silently
@@ -15613,7 +16008,15 @@ async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", s
  * The foreground scan path turns a failed outcome into workspace_scan_blocked;
  * background refreshes simply skip the merge.
  */
-async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle = null }) {
+async function runWorkspaceScanAgent({
+  provider,
+  model,
+  scanRoot,
+  evidenceBundle = null,
+  startedAtMs = null,
+  abortMs = WORKSPACE_SCAN_AGENT_ABORT_MS,
+  hardDeadlineMs = WORKSPACE_SCAN_AGENT_HARD_DEADLINE_MS,
+}) {
   const authState = getProviderAuthState(provider);
   if (!authState.available) {
     telemetry.captureEvent("mac_sidecar_workspace_scan_provider_skipped", {
@@ -15650,14 +16053,14 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
   const abortTimer = setTimeout(() => {
     softTimeoutFired = true;
     abortController.abort();
-  }, WORKSPACE_SCAN_AGENT_ABORT_MS);
+  }, abortMs);
   let hardDeadlineTimer = null;
   const hardDeadline = new Promise((_, reject) => {
     hardDeadlineTimer = setTimeout(() => {
       hardDeadlineFired = true;
       try { abortController.abort(); } catch { /* already aborted */ }
       reject(new Error("workspace scan provider exceeded hard deadline"));
-    }, WORKSPACE_SCAN_AGENT_HARD_DEADLINE_MS);
+    }, hardDeadlineMs);
   });
   let responseText = "";
   const providerLabel = workspaceScanProviderLabel(provider, model);
@@ -15665,16 +16068,16 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
     workspaceRoot: scanRoot,
     scanResult: {},
   });
-  broadcastWorkspaceScanProgress(scanRoot, `scan.agent · ${providerLabel}가 질문 근거를 확인 중`, {
+  broadcastWorkspaceScanProgress(scanRoot, `scan.agent · ${providerLabel}가 질문 근거를 확인 중`, workspaceScanProgress({
     stage: "verifying",
     stepIndex: 2,
     totalSteps: 3,
-  });
+  }, startedAtMs));
   const scanPrompt = buildWorkspaceScanAgentPrompt(scanEvidenceBundle);
   const systemPromptOverride = [
     "You are a fast semantic verifier for a local workspace scan.",
     "Do not modify files. Do not run network commands.",
-    "Do not discover or report document paths. Local deterministic scanning is authoritative for paths.",
+    "Do not discover or report document paths. Local path scanning is authoritative for paths.",
     "Return only one JSON object with keys: onboardingHypothesis, situationSignals, confidence, evidencePathsUsed.",
   ].join("\n");
 
@@ -15687,27 +16090,28 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
         workspaceRoot: scanRoot,
         abortController,
         // Lightweight read-only scan lane: no QMD/PostHog/Cloudflare/GitHub/
-        // internal MCP boot, low codex reasoning effort, low claude turn
-        // ceiling. This is the bulk of the latency win — the heavy "agentic"
-        // mode booted four external MCP servers a doc scanner never needs.
+        // internal MCP boot, low codex AND claude reasoning effort, isolated
+        // claude settingSources, low claude turn ceiling. This is the bulk of
+        // the latency win — the heavy "agentic" mode booted four external MCP
+        // servers a doc scanner never needs.
         executionMode: "workspace_scan_read_only",
         systemPromptOverride,
         onTextDelta: (text) => {
           responseText += text;
-          broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text);
+          broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text, startedAtMs);
         },
         onTextReplace: (text) => {
           responseText = text;
-          broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text);
+          broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text, startedAtMs);
         },
         onToolEvent: (event) => {
           const summary = formatWorkspaceScanToolEvent(event);
           if (summary) {
-            broadcastWorkspaceScanProgress(scanRoot, `${providerLabel}: ${summary}`, {
+            broadcastWorkspaceScanProgress(scanRoot, `${providerLabel}: ${summary}`, workspaceScanProgress({
               stage: "verifying",
               stepIndex: 2,
               totalSteps: 3,
-            });
+            }, startedAtMs));
           }
         },
       }),
@@ -15725,12 +16129,12 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
     broadcastWorkspaceScanProgress(
       scanRoot,
       `scan.agent · ${providerLabel} 완료 (${evidenceCount}개 의미 근거)`,
-      {
+      workspaceScanProgress({
         stage: "verifying",
         stepIndex: 2,
         totalSteps: 3,
         foundCount: evidenceCount,
-      },
+      }, startedAtMs),
     );
     return { ok: true, provider, model, result };
   } catch (error) {
@@ -15750,25 +16154,32 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
       scan_root: scanRoot,
       ...(abortCause ? { abort_cause: abortCause } : {}),
     });
+    // The hard deadline rejects with a plain "exceeded hard deadline" message
+    // that isAbortLikeError() does not match, so errorKind is null there even
+    // though the run WAS aborted by our timer. Treat any timer-driven abort
+    // (soft OR hard) as reason "aborted" so the UI and telemetry classify it as
+    // a timeout, not a generic run error — otherwise hard_deadline silently
+    // becomes workspace_scan_error and the recovery copy/action go wrong.
+    const isTimeoutAbort = abortCause === "soft_timeout" || abortCause === "hard_deadline";
     if (errorKind === PROVIDER_USAGE_LIMIT_ERROR_KIND) {
       broadcastWorkspaceScanProgress(
         scanRoot,
         `scan.agent · ${providerLabel} 사용 한도 도달`,
-        {
+        workspaceScanProgress({
           stage: "verifying",
           stepIndex: 2,
           totalSteps: 3,
-        },
+        }, startedAtMs),
       );
-    } else if (errorKind === PROVIDER_ABORTED_ERROR_KIND) {
+    } else if (errorKind === PROVIDER_ABORTED_ERROR_KIND || isTimeoutAbort) {
       broadcastWorkspaceScanProgress(
         scanRoot,
         `scan.agent · ${providerLabel} 실행 중단됨`,
-        {
+        workspaceScanProgress({
           stage: "verifying",
           stepIndex: 2,
           totalSteps: 3,
-        },
+        }, startedAtMs),
       );
     }
     return {
@@ -15779,9 +16190,10 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
         ? "usage_limit"
         : errorKind === PROVIDER_AUTH_REQUIRED_ERROR_KIND
           ? "unavailable"
-          : errorKind === PROVIDER_ABORTED_ERROR_KIND
+          : (errorKind === PROVIDER_ABORTED_ERROR_KIND || isTimeoutAbort)
             ? "aborted"
             : "error",
+      ...(abortCause ? { abortCause } : {}),
       message: formatError(error),
     };
   } finally {
@@ -15794,9 +16206,8 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle
  * Tells the Mac side a Day 1 synthesis provider hit its usage limit (quota) so
  * the UI can surface an explicit "switch provider and re-verify" button. No
  * automatic fallback happens on this side — provider switching requires the
- * user's consent via that button (see IntakeV2ShowcaseViews). The scan stage
- * itself no longer uses this; weak scan evidence now completes as an explicit
- * degraded workspace_scan_result so Day 1 can ask for the missing context.
+ * user's consent via that button (see IntakeV2ShowcaseViews). Weak scan evidence
+ * now emits workspace_scan_blocked instead of a successful scan result.
  */
 function broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stage }) {
   broadcast({
@@ -15814,13 +16225,6 @@ function day1AlignmentPlanReadyForWorkspaceScan(plan) {
   return readiness.status === "ready" && plan?.qualityGate?.passed === true;
 }
 
-function workspaceScanMissingFieldLabel(field) {
-  if (field === "targetUser") return "고객";
-  if (field === "problem") return "문제";
-  if (field === "validationAction") return "활성/검증 행동";
-  return String(field || "필수 필드");
-}
-
 /**
  * The scan's agent verification failed (usage limit, missing provider auth,
  * provider abort, or a run error). Day 1 must not proceed on local-only signals,
@@ -15829,7 +16233,11 @@ function workspaceScanMissingFieldLabel(field) {
  * Switching still requires the user's click; when no provider is available at
  * all (`nextProvider: null`) the UI says Agentic30 cannot proceed.
  */
-function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, message }, { evidenceBundle = null } = {}) {
+function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, message, abortCause }, {
+  evidenceBundle = null,
+  startedAtMs = null,
+  payload = null,
+} = {}) {
   const failedProviderAuthState = getProviderAuthState(provider);
   const { nextProvider, availableProviders } = selectNextScanProvider(
     provider,
@@ -15846,6 +16254,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
   const authRequiredProviders = providerReadiness
     .filter((item) => item.sdkInstalled && !item.authenticated)
     .map((item) => item.provider);
+  const elapsedMs = workspaceScanElapsedMs(startedAtMs);
   telemetry.captureEvent("mac_sidecar_workspace_scan_blocked", {
     scan_root: scanRoot,
     selected_provider: provider,
@@ -15853,6 +16262,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     provider,
     model,
     reason,
+    ...(abortCause ? { abort_cause: abortCause } : {}),
     next_provider: nextProvider || "none",
     available_provider_count: availableProviders.length,
     installed_providers: installedProviders,
@@ -15862,6 +16272,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     auth_source: failedProviderAuthState.source || "",
     auth_available: failedProviderAuthState.available === true,
     local_found_count: localFindings.localFoundCount,
+    elapsed_ms: elapsedMs,
   });
   captureSidecarLog("workspace scan blocked", workspaceScanBlockedLogLevel(reason), {
     operation: "runWorkspaceScan",
@@ -15871,6 +16282,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     provider,
     model,
     reason,
+    ...(abortCause ? { abort_cause: abortCause } : {}),
     next_provider: nextProvider || "none",
     available_provider_count: availableProviders.length,
     installed_providers: installedProviders,
@@ -15880,6 +16292,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     auth_source: failedProviderAuthState.source || "",
     auth_available: failedProviderAuthState.available === true,
     local_found_count: localFindings.localFoundCount,
+    elapsed_ms: elapsedMs,
     failure_detail: truncateTelemetryString(message || ""),
   });
   markWorkspaceSetupFailed(
@@ -15889,6 +16302,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     }),
     {
       scan_block_reason: reason,
+      ...(abortCause ? { abort_cause: abortCause } : {}),
       selected_provider: provider,
       failed_provider: provider,
       provider,
@@ -15899,7 +16313,11 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
         ? PROVIDER_USAGE_LIMIT_ERROR_KIND
         : reason === "unavailable"
           ? PROVIDER_AUTH_REQUIRED_ERROR_KIND
-          : "workspace_scan_error",
+          : reason === "aborted"
+            ? PROVIDER_ABORTED_ERROR_KIND
+            : reason === "insufficient_evidence"
+              ? "workspace_scan_insufficient_evidence"
+              : "workspace_scan_error",
     },
   );
   const providerLabel = workspaceScanProviderLabel(provider, model);
@@ -15912,6 +16330,8 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
       stage: "blocked",
       stepIndex: 2,
       totalSteps: 3,
+      foundCount: Number.isFinite(payload?.foundCount) ? payload.foundCount : undefined,
+      ...(Number.isFinite(elapsedMs) ? { elapsedMs } : {}),
     },
   );
   broadcast({
@@ -15920,6 +16340,11 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     provider,
     model,
     reason,
+    // soft_timeout | hard_deadline | external — lets the Mac side tell a real
+    // timeout (our wall-clock budget) from an SDK/network abort, so the recovery
+    // banner copy and the retry-vs-switch action are honest. Absent for non-abort
+    // blocks (usage_limit / unavailable / insufficient_evidence).
+    ...(abortCause ? { abortCause } : {}),
     message: String(message || ""),
     stage: "blocked",
     stepIndex: 2,
@@ -15929,20 +16354,23 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     providerReadiness,
     localFoundCount: localFindings.localFoundCount,
     localFindings,
+    ...(Number.isFinite(elapsedMs) ? { elapsedMs } : {}),
     ...(reason === "usage_limit" ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND } : {}),
     ...(reason === "unavailable" ? { errorKind: PROVIDER_AUTH_REQUIRED_ERROR_KIND } : {}),
     ...(reason === "aborted" ? { errorKind: PROVIDER_ABORTED_ERROR_KIND } : {}),
+    ...(reason === "insufficient_evidence" ? { errorKind: "workspace_scan_insufficient_evidence" } : {}),
+    ...(payload && typeof payload === "object" ? payload : {}),
   });
 }
 
-function broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text) {
+function broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text, startedAtMs = null) {
   const summary = formatWorkspaceScanAgentText(text);
   if (!summary) return;
-  broadcastWorkspaceScanProgress(scanRoot, `${providerLabel}: ${summary}`, {
+  broadcastWorkspaceScanProgress(scanRoot, `${providerLabel}: ${summary}`, workspaceScanProgress({
     stage: "verifying",
     stepIndex: 2,
     totalSteps: 3,
-  });
+  }, startedAtMs));
 }
 
 function broadcastWorkspaceScanProgress(scanRoot, progressText, progress = {}) {
@@ -15955,6 +16383,7 @@ function broadcastWorkspaceScanProgress(scanRoot, progressText, progress = {}) {
     totalSteps: Number.isFinite(progress.totalSteps) ? progress.totalSteps : undefined,
     etaSeconds: Number.isFinite(progress.etaSeconds) ? progress.etaSeconds : undefined,
     foundCount: Number.isFinite(progress.foundCount) ? progress.foundCount : undefined,
+    elapsedMs: Number.isFinite(progress.elapsedMs) ? Math.max(0, Math.round(progress.elapsedMs)) : undefined,
   });
 }
 
@@ -19147,15 +19576,30 @@ async function syncPendingUserInputRequests() {
       const requestReadyLatencyMs = Number.isFinite(requestCreatedAtMs)
         ? Math.max(0, Date.now() - requestCreatedAtMs)
         : null;
+      const activeRun = state.activeRuns.get(session.id);
+      const questionElapsedMs = Number.isFinite(activeRun?.startedAtMs)
+        ? performance.now() - activeRun.startedAtMs
+        : null;
+      const questionTiming = await buildOfficeHoursQuestionTiming(session, {
+        context: session.runtime?.officeHours?.context || "",
+        requestId: request.requestId,
+        questionElapsedMs,
+        requestReadyLatencyMs,
+      });
       telemetry.captureEvent("mac_sidecar_office_hours_question_ready", {
         session_id: session.id,
         provider: session.provider,
         request_id: request.requestId,
         request_ready_latency_ms: requestReadyLatencyMs,
+        question_index: questionTiming.questionIndex ?? null,
+        answered_question_count: questionTiming.answeredQuestionCount ?? null,
+        expected_question_count: questionTiming.expectedQuestionCount ?? null,
+        question_elapsed_ms: questionTiming.questionElapsedMs ?? null,
       });
       emitOfficeHoursStatus(session, {
         stage: "question_ready",
         requestId: request.requestId,
+        ...questionTiming,
       });
     }
   }
@@ -19198,9 +19642,9 @@ async function syncPendingUserInputRequests() {
     changedSessions.add(session.id);
   }
 
-  for (const requestId of [...state.resolvedUserInputIds]) {
-    if (!activeRequestIds.has(requestId)) {
-      state.resolvedUserInputIds.delete(requestId);
+  for (const requestId of [...state.submittingUserInputIds]) {
+    if (state.resolvedUserInputIds.has(requestId)) {
+      state.submittingUserInputIds.delete(requestId);
     }
   }
 

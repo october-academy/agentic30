@@ -172,9 +172,6 @@ enum AgentModelCatalog {
         AgentModelOption(id: "claude-haiku-4-5", label: "Claude Haiku 4.5", provider: .claude),
     ]
 
-    // ChatGPT 로그인 계정의 Codex 서버 카탈로그(`codex debug models`)에 노출되는
-    // 모델만 나열한다. 구 세대(gpt-5.2 이하)는 ChatGPT 인증에서 400 거부되므로
-    // 제거 — 저장된 구 ID는 normalizedModelID가 기본값으로 폴백시킨다.
     static let codex: [AgentModelOption] = [
         AgentModelOption(id: "gpt-5.5", label: "GPT 5.5 (Best)", provider: .codex, isRecommended: true),
         AgentModelOption(id: "gpt-5.4", label: "GPT 5.4", provider: .codex),
@@ -493,7 +490,6 @@ struct ChatSession: Identifiable, Codable, Hashable {
 struct ChatSessionRuntime: Codable, Hashable {
     var codexThreadId: String?
     var codexThreadMeta: CodexThreadMeta?
-    var codexWarm: CodexWarmState?
     var startupTiming: StartupTimingState?
     var iddDocumentType: String?
     var iddMode: String?
@@ -1593,6 +1589,16 @@ extension MorningBriefing {
     }
 }
 
+struct OfficeHoursContextMetrics: Codable, Hashable {
+    let rawLength: Int?
+    let contextLength: Int?
+    let clamped: Bool?
+    let hasLockedDay1Goal: Bool?
+    let hasGoalLane: Bool?
+    let expectedQuestionCount: Int?
+    let day: Int?
+}
+
 struct OfficeHoursLiveStatus: Hashable {
     let sessionId: String
     let stage: String
@@ -1602,7 +1608,47 @@ struct OfficeHoursLiveStatus: Hashable {
     let messageId: String?
     let requestId: String?
     let elapsedMs: Int?
+    let contextMetrics: OfficeHoursContextMetrics?
+    let questionIndex: Int?
+    let answeredQuestionCount: Int?
+    let expectedQuestionCount: Int?
+    let questionElapsedMs: Int?
+    let requestReadyLatencyMs: Int?
     let updatedAt: Date
+
+    init(
+        sessionId: String,
+        stage: String,
+        title: String?,
+        detail: String?,
+        progressText: String?,
+        messageId: String?,
+        requestId: String?,
+        elapsedMs: Int?,
+        contextMetrics: OfficeHoursContextMetrics? = nil,
+        questionIndex: Int? = nil,
+        answeredQuestionCount: Int? = nil,
+        expectedQuestionCount: Int? = nil,
+        questionElapsedMs: Int? = nil,
+        requestReadyLatencyMs: Int? = nil,
+        updatedAt: Date
+    ) {
+        self.sessionId = sessionId
+        self.stage = stage
+        self.title = title
+        self.detail = detail
+        self.progressText = progressText
+        self.messageId = messageId
+        self.requestId = requestId
+        self.elapsedMs = elapsedMs
+        self.contextMetrics = contextMetrics
+        self.questionIndex = questionIndex
+        self.answeredQuestionCount = answeredQuestionCount
+        self.expectedQuestionCount = expectedQuestionCount
+        self.questionElapsedMs = questionElapsedMs
+        self.requestReadyLatencyMs = requestReadyLatencyMs
+        self.updatedAt = updatedAt
+    }
 
     var isTerminal: Bool {
         switch stage {
@@ -1621,18 +1667,6 @@ struct CodexThreadMeta: Codable, Hashable {
     var executionMode: String?
     var createdAt: String?
     var lastValidatedAt: String?
-}
-
-struct CodexWarmState: Codable, Hashable {
-    var state: String?
-    var model: String?
-    var workspaceRoot: String?
-    var executionMode: String?
-    var startedAt: String?
-    var completedAt: String?
-    var failedAt: String?
-    var elapsedMs: Int?
-    var error: String?
 }
 
 struct StartupTimingState: Codable, Hashable {

@@ -21,7 +21,7 @@ test("closed WebSocket clients do not crash later broadcasts", async () => {
 
     const events = [];
     second.on("message", (raw) => events.push(JSON.parse(String(raw))));
-    second.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    second.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
 
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     assert.equal(created.session.provider, "codex");
@@ -116,7 +116,7 @@ test("Office Hours source gate blocks emit warning logs", async () => {
     socket.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 2,
     }));
@@ -174,7 +174,7 @@ test("Office Hours past-day snapshot fail-open check errors are reported", async
     socket.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 1,
     }));
@@ -223,7 +223,7 @@ test("Office Hours past-day snapshot turn-load errors are reported", async () =>
     socket.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
       officeHoursDay: 1,
     }));

@@ -76,6 +76,25 @@ test("RecorderStore opens recorder.sqlite with direct better-sqlite3 dependency 
     assert.equal(store.dbPath, path.join(root, "recorder", "recorder.sqlite"));
     assert.deepEqual(store.baseTables(), [...RECORDER_BASE_TABLES].sort());
     assert.deepEqual(store.ftsTables(), [...RECORDER_FTS_TABLES].sort());
+    const mediaColumns = store.database().pragma("table_info(media_assets)").map((column) => column.name);
+    for (const column of ["encryption_key_id", "encryption_alg", "encryption_nonce", "encryption_tag"]) {
+      assert.equal(mediaColumns.includes(column), true);
+    }
+    const audioColumns = store.database().pragma("table_info(audio_chunks)").map((column) => column.name);
+    for (const column of [
+      "consent_grant_id",
+      "visible_notice_id",
+      "raw_audio_indicator_state",
+      "local_transcriber_name",
+      "local_transcriber_version",
+      "transcription_terminal_state",
+    ]) {
+      assert.equal(audioColumns.includes(column), true);
+    }
+    const transcriptColumns = store.database().pragma("table_info(transcript_segments)").map((column) => column.name);
+    for (const column of ["transcript_status", "speaker_label_provenance", "deletion_source_id"]) {
+      assert.equal(transcriptColumns.includes(column), true);
+    }
     const sqlInspectorViews = store.database()
       .prepare("SELECT name FROM sqlite_master WHERE type = 'view' AND name LIKE 'recorder_sql_%' ORDER BY name")
       .all()

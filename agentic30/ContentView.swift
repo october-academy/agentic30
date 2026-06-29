@@ -1853,6 +1853,58 @@ struct OfficeHoursPendingPromptPresentation: Hashable {
     }
 }
 
+struct OfficeHoursPostInterviewFollowupPromptPolicy {
+    private static let officeHoursMode = "office_hours"
+    private static let documentReadinessDocType = "day1_document_readiness"
+    private static let documentJudgeDocType = "day1_doc_handoff_judge"
+    private static let handoffClarityDocType = "day1_handoff_clarity"
+    private static let followupDocTypes: Set<String> = [
+        documentReadinessDocType,
+        documentJudgeDocType,
+        handoffClarityDocType,
+    ]
+    private static let evidenceDebtDocTypes: Set<String> = [
+        documentReadinessDocType,
+        documentJudgeDocType,
+    ]
+
+    static func isFollowup(_ prompt: StructuredPromptRequest?) -> Bool {
+        guard isOfficeHoursPrompt(prompt) else { return false }
+        guard let docType = normalizedDocType(prompt) else { return false }
+        return followupDocTypes.contains(docType)
+    }
+
+    static func isDocumentJudge(_ prompt: StructuredPromptRequest?) -> Bool {
+        isOfficeHoursPrompt(prompt) && normalizedDocType(prompt) == documentJudgeDocType
+    }
+
+    static func showsEvidenceDebtHeading(_ prompt: StructuredPromptRequest?) -> Bool {
+        guard isOfficeHoursPrompt(prompt) else { return false }
+        return showsEvidenceDebtHeading(docType: normalizedDocType(prompt))
+    }
+
+    static func showsEvidenceDebtHeading(docType: String?) -> Bool {
+        guard let docType = normalizedDocType(docType) else { return false }
+        return evidenceDebtDocTypes.contains(docType)
+    }
+
+    private static func isOfficeHoursPrompt(_ prompt: StructuredPromptRequest?) -> Bool {
+        guard let prompt else { return false }
+        let mode = prompt.generation?.mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return mode == officeHoursMode
+    }
+
+    private static func normalizedDocType(_ prompt: StructuredPromptRequest?) -> String? {
+        normalizedDocType(prompt?.generation?.docType)
+    }
+
+    private static func normalizedDocType(_ docType: String?) -> String? {
+        let value = docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+}
+
 struct OfficeHoursCompletedCommitmentPresentation: Equatable {
     let completedDay: Int
     let nextDay: Int
@@ -2647,11 +2699,16 @@ struct ContentView: View {
                               !notice.scanRoot.isEmpty else { return }
                         viewModel.rescanWorkspace(root: notice.scanRoot, provider: provider)
                     },
-                    scanBlockedNotice: viewModel.scanBlockedNotice ?? viewModel.scanDegradedNotice,
+                    scanBlockedNotice: viewModel.scanBlockedNotice,
                     onScanBlockedRescan: { provider in
-                        guard let notice = viewModel.scanBlockedNotice ?? viewModel.scanDegradedNotice,
+                        guard let notice = viewModel.scanBlockedNotice,
                               !notice.scanRoot.isEmpty else { return }
-                        viewModel.rescanWorkspace(root: notice.scanRoot, provider: provider)
+                        // A same-provider retry (timeout recovery) bumps the attempt
+                        // number so the sidecar widens the scan budget once and a
+                        // second timeout escalates to switch-provider; switching to a
+                        // different provider is a fresh attempt (0).
+                        let nextAttempt = provider == notice.provider ? (notice.retryAttempt ?? 0) + 1 : 0
+                        viewModel.rescanWorkspace(root: notice.scanRoot, provider: provider, retryAttempt: nextAttempt)
                     },
                     onScanBlockedAuthAction: { readiness in
                         handleWorkspaceScanBlockedAuthAction(readiness)
@@ -2915,6 +2972,9 @@ struct ContentView: View {
                     recorderFrameImagePreview: viewModel.recorderFrameImagePreview,
                     recorderFrameImageLoadingID: viewModel.recorderFrameImageLoadingID,
                     recorderFrameImageLastError: viewModel.recorderFrameImageLastError,
+                    recorderAuditSource: viewModel.recorderAuditSource,
+                    recorderAuditRefreshing: viewModel.recorderAuditRefreshing,
+                    recorderAuditLastError: viewModel.recorderAuditLastError,
                     recorderAutoCaptureRunning: viewModel.recorderAutoCaptureRunning,
                     recorderAutoCaptureLastTrigger: viewModel.recorderAutoCaptureLastTrigger,
                     recorderAutoCaptureLastError: viewModel.recorderAutoCaptureLastError,
@@ -2966,11 +3026,23 @@ struct ContentView: View {
                     prepareRecorderFrameImage: { frameId in
                         viewModel.prepareRecorderFrameImageForDisplay(frameId: frameId)
                     },
+                    refreshRecorderAuditEvents: {
+                        viewModel.refreshRecorderAuditEvents()
+                    },
                     startRecorderAutoCapture: {
                         viewModel.startRecorderAutoCapture()
                     },
                     stopRecorderAutoCapture: {
                         viewModel.stopRecorderAutoCapture()
+                    },
+                    setRecorderClipboardMode: { mode in
+                        viewModel.setRecorderClipboardMode(mode)
+                    },
+                    setRecorderMicrophoneCapture: { enabled in
+                        viewModel.setRecorderMicrophoneCaptureEnabled(enabled)
+                    },
+                    setRecorderSystemAudioCapture: { enabled in
+                        viewModel.setRecorderSystemAudioCaptureEnabled(enabled)
                     },
                     recorderPipes: viewModel.recorderPipes,
                     recorderPipeRuns: viewModel.recorderPipeRuns,
@@ -7248,22 +7320,8 @@ struct ContentView: View {
         viewModel.activeDay1DocumentReviewPrompt
     }
 
-    private func officeHoursIsDocumentJudgePrompt(_ prompt: StructuredPromptRequest?) -> Bool {
-        guard let prompt else { return false }
-        let mode = prompt.generation?.mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let docType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return mode == "office_hours" && docType == "day1_doc_handoff_judge"
-    }
-
-    private func officeHoursIsDocumentReadinessPrompt(_ prompt: StructuredPromptRequest?) -> Bool {
-        guard let prompt else { return false }
-        let mode = prompt.generation?.mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let docType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return mode == "office_hours" && docType == "day1_document_readiness"
-    }
-
     private func officeHoursIsPostInterviewFollowupPrompt(_ prompt: StructuredPromptRequest?) -> Bool {
-        officeHoursIsDocumentReadinessPrompt(prompt) || officeHoursIsDocumentJudgePrompt(prompt)
+        OfficeHoursPostInterviewFollowupPromptPolicy.isFollowup(prompt)
     }
 
     private func officeHoursIsDocumentHandoffPanelPrompt(_ prompt: StructuredPromptRequest?) -> Bool {
@@ -7343,7 +7401,7 @@ struct ContentView: View {
         guard let prompt = officeHoursDocumentHandoffPrompt(session: session) else {
             return false
         }
-        if officeHoursIsDocumentJudgePrompt(prompt) {
+        if OfficeHoursPostInterviewFollowupPromptPolicy.isDocumentJudge(prompt) {
             return true
         }
         let promptDocType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -8971,7 +9029,7 @@ struct ContentView: View {
         let bullets = (prompt.intro?.bullets ?? [])
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        let showsEvidenceDebtHeading = officeHoursIsDocumentReadinessPrompt(prompt) || officeHoursIsDocumentJudgePrompt(prompt)
+        let showsEvidenceDebtHeading = OfficeHoursPostInterviewFollowupPromptPolicy.showsEvidenceDebtHeading(prompt)
         let evidenceDebtLabel = showsEvidenceDebtHeading && !bullets.isEmpty ? ["부족한 증거"] : []
         let contextAccessibilityLabel = ([introTitle, introBody].compactMap { value -> String? in
             guard let value, !value.isEmpty else { return nil }
@@ -11049,6 +11107,9 @@ struct ContentView: View {
             }
             lines.append("Goal lane: \(goal.goalType.rawValue) / \(goal.goalType.title)")
             lines.append("Goal text: \(goal.goalText)")
+            if !goal.sourcePlanFingerprint.isEmpty {
+                lines.append("Goal source fingerprint: \(goal.sourcePlanFingerprint)")
+            }
             if goal.goalType == .getUsers {
                 lines.append("Active user contract: 활성 사용자 1명은 선택한 ICP가 제품의 핵심 activation action을 완료한 고유 사람/계정입니다.")
                 lines.append("Active user anti-counts: 가입, waitlist, 페이지뷰, 좋아요, 팔로워, 관심 표현만으로는 활성 사용자로 세지 않습니다.")
@@ -13950,8 +14011,9 @@ struct ContentView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let resources = (prompt.resources ?? []).filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let docType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let showsEvidenceDebtHeading = docType == "day1_document_readiness" || docType == "day1_doc_handoff_judge"
+        let showsEvidenceDebtHeading = OfficeHoursPostInterviewFollowupPromptPolicy.showsEvidenceDebtHeading(
+            docType: prompt.generation?.docType
+        )
 
         if introTitle?.isEmpty == false || introBody?.isEmpty == false || !bullets.isEmpty || !resources.isEmpty {
             VStack(alignment: .leading, spacing: 8) {

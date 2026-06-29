@@ -4,7 +4,7 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
-export const RECORDER_STORE_SCHEMA_VERSION = 2;
+export const RECORDER_STORE_SCHEMA_VERSION = 4;
 
 export const RECORDER_BASE_TABLES = Object.freeze([
   "frames",
@@ -28,6 +28,20 @@ export const RECORDER_FTS_TABLES = Object.freeze([
   "product_events_fts",
 ]);
 
+const RECORDER_SQL_INSPECTOR_VIEW_NAMES = Object.freeze([
+  "recorder_sql_frames_redacted",
+  "recorder_sql_transcripts_redacted",
+  "recorder_sql_clipboard_redacted",
+  "recorder_sql_frames_raw_admin",
+  "recorder_sql_transcripts_raw_admin",
+  "recorder_sql_clipboard_raw_admin",
+  "recorder_sql_memory_items",
+  "recorder_sql_product_events",
+  "recorder_sql_storage_stats",
+  "recorder_sql_capture_health",
+  "recorder_sql_audit_sanitized",
+]);
+
 const BASE_TABLE_SET = new Set(RECORDER_BASE_TABLES);
 
 const TABLE_COLUMNS = Object.freeze({
@@ -41,16 +55,20 @@ const TABLE_COLUMNS = Object.freeze({
   ],
   media_assets: [
     "id", "asset_type", "relative_path", "sha256", "byte_size", "encrypted", "workspace_id",
-    "project_id", "created_at", "deleted_at",
+    "project_id", "encryption_key_id", "encryption_alg", "encryption_nonce", "encryption_tag",
+    "created_at", "deleted_at",
   ],
   audio_chunks: [
     "id", "workspace_id", "project_id", "started_at", "ended_at", "source", "audio_asset_id",
-    "transcript_status", "redaction_status", "privacy_state", "created_at", "deleted_at",
+    "transcript_status", "consent_grant_id", "visible_notice_id", "raw_audio_indicator_state",
+    "local_transcriber_name", "local_transcriber_version", "transcription_terminal_state",
+    "redaction_status", "privacy_state", "created_at", "deleted_at",
   ],
   transcript_segments: [
     "id", "audio_chunk_id", "workspace_id", "project_id", "started_at", "ended_at",
-    "speaker_label", "text", "redacted_text", "redaction_status", "privacy_state",
-    "safe_for_search", "safe_for_memory", "created_at", "deleted_at",
+    "speaker_label", "transcript_status", "speaker_label_provenance", "text", "redacted_text",
+    "redaction_status", "privacy_state", "safe_for_search", "safe_for_memory",
+    "deletion_source_id", "created_at", "deleted_at",
   ],
   clipboard_events: [
     "id", "workspace_id", "project_id", "occurred_at", "event_kind", "capture_mode",
@@ -350,18 +368,73 @@ export function migrateRecorderDatabase(db) {
       db.exec(RECORDER_SCHEMA_SQL);
       db.pragma(`user_version = ${RECORDER_STORE_SCHEMA_VERSION}`);
     })();
-  } else if (currentVersion < 2) {
+  } else {
     db.transaction(() => {
-      db.exec(RECORDER_SCHEMA_V2_SQL);
+      if (currentVersion < 2) {
+        db.exec(RECORDER_SCHEMA_V2_SQL);
+      }
+      if (currentVersion < 3) {
+        ensureMediaAssetEncryptionColumns(db);
+      }
+      if (currentVersion < 4) {
+        ensureAudioProvenanceColumns(db);
+      }
       db.pragma(`user_version = ${RECORDER_STORE_SCHEMA_VERSION}`);
     })();
   }
   return db.pragma("user_version", { simple: true });
 }
 
+function ensureMediaAssetEncryptionColumns(db) {
+  const existingColumns = new Set(db.pragma("table_info(media_assets)").map((column) => column.name));
+  const columns = [
+    ["encryption_key_id", "TEXT"],
+    ["encryption_alg", "TEXT"],
+    ["encryption_nonce", "TEXT"],
+    ["encryption_tag", "TEXT"],
+  ];
+  for (const [column, definition] of columns) {
+    if (!existingColumns.has(column)) {
+      db.exec(`ALTER TABLE media_assets ADD COLUMN ${column} ${definition};`);
+    }
+  }
+}
+
+function ensureAudioProvenanceColumns(db) {
+  const audioColumns = new Set(db.pragma("table_info(audio_chunks)").map((column) => column.name));
+  const audioColumnDefinitions = [
+    ["consent_grant_id", "TEXT"],
+    ["visible_notice_id", "TEXT"],
+    ["raw_audio_indicator_state", "TEXT NOT NULL DEFAULT 'unknown'"],
+    ["local_transcriber_name", "TEXT"],
+    ["local_transcriber_version", "TEXT"],
+    ["transcription_terminal_state", "TEXT"],
+  ];
+  for (const [column, definition] of audioColumnDefinitions) {
+    if (!audioColumns.has(column)) {
+      db.exec(`ALTER TABLE audio_chunks ADD COLUMN ${column} ${definition};`);
+    }
+  }
+
+  const transcriptColumns = new Set(db.pragma("table_info(transcript_segments)").map((column) => column.name));
+  const transcriptColumnDefinitions = [
+    ["transcript_status", "TEXT NOT NULL DEFAULT 'local_complete'"],
+    ["speaker_label_provenance", "TEXT"],
+    ["deletion_source_id", "TEXT"],
+  ];
+  for (const [column, definition] of transcriptColumnDefinitions) {
+    if (!transcriptColumns.has(column)) {
+      db.exec(`ALTER TABLE transcript_segments ADD COLUMN ${column} ${definition};`);
+    }
+  }
+}
+
 export function ensureRecorderSqlInspectorViews(db) {
   if (!db || typeof db.exec !== "function") {
     fail("ERR_RECORDER_STORE_INVALID_DB", "ensureRecorderSqlInspectorViews requires a better-sqlite3 database");
+  }
+  for (const viewName of RECORDER_SQL_INSPECTOR_VIEW_NAMES) {
+    db.exec(`DROP VIEW IF EXISTS ${viewName};`);
   }
   db.exec(RECORDER_SQL_INSPECTOR_VIEWS_SQL);
 }
@@ -411,6 +484,10 @@ CREATE TABLE IF NOT EXISTS media_assets (
   encrypted INTEGER NOT NULL DEFAULT 0,
   workspace_id TEXT,
   project_id TEXT,
+  encryption_key_id TEXT,
+  encryption_alg TEXT,
+  encryption_nonce TEXT,
+  encryption_tag TEXT,
   created_at TEXT NOT NULL,
   deleted_at TEXT
 );
@@ -463,6 +540,12 @@ CREATE TABLE IF NOT EXISTS audio_chunks (
   source TEXT NOT NULL CHECK (source IN ('microphone', 'system_audio', 'meeting_audio')),
   audio_asset_id TEXT NOT NULL,
   transcript_status TEXT NOT NULL,
+  consent_grant_id TEXT,
+  visible_notice_id TEXT,
+  raw_audio_indicator_state TEXT NOT NULL DEFAULT 'unknown',
+  local_transcriber_name TEXT,
+  local_transcriber_version TEXT,
+  transcription_terminal_state TEXT,
   redaction_status TEXT NOT NULL,
   privacy_state TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -478,12 +561,15 @@ CREATE TABLE IF NOT EXISTS transcript_segments (
   started_at TEXT NOT NULL,
   ended_at TEXT NOT NULL,
   speaker_label TEXT,
+  transcript_status TEXT NOT NULL DEFAULT 'local_complete',
+  speaker_label_provenance TEXT,
   text TEXT NOT NULL,
   redacted_text TEXT,
   redaction_status TEXT NOT NULL,
   privacy_state TEXT NOT NULL,
   safe_for_search INTEGER NOT NULL DEFAULT 0,
   safe_for_memory INTEGER NOT NULL DEFAULT 0,
+  deletion_source_id TEXT,
   created_at TEXT NOT NULL,
   deleted_at TEXT,
   FOREIGN KEY (audio_chunk_id) REFERENCES audio_chunks(id)
@@ -805,13 +891,19 @@ SELECT
   transcript_segments.started_at,
   transcript_segments.ended_at,
   transcript_segments.speaker_label,
+  transcript_segments.transcript_status AS segment_transcript_status,
+  transcript_segments.speaker_label_provenance,
   transcript_segments.redacted_text,
   transcript_segments.redaction_status,
   transcript_segments.privacy_state,
   transcript_segments.safe_for_search,
   transcript_segments.safe_for_memory,
   audio_chunks.transcript_status,
-  audio_chunks.source AS audio_source
+  audio_chunks.source AS audio_source,
+  audio_chunks.raw_audio_indicator_state,
+  audio_chunks.local_transcriber_name,
+  audio_chunks.local_transcriber_version,
+  audio_chunks.transcription_terminal_state
 FROM transcript_segments
 JOIN audio_chunks ON audio_chunks.id = transcript_segments.audio_chunk_id
 WHERE transcript_segments.deleted_at IS NULL
@@ -882,14 +974,23 @@ SELECT
   transcript_segments.started_at,
   transcript_segments.ended_at,
   transcript_segments.speaker_label,
+  transcript_segments.transcript_status AS segment_transcript_status,
+  transcript_segments.speaker_label_provenance,
   transcript_segments.text AS transcript_text,
   transcript_segments.redacted_text,
   transcript_segments.redaction_status,
   transcript_segments.privacy_state,
   transcript_segments.safe_for_search,
   transcript_segments.safe_for_memory,
+  transcript_segments.deletion_source_id,
   audio_chunks.transcript_status,
   audio_chunks.source AS audio_source,
+  audio_chunks.consent_grant_id,
+  audio_chunks.visible_notice_id,
+  audio_chunks.raw_audio_indicator_state,
+  audio_chunks.local_transcriber_name,
+  audio_chunks.local_transcriber_version,
+  audio_chunks.transcription_terminal_state,
   audio_chunks.audio_asset_id,
   media_assets.relative_path AS audio_relative_path,
   media_assets.sha256 AS audio_sha256,

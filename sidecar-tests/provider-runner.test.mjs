@@ -1013,8 +1013,9 @@ test("workspace_scan_read_only coerces minimal codex reasoning overrides to low"
   }
 });
 
-test("resolveClaudeMaxTurns bounds the workspace scan far below the chat lane", () => {
+test("resolveClaudeMaxTurns bounds scan and Office Hours question modes below the chat lane", () => {
   assert.equal(resolveClaudeMaxTurns("workspace_scan_read_only"), 5);
+  assert.equal(resolveClaudeMaxTurns("office_hours_question"), 4);
   assert.equal(resolveClaudeMaxTurns("agentic"), 24);
   assert.equal(resolveClaudeMaxTurns(""), 24);
 });
@@ -1475,15 +1476,16 @@ test("resolveClaudeReasoningEffort: env > Settings > empty (SDK default)", () =>
   }
 });
 
-test("resolveClaudeReasoningEffort: digest helper -> low (effort-capable models only)", () => {
+test("resolveClaudeReasoningEffort: bounded Office Hours helpers -> low (effort-capable models only)", () => {
   const previousEnv = process.env.AGENTIC30_CLAUDE_REASONING_EFFORT;
   resetProviderSettingsForTest();
   try {
     delete process.env.AGENTIC30_CLAUDE_REASONING_EFFORT;
 
-    // Bounded digest helper lowers effort on effort-capable models.
+    // Bounded Office Hours helpers lower effort on effort-capable models.
     assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", "claude-opus-4-8"), "low");
     assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", "claude-sonnet-4-6"), "low");
+    assert.equal(resolveClaudeReasoningEffort("office_hours_question", "claude-opus-4-8"), "low");
     // Empty model resolves to the Opus default, which supports effort.
     assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", ""), "low");
 
@@ -1491,13 +1493,45 @@ test("resolveClaudeReasoningEffort: digest helper -> low (effort-capable models 
     assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", "claude-haiku-4-5"), "");
     assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", "claude-sonnet-4-5"), "");
 
-    // Quality-critical interview + the evidence judge keep the SDK default.
-    assert.equal(resolveClaudeReasoningEffort("office_hours_question", "claude-opus-4-8"), "");
+    // The evidence judge keeps the SDK default.
     assert.equal(resolveClaudeReasoningEffort("judge_read_only", "claude-opus-4-8"), "");
 
     // A pin still wins over the per-executionMode default.
     process.env.AGENTIC30_CLAUDE_REASONING_EFFORT = "high";
     assert.equal(resolveClaudeReasoningEffort("office_hours_digest_read_only", "claude-opus-4-8"), "high");
+  } finally {
+    restoreEnv("AGENTIC30_CLAUDE_REASONING_EFFORT", previousEnv);
+    resetProviderSettingsForTest();
+  }
+});
+
+test("resolveClaudeReasoningEffort: workspace scan forces low AHEAD of env/Settings (Codex mirror)", () => {
+  const previousEnv = process.env.AGENTIC30_CLAUDE_REASONING_EFFORT;
+  resetProviderSettingsForTest();
+  try {
+    delete process.env.AGENTIC30_CLAUDE_REASONING_EFFORT;
+
+    // Effort-capable scan models pin to low — mirrors resolveCodexReasoningEffort.
+    assert.equal(resolveClaudeReasoningEffort("workspace_scan_read_only", "claude-sonnet-4-6"), "low");
+    // Empty model resolves to the Opus default, which supports effort.
+    assert.equal(resolveClaudeReasoningEffort("workspace_scan_read_only", ""), "low");
+
+    // The Day-1 abort regression: a user-saved high/xhigh/max effort must NOT
+    // escalate the scan. The workspace-scan pin sits AHEAD of env/Settings, so
+    // an env pin that would otherwise win is ignored for this lane.
+    process.env.AGENTIC30_CLAUDE_REASONING_EFFORT = "max";
+    assert.equal(resolveClaudeReasoningEffort("workspace_scan_read_only", "claude-sonnet-4-6"), "low");
+    delete process.env.AGENTIC30_CLAUDE_REASONING_EFFORT;
+
+    // A Settings pin is likewise ignored for the scan lane.
+    updateProviderSettings({ claude: { reasoningEffort: "high" } });
+    assert.equal(resolveClaudeReasoningEffort("workspace_scan_read_only", "claude-sonnet-4-6"), "low");
+    resetProviderSettingsForTest();
+
+    // Effort-incapable / unrecognized scan models still omit effort (SDK default)
+    // so the param is never rejected.
+    assert.equal(resolveClaudeReasoningEffort("workspace_scan_read_only", "claude-sonnet-4-5"), "");
+    assert.equal(resolveClaudeReasoningEffort("workspace_scan_read_only", "claude-haiku-4-5"), "");
   } finally {
     restoreEnv("AGENTIC30_CLAUDE_REASONING_EFFORT", previousEnv);
     resetProviderSettingsForTest();

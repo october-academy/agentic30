@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   RecorderControlStateError,
   applyRecorderControlAction,
+  assertRecorderMetadataAvailable,
   evaluateRecorderCaptureReadiness,
   evaluateRecorderExpandedMediaPolicy,
   loadRecorderControlState,
@@ -202,10 +203,65 @@ test("recorder control state models Gate C clipboard, audio, and metadata polici
   optInPolicy = evaluateRecorderExpandedMediaPolicy(state, { now });
   assert.equal(optInPolicy.audio.microphone.status, "enabled");
   assert.equal(optInPolicy.audio.systemAudio.status, "enabled");
+  assert.equal(optInPolicy.metadata.browserMetadata.status, "probe_unverified");
+  assert.equal(optInPolicy.metadata.browserMetadata.available, false);
+  assert.equal(optInPolicy.metadata.documentMetadata.status, "probe_unverified");
+  assert.equal(optInPolicy.metadata.documentMetadata.available, false);
+  assert.equal(optInPolicy.degradedStates.some((warning) => warning.id === "microphone_capture_blocked_by_permission"), false);
+  assert.equal(optInPolicy.degradedStates.some((warning) => warning.id === "browser_metadata_probe_unverified"), true);
+  assert.throws(
+    () => assertRecorderMetadataAvailable(state, "browser_metadata", { now }),
+    (error) => error instanceof RecorderControlStateError
+      && error.code === "ERR_RECORDER_METADATA_CAPTURE_UNAVAILABLE"
+      && error.details.status === "probe_unverified",
+  );
+
+  assert.throws(
+    () => transitionRecorderControlState(state, {
+      type: "record_metadata_probe",
+      permission: "browser_metadata",
+      status: "unavailable",
+    }, { now }),
+    (error) => error instanceof RecorderControlStateError
+      && error.code === "ERR_RECORDER_CONTROL_METADATA_PROBE_ROOT_CAUSE_REQUIRED",
+  );
+  state = transitionRecorderControlState(state, {
+    type: "record_metadata_probe",
+    permission: "browser_metadata",
+    status: "unavailable",
+    rootCause: "browser_url_unreadable",
+    message: "Browser URL metadata probe failed.",
+  }, { now });
+  optInPolicy = evaluateRecorderExpandedMediaPolicy(state, { now });
+  assert.equal(optInPolicy.metadata.browserMetadata.status, "unavailable");
+  assert.equal(optInPolicy.metadata.browserMetadata.available, false);
+  assert.equal(optInPolicy.metadata.browserMetadata.probe.rootCause, "browser_url_unreadable");
+  assert.throws(
+    () => assertRecorderMetadataAvailable(state, "browser_metadata", { now }),
+    (error) => error instanceof RecorderControlStateError
+      && error.code === "ERR_RECORDER_METADATA_CAPTURE_UNAVAILABLE"
+      && error.details.rootCause === "browser_url_unreadable",
+  );
+
+  state = transitionRecorderControlState(state, {
+    type: "record_metadata_probe",
+    permission: "browser_metadata",
+    status: "available",
+    source: "swift_runtime_probe",
+  }, { now });
+  state = transitionRecorderControlState(state, {
+    type: "record_metadata_probe",
+    permission: "document_metadata",
+    status: "available",
+    source: "swift_runtime_probe",
+  }, { now });
+  optInPolicy = evaluateRecorderExpandedMediaPolicy(state, { now });
   assert.equal(optInPolicy.metadata.browserMetadata.status, "available");
   assert.equal(optInPolicy.metadata.documentMetadata.status, "available");
-  assert.equal(optInPolicy.degradedStates.some((warning) => warning.id === "microphone_capture_blocked_by_permission"), false);
-  assert.equal(optInPolicy.degradedStates.some((warning) => warning.id === "browser_metadata_degraded"), false);
+  assert.equal(optInPolicy.metadata.browserMetadata.available, true);
+  assert.equal(optInPolicy.metadata.documentMetadata.available, true);
+  assert.equal(optInPolicy.degradedStates.some((warning) => warning.id === "browser_metadata_probe_unverified"), false);
+  assert.equal(assertRecorderMetadataAvailable(state, "browser_metadata", { now }).available, true);
 
   const readiness = evaluateRecorderCaptureReadiness(state, { now });
   assert.equal(readiness.canRecord, true);

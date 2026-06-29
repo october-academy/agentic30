@@ -108,8 +108,9 @@ test("recordClipboardEvent requires explicit content opt-in before storing raw c
 
     const result = recordClipboardEvent(store, clipboardEvent({
       id: "clipboard-content-opt-in",
-      contentText: "raw copied content token=secret",
-      redactedText: "redacted copied content",
+      contentText: "raw copied customer note",
+      redactedText: "",
+      redactionStatus: "",
       contentHash: "",
     }), {
       controlState: readyControlState({ contentOptIn: true }),
@@ -118,11 +119,47 @@ test("recordClipboardEvent requires explicit content opt-in before storing raw c
     const row = store.getRecord("clipboard_events", "clipboard-content-opt-in");
     assert.equal(row.capture_mode, "content_opt_in");
     assert.equal(row.content_captured, 1);
-    assert.equal(row.content_text, "raw copied content token=secret");
+    assert.equal(row.content_text, "raw copied customer note");
+    assert.equal(row.redacted_text, "raw copied customer note");
+    assert.equal(row.redaction_status, "safe");
     assert.match(row.content_hash, /^sha256:[a-f0-9]{64}$/);
     assert.equal(result.event.contentCaptured, true);
     assert.equal(result.event.rawContentExposed, false);
-    assert.doesNotMatch(JSON.stringify(result), /raw copied content|content_text|token=secret/);
+    assert.doesNotMatch(JSON.stringify(result), /raw copied customer note|content_text/);
+
+    assert.throws(
+      () => recordClipboardEvent(store, clipboardEvent({
+        id: "clipboard-secret-blocked",
+        contentText: "LOCAL_TEST_PASSWORD=abcdefgh",
+        redactedText: "",
+        redactionStatus: "",
+        contentHash: "",
+      }), {
+        controlState: readyControlState({ contentOptIn: true }),
+        now: new Date("2026-06-28T13:04:30.000Z"),
+      }),
+      (error) => error instanceof RecorderClipboardError
+        && error.code === "ERR_RECORDER_CLIPBOARD_CONTENT_SECRET_BLOCKED"
+        && error.details.secretSuppression === true
+        && !JSON.stringify(error.details).includes("LOCAL_TEST_PASSWORD"),
+    );
+    assert.equal(store.getRecord("clipboard_events", "clipboard-secret-blocked"), null);
+
+    assert.throws(
+      () => recordClipboardEvent(store, clipboardEvent({
+        id: "clipboard-too-large",
+        contentText: "x".repeat(2001),
+        contentHash: "",
+      }), {
+        controlState: readyControlState({ contentOptIn: true }),
+        now: new Date("2026-06-28T13:04:45.000Z"),
+      }),
+      (error) => error instanceof RecorderClipboardError
+        && error.code === "ERR_RECORDER_CLIPBOARD_CONTENT_TOO_LARGE"
+        && error.details.maxLength === 2000
+        && error.details.length === 2001,
+    );
+    assert.equal(store.getRecord("clipboard_events", "clipboard-too-large"), null);
   } finally {
     store.close();
     await fs.rm(root, { recursive: true, force: true });

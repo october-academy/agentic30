@@ -10,6 +10,10 @@ import {
   authorizeRecorderRawRead,
   recordRecorderAudit,
 } from "./recorder-raw-api-auth.mjs";
+import {
+  decryptRecorderMediaBytes,
+  loadRecorderMediaKey,
+} from "./recorder-media-encryption.mjs";
 import { atomicWriteJson } from "./atomic-store.mjs";
 import {
   cancelRecorderPipeRun,
@@ -126,6 +130,7 @@ export async function createRecorderRawApiServer({
   port = 0,
   trustedOrigins = undefined,
   now = () => new Date(),
+  mediaKeyStore = undefined,
 } = {}) {
   assertLoopbackHost(host);
   assertStore(store);
@@ -140,6 +145,7 @@ export async function createRecorderRawApiServer({
         body: await readRequestBody(req),
         trustedOrigins,
         now: typeof now === "function" ? now() : now,
+        mediaKeyStore,
       });
     } catch (error) {
       response = errorResponse(error);
@@ -174,6 +180,7 @@ export async function handleRecorderRawApiRequest({
   body = "",
   trustedOrigins = undefined,
   now = new Date(),
+  mediaKeyStore = undefined,
 } = {}) {
   try {
     assertStore(store);
@@ -341,7 +348,7 @@ export async function handleRecorderRawApiRequest({
       const frame = requireFrame(store, frameId);
       const mediaAsset = requireMediaAsset(store, frame.snapshot_asset_id);
       const mediaPath = resolveRecorderFrameMediaPath(store, mediaAsset);
-      const body = await fs.readFile(mediaPath);
+      const body = await readFrameImageBody(mediaPath, mediaAsset, { mediaKeyStore });
       return {
         status: 200,
         headers: {
@@ -388,7 +395,7 @@ export async function handleRecorderRawApiRequest({
       const audio = requireAudioChunk(store, audioId);
       const mediaAsset = requireAudioMediaAsset(store, audio.audio_asset_id);
       const mediaPath = resolveRecorderAudioMediaPath(store, mediaAsset);
-      const body = await readRawMediaFile(mediaPath, mediaAsset.id, "audio");
+      const body = await readRecorderMediaBody(mediaPath, mediaAsset, "audio", { mediaKeyStore });
       return {
         status: 200,
         headers: {
@@ -574,6 +581,26 @@ export async function handleRecorderRawApiRequest({
   } catch (error) {
     return errorResponse(error);
   }
+}
+
+async function readFrameImageBody(mediaPath, mediaAsset, { mediaKeyStore = undefined } = {}) {
+  return readRecorderMediaBody(mediaPath, mediaAsset, "frame", { mediaKeyStore });
+}
+
+async function readRecorderMediaBody(mediaPath, mediaAsset, mediaKind, { mediaKeyStore = undefined } = {}) {
+  const body = await fs.readFile(mediaPath);
+  if (Number(mediaAsset.encrypted) !== 1) return body;
+  const key = loadRecorderMediaKey({ keyStore: mediaKeyStore });
+  return decryptRecorderMediaBytes(body, {
+    key,
+    encryption: {
+      algorithm: mediaAsset.encryption_alg,
+      keyId: mediaAsset.encryption_key_id,
+      nonce: mediaAsset.encryption_nonce,
+      tag: mediaAsset.encryption_tag,
+      ciphertextSha256: mediaAsset.sha256,
+    },
+  });
 }
 
 function authorize(request, store, requiredAccessLevel, sourceIds, trustedOrigins) {
@@ -1443,22 +1470,6 @@ function normalizeAudioMediaRelativePath(value) {
   return normalized;
 }
 
-async function readRawMediaFile(mediaPath, mediaAssetId, mediaKind) {
-  try {
-    return await fs.readFile(mediaPath);
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      fail("ERR_RECORDER_RAW_API_MEDIA_MISSING", `recorder ${mediaKind} media file is missing`, {
-        mediaAssetId,
-      });
-    }
-    fail("ERR_RECORDER_RAW_API_MEDIA_READ_FAILED", `failed to read recorder ${mediaKind} media file`, {
-      mediaAssetId,
-      cause: error?.message || String(error),
-    });
-  }
-}
-
 function audioDto({ store, audio }) {
   const mediaAsset = audio.audio_asset_id ? store.getRecord("media_assets", audio.audio_asset_id) : null;
   return stripEmpty({
@@ -1474,6 +1485,18 @@ function audioDto({ store, audio }) {
     source: audio.source,
     transcriptStatus: audio.transcript_status,
     transcript_status: audio.transcript_status,
+    consentGrantId: audio.consent_grant_id,
+    consent_grant_id: audio.consent_grant_id,
+    visibleNoticeId: audio.visible_notice_id,
+    visible_notice_id: audio.visible_notice_id,
+    rawAudioIndicatorState: audio.raw_audio_indicator_state,
+    raw_audio_indicator_state: audio.raw_audio_indicator_state,
+    localTranscriberName: audio.local_transcriber_name,
+    local_transcriber_name: audio.local_transcriber_name,
+    localTranscriberVersion: audio.local_transcriber_version,
+    local_transcriber_version: audio.local_transcriber_version,
+    transcriptionTerminalState: audio.transcription_terminal_state,
+    transcription_terminal_state: audio.transcription_terminal_state,
     redactionStatus: audio.redaction_status,
     redaction_status: audio.redaction_status,
     privacyState: audio.privacy_state,
@@ -1504,6 +1527,10 @@ function transcriptDto(row) {
     ended_at: row.ended_at,
     speakerLabel: row.speaker_label,
     speaker_label: row.speaker_label,
+    transcriptStatus: row.transcript_status,
+    transcript_status: row.transcript_status,
+    speakerLabelProvenance: row.speaker_label_provenance,
+    speaker_label_provenance: row.speaker_label_provenance,
     redactedText: row.redacted_text,
     redacted_text: row.redacted_text,
     redactionStatus: row.redaction_status,

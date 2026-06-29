@@ -38,6 +38,8 @@ final class WorkspaceScanBlockedRecoveryTests: XCTestCase {
         provider: AgentProvider,
         message: String = "",
         nextProvider: AgentProvider? = nil,
+        abortCause: String? = nil,
+        retryAttempt: Int? = nil,
         readiness list: [WorkspaceScanProviderReadiness]
     ) -> WorkspaceScanBlockedNotice {
         WorkspaceScanBlockedNotice(
@@ -49,24 +51,59 @@ final class WorkspaceScanBlockedRecoveryTests: XCTestCase {
             nextProvider: nextProvider,
             availableProviders: list.filter(\.scanReady).map(\.provider),
             providerReadiness: list,
-            errorKind: errorKind
+            errorKind: errorKind,
+            abortCause: abortCause,
+            retryAttempt: retryAttempt
         )
     }
 
-    func testAbortedRetriesSameStillReadyProvider() {
-        // claude timed out (aborted) but is still authed + scan-ready → retry it,
-        // do NOT switch to the nextProvider rotation.
+    func testTimeoutAbortRetriesSameStillReadyProvider() {
+        // claude timed out on our wall-clock budget (soft_timeout) but is still
+        // authed + scan-ready → retry it once with the extended budget; do NOT
+        // switch to the nextProvider rotation, and frame it as a timeout.
         let recovery = WorkspaceScanBlockedRecovery(notice: notice(
             reason: "aborted",
             errorKind: "provider_aborted",
             provider: .claude,
             nextProvider: .codex,
+            abortCause: "soft_timeout",
             readiness: [readiness(.claude, scanReady: true), readiness(.codex, scanReady: true)]
         ))
         XCTAssertEqual(recovery.primaryAction, .retry(.claude))
         XCTAssertEqual(recovery.alternateProviders, [.codex])
-        XCTAssertTrue(recovery.title.contains("중단"))
+        XCTAssertTrue(recovery.title.contains("시간"))
         XCTAssertTrue(recovery.body.contains("다시 시도"))
+    }
+
+    func testTimeoutAbortAfterRetrySwitchesProvider() {
+        // The extended-budget retry (retryAttempt 1) still timed out → stop
+        // looping on the same provider and steer to a switch.
+        let recovery = WorkspaceScanBlockedRecovery(notice: notice(
+            reason: "aborted",
+            errorKind: "provider_aborted",
+            provider: .claude,
+            nextProvider: .codex,
+            abortCause: "hard_deadline",
+            retryAttempt: 1,
+            readiness: [readiness(.claude, scanReady: true), readiness(.codex, scanReady: true)]
+        ))
+        XCTAssertEqual(recovery.primaryAction, .switchProvider(.codex))
+        XCTAssertTrue(recovery.title.contains("시간"))
+    }
+
+    func testExternalAbortSteersToSwitchNotTimeoutRetry() {
+        // External/SDK abort (no soft/hard timer fired) → switch, NOT a
+        // same-provider retry, and the copy must not claim a timeout.
+        let recovery = WorkspaceScanBlockedRecovery(notice: notice(
+            reason: "aborted",
+            errorKind: "provider_aborted",
+            provider: .claude,
+            nextProvider: .codex,
+            abortCause: "external",
+            readiness: [readiness(.claude, scanReady: true), readiness(.codex, scanReady: true)]
+        ))
+        XCTAssertEqual(recovery.primaryAction, .switchProvider(.codex))
+        XCTAssertFalse(recovery.body.contains("시간 예산"))
     }
 
     func testUsageLimitSwitchesToFallbackWithCapCopy() {

@@ -1468,7 +1468,8 @@ struct SidecarEventDecodingTests {
           "stepIndex": 3,
           "totalSteps": 3,
           "etaSeconds": 10,
-          "foundCount": 4
+          "foundCount": 4,
+          "elapsedMs": 1234
         }
         """
 
@@ -1482,6 +1483,7 @@ struct SidecarEventDecodingTests {
         #expect(event.totalSteps == 3)
         #expect(event.etaSeconds == 10)
         #expect(event.foundCount == 4)
+        #expect(event.elapsedMs == 1234)
     }
 
     @MainActor @Test func decodesOfficeHoursStatusPayload() throws {
@@ -1495,7 +1497,21 @@ struct SidecarEventDecodingTests {
           "title": "다음 질문 준비 중",
           "detail": "프로젝트 맥락에 맞는 질문을 준비하고 있습니다.",
           "progressText": "프로젝트 맥락에 맞는 질문 준비 중",
-          "elapsedMs": 42
+          "elapsedMs": 42,
+          "questionIndex": 3,
+          "answeredQuestionCount": 3,
+          "expectedQuestionCount": 6,
+          "questionElapsedMs": 1200,
+          "requestReadyLatencyMs": 35,
+          "contextMetrics": {
+            "rawLength": 24000,
+            "contextLength": 16000,
+            "clamped": true,
+            "hasLockedDay1Goal": true,
+            "hasGoalLane": true,
+            "expectedQuestionCount": 6,
+            "day": 1
+          }
         }
         """
 
@@ -1511,6 +1527,18 @@ struct SidecarEventDecodingTests {
         #expect(status.messageId == "message-1")
         #expect(status.requestId == "request-1")
         #expect(status.elapsedMs == 42)
+        #expect(status.questionIndex == 3)
+        #expect(status.answeredQuestionCount == 3)
+        #expect(status.expectedQuestionCount == 6)
+        #expect(status.questionElapsedMs == 1200)
+        #expect(status.requestReadyLatencyMs == 35)
+        #expect(status.contextMetrics?.rawLength == 24000)
+        #expect(status.contextMetrics?.contextLength == 16000)
+        #expect(status.contextMetrics?.clamped == true)
+        #expect(status.contextMetrics?.hasLockedDay1Goal == true)
+        #expect(status.contextMetrics?.hasGoalLane == true)
+        #expect(status.contextMetrics?.expectedQuestionCount == 6)
+        #expect(status.contextMetrics?.day == 1)
     }
 
     @MainActor @Test func decodesWeeklyRitualPromptPayload() throws {
@@ -1631,7 +1659,7 @@ struct SidecarEventDecodingTests {
             "id": "office-hours-session",
             "title": "Office Hours · Day 1",
             "provider": "codex",
-            "model": "gpt-5.1-codex-mini",
+            "model": "gpt-5.5",
             "status": "awaiting_input",
             "createdAt": "2026-06-27T00:00:00.000Z",
             "updatedAt": "2026-06-27T00:00:00.000Z",
@@ -1795,65 +1823,53 @@ struct SidecarEventDecodingTests {
         #expect(event.onboardingHypothesis?.targetUser?.contains("전업 1인 개발자") == true)
         #expect(event.onboardingHypothesis?.likelyUsers?.first == "AI 코딩 도구를 쓰는 개발자")
         #expect(event.error == nil)
-        // Normal (non-degraded) scan: the additive degraded markers stay absent.
-        #expect(event.degraded == nil)
-        #expect(event.degradedReason == nil)
-        #expect(event.degradedProvider == nil)
-        #expect(event.scanBlockedNotice == nil)
     }
 
-    @MainActor @Test func decodesDegradedWorkspaceScanResult() throws {
+    @MainActor @Test func decodesWorkspaceScanBlockedAbortDiagnostics() throws {
+        // A timeout abort carries abortCause + the echoed retryAttempt so the
+        // recovery UI can frame it as a timeout and escalate past an extended retry.
         let payload = """
         {
-          "type": "workspace_scan_result",
+          "type": "workspace_scan_blocked",
           "scanRoot": "/Users/october/prj/myapp",
-          "icp": ".agentic30/docs/ICP.md",
-          "foundCount": 2,
-          "degraded": true,
-          "degradedReason": "unavailable",
-          "degradedProvider": "codex",
-          "scanBlockedNotice": {
-            "scanRoot": "/Users/october/prj/myapp",
-            "provider": "codex",
-            "model": "",
-            "reason": "unavailable",
-            "message": "AI 정밀 스캔을 적용하지 못했습니다.",
-            "nextProvider": "claude",
-            "availableProviders": ["claude"],
-            "providerReadiness": [
-              {
-                "provider": "codex",
-                "sdkInstalled": true,
-                "authenticated": false,
-                "scanReady": false,
-                "source": "none",
-                "message": "",
-                "sdkMessage": "",
-                "authAction": "codex_login"
-              }
-            ],
-            "errorKind": "provider_auth_required"
-          }
+          "provider": "claude",
+          "model": "claude-sonnet-4-6",
+          "reason": "aborted",
+          "errorKind": "provider_aborted",
+          "abortCause": "soft_timeout",
+          "retryAttempt": 1,
+          "nextProvider": "codex",
+          "availableProviders": ["codex"]
         }
         """
 
         let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
 
-        #expect(event.type == "workspace_scan_result")
-        #expect(event.icp == ".agentic30/docs/ICP.md")
-        #expect(event.foundCount == 2)
-        #expect(event.degraded == true)
-        #expect(event.degradedReason == "unavailable")
-        #expect(event.degradedProvider == "codex")
-        #expect(event.error == nil)
-        let notice = try #require(event.scanBlockedNotice)
-        #expect(notice.provider == "codex")
-        #expect(notice.reason == "unavailable")
-        #expect(notice.nextProvider == "claude")
-        #expect(notice.availableProviders == ["claude"])
-        #expect(notice.errorKind == "provider_auth_required")
-        #expect(notice.providerReadiness?.first?.provider == .codex)
-        #expect(notice.providerReadiness?.first?.authAction == "codex_login")
+        #expect(event.type == "workspace_scan_blocked")
+        #expect(event.reason == "aborted")
+        #expect(event.errorKind == "provider_aborted")
+        #expect(event.abortCause == "soft_timeout")
+        #expect(event.retryAttempt == 1)
+        #expect(event.nextProvider == "codex")
+    }
+
+    @MainActor @Test func decodesWorkspaceScanBlockedWithoutAbortDiagnostics() throws {
+        // A non-abort block (e.g. usage limit) omits abortCause/retryAttempt.
+        let payload = """
+        {
+          "type": "workspace_scan_blocked",
+          "scanRoot": "/Users/october/prj/myapp",
+          "provider": "claude",
+          "reason": "usage_limit",
+          "errorKind": "provider_usage_limit"
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.reason == "usage_limit")
+        #expect(event.abortCause == nil)
+        #expect(event.retryAttempt == nil)
     }
 
     @MainActor @Test func decodesWorkspaceGitignoreResult() throws {
@@ -4378,7 +4394,7 @@ struct SidecarEventDecodingTests {
           "type": "workspace_scan_provider_limited",
           "scanRoot": "/Users/me/project",
           "provider": "codex",
-          "model": "gpt-5.1-codex-mini",
+          "model": "gpt-5.5",
           "stage": "scan_agent",
           "errorKind": "provider_usage_limit"
         }
@@ -4439,7 +4455,8 @@ struct SidecarEventDecodingTests {
           "errorKind": "provider_usage_limit",
           "stage": "blocked",
           "stepIndex": 2,
-          "totalSteps": 3
+          "totalSteps": 3,
+          "elapsedMs": 987
         }
         """
 
@@ -4461,6 +4478,7 @@ struct SidecarEventDecodingTests {
         #expect(event.stage == "blocked")
         #expect(event.stepIndex == 2)
         #expect(event.totalSteps == 3)
+        #expect(event.elapsedMs == 987)
 
         let provider = try #require(AgentProvider(rawValue: event.provider ?? ""))
         let notice = WorkspaceScanBlockedNotice(
@@ -4815,6 +4833,46 @@ struct SidecarEventDecodingTests {
         #expect(event.recorderRawApi?.proofAcceptedByRawApi == false)
         #expect(event.recorderRawApiToken?.clientId == "agentic30-founder-replay")
         #expect(event.recorderRawApiToken?.scopes == ["raw_frame"])
+    }
+
+    @MainActor @Test func decodesRecorderAuditEvents() throws {
+        let payload = """
+        {
+          "type": "recorder_audit_events",
+          "recorder_audit_source": {
+            "generated_at": "2026-06-28T09:10:00.000Z",
+            "result_count": 1,
+            "audit": [
+              {
+                "id": "audit-1",
+                "request_id": "req-1",
+                "actor_type": "local_user",
+                "actor_id": "agentic30-founder-replay",
+                "workspace_id": "workspace-1",
+                "project_id": null,
+                "endpoint": "/raw/frames/frame-1/image",
+                "access_level": "raw_frame",
+                "source_ids": [
+                  { "id": "frame-1", "source_type": "frame" }
+                ],
+                "decision": "accepted",
+                "reason": "raw_frame token authorized",
+                "created_at": "2026-06-28T09:09:00.000Z"
+              }
+            ],
+            "proof_accepted_by_audit_source": false
+          },
+          "proof_accepted_by_audit_source": false
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "recorder_audit_events")
+        #expect(event.recorderAuditSource?.resultCount == 1)
+        #expect(event.recorderAuditSource?.proofAcceptedByAuditSource == false)
+        #expect(event.recorderAuditSource?.audit.first?.endpoint == "/raw/frames/frame-1/image")
+        #expect(event.recorderAuditSource?.audit.first?.accessLevel == "raw_frame")
+        #expect(event.recorderAuditSource?.audit.first?.sourceIds.first?.id == "frame-1")
     }
 
     @MainActor @Test func decodesRecorderPipeManagementEvents() throws {

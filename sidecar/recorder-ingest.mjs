@@ -4,6 +4,10 @@ import {
   RecorderControlStateError,
   assertRecorderCaptureReady,
 } from "./recorder-control-state.mjs";
+import {
+  assertRawMediaEncryptionPolicy,
+  normalizeMediaCaptureMode,
+} from "./recorder-media-protection.mjs";
 
 export const RECORDER_CAPTURE_ENVELOPE_SCHEMA_VERSION = 1;
 
@@ -93,6 +97,26 @@ export function normalizeFrameCaptureEnvelope(envelope = {}, { createdAt = new D
   const browserUrl = textOrNull(source.browserUrl ?? source.browser_url);
   const browserDomain = textOrNull(source.browserDomain ?? source.browser_domain) || domainFromUrl(browserUrl);
   const browserUrlNormalized = textOrNull(source.browserUrlNormalized ?? source.browser_url_normalized) || normalizeUrl(browserUrl);
+  const captureTrigger = requiredText(source.captureTrigger ?? source.capture_trigger, "capture_trigger");
+  const automaticCapture = boolean01(source.automatic ?? source.automaticCapture ?? source.automatic_capture);
+  const backgroundCapture = boolean01(
+    source.background ?? source.backgroundCapture ?? source.background_capture ?? source.alwaysOn ?? source.always_on,
+  );
+  const captureMode = normalizeMediaCaptureMode(
+    source.captureMode ?? source.capture_mode
+      ?? source.mediaCaptureMode ?? source.media_capture_mode
+      ?? (automaticCapture ? "automatic" : backgroundCapture ? "background" : ""),
+  );
+  const encrypted = boolean01(snapshot.encrypted ?? 0);
+  const encryptionEnvelope = assertRawMediaEncryptionPolicy({
+    mediaKind: "frame",
+    encrypted: Boolean(encrypted),
+    encryption: snapshot.encryption ?? snapshot.encryptionEnvelope ?? snapshot.encryption_envelope,
+    mediaSha256: snapshotSha256,
+    captureMode,
+    captureTrigger,
+    fail,
+  });
 
   const mediaAsset = {
     id: assetId,
@@ -100,7 +124,11 @@ export function normalizeFrameCaptureEnvelope(envelope = {}, { createdAt = new D
     relative_path: normalizeMediaRelativePath(snapshot.relativePath ?? snapshot.relative_path),
     sha256: snapshotSha256,
     byte_size: positiveInteger(snapshot.byteSize ?? snapshot.byte_size, "snapshot.byte_size"),
-    encrypted: boolean01(snapshot.encrypted ?? 0),
+    encrypted,
+    encryption_key_id: encryptionEnvelope?.key_id ?? null,
+    encryption_alg: encryptionEnvelope?.algorithm ?? null,
+    encryption_nonce: encryptionEnvelope?.nonce ?? null,
+    encryption_tag: encryptionEnvelope?.tag ?? null,
     workspace_id: workspaceId,
     project_id: projectId,
     created_at: toIso(snapshot.createdAt ?? snapshot.created_at ?? createdAt),
@@ -114,7 +142,7 @@ export function normalizeFrameCaptureEnvelope(envelope = {}, { createdAt = new D
     project_id: projectId,
     captured_at: capturedAt,
     monitor_id: requiredText(source.monitorId ?? source.monitor_id ?? "main", "monitor_id"),
-    capture_trigger: requiredText(source.captureTrigger ?? source.capture_trigger, "capture_trigger"),
+    capture_trigger: captureTrigger,
     app_name: textOrNull(source.appName ?? source.app_name),
     window_title: textOrNull(source.windowTitle ?? source.window_title),
     browser_url: browserUrl,

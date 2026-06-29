@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### 변경
+- **Codex live provider 모델**: Exa로 확인한 공식 Codex 권장 모델과 로컬 `codex debug models` 카탈로그에 맞춰 Codex 기본 모델을 `gpt-5.5`로 통일하고, workspace scan/Day 1 choice 경로도 같은 기본값을 사용하도록 정리했습니다.
+
+### 수정
+- **Codex 모델 마이그레이션**: 이전 Codex mini 모델 ID로 저장된 설정과 세션은 시작 시 `gpt-5.5`로 정규화하도록 보강했습니다.
+
 ## [1.0.29] - 2026-06-23
 
 ### 추가
@@ -178,4 +184,4 @@
 - **Onboarding Usage Limit UI**: Surfaces an explicit warning banner and manual provider-switch rescan button if the scan provider hits quota limits during workspace analysis.
 
 ### Changed
-- **Codex Scan Model**: Swapped the retired `gpt-5.1-codex-mini` workspace scan model for the active, low-cost `gpt-5.4-mini` model to prevent 400 API rejection errors.
+- **Codex Scan Model**: Replaced the retired Codex mini workspace scan model with an active scan model to prevent ChatGPT-authenticated Codex 400 rejection errors.

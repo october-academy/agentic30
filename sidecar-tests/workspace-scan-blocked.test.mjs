@@ -1,11 +1,10 @@
-// Pins the workspace-scan gate. Provider execution failures still expose
-// readiness diagnostics, but weak local context must degrade into a Day 1
-// question plan instead of stopping onboarding:
+// Pins the workspace-scan gate. Provider execution failures and weak evidence
+// expose readiness diagnostics as explicit blocked events instead of falling
+// back to local-only onboarding:
 //
-//   - No usable provider AND no canonical doc -> degraded result with a
-//     weak-evidence notice and first-question material.
-//   - Canonical docs that lack customer/problem/action quotes -> degraded
-//     result with explicit missing-field diagnostics.
+//   - No usable provider -> blocked event with provider readiness diagnostics.
+//   - Canonical docs that lack customer/problem/action quotes -> blocked event
+//     with explicit missing-field diagnostics.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -32,7 +31,7 @@ async function spawnSidecarWithoutStub({
   seedGeminiLogin = false,
   // When true, seeds a partial canonical .agentic30/docs/ICP.md. This is still
   // insufficient for Day 1 because problem and activation-action quotes are
-  // missing, so the scan result must stay explicitly degraded.
+  // missing, so a successful provider scan must still block explicitly.
   seedCanonicalDoc = false,
   extraEnv = {},
   processCwd = packageRoot,
@@ -167,7 +166,7 @@ async function waitForEvent(events, predicate, timeoutMs = 20_000) {
   throw new Error(`Timed out waiting for event. Saw: ${events.map((event) => event.type).join(", ")}`);
 }
 
-test("scan with no available provider completes degraded first-question context", async () => {
+test("scan with no available provider fails explicitly with a blocked event", async () => {
   const harness = await spawnSidecarWithoutStub();
   let ws;
   try {
@@ -178,21 +177,12 @@ test("scan with no available provider completes degraded first-question context"
       prompt: "scan blocked contract",
     }));
 
-    const result = await waitForEvent(ws.events, (event) =>
-      event.type === "workspace_scan_result"
+    const notice = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_blocked"
         && event.scanRoot === harness.workspacePath,
     );
-    assert.equal(result.error, undefined);
-    assert.equal(result.degraded, true);
-    assert.equal(result.degradedReason, "insufficient_evidence");
-    assert.equal(result.degradedProvider, "codex");
-    assert.ok(result.foundCount >= 1);
-    assert.ok(result.day1IcpPlan?.questions?.length > 0);
-    assert.ok(result.day1AlignmentPlan?.components?.icp?.options?.length > 0);
-    assert.equal(result.day1AlignmentPlan?.readiness?.status, "blocked");
-    const notice = result.scanBlockedNotice;
-    assert.equal(notice.reason, "insufficient_evidence");
-    assert.equal(notice.errorKind, "workspace_scan_insufficient_evidence");
+    assert.equal(notice.reason, "unavailable");
+    assert.equal(notice.errorKind, "provider_auth_required");
     assert.equal(notice.nextProvider, null);
     assert.deepEqual(notice.availableProviders, []);
     assert.ok(notice.localFoundCount >= 1);
@@ -216,9 +206,10 @@ test("scan with no available provider completes degraded first-question context"
       notice.providerReadiness.find((item) => item.provider === "cursor").authAction,
       "cursor_api_key",
     );
+    assert.equal(typeof notice.elapsedMs, "number");
     assert.equal(
       ws.events.some((event) =>
-        event.type === "workspace_scan_blocked"
+        event.type === "workspace_scan_result"
           && event.scanRoot === harness.workspacePath,
       ),
       false,
@@ -244,16 +235,15 @@ test("scan workspace normalizes current-directory path aliases before scanning",
         prompt: "scan current directory alias contract",
       }));
 
-      const result = await waitForEvent(ws.events, (event) =>
-        event.type === "workspace_scan_result",
+      const blocked = await waitForEvent(ws.events, (event) =>
+        event.type === "workspace_scan_blocked",
       );
-      assert.equal(await fs.realpath(result.scanRoot), expectedWorkspaceRoot);
-      assert.equal(result.degraded, true);
-      assert.equal(result.degradedReason, "insufficient_evidence");
+      assert.equal(await fs.realpath(blocked.scanRoot), expectedWorkspaceRoot);
+      assert.equal(blocked.reason, "unavailable");
       assert.ok(
         ws.events.some((event) =>
           event.type === "workspace_scan_started"
-            && event.scanRoot === result.scanRoot,
+            && event.scanRoot === blocked.scanRoot,
         ),
       );
     }
@@ -263,7 +253,7 @@ test("scan workspace normalizes current-directory path aliases before scanning",
   }
 });
 
-test("degraded scan notice recommends claude when a claude login session exists", async () => {
+test("blocked scan recommends claude when a claude login session exists", async () => {
   const harness = await spawnSidecarWithoutStub({ seedClaudeLogin: true });
   let ws;
   try {
@@ -274,17 +264,15 @@ test("degraded scan notice recommends claude when a claude login session exists"
       prompt: "scan blocked chain recommendation",
     }));
 
-    const result = await waitForEvent(ws.events, (event) =>
-      event.type === "workspace_scan_result"
+    const notice = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_blocked"
         && event.scanRoot === harness.workspacePath,
     );
-    assert.equal(result.degraded, true);
-    assert.equal(result.degradedReason, "insufficient_evidence");
-    assert.equal(result.scanBlockedNotice?.provider, "codex");
-    assert.equal(result.scanBlockedNotice?.reason, "insufficient_evidence");
-    assert.equal(result.scanBlockedNotice?.nextProvider, "claude");
-    assert.deepEqual(result.scanBlockedNotice?.availableProviders, ["claude"]);
-    const claudeReadiness = result.scanBlockedNotice.providerReadiness.find((item) => item.provider === "claude");
+    assert.equal(notice.provider, "codex");
+    assert.equal(notice.reason, "unavailable");
+    assert.equal(notice.nextProvider, "claude");
+    assert.deepEqual(notice.availableProviders, ["claude"]);
+    const claudeReadiness = notice.providerReadiness.find((item) => item.provider === "claude");
     assert.equal(claudeReadiness.authenticated, true);
     assert.equal(claudeReadiness.scanReady, true);
     assert.equal(claudeReadiness.authAction, null);
@@ -294,7 +282,7 @@ test("degraded scan notice recommends claude when a claude login session exists"
   }
 });
 
-test("degraded scan on selected claude usage limit recommends the next scan-ready provider", async () => {
+test("blocked scan on selected claude usage limit recommends the next scan-ready provider", async () => {
   const harness = await spawnSidecarWithoutStub({
     seedClaudeLogin: true,
     seedGeminiLogin: true,
@@ -312,31 +300,28 @@ test("degraded scan on selected claude usage limit recommends the next scan-read
       preferredProvider: "claude",
     }));
 
-    const result = await waitForEvent(ws.events, (event) =>
-      event.type === "workspace_scan_result"
+    const notice = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_blocked"
         && event.scanRoot === harness.workspacePath,
     );
-    assert.equal(result.degraded, true);
-    assert.equal(result.degradedReason, "insufficient_evidence");
-    assert.equal(result.scanBlockedNotice?.provider, "claude");
-    assert.equal(result.scanBlockedNotice?.model, "claude-sonnet-4-6");
-    assert.equal(result.scanBlockedNotice?.reason, "insufficient_evidence");
-    assert.equal(result.scanBlockedNotice?.errorKind, "workspace_scan_insufficient_evidence");
-    assert.equal(result.scanBlockedNotice?.nextProvider, "gemini");
-    assert.deepEqual(result.scanBlockedNotice?.availableProviders, ["gemini"]);
-    assert.match(result.scanBlockedNotice?.message, /근거가 부족/);
-    const claudeReadiness = result.scanBlockedNotice.providerReadiness.find((item) => item.provider === "claude");
-    const geminiReadiness = result.scanBlockedNotice.providerReadiness.find((item) => item.provider === "gemini");
+    assert.equal(notice.provider, "claude");
+    assert.equal(notice.model, "claude-sonnet-4-6");
+    assert.equal(notice.reason, "usage_limit");
+    assert.equal(notice.errorKind, "provider_usage_limit");
+    assert.equal(notice.nextProvider, "gemini");
+    assert.deepEqual(notice.availableProviders, ["gemini"]);
+    const claudeReadiness = notice.providerReadiness.find((item) => item.provider === "claude");
+    const geminiReadiness = notice.providerReadiness.find((item) => item.provider === "gemini");
     assert.equal(claudeReadiness.authenticated, true);
     assert.equal(claudeReadiness.scanReady, true);
     assert.equal(geminiReadiness.authenticated, true);
     assert.equal(geminiReadiness.scanReady, true);
-    const cursorReadiness = result.scanBlockedNotice.providerReadiness.find((item) => item.provider === "cursor");
+    const cursorReadiness = notice.providerReadiness.find((item) => item.provider === "cursor");
     assert.equal(cursorReadiness.scanSupported, false);
     assert.equal(cursorReadiness.scanReady, false);
     assert.equal(
       ws.events.some((event) =>
-        event.type === "workspace_scan_blocked"
+        event.type === "workspace_scan_result"
           && event.scanRoot === harness.workspacePath,
       ),
       false,
@@ -347,7 +332,7 @@ test("degraded scan on selected claude usage limit recommends the next scan-read
   }
 });
 
-test("degraded scan on selected claude abort recommends the next scan-ready provider", async () => {
+test("blocked scan on selected claude abort recommends the next scan-ready provider", async () => {
   const harness = await spawnSidecarWithoutStub({
     seedClaudeLogin: true,
     seedGeminiLogin: true,
@@ -365,21 +350,23 @@ test("degraded scan on selected claude abort recommends the next scan-ready prov
       preferredProvider: "claude",
     }));
 
-    const result = await waitForEvent(ws.events, (event) =>
-      event.type === "workspace_scan_result"
+    const notice = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_blocked"
         && event.scanRoot === harness.workspacePath,
     );
-    assert.equal(result.degraded, true);
-    assert.equal(result.degradedReason, "insufficient_evidence");
-    assert.equal(result.scanBlockedNotice?.provider, "claude");
-    assert.equal(result.scanBlockedNotice?.model, "claude-sonnet-4-6");
-    assert.equal(result.scanBlockedNotice?.reason, "insufficient_evidence");
-    assert.equal(result.scanBlockedNotice?.errorKind, "workspace_scan_insufficient_evidence");
-    assert.equal(result.scanBlockedNotice?.nextProvider, "gemini");
-    assert.deepEqual(result.scanBlockedNotice?.availableProviders, ["gemini"]);
+    assert.equal(notice.provider, "claude");
+    assert.equal(notice.model, "claude-sonnet-4-6");
+    assert.equal(notice.reason, "aborted");
+    assert.equal(notice.errorKind, "provider_aborted");
+    // Forced abort fires neither the soft nor the hard timer, so deriveScanAbortCause
+    // classifies it as "external" — NOT a timeout. The Mac side must not show a
+    // "시간 초과" banner or offer same-provider retry for an external abort.
+    assert.equal(notice.abortCause, "external");
+    assert.equal(notice.nextProvider, "gemini");
+    assert.deepEqual(notice.availableProviders, ["gemini"]);
     assert.equal(
       ws.events.some((event) =>
-        event.type === "workspace_scan_blocked"
+        event.type === "workspace_scan_result"
           && event.scanRoot === harness.workspacePath,
       ),
       false,
@@ -390,7 +377,46 @@ test("degraded scan on selected claude abort recommends the next scan-ready prov
   }
 });
 
-test("scan with no provider and partial local canonical docs completes degraded with diagnostics", async () => {
+test("blocked scan echoes retryAttempt so the UI can escalate past an extended retry", async () => {
+  const harness = await spawnSidecarWithoutStub();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    // First attempt (retryAttempt omitted) must NOT echo a retry marker.
+    ws.send(JSON.stringify({
+      type: "scan_workspace",
+      root: harness.workspacePath,
+      prompt: "first attempt has no retry marker",
+    }));
+    const firstNotice = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_blocked"
+        && event.scanRoot === harness.workspacePath,
+    );
+    assert.equal(firstNotice.reason, "unavailable");
+    assert.equal(firstNotice.retryAttempt, undefined);
+
+    // An explicit retry (retryAttempt: 1) echoes back so the Mac side can stop
+    // offering same-provider retry and escalate to switch-provider.
+    ws.events.length = 0;
+    ws.send(JSON.stringify({
+      type: "scan_workspace",
+      root: harness.workspacePath,
+      prompt: "explicit retry echoes attempt number",
+      retryAttempt: 1,
+    }));
+    const retryNotice = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_blocked"
+        && event.scanRoot === harness.workspacePath,
+    );
+    assert.equal(retryNotice.reason, "unavailable");
+    assert.equal(retryNotice.retryAttempt, 1);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("scan with no provider and partial local canonical docs fails blocked with diagnostics", async () => {
   const harness = await spawnSidecarWithoutStub({ seedCanonicalDoc: true });
   let ws;
   try {
@@ -401,29 +427,21 @@ test("scan with no provider and partial local canonical docs completes degraded 
       prompt: "deep scan with local doc but no provider",
     }));
 
-    const result = await waitForEvent(ws.events, (event) =>
-      event.type === "workspace_scan_result"
+    const notice = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_blocked"
         && event.scanRoot === harness.workspacePath,
     );
-    assert.equal(result.error, undefined);
-    assert.equal(result.degraded, true);
-    assert.equal(result.degradedReason, "insufficient_evidence");
-    assert.ok(result.day1IcpPlan?.questions?.length > 0);
-    assert.equal(result.day1AlignmentPlan?.readiness?.status, "blocked");
-    const notice = result.scanBlockedNotice;
-    assert.equal(notice.reason, "insufficient_evidence");
-    assert.equal(notice.errorKind, "workspace_scan_insufficient_evidence");
-    assert.deepEqual(notice.missingFields, ["problem", "validationAction"]);
-    assert.equal(notice.day1AlignmentReadiness?.status, "blocked");
+    assert.equal(notice.reason, "unavailable");
+    assert.equal(notice.errorKind, "provider_auth_required");
     assert.ok(notice.localFindings.localFoundCount >= 1);
     assert.ok(
       notice.localFindings.evidencePaths.includes(".agentic30/docs/ICP.md")
         || notice.localFindings.canonicalDocs.icp?.found === true,
-      "degraded findings should reflect the local canonical doc",
+      "blocked findings should reflect the local canonical doc",
     );
     assert.equal(
       ws.events.some((event) =>
-        event.type === "workspace_scan_blocked"
+        event.type === "workspace_scan_result"
           && event.scanRoot === harness.workspacePath,
       ),
       false,

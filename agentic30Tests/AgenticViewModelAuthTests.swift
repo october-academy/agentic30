@@ -922,7 +922,6 @@ final class AgenticViewModelAuthTests {
             runtime: ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: nil,
                 iddMode: nil,
@@ -1216,6 +1215,347 @@ final class AgenticViewModelAuthTests {
         #expect(payload["preferredProvider"] as? String == "codex")
         #expect(viewModel.mcpOauthProgress["vercel"] == "중지 중…")
         #expect(viewModel.mcpOauthConnecting.contains("vercel"))
+    }
+
+    @Test @MainActor func recorderPermissionProbeEmitsMetadataRuntimeProbesAfterConsent() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent("""
+        {
+          "type": "recorder_control_state",
+          "controlState": {
+            "mode": "active",
+            "consent": {
+              "status": "granted",
+              "visibleIndicatorRequired": true,
+              "visibleIndicatorAcknowledged": true
+            },
+            "permissions": {},
+            "sensitiveCapture": {
+              "clipboardMode": "trigger_only",
+              "microphone": false,
+              "systemAudio": false
+            },
+            "updatedAt": "2026-06-29T05:00:00.000Z"
+          },
+          "readiness": {
+            "canRecord": false,
+            "state": "blocked",
+            "mode": "active",
+            "blockers": [],
+            "warnings": [],
+            "visibleIndicatorRequired": true,
+            "visibleIndicatorAcknowledged": true
+          }
+        }
+        """))
+        sidecar.resetSentPayloads()
+
+        viewModel.refreshRecorderPermissionProbe()
+
+        let actions = sidecar.sentPayloads.compactMap { $0["action"] as? [String: Any] }
+        let permissionUpdates = actions.filter { $0["type"] as? String == "set_permission" }
+        let audioPermissionStates: Set<String> = ["unknown", "not_determined", "granted", "denied", "restricted", "unavailable"]
+        #expect(permissionUpdates.contains { $0["permission"] as? String == "clipboard" && $0["state"] as? String == "granted" })
+        #expect(permissionUpdates.contains {
+            $0["permission"] as? String == "microphone"
+                && audioPermissionStates.contains($0["state"] as? String ?? "")
+        })
+        #expect(permissionUpdates.contains {
+            $0["permission"] as? String == "systemAudio"
+                && audioPermissionStates.contains($0["state"] as? String ?? "")
+        })
+        #expect(permissionUpdates.contains { $0["permission"] as? String == "browserMetadata" && $0["state"] as? String == "granted" })
+        #expect(permissionUpdates.contains { $0["permission"] as? String == "documentMetadata" && $0["state"] as? String == "granted" })
+
+        let metadataProbes = actions.filter { $0["type"] as? String == "record_metadata_probe" }
+        #expect(metadataProbes.count == 2)
+        let browserProbe = try #require(metadataProbes.first { $0["permission"] as? String == "browserMetadata" })
+        let documentProbe = try #require(metadataProbes.first { $0["permission"] as? String == "documentMetadata" })
+        #expect(["available", "degraded"].contains(browserProbe["status"] as? String ?? ""))
+        #expect(["available", "degraded"].contains(documentProbe["status"] as? String ?? ""))
+        if browserProbe["status"] as? String == "degraded" {
+            #expect([
+                "accessibility_permission_missing",
+                "frontmost_application_unavailable",
+                "browser_url_ax_attribute_unavailable",
+                "browser_url_apple_events_empty",
+                "browser_url_apple_events_invalid_url",
+                "browser_url_apple_events_permission_denied",
+                "browser_url_apple_events_application_unavailable",
+                "browser_url_apple_events_unavailable",
+            ].contains(browserProbe["rootCause"] as? String ?? ""))
+        }
+        if documentProbe["status"] as? String == "degraded" {
+            #expect([
+                "accessibility_permission_missing",
+                "frontmost_application_unavailable",
+                "document_path_ax_attribute_unavailable",
+            ].contains(documentProbe["rootCause"] as? String ?? ""))
+        }
+    }
+
+    @Test @MainActor func recorderBrowserURLAppleScriptSourcesCoverKnownLocalBrowsers() throws {
+        let safari = try #require(AgenticViewModel.recorderBrowserURLAppleScriptSourceForTesting(
+            bundleIdentifier: "com.apple.Safari"
+        ))
+        #expect(safari.contains("URL of front document"))
+        #expect(safari.contains("com.apple.Safari"))
+
+        let chrome = try #require(AgenticViewModel.recorderBrowserURLAppleScriptSourceForTesting(
+            bundleIdentifier: "com.google.Chrome"
+        ))
+        #expect(chrome.contains("URL of active tab of front window"))
+        #expect(chrome.contains("com.google.Chrome"))
+
+        let whale = try #require(AgenticViewModel.recorderBrowserURLAppleScriptSourceForTesting(
+            bundleIdentifier: "com.naver.Whale"
+        ))
+        #expect(whale.contains("URL of active tab of front window"))
+        #expect(whale.contains("com.naver.Whale"))
+
+        #expect(AgenticViewModel.recorderBrowserURLAppleScriptSourceForTesting(bundleIdentifier: "com.example.Notes") == nil)
+        #expect(AgenticViewModel.recorderBrowserURLAppleScriptRootCauseForTesting(errorNumber: -1743) == "browser_url_apple_events_permission_denied")
+        #expect(AgenticViewModel.recorderBrowserURLAppleScriptRootCauseForTesting(errorNumber: -600) == "browser_url_apple_events_application_unavailable")
+        #expect(AgenticViewModel.recorderBrowserURLAppleScriptRootCauseForTesting(errorNumber: -1708) == "browser_url_apple_events_unavailable")
+    }
+
+    @Test @MainActor func recorderClipboardTriggerCollectorSendsTriggerOnlyEventPayload() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        sidecar.resetSentPayloads()
+
+        viewModel.recordRecorderClipboardTriggerForTesting(
+            changeCount: 42,
+            pasteboardTypes: ["public.utf8-plain-text"],
+            occurredAt: Date(timeIntervalSince1970: 1_782_680_400),
+            appName: "Notes",
+            windowTitle: "Customer note"
+        )
+
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "recorder_clipboard_event_record")
+        let event = try #require(payload["event"] as? [String: Any])
+        #expect((event["id"] as? String)?.hasPrefix("clipboard-") == true)
+        #expect(event["occurredAt"] as? String == "2026-06-28T21:00:00.000Z")
+        #expect(event["eventKind"] as? String == "change")
+        #expect(event["contentType"] as? String == "text")
+        #expect(event["redactionStatus"] as? String == "not_collected")
+        #expect(event["privacyState"] as? String == "trigger_only_local")
+        #expect(event["safeForSearch"] as? Bool == false)
+        #expect(event["safeForMemory"] as? Bool == false)
+        #expect(event["safeForExport"] as? Bool == false)
+        #expect(event["contentText"] == nil)
+        #expect(event["appName"] as? String == "Notes")
+        #expect(event["windowTitle"] as? String == "Customer note")
+        #expect(viewModel.recorderClipboardLastError == nil)
+    }
+
+    @Test @MainActor func recorderClipboardContentOptInPayloadCarriesRawTextForSidecarRedaction() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        sidecar.resetSentPayloads()
+
+        viewModel.recordRecorderClipboardTriggerForTesting(
+            changeCount: 43,
+            pasteboardTypes: ["public.utf8-plain-text"],
+            occurredAt: Date(timeIntervalSince1970: 1_782_680_460),
+            appName: "Notes",
+            windowTitle: "Customer note",
+            contentText: "copied customer line"
+        )
+
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "recorder_clipboard_event_record")
+        let event = try #require(payload["event"] as? [String: Any])
+        #expect(event["contentType"] as? String == "text")
+        #expect(event["contentText"] as? String == "copied customer line")
+        #expect(event["redactionStatus"] == nil)
+        #expect(event["privacyState"] as? String == "raw_local")
+        #expect(event["safeForSearch"] as? Bool == false)
+        #expect(event["safeForMemory"] as? Bool == false)
+        #expect(event["safeForExport"] as? Bool == false)
+        #expect(viewModel.recorderClipboardLastError == nil)
+    }
+
+    @Test @MainActor func recorderMicrophoneAudioChunkPayloadWritesEncryptedMediaAndUsesSidecarRoute() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        sidecar.resetSentPayloads()
+        let recorderRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-audio-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: recorderRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: recorderRoot) }
+
+        let plaintext = Data("local microphone bytes".utf8)
+        let audio = try viewModel.buildEncryptedRecorderMicrophoneAudioChunkForTesting(
+            plaintext: plaintext,
+            recorderRoot: recorderRoot
+        )
+        let asset = try #require(audio["audioAsset"] as? [String: Any])
+        let relativePath = try #require(asset["relativePath"] as? String)
+        let mediaURL = relativePath.split(separator: "/").reduce(recorderRoot) { partial, component in
+            partial.appendingPathComponent(String(component), isDirectory: false)
+        }
+        let ciphertext = try Data(contentsOf: mediaURL)
+        #expect(!ciphertext.isEmpty)
+        #expect(ciphertext != plaintext)
+        #expect(asset["encrypted"] as? Bool == true)
+        let assetSha256 = try #require(asset["sha256"] as? String)
+        #expect(assetSha256.range(of: #"^[a-f0-9]{64}$"#, options: .regularExpression) != nil)
+        let envelope = try #require(asset["encryption"] as? [String: Any])
+        #expect(envelope["algorithm"] as? String == "aes-256-gcm")
+        #expect(envelope["ciphertextSha256"] as? String == "sha256:\(assetSha256)")
+        #expect(audio["source"] as? String == "microphone")
+        #expect(audio["transcriptStatus"] as? String == "local_transcription_unavailable")
+        #expect(audio["consentGrantId"] is NSNull)
+        #expect(audio["visibleNoticeId"] is NSNull)
+        #expect(audio["rawAudioIndicatorState"] as? String == "visible_indicator_active")
+        #expect(audio["localTranscriberName"] is NSNull)
+        #expect(audio["localTranscriberVersion"] is NSNull)
+        #expect(audio["transcriptionTerminalState"] as? String == "local_unavailable_no_cloud_fallback")
+        #expect(audio["redactionStatus"] as? String == "not_redacted")
+        #expect(audio["privacyState"] as? String == "raw_local")
+
+        #expect(viewModel.sendRecorderAudioChunkForTesting(audio) == true)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "recorder_audio_chunk_record")
+        #expect(payload["captureMode"] as? String == "background")
+        #expect(payload["automatic"] as? Bool == true)
+        #expect(payload["background"] as? Bool == true)
+        let sentAudio = try #require(payload["audio"] as? [String: Any])
+        #expect(sentAudio["id"] as? String == audio["id"] as? String)
+        #expect(viewModel.recorderAudioCaptureLastError == nil)
+    }
+
+    @Test @MainActor func recorderMicrophoneAudioChunkPayloadCanCarryLocalOnlyTranscriptSegments() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        sidecar.resetSentPayloads()
+        let recorderRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-audio-transcript-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: recorderRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: recorderRoot) }
+
+        let audio = try viewModel.buildEncryptedRecorderMicrophoneAudioChunkWithLocalTranscriptForTesting(
+            plaintext: Data("local microphone bytes".utf8),
+            transcriptText: "Founder described activation friction",
+            recorderRoot: recorderRoot
+        )
+
+        #expect(audio["transcriptStatus"] as? String == "local_complete")
+        #expect(audio["localTranscriberName"] as? String == "agentic30-local-transcriber-test")
+        #expect(audio["localTranscriberVersion"] as? String == "0.0.0-test")
+        #expect(audio["transcriptionTerminalState"] is NSNull)
+        let segments = try #require(audio["transcriptSegments"] as? [[String: Any]])
+        #expect(segments.count == 1)
+        #expect(segments[0]["text"] as? String == "Founder described activation friction")
+        #expect(segments[0]["redactionStatus"] as? String == "not_redacted")
+        #expect(segments[0]["privacyState"] as? String == "raw_local")
+        #expect(segments[0]["safeForSearch"] as? Bool == false)
+        #expect(segments[0]["safeForMemory"] as? Bool == false)
+        #expect(segments[0]["speakerLabel"] is NSNull)
+        #expect(segments[0]["redactedText"] is NSNull)
+
+        #expect(viewModel.sendRecorderAudioChunkForTesting(audio) == true)
+        let payload = try #require(sidecar.sentPayloads.first)
+        let sentAudio = try #require(payload["audio"] as? [String: Any])
+        #expect(sentAudio["transcriptStatus"] as? String == "local_complete")
+        let sentSegments = try #require(sentAudio["transcriptSegments"] as? [[String: Any]])
+        #expect(sentSegments[0]["text"] as? String == "Founder described activation friction")
+    }
+
+    @Test @MainActor func recorderSystemAudioChunkPayloadWritesEncryptedMediaAndUsesSidecarRoute() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        sidecar.resetSentPayloads()
+        let recorderRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-system-audio-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: recorderRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: recorderRoot) }
+
+        let plaintext = Data("local system audio bytes".utf8)
+        let audio = try viewModel.buildEncryptedRecorderSystemAudioChunkForTesting(
+            plaintext: plaintext,
+            recorderRoot: recorderRoot
+        )
+        let asset = try #require(audio["audioAsset"] as? [String: Any])
+        let relativePath = try #require(asset["relativePath"] as? String)
+        let mediaURL = relativePath.split(separator: "/").reduce(recorderRoot) { partial, component in
+            partial.appendingPathComponent(String(component), isDirectory: false)
+        }
+        let ciphertext = try Data(contentsOf: mediaURL)
+        #expect(!ciphertext.isEmpty)
+        #expect(ciphertext != plaintext)
+        #expect(asset["encrypted"] as? Bool == true)
+        #expect(audio["source"] as? String == "system_audio")
+        #expect(audio["transcriptStatus"] as? String == "local_transcription_unavailable")
+        #expect(audio["rawAudioIndicatorState"] as? String == "visible_indicator_active")
+        #expect(audio["transcriptionTerminalState"] as? String == "local_unavailable_no_cloud_fallback")
+
+        #expect(viewModel.sendRecorderAudioChunkForTesting(audio) == true)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "recorder_audio_chunk_record")
+        let sentAudio = try #require(payload["audio"] as? [String: Any])
+        #expect(sentAudio["id"] as? String == audio["id"] as? String)
+        #expect(sentAudio["source"] as? String == "system_audio")
+        #expect(viewModel.recorderAudioCaptureLastError == nil)
+    }
+
+    @Test @MainActor func recorderAuditRefreshSendsBoundedListPayload() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        sidecar.resetSentPayloads()
+
+        viewModel.refreshRecorderAuditEvents(limit: 150)
+
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "recorder_audit_list")
+        #expect(payload["limit"] as? Int == 100)
+        #expect(viewModel.recorderAuditRefreshing == true)
+        #expect(viewModel.recorderAuditLastError == nil)
+    }
+
+    @Test @MainActor func recorderSensitiveCapturePolicyActionsSendSidecarPatches() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        sidecar.resetSentPayloads()
+
+        viewModel.setRecorderClipboardMode("content_opt_in")
+        viewModel.setRecorderMicrophoneCaptureEnabled(true)
+        viewModel.setRecorderSystemAudioCaptureEnabled(true)
+
+        let actions = sidecar.sentPayloads.compactMap { payload -> [String: Any]? in
+            #expect(payload["type"] as? String == "recorder_control_action")
+            return payload["action"] as? [String: Any]
+        }
+        #expect(actions.count == 3)
+        #expect(actions[0]["type"] as? String == "set_sensitive_capture")
+        #expect(actions[0]["clipboardMode"] as? String == "content_opt_in")
+        #expect(actions[1]["type"] as? String == "set_sensitive_capture")
+        #expect(actions[1]["microphone"] as? Bool == true)
+        #expect(actions[2]["type"] as? String == "set_sensitive_capture")
+        #expect(actions[2]["systemAudio"] as? Bool == true)
+    }
+
+    @Test @MainActor func recorderClipboardPolicyRejectsInvalidModeBeforeSending() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        sidecar.resetSentPayloads()
+
+        viewModel.setRecorderClipboardMode("clipboard_everything")
+
+        #expect(sidecar.sentPayloads.isEmpty)
+        #expect(viewModel.recorderControlLastError == "ERR_RECORDER_SENSITIVE_CAPTURE_INVALID_CLIPBOARD_MODE: clipboard_everything")
     }
 
     @Test @MainActor func readyRestoresWorkspaceSurfacesAfterProviderSettingsSync() throws {
@@ -1715,7 +2055,7 @@ final class AgenticViewModelAuthTests {
                 "Starting workspace scan...",
                 "Found 3 local candidate(s). Asking agents to verify context...",
                 "Claude Sonnet 4.6 (claude-sonnet-4-6): using Read: .agentic30/docs/ICP.md .agentic30/docs/SPEC.md .agentic30/docs/GOAL.md",
-                "GPT 5.1 Codex Mini (gpt-5.1-codex-mini): this is a long provider summary that should not leak raw debug text into onboarding"
+                "GPT 5.5 (gpt-5.5): this is a long provider summary that should not leak raw debug text into onboarding"
             ],
             scanDidComplete: true,
             scanError: nil,
@@ -1739,7 +2079,7 @@ final class AgenticViewModelAuthTests {
         #expect(state.lines[5].status == "✓ 3 evidence sources scanned")
         #expect(!state.lines.contains { $0.status == "Preparing workspace scan..." })
         #expect(!state.lines.contains { $0.status?.contains("Claude Sonnet") == true })
-        #expect(!state.lines.contains { $0.status?.contains("gpt-5.1-codex-mini") == true })
+        #expect(!state.lines.contains { $0.status?.contains("gpt-5.5") == true })
         #expect(state.scanDidComplete)
         #expect(!state.scanDidFail)
     }
@@ -2919,74 +3259,6 @@ final class AgenticViewModelAuthTests {
         #expect(draft.goalText.contains("방법:") == false)
     }
 
-    @Test @MainActor func degradedDay1AlignmentReadinessStillShowsGoalDrafts() async throws {
-        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
-        defer { cleanup() }
-        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
-        let viewModel = Self.makeStartedViewModel(
-            sidecar: sidecar,
-            workspace: workspace,
-            currentDay: 1
-        )
-        let alignmentData = try JSONEncoder().encode(Self.makeReadyDay1AlignmentPlan(
-            includeValidationActionEvidence: false,
-            readinessStatus: "blocked",
-            readinessMissingFields: ["validationAction"],
-            readinessRootCause: "활성/검증 행동 quote 근거가 부족해 Day 1 질문에서 먼저 확인합니다.",
-            qualityGatePassed: false
-        ))
-        let alignmentJSON = try #require(String(data: alignmentData, encoding: .utf8))
-
-        try sidecar.emit("""
-        {
-          "type": "workspace_scan_result",
-          "scanRoot": "\(workspace.path)",
-          "foundCount": 1,
-          "degraded": true,
-          "degradedReason": "insufficient_evidence",
-          "degradedProvider": "codex",
-          "scanBlockedNotice": {
-            "scanRoot": "\(workspace.path)",
-            "provider": "codex",
-            "model": "",
-            "reason": "insufficient_evidence",
-            "message": "활성/검증 행동 quote 근거가 부족해 Day 1 질문을 제한된 근거로 구성했습니다.",
-            "availableProviders": [],
-            "providerReadiness": [],
-            "errorKind": "workspace_scan_insufficient_evidence"
-          },
-          "day1AlignmentPlan": \(alignmentJSON)
-        }
-        """)
-        try await Task.sleep(nanoseconds: 10_000_000)
-
-        #expect(viewModel.scanResult?.day1AlignmentPlan?.readiness?.status == "blocked")
-        #expect(viewModel.scanResult?.foundArtifactCount == 1)
-        #expect(viewModel.day1GoalDrafts.map(\.goalType) == [.buildProduct, .getUsers, .makeMoney])
-        let draft = try #require(viewModel.day1GoalDrafts.first)
-        #expect(draft.customer == "B2B SaaS support lead")
-        #expect(draft.problem == "Slack escalation을 놓침")
-        #expect(draft.validationAction == "Ask three support leads for a paid pilot.")
-        #expect(viewModel.scanBlockedNotice == nil)
-        let notice = try #require(viewModel.scanDegradedNotice)
-        #expect(notice.message.contains("quote 근거가 부족"))
-        let recovery = WorkspaceScanBlockedRecovery(notice: notice)
-        #expect(recovery.primaryAction == .reviewEvidence)
-        #expect(recovery.title == "프로젝트 근거가 부족해요")
-        #expect(recovery.body.contains("quote 근거가 부족"))
-
-        let presentation = Day1ScanWaitPresentation(
-            bootLogState: viewModel.intakeV2BootLogState,
-            hasFolder: true,
-            hasWorkspaceScanResult: viewModel.scanResult != nil,
-            now: Date()
-        )
-        #expect(presentation.state == .scanMergedReady)
-        #expect(presentation.canOpenDay1)
-        #expect(presentation.headerTitle(questionCount: 3) == "Day 1 질문 3개가 준비됐어요")
-        #expect(presentation.primaryCTATitle(questionCount: 3) == "질문 3개 시작하기 →")
-    }
-
     @Test func day1GoalSelectionOfficeHoursContextCopyIsConcise() {
         let selection = Day1GoalSelection(
             goalType: .getUsers,
@@ -3213,7 +3485,6 @@ final class AgenticViewModelAuthTests {
             runtime: ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: nil,
                 iddMode: nil,
@@ -3281,99 +3552,6 @@ final class AgenticViewModelAuthTests {
         viewModel.applySessionUpdatedForTesting(session)
 
         #expect(viewModel.officeHoursLiveStatus(for: session.id) == nil)
-    }
-
-    @Test @MainActor func officeHoursCodexWarmupStartsForActiveSessionAndDedupesContext() throws {
-        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
-        defer { cleanup() }
-        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
-        let viewModel = Self.makeStartedViewModel(
-            sidecar: sidecar,
-            workspace: workspace,
-            currentDay: 1
-        )
-        let prompt = StructuredPromptRequest(
-            requestId: "request-1",
-            sessionId: "office-hours-session",
-            toolName: "agentic30_request_user_input",
-            title: "Office Hours",
-            createdAt: Date(),
-            questions: [
-                StructuredPromptQuestion(
-                    questionId: "office_hours_demand_evidence",
-                    header: "수요 증거",
-                    question: "가장 강한 증거는 무엇인가요?",
-                    helperText: nil,
-                    options: nil,
-                    multiSelect: false,
-                    allowFreeText: true,
-                    requiresFreeText: false,
-                    freeTextPlaceholder: nil,
-                    textMode: .short
-                ),
-            ],
-            generation: StructuredPromptGeneration(mode: "office_hours", docType: "day1_step")
-        )
-        var session = ChatSession(
-            id: "office-hours-session",
-            title: "Office Hours",
-            provider: .codex,
-            model: AgentModelCatalog.defaultModelID(for: .codex),
-            status: .running,
-            createdAt: Date(),
-            updatedAt: Date(),
-            error: nil,
-            messages: [],
-            pendingUserInput: nil,
-            runtime: ChatSessionRuntime(
-                codexThreadId: nil,
-                codexThreadMeta: nil,
-                codexWarm: nil,
-                startupTiming: nil,
-                iddDocumentType: nil,
-                iddMode: nil,
-                officeHours: OfficeHoursRuntime(
-                    active: true,
-                    source: "office_hours_screen",
-                    startedAt: "2026-06-03T00:00:00.000Z",
-                    context: "context v1",
-                    day: 1
-                )
-            )
-        )
-        sidecar.resetSentPayloads()
-
-        viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
-        let firstWarmPayloads = sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }
-        try #require(firstWarmPayloads.count == 1)
-        #expect(firstWarmPayloads[0]["sessionId"] as? String == session.id)
-        #expect(firstWarmPayloads[0]["purpose"] as? String == "office_hours_question")
-        #expect(firstWarmPayloads[0]["context"] as? String == "context v1")
-        #expect(firstWarmPayloads[0]["day"] as? Int == 1)
-        #expect(firstWarmPayloads[0]["source"] as? String == "office_hours_screen")
-
-        session.status = .awaitingInput
-        session.pendingUserInput = prompt
-        viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
-        #expect(sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }.count == 1)
-
-        viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
-        viewModel.applySidecarEventForTesting(try sidecar.decodeEvent("""
-        {
-          "type": "office_hours_status",
-          "sessionId": "\(session.id)",
-          "requestId": "\(prompt.requestId)",
-          "stage": "question_ready",
-          "title": "질문 준비 완료"
-        }
-        """))
-        #expect(sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }.count == 1)
-
-        session.runtime?.officeHours?.context = "context v2"
-        viewModel.applySidecarEventForTesting(try Self.sessionUpdatedEvent(for: session, sidecar: sidecar))
-        let allWarmPayloads = sidecar.sentPayloads.filter { $0["type"] as? String == "warm_session" }
-        try #require(allWarmPayloads.count == 2)
-        #expect(allWarmPayloads[1]["context"] as? String == "context v2")
     }
 
     @Test @MainActor func missionBeforeSessionQueuesStartupAction() throws {

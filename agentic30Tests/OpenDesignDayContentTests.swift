@@ -443,6 +443,25 @@ struct OpenDesignDayContentTests {
         #expect(stillActive.total == 8)
     }
 
+    @Test func officeHoursPostInterviewFollowupPolicyKeepsHandoffClarityVisibleAfterCap() {
+        let clarity = makeOfficeHoursPrompt(
+            sessionID: "session",
+            docType: "day1_handoff_clarity",
+            signalId: "day1_clarity_candidate_or_channel"
+        )
+        let readiness = makeOfficeHoursPrompt(sessionID: "session", docType: "day1_document_readiness")
+        let judge = makeOfficeHoursPrompt(sessionID: "session", docType: "day1_doc_handoff_judge")
+        let ordinary = makeOfficeHoursPrompt(sessionID: "session", docType: "day1_step")
+
+        #expect(OfficeHoursPostInterviewFollowupPromptPolicy.isFollowup(clarity))
+        #expect(OfficeHoursPostInterviewFollowupPromptPolicy.isFollowup(readiness))
+        #expect(OfficeHoursPostInterviewFollowupPromptPolicy.isFollowup(judge))
+        #expect(!OfficeHoursPostInterviewFollowupPromptPolicy.isFollowup(ordinary))
+        #expect(!OfficeHoursPostInterviewFollowupPromptPolicy.showsEvidenceDebtHeading(clarity))
+        #expect(OfficeHoursPostInterviewFollowupPromptPolicy.showsEvidenceDebtHeading(readiness))
+        #expect(OfficeHoursPostInterviewFollowupPromptPolicy.showsEvidenceDebtHeading(judge))
+    }
+
     @Test func officeHoursLiveStatusPolicyShowsDetachedPanelOnlyWithoutStreamingAssistantRow() {
         let runningWithoutAssistant = makeChatSession(
             status: .running,
@@ -1013,7 +1032,6 @@ struct OpenDesignDayContentTests {
         ChatSessionRuntime(
             codexThreadId: nil,
             codexThreadMeta: nil,
-            codexWarm: nil,
             startupTiming: nil,
             iddDocumentType: nil,
             iddMode: nil,

@@ -5,6 +5,11 @@ import {
   assertRecorderCaptureReady,
   evaluateRecorderExpandedMediaPolicy,
 } from "./recorder-control-state.mjs";
+import {
+  assertRawMediaEncryptionPolicy,
+  normalizeMediaCaptureMode,
+} from "./recorder-media-protection.mjs";
+import { redactSecrets } from "./workspace-safety.mjs";
 
 export const RECORDER_AUDIO_CHUNK_SCHEMA_VERSION = 1;
 
@@ -21,6 +26,25 @@ const SEARCH_SAFE_REDACTION_STATUSES = new Set([
   "safe_redacted",
   "allowlisted",
 ]);
+const TRANSCRIPT_REDACTION_STATUS_OVERRIDES = new Set([
+  "none",
+  "not_collected",
+  "not_redacted",
+  "pending",
+]);
+const RAW_AUDIO_INDICATOR_STATES = new Set([
+  "unknown",
+  "visible_indicator_active",
+  "visible_indicator_acknowledged",
+  "not_applicable",
+]);
+const SPEAKER_LABEL_PROVENANCE = new Set([
+  "local_transcriber",
+  "manual",
+  "meeting_app_metadata",
+  "unknown",
+]);
+const LOCAL_UNAVAILABLE_NO_CLOUD_FALLBACK = "local_unavailable_no_cloud_fallback";
 const CLOUD_TRANSCRIPTION_PROVIDERS = new Set([
   "cloud",
   "openai",
@@ -129,13 +153,53 @@ export function normalizeAudioChunk(audio = {}, { createdAt = new Date().toISOSt
   const workspaceId = textOrNull(source.workspaceId ?? source.workspace_id);
   const projectId = textOrNull(source.projectId ?? source.project_id);
   const assetId = requiredText(asset.id ?? asset.assetId ?? asset.asset_id, "audio_asset.id");
+  const automaticCapture = boolean01(source.automatic ?? source.automaticCapture ?? source.automatic_capture);
+  const backgroundCapture = boolean01(
+    source.background ?? source.backgroundCapture ?? source.background_capture ?? source.alwaysOn ?? source.always_on,
+  );
+  const captureMode = normalizeMediaCaptureMode(
+    source.captureMode ?? source.capture_mode
+      ?? source.mediaCaptureMode ?? source.media_capture_mode
+      ?? (automaticCapture ? "automatic" : backgroundCapture ? "background" : ""),
+  );
+  const captureTrigger = textOrNull(source.captureTrigger ?? source.capture_trigger) || audioSource;
+  const encrypted = boolean01(asset.encrypted ?? 0);
+  const assetSha256 = requiredText(asset.sha256, "audio_asset.sha256");
+  const encryptionEnvelope = assertRawMediaEncryptionPolicy({
+    mediaKind: "audio",
+    encrypted: Boolean(encrypted),
+    encryption: asset.encryption ?? asset.encryptionEnvelope ?? asset.encryption_envelope,
+    mediaSha256: assetSha256,
+    captureMode,
+    captureTrigger,
+    fail,
+  });
   const transcriptStatus = normalizeTranscriptStatus(source.transcriptStatus ?? source.transcript_status ?? "not_requested");
+  const consentGrantId = textOrNull(source.consentGrantId ?? source.consent_grant_id);
+  const visibleNoticeId = textOrNull(source.visibleNoticeId ?? source.visible_notice_id);
+  const rawAudioIndicatorState = normalizeRawAudioIndicatorState(
+    source.rawAudioIndicatorState ?? source.raw_audio_indicator_state ?? "unknown",
+  );
+  const localTranscriberName = textOrNull(source.localTranscriberName ?? source.local_transcriber_name);
+  const localTranscriberVersion = textOrNull(source.localTranscriberVersion ?? source.local_transcriber_version);
+  const transcriptionTerminalState = normalizeTranscriptionTerminalState(
+    source.transcriptionTerminalState ?? source.transcription_terminal_state,
+    { transcriptStatus },
+  );
+  assertAudioProvenance({
+    audioSource,
+    transcriptStatus,
+    visibleNoticeId,
+    localTranscriberName,
+    localTranscriberVersion,
+  });
   const segments = normalizeTranscriptSegments(source.transcriptSegments ?? source.transcript_segments ?? [], {
     audioChunkId: requiredText(source.id ?? source.audioChunkId ?? source.audio_chunk_id, "id"),
     workspaceId,
     projectId,
     chunkStartedAt: startedAt,
     chunkEndedAt: endedAt,
+    transcriptStatus,
     createdAt,
   });
   if (transcriptStatus === "local_complete" && segments.length === 0) {
@@ -149,9 +213,13 @@ export function normalizeAudioChunk(audio = {}, { createdAt = new Date().toISOSt
     id: assetId,
     asset_type: "audio_m4a",
     relative_path: normalizeAudioMediaRelativePath(asset.relativePath ?? asset.relative_path),
-    sha256: requiredText(asset.sha256, "audio_asset.sha256"),
+    sha256: assetSha256,
     byte_size: positiveInteger(asset.byteSize ?? asset.byte_size, "audio_asset.byte_size"),
-    encrypted: boolean01(asset.encrypted ?? 0),
+    encrypted,
+    encryption_key_id: encryptionEnvelope?.key_id ?? null,
+    encryption_alg: encryptionEnvelope?.algorithm ?? null,
+    encryption_nonce: encryptionEnvelope?.nonce ?? null,
+    encryption_tag: encryptionEnvelope?.tag ?? null,
     workspace_id: workspaceId,
     project_id: projectId,
     created_at: toIso(asset.createdAt ?? asset.created_at ?? createdAt),
@@ -166,6 +234,12 @@ export function normalizeAudioChunk(audio = {}, { createdAt = new Date().toISOSt
     source: audioSource,
     audio_asset_id: assetId,
     transcript_status: transcriptStatus,
+    consent_grant_id: consentGrantId,
+    visible_notice_id: visibleNoticeId,
+    raw_audio_indicator_state: rawAudioIndicatorState,
+    local_transcriber_name: localTranscriberName,
+    local_transcriber_version: localTranscriberVersion,
+    transcription_terminal_state: transcriptionTerminalState,
     redaction_status: requiredText(source.redactionStatus ?? source.redaction_status ?? "not_redacted", "redaction_status"),
     privacy_state: requiredText(source.privacyState ?? source.privacy_state ?? "raw_local", "privacy_state"),
     created_at: toIso(source.createdAt ?? source.created_at ?? createdAt),
@@ -186,6 +260,7 @@ function normalizeTranscriptSegments(value, {
   projectId,
   chunkStartedAt,
   chunkEndedAt,
+  transcriptStatus,
   createdAt,
 } = {}) {
   if (!Array.isArray(value)) {
@@ -197,9 +272,19 @@ function normalizeTranscriptSegments(value, {
       "ERR_RECORDER_AUDIO_INVALID_TRANSCRIPT_SEGMENT",
       "transcript segment must be an object",
     );
-    const safeForSearch = boolean01(source.safeForSearch ?? source.safe_for_search);
-    const redactionStatus = requiredText(source.redactionStatus ?? source.redaction_status, "transcript_segment.redaction_status");
-    const redactedText = textOrNull(source.redactedText ?? source.redacted_text);
+    const rawText = requiredText(source.text, "transcript_segment.text");
+    const transcriptRedaction = normalizeTranscriptRedaction({
+      rawText,
+      redactedText: source.redactedText ?? source.redacted_text,
+      redactionStatus: source.redactionStatus ?? source.redaction_status,
+      transcriptStatus,
+    });
+    const safeForSearch = boolean01(source.safeForSearch ?? source.safe_for_search)
+      || (transcriptRedaction.searchEligible ? 1 : 0);
+    const safeForMemory = boolean01(source.safeForMemory ?? source.safe_for_memory)
+      || (transcriptRedaction.searchEligible ? 1 : 0);
+    const redactionStatus = transcriptRedaction.redactionStatus;
+    const redactedText = transcriptRedaction.redactedText;
     if (safeForSearch && !redactedText) {
       fail("ERR_RECORDER_AUDIO_TRANSCRIPT_SEARCH_REQUIRES_REDACTED_TEXT", "safe_for_search transcript segment requires redacted_text");
     }
@@ -226,12 +311,18 @@ function normalizeTranscriptSegments(value, {
       started_at: startedAt,
       ended_at: endedAt,
       speaker_label: textOrNull(source.speakerLabel ?? source.speaker_label),
-      text: requiredText(source.text, "transcript_segment.text"),
+      transcript_status: transcriptStatus,
+      speaker_label_provenance: normalizeSpeakerLabelProvenance(
+        source.speakerLabelProvenance ?? source.speaker_label_provenance,
+        { speakerLabel: textOrNull(source.speakerLabel ?? source.speaker_label) },
+      ),
+      text: rawText,
       redacted_text: redactedText,
       redaction_status: redactionStatus,
       privacy_state: requiredText(source.privacyState ?? source.privacy_state ?? "raw_local", "transcript_segment.privacy_state"),
       safe_for_search: safeForSearch,
-      safe_for_memory: boolean01(source.safeForMemory ?? source.safe_for_memory),
+      safe_for_memory: safeForMemory,
+      deletion_source_id: textOrNull(source.deletionSourceId ?? source.deletion_source_id),
       created_at: toIso(source.createdAt ?? source.created_at ?? createdAt),
       deleted_at: null,
     };
@@ -278,6 +369,57 @@ function assertLocalTranscriptionOnly(source) {
   }
 }
 
+function normalizeTranscriptRedaction({
+  rawText,
+  redactedText,
+  redactionStatus,
+  transcriptStatus,
+} = {}) {
+  let normalizedRedactedText = textOrNull(redactedText);
+  let normalizedStatus = cleanToken(redactionStatus);
+  const canDeriveLocalRedaction = transcriptStatus === "local_complete"
+    && (!normalizedRedactedText || !normalizedStatus || TRANSCRIPT_REDACTION_STATUS_OVERRIDES.has(normalizedStatus));
+  if (canDeriveLocalRedaction) {
+    const derivedRedactedText = redactRecorderTranscriptText(rawText);
+    normalizedRedactedText = normalizedRedactedText || derivedRedactedText;
+    if (!normalizedStatus || TRANSCRIPT_REDACTION_STATUS_OVERRIDES.has(normalizedStatus)) {
+      normalizedStatus = derivedRedactedText === rawText ? "safe" : "redacted";
+    }
+  }
+  normalizedStatus = requiredText(normalizedStatus, "transcript_segment.redaction_status");
+  return {
+    redactedText: normalizedRedactedText,
+    redactionStatus: normalizedStatus,
+    searchEligible: Boolean(normalizedRedactedText && SEARCH_SAFE_REDACTION_STATUSES.has(normalizedStatus)),
+  };
+}
+
+function redactRecorderTranscriptText(value = "") {
+  let text = redactSecrets(String(value ?? ""));
+  text = text.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "‹redacted:email›");
+  text = text.replace(/\bhttps?:\/\/[^\s<>"')]+/gi, "‹redacted:url›");
+  text = text.replace(/\b(?:\+?\d[\d\s().-]{7,}\d)\b/g, "‹redacted:phone›");
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function assertAudioProvenance({
+  audioSource,
+  transcriptStatus,
+  visibleNoticeId,
+  localTranscriberName,
+  localTranscriberVersion,
+} = {}) {
+  if (audioSource === "meeting_audio" && !visibleNoticeId) {
+    fail("ERR_RECORDER_AUDIO_MEETING_NOTICE_REQUIRED", "meeting_audio chunks require visible_notice_id");
+  }
+  if (transcriptStatus === "local_complete" && (!localTranscriberName || !localTranscriberVersion)) {
+    fail(
+      "ERR_RECORDER_AUDIO_LOCAL_TRANSCRIBER_REQUIRED",
+      "local_complete transcript status requires local_transcriber_name and local_transcriber_version",
+    );
+  }
+}
+
 function normalizeAudioMediaRelativePath(value) {
   const raw = requiredText(value, "audio_asset.relative_path").replace(/\\/g, "/");
   if (path.posix.isAbsolute(raw)) {
@@ -309,6 +451,18 @@ function audioChunkReceipt(row, mediaAsset) {
     audio_asset_id: row.audio_asset_id,
     transcriptStatus: row.transcript_status,
     transcript_status: row.transcript_status,
+    consentGrantId: row.consent_grant_id,
+    consent_grant_id: row.consent_grant_id,
+    visibleNoticeId: row.visible_notice_id,
+    visible_notice_id: row.visible_notice_id,
+    rawAudioIndicatorState: row.raw_audio_indicator_state,
+    raw_audio_indicator_state: row.raw_audio_indicator_state,
+    localTranscriberName: row.local_transcriber_name,
+    local_transcriber_name: row.local_transcriber_name,
+    localTranscriberVersion: row.local_transcriber_version,
+    local_transcriber_version: row.local_transcriber_version,
+    transcriptionTerminalState: row.transcription_terminal_state,
+    transcription_terminal_state: row.transcription_terminal_state,
     redactionStatus: row.redaction_status,
     redaction_status: row.redaction_status,
     privacyState: row.privacy_state,
@@ -341,6 +495,10 @@ function transcriptSegmentReceipt(row) {
     ended_at: row.ended_at,
     speakerLabel: row.speaker_label,
     speaker_label: row.speaker_label,
+    transcriptStatus: row.transcript_status,
+    transcript_status: row.transcript_status,
+    speakerLabelProvenance: row.speaker_label_provenance,
+    speaker_label_provenance: row.speaker_label_provenance,
     redactedText: row.redacted_text,
     redacted_text: row.redacted_text,
     redactionStatus: row.redaction_status,
@@ -351,6 +509,8 @@ function transcriptSegmentReceipt(row) {
     safe_for_search: Boolean(row.safe_for_search),
     safeForMemory: Boolean(row.safe_for_memory),
     safe_for_memory: Boolean(row.safe_for_memory),
+    deletionSourceId: row.deletion_source_id,
+    deletion_source_id: row.deletion_source_id,
     rawTranscriptExposed: false,
     raw_transcript_exposed: false,
   };
@@ -387,6 +547,38 @@ function normalizeTranscriptStatus(value) {
   const status = cleanToken(value);
   if (TRANSCRIPT_STATUSES.has(status)) return status;
   fail("ERR_RECORDER_AUDIO_UNKNOWN_TRANSCRIPT_STATUS", `unknown recorder transcript_status: ${status || "(missing)"}`);
+}
+
+function normalizeRawAudioIndicatorState(value) {
+  const state = cleanToken(value);
+  if (RAW_AUDIO_INDICATOR_STATES.has(state)) return state;
+  fail("ERR_RECORDER_AUDIO_UNKNOWN_INDICATOR_STATE", `unknown recorder raw_audio_indicator_state: ${state || "(missing)"}`);
+}
+
+function normalizeTranscriptionTerminalState(value, { transcriptStatus } = {}) {
+  const state = cleanToken(value);
+  if (!state && transcriptStatus === "local_transcription_unavailable") {
+    return LOCAL_UNAVAILABLE_NO_CLOUD_FALLBACK;
+  }
+  if (!state) return null;
+  if (transcriptStatus !== "local_transcription_unavailable") {
+    fail(
+      "ERR_RECORDER_AUDIO_TRANSCRIPTION_TERMINAL_STATE_MISMATCH",
+      "transcription_terminal_state is only valid when transcript_status=local_transcription_unavailable",
+    );
+  }
+  if (state === LOCAL_UNAVAILABLE_NO_CLOUD_FALLBACK) return state;
+  fail("ERR_RECORDER_AUDIO_UNKNOWN_TRANSCRIPTION_TERMINAL_STATE", `unknown recorder transcription_terminal_state: ${state}`);
+}
+
+function normalizeSpeakerLabelProvenance(value, { speakerLabel } = {}) {
+  const provenance = cleanToken(value);
+  if (!speakerLabel && !provenance) return null;
+  if (speakerLabel && !provenance) {
+    fail("ERR_RECORDER_AUDIO_SPEAKER_LABEL_PROVENANCE_REQUIRED", "speaker_label requires speaker_label_provenance");
+  }
+  if (SPEAKER_LABEL_PROVENANCE.has(provenance)) return provenance;
+  fail("ERR_RECORDER_AUDIO_UNKNOWN_SPEAKER_LABEL_PROVENANCE", `unknown speaker_label_provenance: ${provenance || "(missing)"}`);
 }
 
 function requiredText(value, fieldName) {

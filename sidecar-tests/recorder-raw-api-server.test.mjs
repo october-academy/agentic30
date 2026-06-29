@@ -10,10 +10,16 @@ import {
   createRecorderRawApiServer,
 } from "../sidecar/recorder-raw-api-server.mjs";
 import {
+  createMemoryRecorderMediaKeyStore,
+  encryptRecorderMediaBytes,
+} from "../sidecar/recorder-media-encryption.mjs";
+import {
   RECORDER_STORE_SCHEMA_VERSION,
   RecorderStore,
 } from "../sidecar/recorder-store.mjs";
 import { persistBuiltInRecorderPipes } from "../sidecar/recorder-pipes.mjs";
+
+const TEST_RECORDER_MEDIA_KEY = Buffer.alloc(32, 11);
 
 async function makeContext() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-recorder-raw-api-server-"));
@@ -36,7 +42,7 @@ async function insertFrameFixture(store) {
     relative_path: mediaRelativePath,
     sha256: "sha256-frame-1",
     byte_size: 4,
-    encrypted: 1,
+    encrypted: 0,
     workspace_id: "workspace-1",
     project_id: "project-1",
     created_at: "2026-06-28T10:00:00.000Z",
@@ -74,18 +80,78 @@ async function insertFrameFixture(store) {
   });
 }
 
+async function insertEncryptedFrameFixture(store, key) {
+  const plaintext = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  const encrypted = encryptRecorderMediaBytes(plaintext, {
+    key,
+    keyId: "test-media-key",
+    randomBytes: () => Buffer.alloc(12, 7),
+  });
+  const mediaRelativePath = "media/frames/frame-encrypted.jpg.enc";
+  const mediaPath = path.join(path.dirname(store.dbPath), ...mediaRelativePath.split("/"));
+  await fs.mkdir(path.dirname(mediaPath), { recursive: true });
+  await fs.writeFile(mediaPath, encrypted.ciphertext);
+  store.insertRecord("media_assets", {
+    id: "asset-frame-encrypted",
+    asset_type: "frame_jpeg",
+    relative_path: mediaRelativePath,
+    sha256: encrypted.encryption.ciphertextSha256,
+    byte_size: encrypted.ciphertext.length,
+    encrypted: 1,
+    encryption_key_id: encrypted.encryption.keyId,
+    encryption_alg: encrypted.encryption.algorithm,
+    encryption_nonce: encrypted.encryption.nonce,
+    encryption_tag: encrypted.encryption.tag,
+    workspace_id: "workspace-1",
+    project_id: "project-1",
+    created_at: "2026-06-28T10:00:00.000Z",
+  });
+  store.insertRecord("frames", {
+    id: "frame-encrypted",
+    schema_version: RECORDER_STORE_SCHEMA_VERSION,
+    workspace_id: "workspace-1",
+    project_id: "project-1",
+    captured_at: "2026-06-28T10:00:02.000Z",
+    monitor_id: "main",
+    capture_trigger: "auto_swift_screencapturekit_interval",
+    app_name: "Codex",
+    window_title: "Founder Memory OS",
+    snapshot_asset_id: "asset-frame-encrypted",
+    snapshot_sha256: encrypted.encryption.ciphertextSha256,
+    content_hash: "content-hash-encrypted",
+    text_source: "screen_capture",
+    redaction_status: "not_redacted",
+    privacy_state: "raw_local",
+    data_class: "frame",
+    safe_for_search: 0,
+    safe_for_memory: 0,
+    safe_for_export: 0,
+    created_at: "2026-06-28T10:00:03.000Z",
+  });
+}
+
 async function insertAudioTranscriptFixture(store) {
+  const plaintext = Buffer.from("local audio bytes");
+  const encrypted = encryptRecorderMediaBytes(plaintext, {
+    key: TEST_RECORDER_MEDIA_KEY,
+    keyId: "test-media-key",
+    randomBytes: () => Buffer.alloc(12, 8),
+  });
   const mediaRelativePath = "media/audio/audio-1.m4a";
   const mediaPath = path.join(path.dirname(store.dbPath), ...mediaRelativePath.split("/"));
   await fs.mkdir(path.dirname(mediaPath), { recursive: true });
-  await fs.writeFile(mediaPath, Buffer.from("local audio bytes"));
+  await fs.writeFile(mediaPath, encrypted.ciphertext);
   store.insertRecord("media_assets", {
     id: "asset-audio-1",
     asset_type: "audio_m4a",
     relative_path: mediaRelativePath,
-    sha256: "sha256-audio-1",
-    byte_size: 17,
+    sha256: encrypted.encryption.ciphertextSha256,
+    byte_size: encrypted.ciphertext.length,
     encrypted: 1,
+    encryption_key_id: encrypted.encryption.keyId,
+    encryption_alg: encrypted.encryption.algorithm,
+    encryption_nonce: encrypted.encryption.nonce,
+    encryption_tag: encrypted.encryption.tag,
     workspace_id: "workspace-1",
     project_id: "project-1",
     created_at: "2026-06-28T10:10:00.000Z",
@@ -99,6 +165,11 @@ async function insertAudioTranscriptFixture(store) {
     source: "meeting_audio",
     audio_asset_id: "asset-audio-1",
     transcript_status: "local_complete",
+    consent_grant_id: "consent-audio-1",
+    visible_notice_id: "notice-meeting-audio-1",
+    raw_audio_indicator_state: "visible_indicator_active",
+    local_transcriber_name: "agentic30-local-transcriber-test",
+    local_transcriber_version: "0.0.0-test",
     redaction_status: "redacted",
     privacy_state: "searchable_local",
     created_at: "2026-06-28T10:16:00.000Z",
@@ -111,6 +182,8 @@ async function insertAudioTranscriptFixture(store) {
     started_at: "2026-06-28T10:11:00.000Z",
     ended_at: "2026-06-28T10:12:00.000Z",
     speaker_label: "customer",
+    transcript_status: "local_complete",
+    speaker_label_provenance: "local_transcriber",
     text: "raw transcript customer@example.com secret phrase",
     redacted_text: "customer described activation friction",
     redaction_status: "redacted",
@@ -392,11 +465,14 @@ test("recorder raw API serves health, redacted search, and frame metadata with a
 
 test("recorder raw API gates raw frame text/image and never exposes filesystem paths", async () => {
   const { store } = await makeContext();
+  const mediaKey = Buffer.alloc(32, 11);
+  await insertEncryptedFrameFixture(store, mediaKey);
   const frameToken = issueToken(store, ["frame"], "frame");
   const rawFrameToken = issueToken(store, ["raw_frame"], "raw-frame");
   const api = await createRecorderRawApiServer({
     store,
     now: () => new Date("2026-06-28T10:00:30.000Z"),
+    mediaKeyStore: createMemoryRecorderMediaKeyStore(mediaKey),
   });
   try {
     const denied = await jsonFetch(api.url, "/recorder/frames/frame-1/image", frameToken.token);
@@ -420,12 +496,25 @@ test("recorder raw API gates raw frame text/image and never exposes filesystem p
     assert.equal(image.headers.get("x-agentic30-recorder-media-path"), null);
     assert.deepEqual([...new Uint8Array(await image.arrayBuffer())], [0xff, 0xd8, 0xff, 0xd9]);
 
+    const encryptedImage = await fetch(`${api.url}/recorder/frames/frame-encrypted/image`, {
+      headers: {
+        Origin: "http://127.0.0.1:5138",
+        Authorization: `Bearer ${rawFrameToken.token}`,
+        "x-request-id": "request-frame-encrypted-image-ok",
+      },
+    });
+    assert.equal(encryptedImage.status, 200);
+    assert.equal(encryptedImage.headers.get("content-type"), "image/jpeg");
+    assert.equal(encryptedImage.headers.get("x-agentic30-recorder-media-path"), null);
+    assert.deepEqual([...new Uint8Array(await encryptedImage.arrayBuffer())], [0xff, 0xd8, 0xff, 0xd9]);
+
     const audits = store.listRecords("recorder_audit");
-    assert.equal(audits.length, 3);
+    assert.equal(audits.length, 4);
     assert.equal(audits[0].decision, "denied");
     assert.equal(audits[0].reason, "ERR_RECORDER_RAW_API_PERMISSION_DENIED");
     assert.equal(audits[1].decision, "accepted");
     assert.equal(audits[2].decision, "accepted");
+    assert.equal(audits[3].decision, "accepted");
   } finally {
     await api.close();
     store.close();
@@ -440,6 +529,7 @@ test("recorder raw API serves audio, transcript, and memory DTOs without raw tex
   const api = await createRecorderRawApiServer({
     store,
     now: () => new Date("2026-06-28T10:00:30.000Z"),
+    mediaKeyStore: createMemoryRecorderMediaKeyStore(TEST_RECORDER_MEDIA_KEY),
   });
   try {
     const memory = await jsonFetch(api.url, "/recorder/memory?workspaceId=workspace-1", searchToken.token);
@@ -458,6 +548,8 @@ test("recorder raw API serves audio, transcript, and memory DTOs without raw tex
     assert.equal(audio.body.resultCount, 1);
     assert.equal(audio.body.audio[0].id, "audio-1");
     assert.equal(audio.body.audio[0].transcriptStatus, "local_complete");
+    assert.equal(audio.body.audio[0].rawAudioIndicatorState, "visible_indicator_active");
+    assert.equal(audio.body.audio[0].localTranscriberName, "agentic30-local-transcriber-test");
     const audioJson = JSON.stringify(audio.body);
     assert.doesNotMatch(audioJson, /media\/audio/);
     assert.doesNotMatch(audioJson, /local audio bytes/);
@@ -466,7 +558,7 @@ test("recorder raw API serves audio, transcript, and memory DTOs without raw tex
     const audioById = await jsonFetch(api.url, "/recorder/audio/audio-1", audioToken.token);
     assert.equal(audioById.response.status, 200);
     assert.equal(audioById.body.audio.id, "audio-1");
-    assert.equal(audioById.body.audio.mediaSha256, "sha256-audio-1");
+    assert.match(audioById.body.audio.mediaSha256, /^sha256:[a-f0-9]{64}$/);
 
     const deniedAudioMedia = await jsonFetch(api.url, "/recorder/audio/audio-1/media", audioToken.token);
     assert.equal(deniedAudioMedia.response.status, 403);
@@ -489,6 +581,7 @@ test("recorder raw API serves audio, transcript, and memory DTOs without raw tex
     assert.equal(transcripts.body.resultCount, 1);
     assert.equal(transcripts.body.transcripts[0].redactedText, "customer described activation friction");
     assert.equal(transcripts.body.transcripts[0].speakerLabel, "customer");
+    assert.equal(transcripts.body.transcripts[0].speakerLabelProvenance, "local_transcriber");
     const transcriptJson = JSON.stringify(transcripts.body);
     assert.doesNotMatch(transcriptJson, /raw transcript/);
     assert.doesNotMatch(transcriptJson, /secret phrase/);

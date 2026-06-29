@@ -10,7 +10,7 @@ import {
 
 const SCAN_MODELS = {
   claude: "claude-sonnet-4-6",
-  codex: "gpt-5.1-codex-mini",
+  codex: "gpt-5.5",
   gemini: "gemini-3.5-flash",
   cursor: "composer-2.5",
 };
@@ -30,7 +30,7 @@ test("a settings provider narrows the scan to exactly that one provider", () => 
     { provider: "claude", model: "claude-sonnet-4-6" },
   ]);
   assert.deepEqual(selectScanProviderTargets("codex", SCAN_MODELS), [
-    { provider: "codex", model: "gpt-5.1-codex-mini" },
+    { provider: "codex", model: "gpt-5.5" },
   ]);
   assert.deepEqual(selectScanProviderTargets("gemini", SCAN_MODELS), [
     { provider: "gemini", model: "gemini-3.5-flash" },
@@ -41,27 +41,27 @@ test("a settings provider narrows the scan to exactly that one provider", () => 
 });
 
 test("an empty or unknown settings provider defaults to codex only", () => {
-  const codexOnly = [{ provider: "codex", model: "gpt-5.1-codex-mini" }];
+  const codexOnly = [{ provider: "codex", model: "gpt-5.5" }];
   assert.deepEqual(selectScanProviderTargets("", SCAN_MODELS), codexOnly);
   assert.deepEqual(selectScanProviderTargets("openai", SCAN_MODELS), codexOnly);
   assert.deepEqual(selectScanProviderTargets(undefined, SCAN_MODELS), codexOnly);
 });
 
 test("a known provider missing from the model map defaults to codex only", () => {
-  const partial = { claude: "claude-sonnet-4-6", codex: "gpt-5.1-codex-mini" };
+  const partial = { claude: "claude-sonnet-4-6", codex: "gpt-5.5" };
   assert.deepEqual(selectScanProviderTargets("gemini", partial), [
-    { provider: "codex", model: "gpt-5.1-codex-mini" },
+    { provider: "codex", model: "gpt-5.5" },
   ]);
 });
 
 test("workspace scan model maps can omit cursor so a cursor preference falls back to codex", () => {
   const workspaceScanModels = {
     claude: "claude-sonnet-4-6",
-    codex: "gpt-5.1-codex-mini",
+    codex: "gpt-5.5",
     gemini: "gemini-3.5-flash",
   };
   assert.deepEqual(selectScanProviderTargets("cursor", workspaceScanModels), [
-    { provider: "codex", model: "gpt-5.1-codex-mini" },
+    { provider: "codex", model: "gpt-5.5" },
   ]);
 });
 

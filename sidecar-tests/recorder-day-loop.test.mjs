@@ -21,6 +21,7 @@ async function makeContext() {
 }
 
 function frameEnvelope(overrides = {}) {
+  const snapshotSha256 = "f".repeat(64);
   return {
     id: "frame-1",
     workspaceId: "workspace-1",
@@ -45,9 +46,16 @@ function frameEnvelope(overrides = {}) {
     snapshot: {
       id: "asset-frame-1",
       relativePath: "media/frames/frame-1.jpg",
-      sha256: "sha256-frame-1",
+      sha256: snapshotSha256,
       byteSize: 128,
       encrypted: true,
+      encryption: {
+        algorithm: "aes-256-gcm",
+        keyId: "test-media-key",
+        nonce: Buffer.alloc(12, 5).toString("base64"),
+        tag: Buffer.alloc(16, 6).toString("base64"),
+        ciphertextSha256: `sha256:${snapshotSha256}`,
+      },
     },
     ...overrides,
   };

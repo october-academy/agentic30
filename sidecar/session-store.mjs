@@ -5,10 +5,12 @@ import { randomUUID } from "node:crypto";
 export const SESSION_STORE_SCHEMA_VERSION = 2;
 export const LEGACY_DEFAULT_CODEX_MODEL = "gpt-5.4";
 export const PREVIOUS_DEFAULT_CODEX_MODEL = "gpt-5.2-codex";
+export const REMOVED_CODEX_MINI_MODEL = "gpt-5.1-codex-mini";
 export const CURRENT_DEFAULT_CODEX_MODEL = "gpt-5.5";
 const LEGACY_DEFAULT_CODEX_MODELS = new Set([
   LEGACY_DEFAULT_CODEX_MODEL,
   PREVIOUS_DEFAULT_CODEX_MODEL,
+  REMOVED_CODEX_MINI_MODEL,
 ]);
 
 export function normalizePersistedSessionsPayload(parsed) {

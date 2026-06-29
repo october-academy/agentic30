@@ -861,7 +861,6 @@ struct StructuredPromptSubmissionStateTests {
         let runtime = ChatSessionRuntime(
             codexThreadId: nil,
             codexThreadMeta: nil,
-            codexWarm: nil,
             startupTiming: nil,
             iddDocumentType: "goal",
             iddMode: "day1_handoff"

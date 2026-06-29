@@ -5,8 +5,15 @@
 > Scope of this doc: the **Founder Memory OS** substrate (always-on local recorder → search/memory → evidence → proof). Schema and FTS are specified to be implementable on the current stack; Section 16 records the feasibility grounding and the reuse-vs-net-new split.
 > Product target: macOS-only execution OS for solo developers
 > Operational prompt: `docs/specs/agentic30_screenpipe_benchmarking_GOAL_PROMPT.md`
+> Compact session context: `docs/specs/agentic30_screenpipe_benchmarking_CONTEXT.md`
 > Benchmark sources: local `../screenpipe`, DeepWiki `screenpipe/screenpipe`, and `.insane-review/`
 > Companion permission spec: `docs/specs/agentic30_macos_permission_drag_helper_SPEC.md`
+
+> **Context-budget note:** this full SPEC is canonical, but routine goal-prompt
+> sessions should not read it in full. Start with the compact context file, then
+> open only targeted sections or the Section 17 progress tail unless changing
+> scope, architecture, schemas, privacy/proof rules, gate definitions, or making
+> a final implementation-readiness claim.
 
 ## 1. Decision Summary
 
@@ -1785,3 +1792,207 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
 - Added authenticated WebSocket `recorder_audio_chunk_record`, which loads persisted recorder control state, writes through `RecorderStore`, and returns a non-proof receipt with `proofAcceptedByAudioChunk=false` and `proofLedgerWriteAllowed=false`.
 - Focused coverage now proves opted-in microphone audio ingest, redacted-only transcript search, raw transcript non-leakage, disabled/missing-permission failures, cloud-transcription fallback rejection, unsafe media path rejection, duplicate protection, and the WebSocket runtime route smoke.
 - Remaining Gate C gaps include Swift-side clipboard/audio collectors, UI controls for clipboard/audio policy, browser/document metadata runtime probes, media encryption/key management before always-on raw background capture, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C browser/document metadata runtime-probe state slice
+
+- Tightened expanded-media readiness so Browser metadata and Document metadata are no longer considered available from permission state alone.
+- Added persisted `metadataProbes` / `metadata_probes` to recorder control state plus `record_metadata_probe` control actions for `browserMetadata` and `documentMetadata`; probes can report `available`, `unavailable`, or `degraded`.
+- Unavailable/degraded metadata probe results must include a named root cause, otherwise the control action fails with `ERR_RECORDER_CONTROL_METADATA_PROBE_ROOT_CAUSE_REQUIRED`.
+- `evaluateRecorderExpandedMediaPolicy()` now reports `probe_unverified` while permission is granted but no runtime probe has succeeded, and reports probe-root-cause degraded states when the runtime probe fails.
+- Added `assertRecorderMetadataAvailable()` so future metadata-dependent capture paths can fail with named root cause `ERR_RECORDER_METADATA_CAPTURE_UNAVAILABLE` instead of silently degrading or pretending metadata exists.
+- The existing authenticated WebSocket `recorder_control_action` route now carries metadata probe actions through the same persisted control-state boundary; runtime coverage drives the probe route before the recorder becomes fully `ready`.
+- Focused coverage now proves probe-unverified degraded readiness, unavailable probe root-cause enforcement, explicit metadata-required failure, available browser/document probe recovery, recorder runtime bridge behavior, and continued Day 1 request-flow safety.
+- Remaining Gate C gaps include Swift-side clipboard/audio collectors, UI controls for clipboard/audio policy, Swift runtime emission of browser/document probes, media encryption/key management before always-on raw background capture, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C raw-media encryption guard slice
+
+- Added shared raw-media protection in `sidecar/recorder-media-protection.mjs` and wired it into frame and audio ingest before any `media_assets`, `frames`, or `audio_chunks` rows are persisted.
+- Automatic/background raw frame and audio capture now fails closed unless the media asset declares `encrypted=true`; failures use named root cause `ERR_RECORDER_MEDIA_ENCRYPTION_REQUIRED`.
+- Manual or explicit user-triggered capture remains allowed under the documented host-user trust boundary until full key management lands; generic triggers such as `app_switch` are not treated as background capture without an explicit automatic/background mode.
+- The authenticated WebSocket frame/audio ingest handlers now carry root-level capture hints (`captureMode`, `captureTrigger`, `automatic`, `background`) into the nested envelope before normalization, so bridge callers cannot bypass the guard by placing mode metadata outside the payload body.
+- Swift automatic frame capture is also fail-fast gated before `ScreenCaptureKit` writes a JPEG. Until encrypted media writing/key management lands, auto-arm/start records `ERR_RECORDER_MEDIA_ENCRYPTION_REQUIRED`, sets the local stop flag, and does not write raw background media to disk; manual capture still sends `captureMode=manual`.
+- Focused coverage now proves unencrypted automatic frame ingest and unencrypted background audio ingest fail before partial writes, while encrypted background media continues through the same sidecar-owned store boundary.
+- Runtime WebSocket coverage now proves root-level frame/audio capture hints are merged into the nested payload before normalization, so an unencrypted automatic/background bridge request emits `ERR_RECORDER_MEDIA_ENCRYPTION_REQUIRED` and persists no frame, audio, or media-asset rows.
+- Verification passed: `node --check` for changed sidecar/test modules, focused frame/audio recorder tests (`10/10`), recorder raw API runtime smoke (`1/1`), full recorder shard (`88/88`), `sidecar-tests/request-emit.test.mjs` (`68/68`), `npm run check:public-safety`, `npm run build:sidecar`, and Swift unit tests with isolated DerivedData (`559/559`).
+- Remaining Gate C gaps include actual encryption/key generation and Keychain-backed key management, encrypted Swift automatic/background media output, Swift-side clipboard/audio collectors, UI controls for clipboard/audio policy, Swift runtime metadata probes, raw API audit UI, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C Swift browser/document metadata probe emission slice
+
+- Extended Swift's user-triggered recorder permission probe so, after recorder consent is granted, it emits `record_metadata_probe` actions for `browserMetadata` and `documentMetadata` through the existing authenticated `recorder_control_action` bridge.
+- The host also marks browser/document metadata permission states as `granted` for the local probe path, so sidecar readiness can report the probe result itself instead of staying at generic `unknown` permission state.
+- Probe results are intentionally conservative: Swift currently records both metadata surfaces as `degraded` with named root causes `browser_url_extraction_not_implemented` and `document_path_extraction_not_implemented`; it does not pretend URL/path extraction is available from weak app/window-title signals.
+- Pre-consent `Check` still mirrors only core macOS TCC state and does not send metadata probe actions that the sidecar would reject for missing consent.
+- Added Swift unit coverage proving consented permission refresh sends browser/document metadata permission updates and degraded `record_metadata_probe` payloads with the expected root causes.
+- Verification passed: Swift unit tests with isolated DerivedData (`560/560`), `git diff --check` for the changed Swift/SPEC files, and `npm run check:public-safety`.
+- Remaining Gate C gaps include actual browser URL and document path extraction, Swift-side clipboard/audio collectors, UI controls for clipboard/audio policy, actual encryption/key generation and Keychain-backed key management, raw API audit UI, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C Swift sensitive-capture policy controls slice
+
+- Added Swift view-model wrappers for `set_sensitive_capture` so clipboard policy, microphone opt-in, and system-audio opt-in all travel through the existing authenticated `recorder_control_action` bridge.
+- Clipboard mode is fail-fast validated in Swift against the sidecar contract (`trigger_only`, `content_opt_in`, `blocked`); invalid UI/client calls set `ERR_RECORDER_SENSITIVE_CAPTURE_INVALID_CLIPBOARD_MODE` and send no sidecar payload.
+- Wired the policy actions through `ContentView`, `OpenDesignDayPageView`, `OpenDesignDayShell`, and the Founder Replay control surface.
+- Founder Replay now exposes a segmented clipboard policy control plus microphone/system-audio switches. These controls only update policy state; they do not collect clipboard contents, microphone audio, or system audio.
+- Fixed the sensitive-capture status tone to treat `blocked` as the disabled clipboard policy state instead of the non-contract value `disabled`.
+- Added Swift unit coverage proving the three policy controls send exact `set_sensitive_capture` patches and proving invalid clipboard mode is rejected before any sidecar send.
+- Verification passed: Swift unit tests with isolated DerivedData (`562/562`) and `git diff --check` for the changed Swift files.
+- Remaining Gate C gaps include Swift-side clipboard/audio collectors, actual browser URL and document path extraction, microphone/system-audio TCC runtime probes beyond policy toggles, actual encryption/key generation and Keychain-backed key management, raw API audit UI, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C Swift trigger-only clipboard collector slice
+
+- Added a Swift-side Clipboard trigger collector driven by `NSPasteboard.changeCount`; it starts only when recorder control state is active, consent is granted, Clipboard trigger permission is marked granted, and the Clipboard policy is not `blocked`.
+- The collector emits the existing sidecar `recorder_clipboard_event_record` payload shape and writes through the sidecar-owned policy-enforced `recordClipboardEvent()` path.
+- This slice intentionally does not read raw clipboard contents. Swift inspects pasteboard type metadata only, emits `contentType`, `eventKind=change`, `redactionStatus=not_collected`, `privacyState=trigger_only_local`, and all search/memory/export flags as false.
+- Swift recorder permission refresh now marks `clipboard` as `granted` for trigger access because `NSPasteboard.changeCount` is locally available; raw contents remain gated by the separate `content_opt_in` policy and are still not collected by Swift.
+- The collector is stopped on sidecar stop/reconnect, workspace switching, sidecar status/error events, consent revoke/pause/block policy state changes, or deinit, so stale polling does not survive recorder shutdown boundaries.
+- Added Swift unit coverage proving the permission probe includes Clipboard trigger access and proving the trigger-only Clipboard event payload contains no `contentText` while preserving app/window metadata.
+- Verification passed: Swift unit tests with isolated DerivedData (`563/563`) and `git diff --check` for the changed Swift files.
+- Remaining Gate C gaps include raw clipboard content opt-in collection with redaction, Swift-side microphone/system-audio collectors, actual browser URL and document path extraction, microphone/system-audio TCC runtime probes beyond policy toggles, actual encryption/key generation and Keychain-backed key management, raw API audit UI, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C Swift audio permission probe slice
+
+- Extended Swift's recorder permission probe to include microphone authorization state using `AVCaptureDevice.authorizationStatus(for: .audio)` without prompting for access.
+- Microphone maps into the sidecar permission contract as `granted`, `denied`, `restricted`, `not_determined`, or `unknown`, so microphone opt-in now produces a concrete readiness state instead of staying at generic unknown.
+- Swift now marks `systemAudio` permission as `unavailable`; this is explicit until a real System Audio capture permission/readiness path exists and prevents the UI toggle from implying working capture.
+- Added Swift unit coverage that tolerates the host's current microphone permission state while proving a microphone permission update is emitted and system audio is explicitly `unavailable`.
+- Verification passed: Swift unit tests with isolated DerivedData (`563/563`) and `git diff --check` for the changed Swift files.
+- Remaining Gate C gaps include raw clipboard content opt-in collection with redaction, Swift-side microphone/system-audio collectors, actual System Audio permission/capture implementation, actual browser URL and document path extraction, actual encryption/key generation and Keychain-backed key management, raw API audit UI, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate B/C Swift raw API audit UI slice
+
+- Added Swift DTO decoding for the existing sidecar `recorder_audit_events` / `recorder_audit_source` payload, including endpoint, access level, decision, reason, created time, and sanitized source ids.
+- Added `refreshRecorderAuditEvents()` in `AgenticViewModel`; it sends the existing authenticated `recorder_audit_list` WebSocket request with a capped limit and stores the returned audit source.
+- Founder Replay Control now has a compact Raw API Audit panel with refresh, row count, non-proof status, and recent audit rows. It displays the sidecar-sanitized audit source only; it does not expose raw tokens, filesystem paths, or raw SQL.
+- Added Swift unit coverage proving the bounded audit-list request payload and decoding of sanitized audit rows from `recorder_audit_events`.
+- Verification passed: Swift unit tests with isolated DerivedData (`565/565`) and `git diff --check` for the changed Swift files.
+- Remaining Gate C gaps include raw clipboard content opt-in collection with recorder-grade redaction, Swift-side microphone/system-audio collectors, actual System Audio permission/capture implementation, actual browser URL and document path extraction, actual encryption/key generation and Keychain-backed key management, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C raw clipboard content opt-in redaction slice
+
+- Tightened sidecar clipboard content ingest so raw Clipboard text is no longer silently truncated before policy checks; content over 2,000 characters fails before persistence with `ERR_RECORDER_CLIPBOARD_CONTENT_TOO_LARGE`.
+- Clipboard content opt-in now runs through the existing runtime secret detector/redactor in `workspace-safety.mjs`. Secret-shaped raw Clipboard text fails before any row insert with `ERR_RECORDER_CLIPBOARD_CONTENT_SECRET_BLOCKED`, and failure details do not echo the raw content.
+- Safe raw content can be stored only when the persisted recorder control state evaluates to `content_opt_in`; the sidecar derives a safe redaction receipt/status for non-secret content and keeps sanitized record acknowledgements from echoing raw content when redacted text is identical to the stored raw text.
+- Swift's Clipboard collector now reads `NSPasteboard` string content only when the active sensitive-capture policy is `content_opt_in`, and only for text/URL clipboard types. Trigger-only events remain metadata-only and continue to send no `contentText`.
+- Swift opt-in payloads send raw text to the sidecar with `privacyState=raw_local`, no preclaimed redaction status, and all search/memory/export flags false, so the sidecar remains the single owner of recorder-grade redaction and persistence decisions.
+- Focused sidecar coverage now proves content policy blocking, safe opt-in persistence, secret suppression without partial rows, oversize rejection without truncation, sanitized acknowledgement non-leakage, duplicate protection, and trigger-only non-proof receipts.
+- Added Swift unit coverage proving trigger-only payloads still contain no `contentText` and opt-in payloads carry raw text only in the explicit content event shape for sidecar redaction.
+- Verification passed: `node --check sidecar/recorder-clipboard.mjs`, `node --check sidecar-tests/recorder-clipboard.test.mjs`, `node --test sidecar-tests/recorder-clipboard.test.mjs` (`3/3`), `npm run build:sidecar`, Swift unit tests with isolated DerivedData (`566/566`), `git diff --check` for touched files, and `npm run check:public-safety`.
+- Remaining Gate C gaps include Swift-side microphone/system-audio collectors, actual System Audio permission/capture implementation, actual browser URL and document path extraction, actual encryption/key generation and Keychain-backed key management, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C raw-media encryption envelope and key-management slice
+
+- Added sidecar-owned recorder media encryption helpers in `recorder-media-encryption.mjs` using AES-256-GCM with 32-byte local keys, 12-byte nonces, 16-byte tags, ciphertext SHA-256 binding, decrypt verification, and an injectable key-store boundary.
+- Added a macOS Keychain adapter for recorder media keys plus an in-memory test key store. Focused tests exercise key generation/persistence through the injected store; they do not touch the user's live Keychain.
+- Bumped recorder store schema to v3 and added `media_assets` encryption metadata columns: `encryption_key_id`, `encryption_alg`, `encryption_nonce`, and `encryption_tag`. Existing v1/v2 databases migrate those columns explicitly; fresh databases create them in the base schema.
+- Tightened `assertRawMediaEncryptionPolicy()` so `encrypted=true` now requires a valid AES-GCM envelope. Automatic/background frame and audio ingest still fails with `ERR_RECORDER_MEDIA_ENCRYPTION_REQUIRED` when encryption is absent, and now fails with `ERR_RECORDER_MEDIA_ENCRYPTION_ENVELOPE_REQUIRED` or `ERR_RECORDER_MEDIA_ENCRYPTION_HASH_MISMATCH` when metadata is incomplete or not bound to the stored ciphertext hash.
+- Frame and audio ingest now persist the normalized non-secret envelope metadata on `media_assets`; sanitized audio receipts still do not expose key ids or raw paths.
+- Updated Day Memory Loop fixtures and raw API runtime coverage to keep using the strict ingest path without bypassing the encryption envelope requirement.
+- Verification passed: `node --check` for changed media encryption/protection/ingest/audio/store modules and tests, `node --test sidecar-tests/recorder-media-encryption.test.mjs` (`2/2`), `node --test sidecar-tests/recorder-ingest.test.mjs` (`5/5`), `node --test sidecar-tests/recorder-audio.test.mjs` (`5/5`), `node --test sidecar-tests/recorder-store.test.mjs` (`3/3`), `node --test sidecar-tests/recorder-day-loop.test.mjs` (`3/3`), `node --test sidecar-tests/recorder-raw-api-runtime.test.mjs` (`1/1`), `npm run build:sidecar`, `npm run check:public-safety`, and `git diff --check` for touched files.
+- Remaining Gate C gaps include Swift-side encrypted media writing using the recorder media key, Swift-side microphone/system-audio collectors, actual System Audio permission/capture implementation, actual browser URL and document path extraction, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C Swift automatic frame encryption slice
+
+- Added Swift recorder media key management through `KeychainHelper.loadOrCreateRecorderMediaKey()`. Release builds store the 32-byte recorder media key in macOS Keychain; DEBUG builds follow the existing dev-secrets policy to avoid repeated local Keychain prompts.
+- Automatic/background ScreenCaptureKit frame capture is now unblocked because Swift can write encrypted media. The old local fail-fast guard remains as a root-cause message constant but no longer blocks automatic capture when encrypted writing is available.
+- Automatic frame capture now AES-GCM seals the JPEG bytes, writes only ciphertext to `media/frames/<day>/<asset>.jpg.enc`, computes `snapshot.sha256` over ciphertext, and attaches the sidecar-required `encryption` envelope (`algorithm`, `keyId`, `nonce`, `tag`, `ciphertextSha256`).
+- Manual frame capture still writes normal JPEGs under the documented host-user trust boundary so the existing manual preview/read path is not broken before encrypted preview/decryption is implemented.
+- Added explicit Swift errors for media key and encryption failures (`ERR_RECORDER_MEDIA_KEY_UNAVAILABLE`, `ERR_RECORDER_MEDIA_ENCRYPTION_FAILED`) rather than falling back to unencrypted automatic capture.
+- Verification passed: Swift unit tests with isolated DerivedData (`565/565`).
+- Remaining Gate C gaps include encrypted preview/decryption for stored automatic frames, Swift-side microphone/system-audio collectors, encrypted Swift audio writing, actual System Audio permission/capture implementation, actual browser URL and document path extraction, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C Swift AX browser/document metadata extraction slice
+
+- Replaced the hard-coded Swift browser/document metadata `not_implemented` probes with a real Accessibility-based runtime probe.
+- Swift now reads frontmost app/window AX metadata candidates (`AXURL`, `AXDocument`, `AXFilename`, `AXTitle`) when Accessibility is trusted. HTTP(S) candidates mark `browserMetadata` as `available`; file URLs or absolute paths mark `documentMetadata` as `available`.
+- When AX metadata is unavailable, probes remain explicit degraded states with named root causes such as `accessibility_permission_missing`, `frontmost_application_unavailable`, `browser_url_ax_attribute_unavailable`, and `document_path_ax_attribute_unavailable`.
+- ScreenCaptureKit frame envelopes now include `browserUrl` and `documentPath` when the same AX probe can read them; missing metadata is sent as `null` rather than guessed from weak app/window title signals.
+- The AX element cast now validates Core Foundation type IDs before casting, so malformed accessibility values degrade instead of crashing the recorder path.
+- Updated Swift unit coverage to accept either `available` or `degraded` metadata probes while still requiring named root causes on degraded probes.
+- Verification passed: Swift unit tests with isolated DerivedData (`565/565`).
+- Remaining Gate C gaps include encrypted preview/decryption for stored automatic frames, Swift-side microphone/system-audio collectors, encrypted Swift audio writing, actual System Audio permission/capture implementation, broader browser-specific URL extraction beyond AX, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate B/C encrypted frame image raw API decryption slice
+
+- Aligned the sidecar recorder media key defaults with Swift's shared macOS Keychain item (`service=com.agentic30`, `account=com.agentic30.recorder-media-key-v1`) so Node and Swift address the same local media key.
+- Swift recorder media keys are now Keychain-backed in all builds instead of DEBUG-only dev-secret storage, because the sidecar must be able to decrypt encrypted media written by the app.
+- Added `loadRecorderMediaKey()` for read paths so raw API decryption fails with `ERR_RECORDER_MEDIA_KEY_UNAVAILABLE` rather than silently creating a new wrong key when the original media key is missing.
+- The raw frame image endpoint now decrypts `media_assets.encrypted=1` frame ciphertext with the persisted AES-GCM envelope before returning `image/jpeg`; unencrypted manual frames continue to stream directly.
+- The endpoint still requires `raw_frame`, writes audit rows for denied and accepted image reads, does not expose filesystem paths, and returns plaintext image bytes only through the authenticated raw API boundary.
+- Added raw API server coverage that stores an encrypted `.jpg.enc` frame, injects an in-memory media key store, proves the endpoint returns the original JPEG bytes, and audits the encrypted image read.
+- Verification passed: `node --check sidecar/recorder-raw-api-server.mjs`, `node --check sidecar-tests/recorder-raw-api-server.test.mjs`, `node --test sidecar-tests/recorder-raw-api-server.test.mjs` (`8/8`), `node --test sidecar-tests/recorder-raw-api-runtime.test.mjs` (`1/1`), `npm run build:sidecar`, Swift unit tests with isolated DerivedData (`565/565`), `npm run check:public-safety`, and `git diff --check` for touched files.
+- Remaining Gate C gaps include Swift-side microphone/system-audio collectors, encrypted Swift audio writing, actual System Audio permission/capture implementation, broader browser-specific URL extraction beyond AX, live timeline/manual UI validation for encrypted frames, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C Swift encrypted microphone audio collector slice
+
+- Added `NSMicrophoneUsageDescription` so macOS microphone capture has a concrete, local-only purpose string instead of failing behind an opaque platform prompt.
+- Swift now reconciles the microphone collector from authenticated recorder control state: recorder mode active, consent granted, microphone sensitive-capture opt-in, sidecar permission state `granted`, and live AVFoundation authorization `granted` are all required before capture starts.
+- Added a bounded `AVAudioRecorder` microphone chunk path that writes temporary `.m4a`, encrypts bytes with the shared recorder media Keychain key, writes only `.m4a.enc` under recorder media, and sends `recorder_audio_chunk_record` over the existing sidecar bridge with `captureMode=background`, `automatic=true`, and `background=true`.
+- Audio chunk payloads initially used `transcriptStatus=not_requested`; the follow-up local-transcription state slice below changes Swift microphone chunks to `local_transcription_unavailable` until a real local transcriber is wired. Redaction stays `not_redacted`, privacy stays `raw_local`, no transcript segments are emitted, and no proof acceptance flags are set; the sidecar still owns opt-in policy, encryption-envelope validation, store writes, and proof-boundary enforcement.
+- System Audio remains an explicit named unavailable state (`ERR_RECORDER_SYSTEM_AUDIO_UNAVAILABLE`) until a real local system-audio capture implementation exists; the UI toggle cannot imply working system-audio capture.
+- Extended the raw audio API media endpoint to decrypt encrypted audio assets through the same local media key store used by frame previews before returning `audio/mp4`, preserving raw-audio token/audit requirements and no filesystem path exposure.
+- Updated raw API coverage so the audio fixture stores real AES-GCM ciphertext plus envelope columns and proves `/recorder/audio/:id/media` returns the original audio bytes only through a `raw_audio` token.
+- Added Swift unit coverage for the encrypted microphone chunk builder/bridge seam: it writes ciphertext under a temporary recorder root, proves plaintext is not written as media, verifies the AES-GCM envelope binds to the media hash, and checks the sidecar payload route/hints.
+- Verification passed after repairing local generated dependency state with `npm ci`: `node --check sidecar/recorder-raw-api-server.mjs`, `node --check sidecar-tests/recorder-raw-api-server.test.mjs`, `node --test sidecar-tests/recorder-audio.test.mjs` (`5/5`), `node --test sidecar-tests/recorder-raw-api-server.test.mjs` (`8/8`), `npm run build:sidecar`, `npm run test:swift:unit` (`566/566`), `npm run check:public-safety`, `plutil -lint agentic30/Info.plist`, and `git diff --check` for touched files.
+- Live microphone capture/manual UI validation and blocking UI E2E were not run in this slice; project instructions still require explicit local approval before any foreground UI E2E run.
+- Remaining Gate C gaps include actual System Audio permission/capture implementation, local transcription execution/state beyond `not_requested`, broader browser-specific URL extraction beyond generic AX, live timeline/manual UI validation for encrypted media, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C local browser URL Apple Events extraction slice
+
+- Added `NSAppleEventsUsageDescription` so local browser URL extraction has a concrete purpose string and macOS Automation prompts are tied to Founder Replay context capture rather than appearing as an opaque app request.
+- Swift browser metadata extraction now tries local Apple Events for known browser bundle IDs before falling back to generic Accessibility attributes. Supported script families cover Safari/Safari Technology Preview front-document URLs and Chromium-style active-tab URLs for Chrome, Chrome Canary, Chromium, Brave, Edge, Arc, Vivaldi, Opera, and NAVER Whale.
+- The extractor still uses no browser extension and no cloud path. If Apple Events are denied or unavailable, the recorder degrades with named root causes such as `browser_url_apple_events_permission_denied`, `browser_url_apple_events_application_unavailable`, `browser_url_apple_events_empty`, `browser_url_apple_events_invalid_url`, or `browser_url_apple_events_unavailable`.
+- Browser metadata can now succeed through Apple Events even when Accessibility is missing; document path metadata remains AX-based and still degrades with `accessibility_permission_missing` when AX is unavailable.
+- Updated the metadata probe copy to describe local Apple Events or AX rather than AX-only extraction.
+- Added Swift unit coverage for generated Safari/Chromium/NAVER Whale AppleScript source selection and Apple Events error-root-cause mapping, and widened the metadata probe degraded-root-cause assertions to include the new browser URL root causes.
+- Verification passed: `plutil -lint agentic30/Info.plist`, `npm run test:swift:unit` (`567/567`), and `git diff --check` for touched Swift/plist files.
+- Live browser Automation permission prompts and live browser URL extraction were not exercised in this slice; they require an interactive app/browser validation pass.
+- Remaining Gate C gaps include actual System Audio permission/capture implementation, local transcription execution/state beyond `not_requested`, live timeline/manual UI validation for encrypted media and browser metadata, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C explicit local transcription unavailable state slice
+
+- Swift encrypted microphone chunks now send `transcriptStatus=local_transcription_unavailable` instead of `not_requested`, because no local transcription engine is wired yet and cloud transcription remains explicitly forbidden.
+- The chunk still carries no transcript segments, no raw/redacted transcript text, `redactionStatus=not_redacted`, `privacyState=raw_local`, encrypted media metadata only, and no proof acceptance flags.
+- Added sidecar audio coverage proving `local_transcription_unavailable` stores on `audio_chunks`, emits zero transcript segments, does not index transcript FTS, does not leak raw transcript/media paths in receipts, and cannot become proof.
+- Updated Swift unit expectations for the encrypted microphone payload seam to require `local_transcription_unavailable`.
+- Verification passed: `node --check sidecar-tests/recorder-audio.test.mjs`, `node --test sidecar-tests/recorder-audio.test.mjs` (`6/6`), `npm run test:swift:unit` (`567/567`), `npm run check:public-safety`, and `git diff --check` for touched files.
+- Remaining Gate C gaps include actual local transcription execution with on-device/local-only transcripts, actual System Audio permission/capture implementation, live timeline/manual UI validation for encrypted media and browser metadata, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C audio provenance and no-cloud terminal-state slice
+
+- Bumped recorder store schema to v4 and added audio/transcript provenance columns. `audio_chunks` now stores nullable `consent_grant_id`, `visible_notice_id`, `raw_audio_indicator_state`, `local_transcriber_name`, `local_transcriber_version`, and `transcription_terminal_state`; `transcript_segments` now stores `transcript_status`, `speaker_label_provenance`, and `deletion_source_id`.
+- Added forward migration coverage so existing v1-v3 recorder databases receive the new columns, while fresh v4 databases create them in the base schema. Recorder SQL inspector views are recreated on open so the redacted/raw transcript views expose safe provenance metadata instead of stale view definitions.
+- Tightened audio ingest validation: `local_complete` chunks must name a local transcriber and version, `meeting_audio` chunks must carry a visible notice id, speaker labels require speaker-label provenance, and `local_transcription_unavailable` defaults to the explicit `local_unavailable_no_cloud_fallback` terminal state.
+- Swift encrypted microphone chunks now include `rawAudioIndicatorState=visible_indicator_active`, null local transcriber fields, and `transcriptionTerminalState=local_unavailable_no_cloud_fallback`, matching the no-cloud fallback contract until a real local transcriber is wired.
+- Raw audio/transcript API DTOs now include safe provenance fields while still omitting raw audio bytes, raw transcript text, media paths, filesystem paths, and proof-acceptance flags.
+- Verification passed: `node --check` for changed recorder store/audio/raw API modules and audio tests, `node --test sidecar-tests/recorder-audio.test.mjs` (`7/7`), `node --test sidecar-tests/recorder-store.test.mjs` (`3/3`), `node --test sidecar-tests/recorder-raw-api-server.test.mjs` (`8/8`), `node --test sidecar-tests/recorder-raw-api-runtime.test.mjs` (`1/1`), `npm run build:sidecar`, `npm run test:swift:unit` (`567/567`), `npm run check:public-safety`, and `git diff --check` for touched files.
+- Remaining Gate C gaps include actual local transcription execution with on-device/local-only transcripts, actual System Audio permission/capture implementation, live timeline/manual UI validation for encrypted media and browser metadata, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C Swift local-only speech transcription attempt slice
+
+- Added `NSSpeechRecognitionUsageDescription` and a Swift `Speech.framework` adapter for microphone chunks. The adapter uses `SFSpeechURLRecognitionRequest` with `requiresOnDeviceRecognition=true`; it never retries with network/cloud transcription.
+- The adapter only runs when Speech authorization is already granted. Missing authorization, unavailable local recognition, recognizer errors, empty results, or timeout degrade to `transcriptStatus=local_transcription_unavailable` with `transcriptionTerminalState=local_unavailable_no_cloud_fallback`.
+- When on-device Speech returns a final local result, Swift emits `transcriptStatus=local_complete`, `localTranscriberName=apple-speech-on-device`, the OS version as local transcriber version, and raw-local transcript segments. Those segments are `safeForSearch=false`, `safeForMemory=false`, `redactionStatus=not_redacted`, and have no redacted text, so local transcript execution does not create search/memory/proof material before a redaction path exists.
+- The microphone collector now marks the chunk as in-flight while local transcription/encryption is processing, preventing overlapping chunks. If the user stops capture while the local transcription attempt is still running, the async completion does not send the stale chunk afterward.
+- Added Swift unit coverage for the local-complete transcript envelope seam and kept the existing unavailable/no-cloud encrypted microphone payload coverage.
+- Verification passed: `plutil -lint agentic30/Info.plist` and `npm run test:swift:unit` (`568/568`).
+- Remaining Gate C gaps include transcript redaction/search eligibility for local transcripts, actual System Audio permission/capture implementation, live microphone/Speech permission validation, live timeline/manual UI validation for encrypted media and browser metadata, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C local transcript redaction/search eligibility slice
+
+- Added sidecar-owned transcript redaction in `recorder-audio.mjs` for `local_complete` transcript segments. Swift still sends raw-local Speech output without claiming redaction; the sidecar derives redacted transcript text before FTS/search/memory eligibility is granted.
+- Transcript redaction now reuses the runtime secret redactor and additionally masks email addresses, URL spans, and phone-shaped numbers before a segment can become search-safe.
+- Local transcript segments with derived search-safe redaction are promoted to `safe_for_search=1` and `safe_for_memory=1`; raw transcript text remains raw-local in the recorder DB, but receipts, raw API DTOs, and FTS expose only redacted text and continue to carry `rawTranscriptExposed=false`.
+- Existing unsafe-search validation remains fail-closed when a caller explicitly supplies a non-search-safe redaction status.
+- Added sidecar coverage proving derived redaction indexes the preserved safe phrase, does not index raw email/token/url text, does not leak raw transcript/media paths in receipts, and keeps proof acceptance false through the existing audio receipt boundary.
+- Verification passed: `node --check sidecar/recorder-audio.mjs`, `node --check sidecar-tests/recorder-audio.test.mjs`, `node --test sidecar-tests/recorder-audio.test.mjs` (`8/8`), `node --test sidecar-tests/recorder-store.test.mjs` (`3/3`), `node --test sidecar-tests/recorder-raw-api-server.test.mjs` (`8/8`), `node --test sidecar-tests/recorder-raw-api-runtime.test.mjs` (`1/1`), `npm run build:sidecar`, `npm run check:public-safety`, and `git diff --check` for touched files.
+- Remaining Gate C gaps include actual System Audio permission/capture implementation, live microphone/Speech permission validation, live timeline/manual UI validation for encrypted media and browser metadata, and live app/manual UI E2E validation.
+
+### 2026-06-29 KST — Gate C Swift System Audio collector slice
+
+- Replaced the Swift-side hard-coded `systemAudio=unavailable` probe with a concrete ScreenCaptureKit availability and Screen Recording permission probe. The permission state now reports `granted`, `denied`, or `unavailable` instead of pretending the surface has no implementation path.
+- Added a local ScreenCaptureKit System Audio collector behind the existing sensitive-capture policy. It starts only when the recorder is active, consent is granted, `systemAudio` permission is granted, and the `systemAudio` opt-in flag is enabled.
+- The collector uses `SCStream` audio sample output (`capturesAudio=true`, `excludesCurrentProcessAudio=true`) and writes each chunk to a temporary local `.m4a` via `AVAssetWriter`, then reuses the existing encrypted audio media envelope with `source=system_audio`.
+- System Audio chunks continue through the same sidecar-owned `recorder_audio_chunk_record` route, policy enforcement, encryption requirement, transcript no-cloud state, raw API/audit boundary, and proof-non-acceptance contract as microphone chunks. No new sidecar route or proof path was added.
+- Added explicit root-cause errors for missing runtime permission, ScreenCaptureKit unavailability, stream start/stop failures, writer failures, no samples, and empty output files.
+- Added Swift unit coverage proving the permission probe emits a concrete System Audio state and proving encrypted `system_audio` payloads use the existing sidecar audio route.
+- Verification passed: first Swift unit run failed on an SDK compile issue (`AVAssetWriterInput` has no `error` member), then after fixing the writer error source `npm run test:swift:unit` passed (`569/569`), `node --test sidecar-tests/recorder-audio.test.mjs` passed (`8/8`), `npm run check:public-safety` passed, and `git diff --check` passed for touched Swift/SPEC files.
+- Remaining Gate C gaps include live System Audio permission/capture validation on the signed app, live microphone/Speech permission validation, live timeline/manual UI validation for encrypted media and browser metadata, and live app/manual UI E2E validation. This slice is `actual_collector` for Swift System Audio but not `e2e_accepted`.

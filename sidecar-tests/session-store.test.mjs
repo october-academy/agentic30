@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import {
   CURRENT_DEFAULT_CODEX_MODEL,
   LEGACY_DEFAULT_CODEX_MODEL,
+  REMOVED_CODEX_MINI_MODEL,
   SESSION_STORE_SCHEMA_VERSION,
   loadSessionsFromFile,
   normalizePersistedSessionsPayload,
@@ -181,7 +182,7 @@ test("normalization migrates legacy Codex default models to GPT 5.5", () => {
       {
         id: "codex-mini-session",
         provider: "codex",
-        model: "gpt-5.1-codex-mini",
+        model: REMOVED_CODEX_MINI_MODEL,
       },
       {
         id: "claude-session",
@@ -193,7 +194,7 @@ test("normalization migrates legacy Codex default models to GPT 5.5", () => {
 
   assert.equal(sessions[0].model, CURRENT_DEFAULT_CODEX_MODEL);
   assert.equal(sessions[1].model, CURRENT_DEFAULT_CODEX_MODEL);
-  assert.equal(sessions[2].model, "gpt-5.1-codex-mini");
+  assert.equal(sessions[2].model, CURRENT_DEFAULT_CODEX_MODEL);
   assert.equal(sessions[3].model, LEGACY_DEFAULT_CODEX_MODEL);
 });
 
@@ -203,7 +204,7 @@ test("normalization clears stale Codex runtime thread ids on startup", () => {
       {
         id: "codex-session",
         provider: "codex",
-        model: "gpt-5.1-codex-mini",
+        model: "gpt-5.5",
         runtime: {
           codexThreadId: "019dc32f-4182-7993-a7d7-58012553279d",
           codexThreadMeta: { workspaceRoot: "/tmp/old", codexHome: "/tmp/codex-home" },

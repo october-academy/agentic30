@@ -25,7 +25,7 @@ test("bootstrap free-text submission starts a provider stream", async () => {
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -40,7 +40,7 @@ test("bootstrap free-text submission starts a provider stream", async () => {
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     assert.equal(created.session.messages.length, 0);
     assert.equal(created.session.pendingUserInput?.title, "시작하기");
@@ -121,7 +121,7 @@ test("Foundation-gated create_session suppresses generic initial intake", async 
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -139,7 +139,7 @@ test("Foundation-gated create_session suppresses generic initial intake", async 
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
     }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
@@ -176,7 +176,7 @@ test("Day 1 cached ICP coaching uses instant_chat and completes under 1s without
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -194,7 +194,7 @@ test("Day 1 cached ICP coaching uses instant_chat and completes under 1s without
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
     }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
@@ -244,7 +244,7 @@ test("free chat trivial greeting runs through provider", async () => {
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -259,7 +259,7 @@ test("free chat trivial greeting runs through provider", async () => {
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     const sessionId = created.session.id;
     ws.send(JSON.stringify({
@@ -326,7 +326,7 @@ test("configured doc path questions answer immediately from BIP manifest", async
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -341,7 +341,7 @@ test("configured doc path questions answer immediately from BIP manifest", async
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     const sessionId = created.session.id;
     if (created.session.pendingUserInput) {
@@ -407,7 +407,7 @@ test("structured IDD continuation prompt uses agentic route for Codex MCP tools"
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -422,7 +422,7 @@ test("structured IDD continuation prompt uses agentic route for Codex MCP tools"
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     const sessionId = created.session.id;
     const structuredPrompt = [
@@ -485,7 +485,7 @@ test("Codex IDD queue generates GOAL questions through host-owned structured inp
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -500,7 +500,7 @@ test("Codex IDD queue generates GOAL questions through host-owned structured inp
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
 
     ws.send(JSON.stringify({
@@ -639,7 +639,7 @@ test("BIP setup auto-start starts IDD before mission choices unlock", async () =
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -654,7 +654,7 @@ test("BIP setup auto-start starts IDD before mission choices unlock", async () =
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
 
     ws.send(JSON.stringify({
@@ -722,7 +722,7 @@ test("IDD start uses sidecar agent synthesized structured question when availabl
         learning_goal: "Agentic30의 첫 ICP를 실패 직후 행동 증거가 있는 사람으로 좁힌다",
         why_it_matters: "문제 절박도와 인터뷰 실행 가능성이 가장 높습니다.",
       }),
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -737,7 +737,7 @@ test("IDD start uses sidecar agent synthesized structured question when availabl
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
 
     ws.send(JSON.stringify({
@@ -792,7 +792,7 @@ test("Day 1 document handoff writes one canonical doc immediately without auto-s
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -807,7 +807,7 @@ test("Day 1 document handoff writes one canonical doc immediately without auto-s
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
 
     ws.send(JSON.stringify({
@@ -893,7 +893,7 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -908,7 +908,7 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
 
     ws.send(JSON.stringify({
@@ -988,7 +988,7 @@ test("Day 1 bulk document handoff asks clarity instead of document judge when ha
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1129,7 +1129,7 @@ test("Day 1 bulk document handoff saves concrete handoff with advisory evidence 
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1231,7 +1231,7 @@ test("IDD follow-up uses sidecar agent synthesis instead of host template when a
         ],
         freeTextPlaceholder: "예: 첫 질문이 프로젝트 맥락을 반영할 때까지 Day 2 오픈은 미룬다",
       }),
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1246,7 +1246,7 @@ test("IDD follow-up uses sidecar agent synthesis instead of host template when a
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
 
     ws.send(JSON.stringify({
@@ -1350,7 +1350,7 @@ test("recoverable IDD setup error retry creates host question without provider r
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
 
     ws.send(JSON.stringify({
@@ -1804,7 +1804,7 @@ test("Post-Foundation Day 1 ICP coaching records a five-turn local conversation"
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
-      AGENTIC30_CODEX_MODEL: "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: "gpt-5.5",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1822,7 +1822,7 @@ test("Post-Foundation Day 1 ICP coaching records a five-turn local conversation"
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
     }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
@@ -1891,7 +1891,7 @@ test("Day 1 ICP user completes a five-turn live Codex SDK conversation", {
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
-      AGENTIC30_CODEX_MODEL: process.env.AGENTIC30_CODEX_MODEL || "gpt-5.1-codex-mini",
+      AGENTIC30_CODEX_MODEL: process.env.AGENTIC30_CODEX_MODEL || "gpt-5.5",
       AGENTIC30_CODEX_REASONING_EFFORT: process.env.AGENTIC30_CODEX_REASONING_EFFORT || "low",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -1910,7 +1910,7 @@ test("Day 1 ICP user completes a five-turn live Codex SDK conversation", {
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: process.env.AGENTIC30_CODEX_MODEL || "gpt-5.1-codex-mini",
+      model: process.env.AGENTIC30_CODEX_MODEL || "gpt-5.5",
       suppressBootstrapIntake: true,
     }));
     const created = await waitForEvent(events, (event) => event.type === "session_created", 30_000);

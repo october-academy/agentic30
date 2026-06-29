@@ -4,7 +4,13 @@ You are working in `/Users/october/prj/agentic30-public`.
 
 ## Goal
 
-Implement the final design in `docs/specs/agentic30_screenpipe_benchmarking_SPEC.md`.
+Implement the final design summarized in
+`docs/specs/agentic30_screenpipe_benchmarking_CONTEXT.md`.
+
+The full design and audit record remains
+`docs/specs/agentic30_screenpipe_benchmarking_SPEC.md`, but do not read the full
+SPEC at routine session startup. Use the compact context first, then open only
+the targeted SPEC sections needed for the current task.
 
 Agentic30 Founder Memory OS is a macOS-only, local-first execution memory layer for a solo developer. It intentionally includes always-on background recording, search/memory productization, raw local data APIs, Agentic30 Pipes-like local automation, and expanded macOS media/permission capture.
 
@@ -19,17 +25,23 @@ Build through the gates below. Gate A must keep serving the Day 0-3 loop (Day Me
 
 ## Source Of Truth
 
-Read these first:
+Default read order for a normal implementation session:
 
-- `docs/specs/agentic30_screenpipe_benchmarking_SPEC.md`
+- `docs/specs/agentic30_screenpipe_benchmarking_CONTEXT.md`
 - `docs/SPEC.md`
 - `docs/specs/agentic30-office-hours-redesign-v1.md`
 - `docs/specs/agentic30-30day-adaptive-program-v2.md`
 - `sidecar/execution-os.mjs`
 - `sidecar/office-hours-structured-input.mjs`
+
+Only read these when the active task needs the specific implementation details:
+
+- targeted sections of `docs/specs/agentic30_screenpipe_benchmarking_SPEC.md`
 - `../screenpipe/docs/EVENT_DRIVEN_CAPTURE_SPEC.md`
 - `../screenpipe/docs/VISION_PIPELINE_SPEC.md`
 - `../screenpipe/docs/PIPE_EXECUTION_SPEC.md`
+
+Read the full `docs/specs/agentic30_screenpipe_benchmarking_SPEC.md` only when changing scope, architecture, schemas, privacy policy, proof rules, or gate definitions; preparing a final implementation-readiness claim; running a full adversarial/spec review; resolving a contradiction with the compact context; or updating the compact context after meaningful spec drift.
 
 If Screenpipe behavior is unclear, ask DeepWiki `screenpipe/screenpipe` targeted questions before implementing.
 
@@ -223,7 +235,7 @@ Known review command:
 python3 /tmp/insane-review-inspect/bin/pack_and_ask.py --check-env
 python3 /tmp/insane-review-inspect/bin/pack_and_ask.py \
   --target /Users/october/prj \
-  --include "agentic30-public/docs/specs/agentic30_screenpipe_benchmarking_SPEC.md,agentic30-public/docs/specs/agentic30_screenpipe_benchmarking_GOAL_PROMPT.md,agentic30-public/docs/SPEC.md,agentic30-public/docs/specs/agentic30-office-hours-redesign-v1.md,agentic30-public/docs/specs/agentic30-30day-adaptive-program-v2.md,agentic30-public/sidecar/execution-os.mjs,agentic30-public/sidecar/office-hours-structured-input.mjs,agentic30-public/agentic30/**,agentic30-public/sidecar/**,agentic30-public/sidecar-tests/**,agentic30-public/agentic30Tests/**,screenpipe/docs/EVENT_DRIVEN_CAPTURE_SPEC.md,screenpipe/docs/VISION_PIPELINE_SPEC.md,screenpipe/docs/PIPE_EXECUTION_SPEC.md,screenpipe/README.md" \
+  --include "agentic30-public/docs/specs/agentic30_screenpipe_benchmarking_CONTEXT.md,agentic30-public/docs/specs/agentic30_screenpipe_benchmarking_SPEC.md,agentic30-public/docs/specs/agentic30_screenpipe_benchmarking_GOAL_PROMPT.md,agentic30-public/docs/SPEC.md,agentic30-public/docs/specs/agentic30-office-hours-redesign-v1.md,agentic30-public/docs/specs/agentic30-30day-adaptive-program-v2.md,agentic30-public/sidecar/execution-os.mjs,agentic30-public/sidecar/office-hours-structured-input.mjs,agentic30-public/agentic30/**,agentic30-public/sidecar/**,agentic30-public/sidecar-tests/**,agentic30-public/agentic30Tests/**,screenpipe/docs/EVENT_DRIVEN_CAPTURE_SPEC.md,screenpipe/docs/VISION_PIPELINE_SPEC.md,screenpipe/docs/PIPE_EXECUTION_SPEC.md,screenpipe/README.md" \
   --model pro \
   --require-model "GPT-5.5" \
   --force-answer-after 240 \

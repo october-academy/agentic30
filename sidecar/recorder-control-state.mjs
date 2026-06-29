@@ -35,6 +35,8 @@ const PERMISSION_IDS = Object.freeze([
   "systemAudio",
 ]);
 const CLIPBOARD_CAPTURE_MODES = new Set(["trigger_only", "content_opt_in", "blocked"]);
+const METADATA_PERMISSION_IDS = Object.freeze(["browserMetadata", "documentMetadata"]);
+const METADATA_PROBE_STATUSES = new Set(["unknown", "available", "unavailable", "degraded"]);
 
 export class RecorderControlStateError extends Error {
   constructor(code, message, details = {}) {
@@ -179,6 +181,31 @@ export function transitionRecorderControlState(state = {}, action = {}, { now = 
         updatedAt: timestamp,
         updated_at: timestamp,
       }, { now });
+    case "record_metadata_probe": {
+      assertConsentGranted(current);
+      const permissionId = normalizeMetadataPermissionId(
+        action.permission ?? action.permissionId ?? action.permission_id ?? action.metadataType ?? action.metadata_type,
+      );
+      return normalizeRecorderControlState({
+        ...current,
+        metadataProbes: {
+          ...current.metadataProbes,
+          [permissionId]: normalizeMetadataProbe(action.metadataProbe ?? action.metadata_probe ?? action, {
+            permissionId,
+            checkedAt: timestamp,
+          }),
+        },
+        metadata_probes: {
+          ...current.metadataProbes,
+          [permissionId]: normalizeMetadataProbe(action.metadataProbe ?? action.metadata_probe ?? action, {
+            permissionId,
+            checkedAt: timestamp,
+          }),
+        },
+        updatedAt: timestamp,
+        updated_at: timestamp,
+      }, { now });
+    }
     case "pause":
       assertConsentGranted(current);
       return normalizeRecorderControlState({
@@ -354,6 +381,8 @@ export function normalizeRecorderControlState(value = {}, { now = new Date() } =
     permissions,
     sensitiveCapture: normalizeSensitiveCapture(raw.sensitiveCapture ?? raw.sensitive_capture),
     sensitive_capture: normalizeSensitiveCapture(raw.sensitiveCapture ?? raw.sensitive_capture),
+    metadataProbes: normalizeMetadataProbes(raw.metadataProbes ?? raw.metadata_probes, { now }),
+    metadata_probes: normalizeMetadataProbes(raw.metadataProbes ?? raw.metadata_probes, { now }),
     pause: normalizePause(raw.pause),
     stoppedForToday: normalizeStoppedForToday(raw.stoppedForToday ?? raw.stopped_for_today),
     stopped_for_today: normalizeStoppedForToday(raw.stoppedForToday ?? raw.stopped_for_today),
@@ -510,23 +539,66 @@ function audioPolicyDto(state, key) {
 
 function metadataPolicyDto(state, permissionId) {
   const permissionState = state.permissions[permissionId];
-  const available = permissionState === "granted";
-  const degradedState = available
-    ? null
-    : {
-        id: `${permissionToSnake(permissionId)}_degraded`,
-        severity: "degraded",
-        message: `${permissionLabel(permissionId)} is unavailable; capture will run with less context.`,
-        permission: permissionId,
-        state: permissionState,
-      };
+  const probe = state.metadataProbes?.[permissionId] || normalizeMetadataProbe({}, { permissionId });
+  const permissionGranted = permissionState === "granted";
+  const available = permissionGranted && probe.status === "available";
+  let status = "available";
+  let degradedState = null;
+  if (!permissionGranted) {
+    status = "degraded";
+    degradedState = {
+      id: `${permissionToSnake(permissionId)}_degraded`,
+      severity: "degraded",
+      message: `${permissionLabel(permissionId)} is unavailable; capture will run with less context.`,
+      permission: permissionId,
+      state: permissionState,
+      probeStatus: probe.status,
+      probe_status: probe.status,
+    };
+  } else if (probe.status !== "available") {
+    status = probe.status === "unknown" ? "probe_unverified" : probe.status;
+    degradedState = {
+      id: `${permissionToSnake(permissionId)}_${probe.status === "unknown" ? "probe_unverified" : "probe_unavailable"}`,
+      severity: "degraded",
+      message: probe.message || `${permissionLabel(permissionId)} runtime probe has not proven metadata capture.`,
+      permission: permissionId,
+      state: permissionState,
+      probeStatus: probe.status,
+      probe_status: probe.status,
+      rootCause: probe.rootCause,
+      root_cause: probe.root_cause,
+    };
+  }
   return {
     permission: permissionState,
-    status: available ? "available" : "degraded",
+    status,
     available,
+    canCaptureMetadata: available,
+    can_capture_metadata: available,
+    probe,
     degradedState,
     degraded_state: degradedState,
   };
+}
+
+export function assertRecorderMetadataAvailable(state = {}, permissionId = "", { now = new Date() } = {}) {
+  const metadataId = normalizeMetadataPermissionId(permissionId);
+  const policy = evaluateRecorderExpandedMediaPolicy(state, { now }).metadata;
+  const dto = metadataId === "browserMetadata" ? policy.browserMetadata : policy.documentMetadata;
+  if (dto?.available === true) return dto;
+  fail(
+    "ERR_RECORDER_METADATA_CAPTURE_UNAVAILABLE",
+    `${permissionLabel(metadataId)} capture is unavailable and this feature requires it`,
+    {
+      permission: metadataId,
+      status: dto?.status || "unknown",
+      probeStatus: dto?.probe?.status || "unknown",
+      probe_status: dto?.probe?.status || "unknown",
+      rootCause: dto?.probe?.rootCause || dto?.probe?.root_cause || "",
+      root_cause: dto?.probe?.rootCause || dto?.probe?.root_cause || "",
+      policy: dto || null,
+    },
+  );
 }
 
 function normalizePause(value = null) {
@@ -556,6 +628,46 @@ function normalizeStoppedForToday(value = null) {
     : null;
 }
 
+function normalizeMetadataProbes(value = {}, { now = new Date() } = {}) {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const probes = {};
+  for (const permissionId of METADATA_PERMISSION_IDS) {
+    probes[permissionId] = normalizeMetadataProbe(raw[permissionId] ?? raw[permissionToSnake(permissionId)], {
+      permissionId,
+      checkedAt: toIso(now),
+    });
+  }
+  return probes;
+}
+
+function normalizeMetadataProbe(value = {}, { permissionId = "", checkedAt = null } = {}) {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const status = normalizeMetadataProbeStatus(raw.status ?? raw.state ?? raw.result);
+  const rootCause = cleanString(raw.rootCause ?? raw.root_cause ?? raw.reason, 240);
+  if ((status === "unavailable" || status === "degraded") && !rootCause) {
+    fail(
+      "ERR_RECORDER_CONTROL_METADATA_PROBE_ROOT_CAUSE_REQUIRED",
+      "unavailable metadata probe results require a named root cause",
+      { permission: permissionId, status },
+    );
+  }
+  return {
+    permission: permissionId || cleanString(raw.permission, 80),
+    status,
+    checkedAt: normalizeIso(raw.checkedAt ?? raw.checked_at, checkedAt || toIso(new Date())),
+    checked_at: normalizeIso(raw.checkedAt ?? raw.checked_at, checkedAt || toIso(new Date())),
+    rootCause,
+    root_cause: rootCause,
+    message: cleanString(raw.message ?? raw.detail, 300),
+    source: cleanString(raw.source, 80),
+  };
+}
+
+function normalizeMetadataProbeStatus(value) {
+  const status = cleanToken(value);
+  return METADATA_PROBE_STATUSES.has(status) ? status : "unknown";
+}
+
 function normalizeMode(value) {
   const mode = cleanToken(value);
   return Object.values(RECORDER_CONTROL_MODES).includes(mode) ? mode : RECORDER_CONTROL_MODES.inactive;
@@ -568,6 +680,14 @@ function normalizePermissionId(value) {
     fail("ERR_RECORDER_CONTROL_UNKNOWN_PERMISSION", `unknown recorder permission: ${value || "(missing)"}`);
   }
   return token;
+}
+
+function normalizeMetadataPermissionId(value) {
+  const permissionId = normalizePermissionId(value);
+  if (!METADATA_PERMISSION_IDS.includes(permissionId)) {
+    fail("ERR_RECORDER_CONTROL_UNKNOWN_METADATA_PERMISSION", `metadata probe does not support permission: ${value || "(missing)"}`);
+  }
+  return permissionId;
 }
 
 function normalizePermissionState(value) {

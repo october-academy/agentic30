@@ -4,9 +4,11 @@ import {
   RecorderControlStateError,
   evaluateRecorderExpandedMediaPolicy,
 } from "./recorder-control-state.mjs";
+import { containsSecret, redactSecrets } from "./workspace-safety.mjs";
 
 export const RECORDER_CLIPBOARD_EVENT_SCHEMA_VERSION = 1;
 
+const MAX_CLIPBOARD_CONTENT_CHARS = 2000;
 const EVENT_KINDS = new Set(["copy", "cut", "paste", "change", "unknown"]);
 const CONTENT_TYPES = new Set(["text", "url", "file", "image", "unknown"]);
 const SEARCH_SAFE_REDACTION_STATUSES = new Set([
@@ -15,6 +17,7 @@ const SEARCH_SAFE_REDACTION_STATUSES = new Set([
   "safe_redacted",
   "allowlisted",
 ]);
+const CONTENT_REDACTION_STATUS_OVERRIDES = new Set(["none", "not_collected", "pending"]);
 
 export class RecorderClipboardError extends Error {
   constructor(code, message, details = {}) {
@@ -64,7 +67,7 @@ export function normalizeClipboardEvent(event = {}, {
 } = {}) {
   const source = objectOrFail(event, "ERR_RECORDER_CLIPBOARD_INVALID_EVENT", "clipboard event must be an object");
   const policy = clipboardPolicy ? normalizeClipboardPolicy(clipboardPolicy) : null;
-  const contentText = textOrNull(source.contentText ?? source.content_text ?? source.content?.text);
+  const contentText = clipboardContentTextOrNull(source.contentText ?? source.content_text ?? source.content?.text);
   const hasContent = Boolean(contentText);
   const contentCaptureRequested = hasContent || boolean01(source.contentCaptured ?? source.content_captured) === 1;
 
@@ -93,11 +96,26 @@ export function normalizeClipboardEvent(event = {}, {
 
   const captureMode = contentCaptureRequested ? "content_opt_in" : "trigger_only";
   const safeForSearch = boolean01(source.safeForSearch ?? source.safe_for_search);
-  const redactedText = textOrNull(source.redactedText ?? source.redacted_text);
-  const redactionStatus = requiredText(
-    source.redactionStatus ?? source.redaction_status ?? (redactedText ? "redacted" : "none"),
-    "redaction_status",
-  );
+  let redactedText = textOrNull(source.redactedText ?? source.redacted_text);
+  let redactionStatus = cleanString(source.redactionStatus ?? source.redaction_status, 120);
+  if (contentText) {
+    if (containsSecret(contentText)) {
+      fail("ERR_RECORDER_CLIPBOARD_CONTENT_SECRET_BLOCKED", "clipboard content capture detected secret-shaped text", {
+        status: policy?.status ?? "unknown",
+        mode: policy?.mode ?? "unknown",
+        secretSuppression: true,
+        secret_suppression: true,
+      });
+    }
+    const derivedRedactedText = redactSecrets(contentText);
+    redactedText = redactedText || derivedRedactedText;
+    if (!redactionStatus || CONTENT_REDACTION_STATUS_OVERRIDES.has(redactionStatus)) {
+      redactionStatus = derivedRedactedText === contentText ? "safe" : "redacted";
+    }
+  } else if (!redactionStatus) {
+    redactionStatus = redactedText ? "redacted" : "none";
+  }
+  redactionStatus = requiredText(redactionStatus, "redaction_status");
   if (safeForSearch && !redactedText) {
     fail("ERR_RECORDER_CLIPBOARD_SEARCH_REQUIRES_REDACTED_TEXT", "safe_for_search clipboard event requires redacted_text");
   }
@@ -158,6 +176,9 @@ function normalizeClipboardPolicy(value = {}) {
 }
 
 function sanitizedClipboardEvent(row) {
+  const redactedText = row.capture_mode === "content_opt_in" && row.redacted_text === row.content_text
+    ? null
+    : row.redacted_text;
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -178,8 +199,8 @@ function sanitizedClipboardEvent(row) {
     content_type: row.content_type,
     contentHash: row.content_hash,
     content_hash: row.content_hash,
-    redactedText: row.redacted_text,
-    redacted_text: row.redacted_text,
+    redactedText,
+    redacted_text: redactedText,
     redactionStatus: row.redaction_status,
     redaction_status: row.redaction_status,
     privacyState: row.privacy_state,
@@ -217,6 +238,20 @@ function requiredText(value, fieldName) {
 function textOrNull(value) {
   const text = cleanString(value, 2000);
   return text || null;
+}
+
+function clipboardContentTextOrNull(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).replace(/\r\n/g, "\n").trim();
+  if (!text) return null;
+  if (text.length > MAX_CLIPBOARD_CONTENT_CHARS) {
+    fail("ERR_RECORDER_CLIPBOARD_CONTENT_TOO_LARGE", "clipboard content exceeds recorder content size cap", {
+      maxLength: MAX_CLIPBOARD_CONTENT_CHARS,
+      max_length: MAX_CLIPBOARD_CONTENT_CHARS,
+      length: text.length,
+    });
+  }
+  return text;
 }
 
 function cleanString(value = "", maxLength = 500) {

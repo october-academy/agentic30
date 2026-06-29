@@ -196,6 +196,10 @@ const CODEX_INTERNAL_MCP_TOOL_TIMEOUT_SEC = 60 * 30;
 // burning minutes — see resolveClaudeMaxTurns.
 const DEFAULT_CLAUDE_MAX_TURNS = 24;
 const WORKSPACE_SCAN_MAX_TURNS = 5;
+const OFFICE_HOURS_QUESTION_MAX_TURNS = Number.parseInt(
+  process.env.AGENTIC30_OFFICE_HOURS_QUESTION_MAX_TURNS || "",
+  10,
+) || 4;
 const CODEX_INTERNAL_MCP_READ_ONLY_TOOLS = Object.freeze([
   "get_agentic30_context",
   CODEX_STRUCTURED_INPUT_TOOL,
@@ -337,7 +341,6 @@ export async function runProviderStream({
   onToolEvent,
   onRuntimeUpdate,
   onRunEvent,
-  stopAfterCodexThreadStarted = false,
   structuredOutputSchema = null,
 }) {
   onRunEvent?.({
@@ -372,6 +375,9 @@ export async function runProviderStream({
           requestId: stubRequest.requestId,
           questionCount: stubRequest.questions.length,
         });
+        if (process.env.AGENTIC30_TEST_STUB_OFFICE_HOURS_MCP_PENDING_RESULT === "1") {
+          emitStubOfficeHoursMcpPendingResult({ provider, onToolEvent, request: stubRequest });
+        }
       }
       await delayTestStubOfficeHoursMcpRequestIfNeeded();
       onRunEvent?.({ phase: "provider.stub_response", provider });
@@ -496,7 +502,6 @@ export async function runProviderStream({
     onToolEvent,
     onRuntimeUpdate,
     onRunEvent,
-    stopAfterCodexThreadStarted,
   });
 }
 
@@ -870,6 +875,13 @@ async function runClaudeProvider({
     },
     abortController,
     maxTurns: resolveClaudeMaxTurns(executionMode),
+    // Day-1 workspace scan verifies a precomputed local evidence bundle. Isolate
+    // it from ~/.claude and project settings (CLAUDE.md, custom effort, extra
+    // MCP/skills) so the lane stays deterministic and inside the fail-fast
+    // budget — leaving settingSources unset would let the SDK load those and
+    // reintroduce the abort. Mutually exclusive with the vendor block below
+    // (scan runs without a specialist, so claudeVendor is absent here).
+    ...(executionMode === "workspace_scan_read_only" ? { settingSources: [] } : {}),
     ...(hasStructuredOutputSchema(structuredOutputSchema)
       ? { outputFormat: { type: "json_schema", schema: structuredOutputSchema } }
       : {}),
@@ -1135,6 +1147,15 @@ export function buildClaudeCanUseTool({
       requestId: request.requestId,
       questionCount: questions.length,
     });
+
+    if (executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE) {
+      return {
+        behavior: "allow",
+        updatedInput: parseClaudeStructuredInputToolOutput(
+          buildPendingUserInputToolOutput(request),
+        ),
+      };
+    }
 
     try {
       const response = await waitForUserInputResponse(appSupportPath, {
@@ -1540,7 +1561,6 @@ async function runCodexAttempt({
   onToolEvent,
   onRuntimeUpdate,
   onRunEvent,
-  stopAfterCodexThreadStarted = false,
   structuredOutputSchema = null,
 }) {
   let runtime = { ...sessionRuntime };
@@ -1640,11 +1660,6 @@ async function runCodexAttempt({
         },
       };
       onRuntimeUpdate?.(runtime);
-      if (stopAfterCodexThreadStarted) {
-        onRunEvent?.({ phase: "provider.codex.warm_thread_started" });
-        abortController.abort();
-        return { runtime };
-      }
       continue;
     }
 
@@ -2301,12 +2316,17 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
   return hasDeepWorkSignal ? "high" : "medium";
 }
 
-// Claude Agent SDK `options.effort`. Precedence: env pin > Settings pin >
-// per-executionMode default. With no pin it returns "" for most modes (leaving
-// the SDK default high), but lowers the bounded office-hours digest helper to
-// "low" to trim that once-per-session blocking call — mirroring Codex's
-// office_hours_digest_read_only -> "low". The quality-critical interview
-// (office_hours_question) and the evidence judge (judge_read_only) keep "".
+// Claude Agent SDK `options.effort`. Precedence: workspace-scan pin >
+// env pin > Settings pin > per-executionMode default. With no pin it returns
+// "" for most modes (leaving the SDK default high), but lowers the bounded
+// office-hours digest helper to "low" to trim blocking helper calls — mirroring
+// Codex's office_hours_digest_read_only / office_hours_question -> "low". The
+// evidence judge (judge_read_only) keeps "".
+// The Day-1 workspace scan (workspace_scan_read_only) is forced to "low" AHEAD
+// of env/Settings — mirroring resolveCodexReasoningEffort — because it is a
+// deterministic, bundle-only verify lane that must never inherit a user-saved
+// high/xhigh/max effort and blow the 45s fail-fast budget (Day-1 onboarding
+// would hard-block on an abort otherwise).
 // Guarded by claudeModelSupportsEffort: Haiku 4.5 / Sonnet 4.5 reject an effort
 // param, so an unrecognized model omits effort (safe SDK default) rather than
 // risk a rejection on the digest call.
@@ -2316,6 +2336,12 @@ function claudeModelSupportsEffort(model = "") {
 }
 
 export function resolveClaudeReasoningEffort(executionMode = "", model = "") {
+  // Force the lowest compatible effort for the workspace scan BEFORE env/Settings
+  // pins, so a user-saved high/xhigh/max effort cannot reintroduce the Day-1
+  // abort. Mirrors resolveCodexReasoningEffort's workspace_scan_read_only branch.
+  if (executionMode === "workspace_scan_read_only" && claudeModelSupportsEffort(model)) {
+    return "low";
+  }
   const configured = String(process.env.AGENTIC30_CLAUDE_REASONING_EFFORT || "")
     .trim()
     .toLowerCase();
@@ -2326,7 +2352,11 @@ export function resolveClaudeReasoningEffort(executionMode = "", model = "") {
   if (CLAUDE_REASONING_EFFORTS.has(fromSettings)) {
     return fromSettings;
   }
-  if (executionMode === "office_hours_digest_read_only" && claudeModelSupportsEffort(model)) {
+  if (
+    (executionMode === "office_hours_digest_read_only"
+      || executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE)
+    && claudeModelSupportsEffort(model)
+  ) {
     return "low";
   }
   return "";
@@ -2339,6 +2369,9 @@ export function resolveClaudeReasoningEffort(executionMode = "", model = "") {
 export function resolveClaudeMaxTurns(executionMode = "") {
   if (executionMode === "workspace_scan_read_only") {
     return WORKSPACE_SCAN_MAX_TURNS;
+  }
+  if (executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE) {
+    return OFFICE_HOURS_QUESTION_MAX_TURNS;
   }
   return DEFAULT_CLAUDE_MAX_TURNS;
 }
@@ -2858,6 +2891,38 @@ function emitStubOfficeHoursMcpResultOnly({ provider, onToolEvent } = {}) {
           title: "Office Hours",
           questions: [question],
         })),
+      },
+    },
+  });
+}
+
+function emitStubOfficeHoursMcpPendingResult({ provider, onToolEvent, request } = {}) {
+  if (!request?.requestId) return;
+  const toolCallKey = `stub-office-hours-pending-${request.requestId}`;
+  onToolEvent?.({
+    phase: "use",
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    toolCallKey,
+    payload: {
+      requestedToolName: CODEX_STRUCTURED_INPUT_TOOL,
+      providerMode: provider || "codex",
+      arguments: {
+        title: request.title,
+        generation: request.generation,
+        questions: request.questions,
+      },
+    },
+  });
+  onToolEvent?.({
+    phase: "result",
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    toolCallKey,
+    payload: {
+      requestedToolName: CODEX_STRUCTURED_INPUT_TOOL,
+      providerMode: provider || "codex",
+      result: {
+        type: "text",
+        text: JSON.stringify(buildPendingUserInputToolOutput(request)),
       },
     },
   });

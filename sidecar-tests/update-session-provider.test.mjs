@@ -19,7 +19,7 @@ test("update_session_provider switches the session provider and resets its model
     socket.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.1-codex-mini",
+      model: "gpt-5.5",
       suppressBootstrapIntake: true,
     }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");

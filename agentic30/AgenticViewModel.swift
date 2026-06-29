@@ -6,8 +6,263 @@ import UserNotifications
 import AppKit
 import ApplicationServices
 import CryptoKit
+import AVFoundation
+#if canImport(Speech)
+import Speech
+#endif
 #if canImport(ScreenCaptureKit)
 import ScreenCaptureKit
+#endif
+
+private protocol RecorderSystemAudioCaptureSession: AnyObject {
+    func stopAndFinalize() async throws
+    func cancel()
+}
+
+private enum RecorderSystemAudioCaptureError: LocalizedError {
+    case unavailable
+    case noDisplay
+    case streamOutputRejected(String)
+    case streamStartFailed(String)
+    case streamStopFailed(String)
+    case assetWriterInputRejected
+    case assetWriterStartFailed(String)
+    case assetWriterAppendFailed(String)
+    case assetWriterFinishFailed(String)
+    case noAudioSamples
+    case emptyRecordingFile
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            return "ERR_RECORDER_SYSTEM_AUDIO_UNAVAILABLE: ScreenCaptureKit system audio capture is unavailable on this macOS runtime."
+        case .noDisplay:
+            return "ERR_RECORDER_SYSTEM_AUDIO_NO_DISPLAY: ScreenCaptureKit did not return a display for System Audio capture."
+        case .streamOutputRejected(let message):
+            return "ERR_RECORDER_SYSTEM_AUDIO_STREAM_OUTPUT_REJECTED: \(message)"
+        case .streamStartFailed(let message):
+            return "ERR_RECORDER_SYSTEM_AUDIO_STREAM_START_FAILED: \(message)"
+        case .streamStopFailed(let message):
+            return "ERR_RECORDER_SYSTEM_AUDIO_STREAM_STOP_FAILED: \(message)"
+        case .assetWriterInputRejected:
+            return "ERR_RECORDER_SYSTEM_AUDIO_WRITER_INPUT_REJECTED: AVAssetWriter rejected the System Audio input."
+        case .assetWriterStartFailed(let message):
+            return "ERR_RECORDER_SYSTEM_AUDIO_WRITER_START_FAILED: \(message)"
+        case .assetWriterAppendFailed(let message):
+            return "ERR_RECORDER_SYSTEM_AUDIO_WRITER_APPEND_FAILED: \(message)"
+        case .assetWriterFinishFailed(let message):
+            return "ERR_RECORDER_SYSTEM_AUDIO_WRITER_FINISH_FAILED: \(message)"
+        case .noAudioSamples:
+            return "ERR_RECORDER_SYSTEM_AUDIO_NO_SAMPLES: ScreenCaptureKit produced no System Audio samples before the chunk ended."
+        case .emptyRecordingFile:
+            return "ERR_RECORDER_SYSTEM_AUDIO_EMPTY_MEDIA_FILE: System Audio capture produced an empty audio file."
+        }
+    }
+}
+
+#if canImport(ScreenCaptureKit)
+@available(macOS 13.0, *)
+private final class ScreenCaptureKitSystemAudioCaptureSession: NSObject, RecorderSystemAudioCaptureSession, SCStreamOutput, @unchecked Sendable {
+    private let outputURL: URL
+    private let sampleQueue = DispatchQueue(label: "app.agentic30.recorder.system-audio", qos: .utility)
+    private let lock = NSLock()
+    private var stream: SCStream?
+    private var writer: AVAssetWriter?
+    private var input: AVAssetWriterInput?
+    private var sampleCount = 0
+    private var terminalError: Error?
+    private var stopping = false
+
+    init(outputURL: URL) {
+        self.outputURL = outputURL
+        super.init()
+    }
+
+    static func start(outputURL: URL) async throws -> ScreenCaptureKitSystemAudioCaptureSession {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first else {
+            throw RecorderSystemAudioCaptureError.noDisplay
+        }
+        let session = ScreenCaptureKitSystemAudioCaptureSession(outputURL: outputURL)
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let configuration = SCStreamConfiguration()
+        configuration.width = max(Int(display.width), 2)
+        configuration.height = max(Int(display.height), 2)
+        configuration.capturesAudio = true
+        configuration.sampleRate = 48_000
+        configuration.channelCount = 2
+        configuration.excludesCurrentProcessAudio = true
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
+        do {
+            try stream.addStreamOutput(session, type: .audio, sampleHandlerQueue: session.sampleQueue)
+        } catch {
+            throw RecorderSystemAudioCaptureError.streamOutputRejected(error.localizedDescription)
+        }
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                stream.startCapture { error in
+                    if let error {
+                        continuation.resume(throwing: RecorderSystemAudioCaptureError.streamStartFailed(error.localizedDescription))
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        } catch {
+            try? stream.removeStreamOutput(session, type: .audio)
+            throw error
+        }
+        session.setStream(stream)
+        return session
+    }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .audio, CMSampleBufferDataIsReady(sampleBuffer) else { return }
+        lock.lock()
+        guard !stopping, terminalError == nil else {
+            lock.unlock()
+            return
+        }
+        do {
+            if writer == nil || input == nil {
+                try prepareWriterLocked(startingAt: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+            }
+            guard let writer, let input else {
+                throw RecorderSystemAudioCaptureError.assetWriterStartFailed("AVAssetWriter was not initialized.")
+            }
+            guard input.isReadyForMoreMediaData else {
+                lock.unlock()
+                return
+            }
+            if input.append(sampleBuffer) {
+                sampleCount += 1
+            } else {
+                throw RecorderSystemAudioCaptureError.assetWriterAppendFailed(
+                    writer.error?.localizedDescription
+                        ?? "AVAssetWriterInput append returned false."
+                )
+            }
+        } catch {
+            terminalError = error
+        }
+        lock.unlock()
+    }
+
+    func stopAndFinalize() async throws {
+        let streamToStop: SCStream?
+        lock.lock()
+        stopping = true
+        streamToStop = stream
+        stream = nil
+        lock.unlock()
+
+        if let streamToStop {
+            try await Self.stopStream(streamToStop)
+        }
+
+        let writerToFinish: AVAssetWriter?
+        let inputToFinish: AVAssetWriterInput?
+        let count: Int
+        let error: Error?
+        lock.lock()
+        writerToFinish = writer
+        inputToFinish = input
+        count = sampleCount
+        error = terminalError
+        writer = nil
+        input = nil
+        lock.unlock()
+
+        if let error {
+            throw error
+        }
+        guard let writerToFinish, let inputToFinish, count > 0 else {
+            throw RecorderSystemAudioCaptureError.noAudioSamples
+        }
+        inputToFinish.markAsFinished()
+        try await Self.finishWriter(writerToFinish)
+        let attributes = try FileManager.default.attributesOfItem(atPath: outputURL.path)
+        let byteSize = attributes[.size] as? NSNumber
+        guard (byteSize?.intValue ?? 0) > 0 else {
+            throw RecorderSystemAudioCaptureError.emptyRecordingFile
+        }
+    }
+
+    func cancel() {
+        let streamToStop: SCStream?
+        let writerToCancel: AVAssetWriter?
+        lock.lock()
+        stopping = true
+        streamToStop = stream
+        writerToCancel = writer
+        stream = nil
+        writer = nil
+        input = nil
+        lock.unlock()
+
+        writerToCancel?.cancelWriting()
+        try? FileManager.default.removeItem(at: outputURL)
+        streamToStop?.stopCapture { _ in }
+    }
+
+    private func setStream(_ stream: SCStream) {
+        lock.lock()
+        self.stream = stream
+        lock.unlock()
+    }
+
+    private func prepareWriterLocked(startingAt startTime: CMTime) throws {
+        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .m4a)
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 48_000,
+            AVNumberOfChannelsKey: 2,
+            AVEncoderBitRateKey: 128_000,
+        ])
+        input.expectsMediaDataInRealTime = true
+        guard writer.canAdd(input) else {
+            throw RecorderSystemAudioCaptureError.assetWriterInputRejected
+        }
+        writer.add(input)
+        guard writer.startWriting() else {
+            throw RecorderSystemAudioCaptureError.assetWriterStartFailed(
+                writer.error?.localizedDescription ?? "AVAssetWriter.startWriting returned false."
+            )
+        }
+        writer.startSession(atSourceTime: startTime)
+        self.writer = writer
+        self.input = input
+    }
+
+    private static func stopStream(_ stream: SCStream) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            stream.stopCapture { error in
+                if let error {
+                    continuation.resume(throwing: RecorderSystemAudioCaptureError.streamStopFailed(error.localizedDescription))
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    private static func finishWriter(_ writer: AVAssetWriter) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            writer.finishWriting {
+                switch writer.status {
+                case .completed:
+                    continuation.resume()
+                case .failed, .cancelled:
+                    continuation.resume(throwing: RecorderSystemAudioCaptureError.assetWriterFinishFailed(
+                        writer.error?.localizedDescription ?? "AVAssetWriter did not complete."
+                    ))
+                default:
+                    continuation.resume()
+                }
+            }
+        }
+    }
+}
 #endif
 
 typealias WebAuthenticationSessionCompletion = (URL?, Error?) -> Void
@@ -1047,6 +1302,7 @@ struct WorkspaceScanProgressSnapshot: Equatable {
     let totalSteps: Int?
     let etaSeconds: Int?
     let foundCount: Int?
+    let elapsedMs: Int?
 
     init(
         progressText: String,
@@ -1054,7 +1310,8 @@ struct WorkspaceScanProgressSnapshot: Equatable {
         stepIndex: Int? = nil,
         totalSteps: Int? = nil,
         etaSeconds: Int? = nil,
-        foundCount: Int? = nil
+        foundCount: Int? = nil,
+        elapsedMs: Int? = nil
     ) {
         self.progressText = progressText
         self.stage = stage
@@ -1062,6 +1319,7 @@ struct WorkspaceScanProgressSnapshot: Equatable {
         self.totalSteps = totalSteps
         self.etaSeconds = etaSeconds
         self.foundCount = foundCount
+        self.elapsedMs = elapsedMs
     }
 }
 
@@ -1136,25 +1394,14 @@ struct WorkspaceScanBlockedNotice: Equatable {
     let availableProviders: [AgentProvider]
     let providerReadiness: [WorkspaceScanProviderReadiness]
     let errorKind: String?
-}
-
-/// Decodable payload for the `scanBlockedNotice` object carried INSIDE a
-/// fail-open `workspace_scan_result` (degraded scan). It mirrors the
-/// `workspace_scan_blocked` envelope so the host can reuse the same recovery
-/// copy, but here it is advisory: the scan already succeeded on local signals
-/// and Day 1 proceeds — this only powers a non-blocking "reconnect for a precise
-/// scan" warning. Provider strings are raw so an unknown provider degrades
-/// gracefully rather than failing the decode.
-struct WorkspaceScanDegradedNoticePayload: Decodable, Equatable {
-    let scanRoot: String?
-    let provider: String?
-    let model: String?
-    let reason: String?
-    let message: String?
-    let nextProvider: String?
-    let availableProviders: [String]?
-    let providerReadiness: [WorkspaceScanProviderReadiness]?
-    let errorKind: String?
+    /// Why an aborted scan stopped: "soft_timeout" / "hard_deadline" (our
+    /// wall-clock budget) vs "external" (SDK/network abort). nil for non-abort
+    /// blocks. Drives whether the recovery copy says "시간 초과" and whether the
+    /// primary action retries the same provider or steers to a switch.
+    var abortCause: String? = nil
+    /// Attempt number echoed by the sidecar (0/absent = first run). >= 1 means an
+    /// extended-budget retry already failed, so recovery escalates to switch.
+    var retryAttempt: Int? = nil
 }
 
 /// Reason-aware recovery plan for a blocked workspace scan. Pure (no SwiftUI) so
@@ -1211,11 +1458,32 @@ struct WorkspaceScanBlockedRecovery: Equatable {
 
         if let primaryReady = WorkspaceScanBlockedRecovery.preferredProvider(scanReady, nextProvider: notice.nextProvider) {
             let failedStillReady = scanReady.contains { $0.provider == notice.provider }
-            if isAborted && failedStillReady {
+            let abortCause = (notice.abortCause ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let isTimeoutAbort = abortCause == "soft_timeout" || abortCause == "hard_deadline"
+            let alreadyRetried = (notice.retryAttempt ?? 0) >= 1
+            if isAborted && failedStillReady && isTimeoutAbort && !alreadyRetried {
+                // Timed out on our wall-clock budget; the same provider is still
+                // scan-ready. A retry re-runs it ONCE with the extended budget —
+                // honest "시간 초과" framing, not a generic "중단".
                 primaryAction = .retry(notice.provider)
                 alternateProviders = scanReady.map(\.provider).filter { $0 != notice.provider }
+                title = "\(failedTitle) 검증이 시간을 초과했어요"
+                body = "검증이 시간 예산을 넘겼어요. 같은 AI로 다시 시도하면 더 넉넉한 시간으로 재검증합니다."
+            } else if isAborted && isTimeoutAbort && alreadyRetried {
+                // The extended-budget retry still timed out — stop looping on the
+                // same provider and steer to a switch (never auto-switch).
+                primaryAction = .switchProvider(primaryReady)
+                alternateProviders = scanReady.map(\.provider).filter { $0 != primaryReady }
+                title = "\(failedTitle) 검증이 계속 시간을 초과해요"
+                body = "넉넉한 시간으로도 \(failedTitle) 검증을 끝내지 못했어요. \(primaryReady.title)로 전환해 검증하세요."
+            } else if isAborted {
+                // External/SDK abort (not our timer), or the failed provider is no
+                // longer scan-ready: a same-provider retry is less honest than
+                // steering to another scan-ready provider.
+                primaryAction = .switchProvider(primaryReady)
+                alternateProviders = scanReady.map(\.provider).filter { $0 != primaryReady }
                 title = "\(failedTitle) 검증이 중단됐어요"
-                body = "검증이 제한 시간 안에 끝나지 않았어요. 같은 AI로 다시 시도해 주세요."
+                body = "\(failedTitle) 검증이 예기치 않게 중단됐어요. \(primaryReady.title)로 전환하거나 잠시 후 다시 시도하세요."
             } else if isUsageLimit {
                 primaryAction = .switchProvider(primaryReady)
                 alternateProviders = scanReady.map(\.provider).filter { $0 != primaryReady }
@@ -2757,6 +3025,8 @@ struct RecorderControlConsent: Decodable, Equatable, Hashable {
 }
 
 struct RecorderSensitiveCapture: Decodable, Equatable, Hashable {
+    static let allowedClipboardModes: Set<String> = ["trigger_only", "content_opt_in", "blocked"]
+
     let clipboardMode: String
     let microphone: Bool
     let systemAudio: Bool
@@ -3151,6 +3421,112 @@ struct RecorderRawApiToken: Decodable, Equatable, Hashable {
         expiresAt = try c.decodeIfPresent(String.self, forKey: .expiresAt)
             ?? c.decodeIfPresent(String.self, forKey: .expires_at)
             ?? ""
+    }
+}
+
+struct RecorderAuditSourceId: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let sourceType: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case sourceType, source_type
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        sourceType = try c.decodeIfPresent(String.self, forKey: .sourceType)
+            ?? c.decodeIfPresent(String.self, forKey: .source_type)
+            ?? "unknown"
+    }
+}
+
+struct RecorderAuditEvent: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let requestId: String
+    let actorType: String
+    let actorId: String
+    let workspaceId: String?
+    let projectId: String?
+    let endpoint: String
+    let accessLevel: String
+    let sourceIds: [RecorderAuditSourceId]
+    let decision: String
+    let reason: String
+    let createdAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case requestId, request_id
+        case actorType, actor_type
+        case actorId, actor_id
+        case workspaceId, workspace_id
+        case projectId, project_id
+        case endpoint
+        case accessLevel, access_level
+        case sourceIds, source_ids
+        case decision
+        case reason
+        case createdAt, created_at
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        requestId = try c.decodeIfPresent(String.self, forKey: .requestId)
+            ?? c.decodeIfPresent(String.self, forKey: .request_id)
+            ?? ""
+        actorType = try c.decodeIfPresent(String.self, forKey: .actorType)
+            ?? c.decodeIfPresent(String.self, forKey: .actor_type)
+            ?? ""
+        actorId = try c.decodeIfPresent(String.self, forKey: .actorId)
+            ?? c.decodeIfPresent(String.self, forKey: .actor_id)
+            ?? ""
+        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+            ?? c.decodeIfPresent(String.self, forKey: .workspace_id)
+        projectId = try c.decodeIfPresent(String.self, forKey: .projectId)
+            ?? c.decodeIfPresent(String.self, forKey: .project_id)
+        endpoint = try c.decodeIfPresent(String.self, forKey: .endpoint) ?? ""
+        accessLevel = try c.decodeIfPresent(String.self, forKey: .accessLevel)
+            ?? c.decodeIfPresent(String.self, forKey: .access_level)
+            ?? ""
+        sourceIds = try c.decodeIfPresent([RecorderAuditSourceId].self, forKey: .sourceIds)
+            ?? c.decodeIfPresent([RecorderAuditSourceId].self, forKey: .source_ids)
+            ?? []
+        decision = try c.decodeIfPresent(String.self, forKey: .decision) ?? ""
+        reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? ""
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+            ?? c.decodeIfPresent(String.self, forKey: .created_at)
+            ?? ""
+    }
+}
+
+struct RecorderAuditSource: Decodable, Equatable, Hashable {
+    let generatedAt: String
+    let resultCount: Int
+    let audit: [RecorderAuditEvent]
+    let proofAcceptedByAuditSource: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case generatedAt, generated_at
+        case resultCount, result_count
+        case audit
+        case proofAcceptedByAuditSource, proof_accepted_by_audit_source
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .generated_at)
+            ?? ""
+        resultCount = try c.decodeIfPresent(Int.self, forKey: .resultCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .result_count)
+            ?? 0
+        audit = try c.decodeIfPresent([RecorderAuditEvent].self, forKey: .audit) ?? []
+        proofAcceptedByAuditSource = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByAuditSource)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_audit_source)
+            ?? false
     }
 }
 
@@ -3730,12 +4106,6 @@ final class AgenticViewModel: ObservableObject {
     /// "switch provider and re-scan" button. Cleared on the next scan start.
     @Published private(set) var scanProviderLimitNotice: ScanProviderLimitNotice?
     @Published private(set) var scanBlockedNotice: WorkspaceScanBlockedNotice?
-    /// Set when a workspace scan completed on LOCAL-only signals because provider
-    /// verification could not run (fail-open degraded scan). Unlike
-    /// `scanBlockedNotice` this is NON-blocking: Day 1 proceeds and the UI shows
-    /// an advisory "local-only scan — reconnect for a precise scan" warning.
-    /// Cleared on the next scan start and on any non-degraded scan result.
-    @Published private(set) var scanDegradedNotice: WorkspaceScanBlockedNotice?
     @Published private(set) var pendingAgentic30GitignoreConsent: Agentic30GitignoreState?
     @Published private(set) var isCreatingDoc: String?
     @Published private(set) var docCreationLogs: [String] = []
@@ -3876,6 +4246,12 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var recorderAutoCaptureRunning = false
     @Published private(set) var recorderAutoCaptureLastTrigger: String?
     @Published private(set) var recorderAutoCaptureLastError: String?
+    @Published private(set) var recorderClipboardLastError: String?
+    @Published private(set) var recorderAudioCaptureRunning = false
+    @Published private(set) var recorderAudioCaptureLastError: String?
+    @Published private(set) var recorderAuditSource: RecorderAuditSource?
+    @Published private(set) var recorderAuditRefreshing = false
+    @Published private(set) var recorderAuditLastError: String?
     @Published private(set) var recorderPipes: [RecorderPipeDefinition] = []
     @Published private(set) var recorderPipeRuns: [RecorderPipeRun] = []
     @Published private(set) var recorderPipesRefreshing = false
@@ -3923,6 +4299,21 @@ final class AgenticViewModel: ObservableObject {
     private var recorderAutoCaptureActivationObserver: NSObjectProtocol?
     private let recorderAutoCaptureIntervalSeconds: TimeInterval = 120
     private var recorderAutoCaptureLocallyStopped = false
+    private var recorderClipboardCollectorTimer: Timer?
+    private var recorderClipboardLastChangeCount: Int?
+    private var recorderMicrophoneRecorder: AVAudioRecorder?
+    private var recorderMicrophoneChunkStartedAt: Date?
+    private var recorderMicrophoneTempFileURL: URL?
+    private var recorderMicrophoneChunkTimer: Timer?
+    private var recorderSystemAudioSession: RecorderSystemAudioCaptureSession?
+    private var recorderSystemAudioChunkStartedAt: Date?
+    private var recorderSystemAudioTempFileURL: URL?
+    private var recorderSystemAudioChunkTimer: Timer?
+    private var recorderSystemAudioStartInFlight = false
+    private var recorderAudioChunkInFlight = false
+    private var recorderMicrophoneAudioChunkInFlight = false
+    private var recorderSystemAudioChunkInFlight = false
+    private let recorderAudioChunkDurationSeconds: TimeInterval = 30
     private var recorderRawApiStatus: RecorderRawApiStatus?
     private var pendingRecorderFrameImageRequestID: String?
     private var recorderFrameImagePreparedForDisplay = false
@@ -4026,7 +4417,6 @@ final class AgenticViewModel: ObservableObject {
     static var workspaceScanResultAppSupportURLOverrideForTesting: URL?
     #endif
     private var workspaceSetupTelemetryGate = WorkspaceSetupTelemetryGate()
-    private var requestedWarmSessionKeys = Set<String>()
     private var requestedInitialBipGate = false
     private var requestedInitialBipMission = false
     private var activeOnboardingWorkspacePrefetchFingerprint: String?
@@ -4416,6 +4806,17 @@ final class AgenticViewModel: ObservableObject {
 
     deinit {
         recorderAutoCaptureTimer?.invalidate()
+        recorderClipboardCollectorTimer?.invalidate()
+        recorderMicrophoneChunkTimer?.invalidate()
+        recorderMicrophoneRecorder?.stop()
+        if let recorderMicrophoneTempFileURL {
+            try? FileManager.default.removeItem(at: recorderMicrophoneTempFileURL)
+        }
+        recorderSystemAudioChunkTimer?.invalidate()
+        recorderSystemAudioSession?.cancel()
+        if let recorderSystemAudioTempFileURL {
+            try? FileManager.default.removeItem(at: recorderSystemAudioTempFileURL)
+        }
         if let recorderAutoCaptureActivationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(recorderAutoCaptureActivationObserver)
         }
@@ -5017,6 +5418,7 @@ final class AgenticViewModel: ObservableObject {
         integrationStatusChecking = false
         finishMcpOauthInFlightAfterSidecarInterruption(markFailedResult: false)
         finishExaMcpConnectAfterSidecarInterruption()
+        stopRecorderClipboardCollector()
         sidecar.stop()
         started = false
         officeHoursSessionCreateInFlight = false
@@ -5028,6 +5430,7 @@ final class AgenticViewModel: ObservableObject {
         connectionLabel = "실행 보조 앱 다시 연결 중..."
         lastError = nil
         isConnected = false
+        stopRecorderClipboardCollector()
         integrationStatusChecking = false
         isBipCoachRefreshing = false
         isBipCoachGenerating = false
@@ -6270,35 +6673,9 @@ final class AgenticViewModel: ObservableObject {
     func selectSession(_ sessionID: String) {
         selectedSessionID = sessionID
         refreshPresentationState()
-        requestCodexWarmupIfNeeded()
     }
 
-    /// Maps a degraded `workspace_scan_result`'s advisory `scanBlockedNotice`
-    /// payload onto the existing `WorkspaceScanBlockedNotice` so the recovery UI
-    /// can be reused. The scan already succeeded on local signals — this notice
-    /// is non-blocking. Falls back to a generic local-only message when the
-    /// sidecar did not attach a payload.
-    private func makeScanDegradedNotice(event: SidecarEvent, fallbackRoot: String) -> WorkspaceScanBlockedNotice {
-        let payload = event.scanBlockedNotice
-        let provider = payload?.provider.flatMap(AgentProvider.init(rawValue:))
-            ?? event.degradedProvider.flatMap(AgentProvider.init(rawValue:))
-            ?? selectedProvider
-        let message = payload?.message?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-            ?? "AI 정밀 스캔을 적용하지 못해 로컬 문서만으로 Day 1을 구성했습니다. AI를 연결하면 정밀 스캔을 받을 수 있어요."
-        return WorkspaceScanBlockedNotice(
-            scanRoot: payload?.scanRoot ?? fallbackRoot,
-            provider: provider,
-            model: payload?.model ?? event.model ?? "",
-            reason: payload?.reason ?? event.degradedReason ?? "",
-            message: message,
-            nextProvider: payload?.nextProvider.flatMap(AgentProvider.init(rawValue:)),
-            availableProviders: (payload?.availableProviders ?? []).compactMap(AgentProvider.init(rawValue:)),
-            providerReadiness: payload?.providerReadiness ?? [],
-            errorKind: payload?.errorKind
-        )
-    }
-
-    func scanWorkspace(root: String, providerOverride: AgentProvider? = nil) {
+    func scanWorkspace(root: String, providerOverride: AgentProvider? = nil, retryAttempt: Int = 0) {
         guard !root.isEmpty else { return }
         beginWorkspaceScanTiming(reset: true)
         beginLongRunningCompletionAttempt(.workspaceScan, source: "workspace_scan", isUserVisible: true)
@@ -6321,7 +6698,6 @@ final class AgenticViewModel: ObservableObject {
         scanResult = nil
         scanProviderLimitNotice = nil
         scanBlockedNotice = nil
-        scanDegradedNotice = nil
         pendingAgentic30GitignoreConsent = nil
         PostHogTelemetry.capture("mac_workspace_scan_requested", properties: [
             "workspace_basename": (root as NSString).lastPathComponent,
@@ -6333,16 +6709,16 @@ final class AgenticViewModel: ObservableObject {
             pendingWorkspaceScanProvider = providerOverride
             return
         }
-        sendWorkspaceScan(root: root, providerOverride: providerOverride)
+        sendWorkspaceScan(root: root, providerOverride: providerOverride, retryAttempt: retryAttempt)
     }
 
     /// Explicit, user-consented provider switch after a usage-limit notice:
     /// adopts `provider` as the active engine (so the settings picker and
     /// follow-up flows stay on the provider the user just chose) and re-runs
     /// the scan once with it.
-    func rescanWorkspace(root: String, provider: AgentProvider) {
+    func rescanWorkspace(root: String, provider: AgentProvider, retryAttempt: Int = 0) {
         setActiveProvider(provider)
-        scanWorkspace(root: root, providerOverride: provider)
+        scanWorkspace(root: root, providerOverride: provider, retryAttempt: retryAttempt)
     }
 
     func submitAgentic30GitignoreConsent(consented: Bool) {
@@ -6359,12 +6735,19 @@ final class AgenticViewModel: ObservableObject {
         pendingAgentic30GitignoreConsent = nil
     }
 
-    private func sendWorkspaceScan(root: String, providerOverride: AgentProvider? = nil) {
-        sidecar.send(payload: [
+    private func sendWorkspaceScan(root: String, providerOverride: AgentProvider? = nil, retryAttempt: Int = 0) {
+        var payload: [String: Any] = [
             "type": "scan_workspace",
             "root": root,
             "preferredProvider": (providerOverride ?? selectedProvider).rawValue,
-        ])
+        ]
+        // Only a deliberate timeout-recovery retry carries an attempt number; the
+        // sidecar widens the scan budget once for retryAttempt >= 1 and echoes it
+        // back so a second timeout escalates to switch-provider in the UI.
+        if retryAttempt > 0 {
+            payload["retryAttempt"] = retryAttempt
+        }
+        sidecar.send(payload: payload)
     }
 
     private func beginWorkspaceScanTiming(reset: Bool = false) {
@@ -6714,7 +7097,8 @@ final class AgenticViewModel: ObservableObject {
         stepIndex: Int? = nil,
         totalSteps: Int? = nil,
         etaSeconds: Int? = nil,
-        foundCount: Int? = nil
+        foundCount: Int? = nil,
+        elapsedMs: Int? = nil
     ) {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
@@ -6725,7 +7109,8 @@ final class AgenticViewModel: ObservableObject {
             stepIndex: stepIndex,
             totalSteps: totalSteps,
             etaSeconds: etaSeconds,
-            foundCount: foundCount
+            foundCount: foundCount,
+            elapsedMs: elapsedMs
         )
         if reset {
             scanProgressLogs = [message]
@@ -7603,6 +7988,29 @@ final class AgenticViewModel: ObservableObject {
         )
     }
 
+    func refreshRecorderAuditEvents(limit: Int = 20) {
+        guard isConnected else {
+            recorderAuditLastError = "실행 보조 앱이 연결되지 않아 raw API 감사 로그를 불러올 수 없습니다."
+            return
+        }
+        recorderAuditRefreshing = true
+        recorderAuditLastError = nil
+        let cappedLimit = max(1, min(limit, 100))
+        guard sidecar.send(payload: [
+            "type": "recorder_audit_list",
+            "limit": cappedLimit,
+        ]) else {
+            recorderAuditRefreshing = false
+            recorderAuditLastError = "raw API 감사 로그 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_audit_list_requested",
+            properties: ["limit": cappedLimit],
+            authSession: macAuthSession
+        )
+    }
+
     func grantRecorderConsent() {
         recorderAutoCaptureLocallyStopped = false
         sendRecorderControlAction(
@@ -7658,20 +8066,51 @@ final class AgenticViewModel: ObservableObject {
         )
     }
 
+    func setRecorderClipboardMode(_ mode: String) {
+        let normalizedMode = mode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard RecorderSensitiveCapture.allowedClipboardModes.contains(normalizedMode) else {
+            recorderControlLastError = "ERR_RECORDER_SENSITIVE_CAPTURE_INVALID_CLIPBOARD_MODE: \(normalizedMode)"
+            return
+        }
+        sendRecorderSensitiveCapturePatch(
+            ["clipboardMode": normalizedMode],
+            actionID: "sensitive_capture_clipboard"
+        )
+    }
+
+    func setRecorderMicrophoneCaptureEnabled(_ enabled: Bool) {
+        sendRecorderSensitiveCapturePatch(
+            ["microphone": enabled],
+            actionID: "sensitive_capture_microphone"
+        )
+    }
+
+    func setRecorderSystemAudioCaptureEnabled(_ enabled: Bool) {
+        sendRecorderSensitiveCapturePatch(
+            ["systemAudio": enabled],
+            actionID: "sensitive_capture_system_audio"
+        )
+    }
+
     func refreshRecorderPermissionProbe() {
         guard isConnected else {
             recorderControlLastError = "실행 보조 앱이 연결되지 않아 macOS 권한 상태를 반영할 수 없습니다."
             return
         }
         let permissions = Self.currentRecorderPermissionProbe()
-        guard !permissions.isEmpty else {
+        let metadataProbes = recorderControlState?.consent.status == "granted"
+            ? Self.currentRecorderMetadataProbe()
+            : []
+        let metadataPermissions = metadataProbes.map { (id: $0.id, state: "granted") }
+        let permissionUpdates = permissions + metadataPermissions
+        guard !permissionUpdates.isEmpty || !metadataProbes.isEmpty else {
             recorderControlLastError = "확인할 수 있는 macOS 권한 항목이 없습니다."
             return
         }
         recorderControlActionInFlight = "permission_probe"
         recorderControlLastError = nil
         var sentAll = true
-        for permission in permissions {
+        for permission in permissionUpdates {
             let sent = sidecar.send(payload: [
                 "type": "recorder_control_action",
                 "action": [
@@ -7682,14 +8121,38 @@ final class AgenticViewModel: ObservableObject {
             ])
             sentAll = sentAll && sent
         }
+        for probe in metadataProbes {
+            var action: [String: Any] = [
+                "type": "record_metadata_probe",
+                "permission": probe.id,
+                "status": probe.status,
+                "source": "swift_runtime_probe",
+                "message": probe.message,
+            ]
+            if let rootCause = probe.rootCause {
+                action["rootCause"] = rootCause
+            }
+            let sent = sidecar.send(payload: [
+                "type": "recorder_control_action",
+                "action": action,
+            ])
+            sentAll = sentAll && sent
+        }
         guard sentAll else {
             recorderControlActionInFlight = nil
             recorderControlLastError = "macOS 권한 상태 업데이트를 실행 보조 앱에 보내지 못했습니다."
             return
         }
+        var telemetryProperties: [String: Any] = Dictionary(uniqueKeysWithValues: permissionUpdates.map { ($0.id, $0.state) })
+        for probe in metadataProbes {
+            telemetryProperties["\(probe.id)_probe_status"] = probe.status
+            if let rootCause = probe.rootCause {
+                telemetryProperties["\(probe.id)_probe_root_cause"] = rootCause
+            }
+        }
         PostHogTelemetry.capture(
             "mac_recorder_permission_probe_requested",
-            properties: Dictionary(uniqueKeysWithValues: permissions.map { ($0.id, $0.state) }),
+            properties: telemetryProperties,
             authSession: macAuthSession
         )
     }
@@ -7840,6 +8303,11 @@ final class AgenticViewModel: ObservableObject {
         )
     }
 
+    private static let recorderMediaEncryptionKeyId = "agentic30-recorder-media-v1"
+    private static var recorderAutomaticRawMediaCaptureCanWriteEncryptedMedia: Bool { true }
+    private static let recorderRawMediaEncryptionRequiredMessage =
+        "ERR_RECORDER_MEDIA_ENCRYPTION_REQUIRED: 자동/백그라운드 화면 기록은 암호화 저장과 키 관리가 구현되기 전에는 시작할 수 없습니다. 수동 캡처만 사용할 수 있습니다."
+
     func startRecorderAutoCapture() {
         startRecorderAutoCapture(reason: "local_user_start_auto_capture")
     }
@@ -7853,6 +8321,19 @@ final class AgenticViewModel: ObservableObject {
         guard recorderCaptureReadiness?.canRecord == true else {
             let blocker = recorderCaptureReadiness?.blockers.first?.message ?? "Recorder capture readiness is blocked."
             recorderAutoCaptureLastError = blocker
+            return
+        }
+        guard Self.recorderAutomaticRawMediaCaptureCanWriteEncryptedMedia else {
+            recorderAutoCaptureLastError = Self.recorderRawMediaEncryptionRequiredMessage
+            recorderFrameCaptureLastError = Self.recorderRawMediaEncryptionRequiredMessage
+            recorderAutoCaptureLocallyStopped = true
+            PostHogTelemetry.capture(
+                "mac_recorder_auto_capture_blocked",
+                properties: [
+                    "reason": "raw_media_encryption_required",
+                ],
+                authSession: macAuthSession
+            )
             return
         }
         recorderAutoCaptureLocallyStopped = false
@@ -7899,7 +8380,10 @@ final class AgenticViewModel: ObservableObject {
         recorderFrameCaptureLastError = nil
         Task { [weak self] in
             do {
-                let envelope = try await Self.buildScreenCaptureKitFrameEnvelope(trigger: trigger)
+                let envelope = try await Self.buildScreenCaptureKitFrameEnvelope(
+                    trigger: trigger,
+                    encryptedMedia: automatic
+                )
                 await MainActor.run {
                     self?.sendRecorderFrameCaptureEnvelope(envelope, automatic: automatic)
                 }
@@ -7974,6 +8458,551 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
+    private func reconcileRecorderClipboardCollectorWithControlState() {
+        guard isConnected,
+              recorderControlState?.mode == "active",
+              recorderControlState?.consent.status == "granted",
+              recorderControlState?.permissions["clipboard"] == "granted",
+              recorderControlState?.sensitiveCapture.clipboardMode != "blocked" else {
+            stopRecorderClipboardCollector()
+            return
+        }
+        startRecorderClipboardCollector()
+    }
+
+    private func reconcileRecorderAudioCollectorsWithControlState() {
+        guard isConnected,
+              let controlState = recorderControlState,
+              controlState.mode == "active",
+              controlState.consent.status == "granted" else {
+            stopRecorderMicrophoneCollector(reason: "control_state_not_active", clearError: false)
+            stopRecorderSystemAudioCollector(reason: "control_state_not_active", clearError: false)
+            return
+        }
+
+        if controlState.sensitiveCapture.microphone {
+            startRecorderMicrophoneCollectorIfReady()
+        } else {
+            stopRecorderMicrophoneCollector(reason: "microphone_policy_disabled", clearError: true)
+        }
+
+        if controlState.sensitiveCapture.systemAudio {
+            startRecorderSystemAudioCollectorIfReady()
+        } else {
+            stopRecorderSystemAudioCollector(reason: "system_audio_policy_disabled", clearError: true)
+        }
+    }
+
+    private func startRecorderClipboardCollector() {
+        guard recorderClipboardCollectorTimer == nil else { return }
+        recorderClipboardLastChangeCount = NSPasteboard.general.changeCount
+        recorderClipboardLastError = nil
+        recorderClipboardCollectorTimer = Timer.scheduledTimer(
+            withTimeInterval: 2,
+            repeats: true
+        ) { [weak self] _ in
+            self?.pollRecorderClipboardChangeCount()
+        }
+        recorderClipboardCollectorTimer?.tolerance = 0.5
+    }
+
+    private func stopRecorderClipboardCollector() {
+        recorderClipboardCollectorTimer?.invalidate()
+        recorderClipboardCollectorTimer = nil
+        recorderClipboardLastChangeCount = nil
+    }
+
+    private func pollRecorderClipboardChangeCount() {
+        let pasteboard = NSPasteboard.general
+        let changeCount = pasteboard.changeCount
+        guard changeCount != recorderClipboardLastChangeCount else { return }
+        recorderClipboardLastChangeCount = changeCount
+        let pasteboardTypes = pasteboard.types?.map(\.rawValue) ?? []
+        let contentType = Self.recorderClipboardContentType(from: pasteboardTypes)
+        let contentText = recorderControlState?.sensitiveCapture.clipboardMode == "content_opt_in"
+            && (contentType == "text" || contentType == "url")
+            ? pasteboard.string(forType: .string)
+            : nil
+        recordRecorderClipboardTrigger(
+            changeCount: changeCount,
+            pasteboardTypes: pasteboardTypes,
+            occurredAt: Date(),
+            appName: NSWorkspace.shared.frontmostApplication?.localizedName,
+            windowTitle: NSApp.keyWindow?.title,
+            contentText: contentText
+        )
+    }
+
+    private func recordRecorderClipboardTrigger(
+        changeCount: Int,
+        pasteboardTypes: [String],
+        occurredAt: Date,
+        appName: String?,
+        windowTitle: String?,
+        contentText: String? = nil
+    ) {
+        guard isConnected else {
+            recorderClipboardLastError = "ERR_RECORDER_CLIPBOARD_SIDECAR_DISCONNECTED: 실행 보조 앱이 연결되지 않아 Clipboard trigger를 기록할 수 없습니다."
+            return
+        }
+        let contentType = Self.recorderClipboardContentType(from: pasteboardTypes)
+        var event: [String: Any] = [
+            "id": "clipboard-\(UUID().uuidString.lowercased())",
+            "occurredAt": Self.recorderIsoTimestamp(occurredAt),
+            "eventKind": "change",
+            "contentType": contentType,
+            "redactionStatus": "not_collected",
+            "privacyState": "trigger_only_local",
+            "safeForSearch": false,
+            "safeForMemory": false,
+            "safeForExport": false,
+        ]
+        let cleanAppName = appName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cleanAppName, !cleanAppName.isEmpty {
+            event["appName"] = cleanAppName
+        }
+        let cleanWindowTitle = windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cleanWindowTitle, !cleanWindowTitle.isEmpty {
+            event["windowTitle"] = cleanWindowTitle
+        }
+        let cleanContentText = contentText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cleanContentText, !cleanContentText.isEmpty {
+            event["contentText"] = cleanContentText
+            event["privacyState"] = "raw_local"
+            event.removeValue(forKey: "redactionStatus")
+        }
+        let sent = sidecar.send(payload: [
+            "type": "recorder_clipboard_event_record",
+            "event": event,
+        ])
+        guard sent else {
+            recorderClipboardLastError = "ERR_RECORDER_CLIPBOARD_SEND_FAILED: Clipboard trigger 기록 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        recorderClipboardLastError = nil
+        PostHogTelemetry.capture(
+            "mac_recorder_clipboard_trigger_record_requested",
+            properties: [
+                "content_type": event["contentType"] as? String ?? "unknown",
+            ],
+            authSession: macAuthSession
+        )
+    }
+
+    private func startRecorderMicrophoneCollectorIfReady() {
+        guard recorderMicrophoneRecorder == nil else { return }
+        guard !recorderMicrophoneAudioChunkInFlight else { return }
+        guard isConnected else {
+            recorderAudioCaptureLastError = "ERR_RECORDER_AUDIO_SIDECAR_DISCONNECTED: 실행 보조 앱이 연결되지 않아 Microphone audio를 기록할 수 없습니다."
+            return
+        }
+        let controlPermission = recorderControlState?.permissions["microphone"] ?? "unknown"
+        guard controlPermission == "granted" else {
+            recorderAudioCaptureLastError = "ERR_RECORDER_AUDIO_MICROPHONE_PERMISSION_MISSING: microphone permission is \(controlPermission)."
+            return
+        }
+        let runtimePermission = Self.currentRecorderMicrophonePermissionState()
+        guard runtimePermission == "granted" else {
+            recorderAudioCaptureLastError = "ERR_RECORDER_AUDIO_MICROPHONE_PERMISSION_MISSING: runtime microphone permission is \(runtimePermission)."
+            return
+        }
+        startRecorderMicrophoneChunk()
+    }
+
+    private func startRecorderMicrophoneChunk() {
+        guard recorderMicrophoneRecorder == nil else { return }
+        do {
+            let tempURL = try Self.recorderTemporaryAudioFileURL()
+            let settings: [String: Any] = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 16_000,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 32_000,
+            ]
+            let recorder = try AVAudioRecorder(url: tempURL, settings: settings)
+            recorder.isMeteringEnabled = false
+            guard recorder.prepareToRecord(), recorder.record() else {
+                throw RecorderAudioCaptureError.microphoneRecorderStartFailed
+            }
+            let startedAt = Date()
+            recorderMicrophoneRecorder = recorder
+            recorderMicrophoneChunkStartedAt = startedAt
+            recorderMicrophoneTempFileURL = tempURL
+            updateRecorderAudioCaptureRunning()
+            recorderAudioCaptureLastError = nil
+            recorderMicrophoneChunkTimer?.invalidate()
+            recorderMicrophoneChunkTimer = Timer.scheduledTimer(
+                withTimeInterval: recorderAudioChunkDurationSeconds,
+                repeats: false
+            ) { [weak self] _ in
+                self?.finishRecorderMicrophoneChunk()
+            }
+            recorderMicrophoneChunkTimer?.tolerance = min(5, recorderAudioChunkDurationSeconds / 5)
+        } catch {
+            recorderAudioCaptureLastError = error.localizedDescription
+            cleanupRecorderMicrophoneChunkFile()
+            updateRecorderAudioCaptureRunning()
+            PostHogTelemetry.captureException(error, properties: [
+                "component": "agentic_view_model",
+                "operation": "recorder_microphone_capture_start",
+            ], authSession: macAuthSession)
+        }
+    }
+
+    private func finishRecorderMicrophoneChunk() {
+        guard let recorder = recorderMicrophoneRecorder,
+              let startedAt = recorderMicrophoneChunkStartedAt,
+              let tempURL = recorderMicrophoneTempFileURL else {
+            cleanupRecorderMicrophoneChunkFile()
+            return
+        }
+        recorder.stop()
+        recorderMicrophoneChunkTimer?.invalidate()
+        recorderMicrophoneChunkTimer = nil
+        recorderMicrophoneRecorder = nil
+        recorderMicrophoneChunkStartedAt = nil
+        recorderMicrophoneTempFileURL = nil
+        let endedAt = Date()
+        recorderMicrophoneAudioChunkInFlight = true
+        updateRecorderAudioCaptureRunning()
+
+        Task { [weak self] in
+            let transcript = await Self.transcribeRecorderAudioLocallyIfAvailable(
+                fileURL: tempURL,
+                startedAt: startedAt,
+                endedAt: endedAt
+            )
+            do {
+                let audio = try Self.buildEncryptedRecorderAudioChunkEnvelope(
+                    source: "microphone",
+                    startedAt: startedAt,
+                    endedAt: endedAt,
+                    temporaryFileURL: tempURL,
+                    transcript: transcript
+                )
+                await MainActor.run {
+                    guard let self else { return }
+                    guard self.recorderMicrophoneAudioChunkInFlight else {
+                        self.updateRecorderAudioCaptureRunning()
+                        return
+                    }
+                    let sent = self.sendRecorderAudioChunkEnvelope(
+                        audio,
+                        captureMode: "background",
+                        automatic: true
+                    )
+                    if sent {
+                        if self.shouldContinueRecorderMicrophoneCollector() {
+                            self.startRecorderMicrophoneChunk()
+                        } else {
+                            self.updateRecorderAudioCaptureRunning()
+                        }
+                    } else {
+                        self.stopRecorderMicrophoneCollector(reason: "audio_ingest_send_failed", clearError: false)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    if let self {
+                        self.recorderMicrophoneAudioChunkInFlight = false
+                        self.recorderAudioCaptureLastError = error.localizedDescription
+                        self.cleanupRecorderMicrophoneChunkFile(url: tempURL)
+                        self.updateRecorderAudioCaptureRunning()
+                        PostHogTelemetry.captureException(error, properties: [
+                            "component": "agentic_view_model",
+                            "operation": "recorder_microphone_chunk_finish",
+                        ], authSession: self.macAuthSession)
+                    } else {
+                        try? FileManager.default.removeItem(at: tempURL)
+                    }
+                }
+            }
+        }
+    }
+
+    private func shouldContinueRecorderMicrophoneCollector() -> Bool {
+        isConnected
+            && recorderControlState?.mode == "active"
+            && recorderControlState?.consent.status == "granted"
+            && recorderControlState?.permissions["microphone"] == "granted"
+            && recorderControlState?.sensitiveCapture.microphone == true
+            && Self.currentRecorderMicrophonePermissionState() == "granted"
+    }
+
+    private func stopRecorderMicrophoneCollector(reason: String, clearError: Bool) {
+        recorderMicrophoneChunkTimer?.invalidate()
+        recorderMicrophoneChunkTimer = nil
+        recorderMicrophoneRecorder?.stop()
+        recorderMicrophoneRecorder = nil
+        recorderMicrophoneChunkStartedAt = nil
+        cleanupRecorderMicrophoneChunkFile()
+        recorderMicrophoneAudioChunkInFlight = false
+        updateRecorderAudioCaptureRunning()
+        if clearError {
+            recorderAudioCaptureLastError = nil
+        }
+        if reason != "microphone_policy_disabled" && reason != "control_state_not_active" {
+            PostHogTelemetry.capture(
+                "mac_recorder_microphone_capture_stopped",
+                properties: [
+                    "reason": reason,
+                ],
+                authSession: macAuthSession
+            )
+        }
+    }
+
+    private func cleanupRecorderMicrophoneChunkFile(url explicitURL: URL? = nil) {
+        let url = explicitURL ?? recorderMicrophoneTempFileURL
+        if let url {
+            try? FileManager.default.removeItem(at: url)
+        }
+        if explicitURL == nil {
+            recorderMicrophoneTempFileURL = nil
+        }
+    }
+
+    private func startRecorderSystemAudioCollectorIfReady() {
+        guard recorderSystemAudioSession == nil, !recorderSystemAudioStartInFlight else { return }
+        guard !recorderSystemAudioChunkInFlight else { return }
+        guard isConnected else {
+            recorderAudioCaptureLastError = "ERR_RECORDER_AUDIO_SIDECAR_DISCONNECTED: 실행 보조 앱이 연결되지 않아 System Audio를 기록할 수 없습니다."
+            return
+        }
+        let controlPermission = recorderControlState?.permissions["systemAudio"] ?? "unknown"
+        guard controlPermission == "granted" else {
+            recorderAudioCaptureLastError = "ERR_RECORDER_SYSTEM_AUDIO_PERMISSION_MISSING: systemAudio permission is \(controlPermission)."
+            return
+        }
+        let runtimePermission = Self.currentRecorderSystemAudioPermissionState()
+        guard runtimePermission == "granted" else {
+            recorderAudioCaptureLastError = "ERR_RECORDER_SYSTEM_AUDIO_PERMISSION_MISSING: runtime systemAudio permission is \(runtimePermission)."
+            return
+        }
+        startRecorderSystemAudioChunk()
+    }
+
+    private func startRecorderSystemAudioChunk() {
+        guard recorderSystemAudioSession == nil, !recorderSystemAudioStartInFlight else { return }
+        recorderSystemAudioStartInFlight = true
+        updateRecorderAudioCaptureRunning()
+        let startedAt = Date()
+        Task { [weak self] in
+            var tempURL: URL?
+            do {
+                let url = try Self.recorderTemporaryAudioFileURL()
+                tempURL = url
+                let session = try await Self.startRecorderSystemAudioCaptureSession(outputURL: url)
+                await MainActor.run {
+                    guard let self else {
+                        session.cancel()
+                        return
+                    }
+                    guard self.shouldContinueRecorderSystemAudioCollector() else {
+                        session.cancel()
+                        self.recorderSystemAudioStartInFlight = false
+                        self.updateRecorderAudioCaptureRunning()
+                        return
+                    }
+                    self.recorderSystemAudioSession = session
+                    self.recorderSystemAudioChunkStartedAt = startedAt
+                    self.recorderSystemAudioTempFileURL = url
+                    self.recorderSystemAudioStartInFlight = false
+                    self.recorderAudioCaptureLastError = nil
+                    self.updateRecorderAudioCaptureRunning()
+                    self.recorderSystemAudioChunkTimer?.invalidate()
+                    self.recorderSystemAudioChunkTimer = Timer.scheduledTimer(
+                        withTimeInterval: self.recorderAudioChunkDurationSeconds,
+                        repeats: false
+                    ) { [weak self] _ in
+                        self?.finishRecorderSystemAudioChunk()
+                    }
+                    self.recorderSystemAudioChunkTimer?.tolerance = min(5, self.recorderAudioChunkDurationSeconds / 5)
+                }
+            } catch {
+                await MainActor.run {
+                    if let self {
+                        self.recorderSystemAudioStartInFlight = false
+                        self.recorderAudioCaptureLastError = error.localizedDescription
+                        if let tempURL {
+                            try? FileManager.default.removeItem(at: tempURL)
+                        }
+                        self.updateRecorderAudioCaptureRunning()
+                        PostHogTelemetry.captureException(error, properties: [
+                            "component": "agentic_view_model",
+                            "operation": "recorder_system_audio_capture_start",
+                        ], authSession: self.macAuthSession)
+                    } else if let tempURL {
+                        try? FileManager.default.removeItem(at: tempURL)
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishRecorderSystemAudioChunk() {
+        guard let session = recorderSystemAudioSession,
+              let startedAt = recorderSystemAudioChunkStartedAt,
+              let tempURL = recorderSystemAudioTempFileURL else {
+            cleanupRecorderSystemAudioChunkFile()
+            return
+        }
+        recorderSystemAudioChunkTimer?.invalidate()
+        recorderSystemAudioChunkTimer = nil
+        recorderSystemAudioSession = nil
+        recorderSystemAudioChunkStartedAt = nil
+        recorderSystemAudioTempFileURL = nil
+        recorderSystemAudioChunkInFlight = true
+        updateRecorderAudioCaptureRunning()
+
+        Task { [weak self] in
+            do {
+                try await session.stopAndFinalize()
+                let endedAt = Date()
+                let transcript = await Self.transcribeRecorderAudioLocallyIfAvailable(
+                    fileURL: tempURL,
+                    startedAt: startedAt,
+                    endedAt: endedAt
+                )
+                let audio = try Self.buildEncryptedRecorderAudioChunkEnvelope(
+                    source: "system_audio",
+                    startedAt: startedAt,
+                    endedAt: endedAt,
+                    temporaryFileURL: tempURL,
+                    transcript: transcript
+                )
+                await MainActor.run {
+                    guard let self else { return }
+                    guard self.recorderSystemAudioChunkInFlight else {
+                        self.updateRecorderAudioCaptureRunning()
+                        return
+                    }
+                    let sent = self.sendRecorderAudioChunkEnvelope(
+                        audio,
+                        captureMode: "background",
+                        automatic: true
+                    )
+                    if sent {
+                        if self.shouldContinueRecorderSystemAudioCollector() {
+                            self.startRecorderSystemAudioChunk()
+                        } else {
+                            self.updateRecorderAudioCaptureRunning()
+                        }
+                    } else {
+                        self.stopRecorderSystemAudioCollector(reason: "audio_ingest_send_failed", clearError: false)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    if let self {
+                        self.recorderSystemAudioChunkInFlight = false
+                        self.recorderAudioCaptureLastError = error.localizedDescription
+                        self.cleanupRecorderSystemAudioChunkFile(url: tempURL)
+                        self.updateRecorderAudioCaptureRunning()
+                        PostHogTelemetry.captureException(error, properties: [
+                            "component": "agentic_view_model",
+                            "operation": "recorder_system_audio_chunk_finish",
+                        ], authSession: self.macAuthSession)
+                    } else {
+                        try? FileManager.default.removeItem(at: tempURL)
+                    }
+                }
+            }
+        }
+    }
+
+    private func shouldContinueRecorderSystemAudioCollector() -> Bool {
+        isConnected
+            && recorderControlState?.mode == "active"
+            && recorderControlState?.consent.status == "granted"
+            && recorderControlState?.permissions["systemAudio"] == "granted"
+            && recorderControlState?.sensitiveCapture.systemAudio == true
+            && Self.currentRecorderSystemAudioPermissionState() == "granted"
+    }
+
+    private func stopRecorderSystemAudioCollector(reason: String, clearError: Bool) {
+        recorderSystemAudioChunkTimer?.invalidate()
+        recorderSystemAudioChunkTimer = nil
+        recorderSystemAudioSession?.cancel()
+        recorderSystemAudioSession = nil
+        recorderSystemAudioStartInFlight = false
+        recorderSystemAudioChunkStartedAt = nil
+        cleanupRecorderSystemAudioChunkFile()
+        recorderSystemAudioChunkInFlight = false
+        updateRecorderAudioCaptureRunning()
+        if clearError {
+            recorderAudioCaptureLastError = nil
+        }
+        if reason != "system_audio_policy_disabled" && reason != "control_state_not_active" {
+            PostHogTelemetry.capture(
+                "mac_recorder_system_audio_capture_stopped",
+                properties: [
+                    "reason": reason,
+                ],
+                authSession: macAuthSession
+            )
+        }
+    }
+
+    private func cleanupRecorderSystemAudioChunkFile(url explicitURL: URL? = nil) {
+        let url = explicitURL ?? recorderSystemAudioTempFileURL
+        if let url {
+            try? FileManager.default.removeItem(at: url)
+        }
+        if explicitURL == nil {
+            recorderSystemAudioTempFileURL = nil
+        }
+    }
+
+    private func updateRecorderAudioCaptureRunning() {
+        recorderAudioChunkInFlight = recorderMicrophoneAudioChunkInFlight
+            || recorderSystemAudioChunkInFlight
+        recorderAudioCaptureRunning = recorderMicrophoneRecorder != nil
+            || recorderSystemAudioSession != nil
+            || recorderSystemAudioStartInFlight
+            || recorderMicrophoneAudioChunkInFlight
+            || recorderSystemAudioChunkInFlight
+    }
+
+    private func sendRecorderAudioChunkEnvelope(
+        _ audio: [String: Any],
+        captureMode: String,
+        automatic: Bool
+    ) -> Bool {
+        guard isConnected else {
+            recorderAudioCaptureLastError = "ERR_RECORDER_AUDIO_SIDECAR_DISCONNECTED: 실행 보조 앱이 연결되지 않아 Audio chunk를 기록할 수 없습니다."
+            return false
+        }
+        if !recorderMicrophoneAudioChunkInFlight && !recorderSystemAudioChunkInFlight {
+            recorderAudioChunkInFlight = true
+        }
+        updateRecorderAudioCaptureRunning()
+        let sent = sidecar.send(payload: [
+            "type": "recorder_audio_chunk_record",
+            "audio": audio,
+            "captureMode": captureMode,
+            "automatic": automatic,
+            "background": automatic,
+        ])
+        guard sent else {
+            recorderMicrophoneAudioChunkInFlight = false
+            recorderSystemAudioChunkInFlight = false
+            recorderAudioCaptureLastError = "ERR_RECORDER_AUDIO_SEND_FAILED: Audio chunk 기록 요청을 실행 보조 앱에 보내지 못했습니다."
+            updateRecorderAudioCaptureRunning()
+            return false
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_audio_chunk_record_requested",
+            properties: [
+                "source": audio["source"] as? String ?? "unknown",
+                "capture_mode": captureMode,
+                "automatic": automatic,
+            ],
+            authSession: macAuthSession
+        )
+        return true
+    }
+
     private func stopRecorderAutoCapture(
         reason: String,
         errorMessage: String? = nil,
@@ -8032,10 +9061,19 @@ final class AgenticViewModel: ObservableObject {
         )
     }
 
+    private func sendRecorderSensitiveCapturePatch(_ patch: [String: Any], actionID: String) {
+        var action = patch
+        action["type"] = "set_sensitive_capture"
+        sendRecorderControlAction(action, actionID: actionID)
+    }
+
     private func sendRecorderFrameCaptureEnvelope(_ envelope: [String: Any], automatic: Bool) {
+        let captureMode = automatic ? "automatic" : "manual"
         let sent = sidecar.send(payload: [
             "type": "recorder_frame_capture_ingest",
             "envelope": envelope,
+            "captureMode": captureMode,
+            "automatic": automatic,
         ])
         guard sent else {
             recorderFrameCaptureInFlight = false
@@ -8049,6 +9087,7 @@ final class AgenticViewModel: ObservableObject {
             "mac_recorder_frame_capture_ingest_requested",
             properties: [
                 "capture_trigger": envelope["captureTrigger"] as? String ?? "unknown",
+                "capture_mode": captureMode,
                 "automatic": automatic,
             ],
             authSession: macAuthSession
@@ -8216,18 +9255,36 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
-    private static func buildScreenCaptureKitFrameEnvelope(trigger: String) async throws -> [String: Any] {
+    private static func buildScreenCaptureKitFrameEnvelope(
+        trigger: String,
+        encryptedMedia: Bool = false
+    ) async throws -> [String: Any] {
         #if canImport(ScreenCaptureKit)
         if #available(macOS 14.0, *) {
-            return try await buildScreenCaptureKitFrameEnvelopeAvailable(trigger: trigger)
+            return try await buildScreenCaptureKitFrameEnvelopeAvailable(
+                trigger: trigger,
+                encryptedMedia: encryptedMedia
+            )
         }
         #endif
         throw RecorderFrameCaptureError.screenCaptureKitUnavailable
     }
 
+    private static func startRecorderSystemAudioCaptureSession(outputURL: URL) async throws -> RecorderSystemAudioCaptureSession {
+        #if canImport(ScreenCaptureKit)
+        if #available(macOS 13.0, *) {
+            return try await ScreenCaptureKitSystemAudioCaptureSession.start(outputURL: outputURL)
+        }
+        #endif
+        throw RecorderSystemAudioCaptureError.unavailable
+    }
+
     #if canImport(ScreenCaptureKit)
     @available(macOS 14.0, *)
-    private static func buildScreenCaptureKitFrameEnvelopeAvailable(trigger: String) async throws -> [String: Any] {
+    private static func buildScreenCaptureKitFrameEnvelopeAvailable(
+        trigger: String,
+        encryptedMedia: Bool
+    ) async throws -> [String: Any] {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first else {
             throw RecorderFrameCaptureError.noDisplay
@@ -8252,7 +9309,10 @@ final class AgenticViewModel: ObservableObject {
         let day = String(timestamp.prefix(10))
         let frameId = "frame-\(UUID().uuidString.lowercased())"
         let assetId = "asset-\(UUID().uuidString.lowercased())"
-        let relativePath = "media/frames/\(day)/\(assetId).jpg"
+        let encryptedFrameMedia = encryptedMedia ? try encryptRecorderMedia(data) : nil
+        let mediaData = encryptedFrameMedia?.ciphertext ?? data
+        let digest = encryptedFrameMedia?.ciphertextSha256 ?? sha256Hex(mediaData)
+        let relativePath = "media/frames/\(day)/\(assetId).jpg\(encryptedMedia ? ".enc" : "")"
         let recorderRoot = FoundationProgressStore.defaultAppSupportURL()
             .appendingPathComponent("recorder", isDirectory: true)
         let fileURL = recorderRoot.appendingPathComponent(relativePath, isDirectory: false)
@@ -8260,12 +9320,23 @@ final class AgenticViewModel: ObservableObject {
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try data.write(to: fileURL, options: [.atomic])
+        try mediaData.write(to: fileURL, options: [.atomic])
 
-        let digest = sha256Hex(data)
         let appName = NSWorkspace.shared.frontmostApplication?.localizedName?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let windowTitle = NSApp.keyWindow?.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let runtimeMetadata = currentRecorderRuntimeMetadata()
+        var snapshot: [String: Any] = [
+            "id": assetId,
+            "relativePath": relativePath,
+            "sha256": digest,
+            "byteSize": mediaData.count,
+            "encrypted": encryptedMedia,
+            "createdAt": timestamp,
+        ]
+        if let encryptedFrameMedia {
+            snapshot["encryption"] = encryptedFrameMedia.envelope
+        }
 
         return [
             "id": frameId,
@@ -8274,6 +9345,8 @@ final class AgenticViewModel: ObservableObject {
             "captureTrigger": trigger,
             "appName": appName?.isEmpty == false ? appName! : NSNull(),
             "windowTitle": windowTitle?.isEmpty == false ? windowTitle! : NSNull(),
+            "browserUrl": runtimeMetadata.browserURL ?? NSNull(),
+            "documentPath": runtimeMetadata.documentPath ?? NSNull(),
             "contentHash": digest,
             "textSource": "screen_capture",
             "redactionStatus": "not_redacted",
@@ -8282,19 +9355,297 @@ final class AgenticViewModel: ObservableObject {
             "safeForExport": false,
             "privacyState": "raw_local",
             "dataClass": "screen",
-            "snapshot": [
-                "id": assetId,
-                "relativePath": relativePath,
-                "sha256": digest,
-                "byteSize": data.count,
-                "encrypted": false,
-                "createdAt": timestamp,
-            ],
+            "snapshot": snapshot,
         ]
     }
     #endif
 
-    private static func recorderIsoTimestamp(_ date: Date) -> String {
+    private struct RecorderEncryptedMedia {
+        let ciphertext: Data
+        let ciphertextSha256: String
+        let envelope: [String: Any]
+    }
+
+    private struct RecorderLocalAudioTranscriptSegment {
+        let idSuffix: String
+        let startedAt: Date
+        let endedAt: Date
+        let text: String
+
+        nonisolated func payload(audioId: String) -> [String: Any] {
+            [
+                "id": "\(audioId)-segment-\(idSuffix)",
+                "startedAt": AgenticViewModel.recorderIsoTimestamp(startedAt),
+                "endedAt": AgenticViewModel.recorderIsoTimestamp(endedAt),
+                "speakerLabel": NSNull(),
+                "text": text,
+                "redactedText": NSNull(),
+                "redactionStatus": "not_redacted",
+                "privacyState": "raw_local",
+                "safeForSearch": false,
+                "safeForMemory": false,
+            ]
+        }
+    }
+
+    private struct RecorderLocalAudioTranscript {
+        let status: String
+        let localTranscriberName: String?
+        let localTranscriberVersion: String?
+        let transcriptionTerminalState: String?
+        let segments: [RecorderLocalAudioTranscriptSegment]
+
+        nonisolated static func unavailable() -> RecorderLocalAudioTranscript {
+            RecorderLocalAudioTranscript(
+                status: "local_transcription_unavailable",
+                localTranscriberName: nil,
+                localTranscriberVersion: nil,
+                transcriptionTerminalState: "local_unavailable_no_cloud_fallback",
+                segments: []
+            )
+        }
+
+        nonisolated static func localComplete(
+            text: String,
+            startedAt: Date,
+            endedAt: Date,
+            transcriberName: String = "apple-speech-on-device",
+            transcriberVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
+        ) -> RecorderLocalAudioTranscript {
+            let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanText.isEmpty else { return unavailable() }
+            return RecorderLocalAudioTranscript(
+                status: "local_complete",
+                localTranscriberName: transcriberName,
+                localTranscriberVersion: transcriberVersion,
+                transcriptionTerminalState: nil,
+                segments: [
+                    RecorderLocalAudioTranscriptSegment(
+                        idSuffix: "1",
+                        startedAt: startedAt,
+                        endedAt: endedAt,
+                        text: cleanText
+                    ),
+                ]
+            )
+        }
+    }
+
+    #if canImport(Speech)
+    @available(macOS 10.15, *)
+    private final class RecorderSpeechRecognitionCompletion: @unchecked Sendable {
+        private let lock = NSLock()
+        private var didFinish = false
+        private var task: SFSpeechRecognitionTask?
+        private let continuation: CheckedContinuation<RecorderLocalAudioTranscript, Never>
+
+        init(_ continuation: CheckedContinuation<RecorderLocalAudioTranscript, Never>) {
+            self.continuation = continuation
+        }
+
+        func setTask(_ task: SFSpeechRecognitionTask) {
+            lock.lock()
+            if didFinish {
+                lock.unlock()
+                task.cancel()
+                return
+            }
+            self.task = task
+            lock.unlock()
+        }
+
+        func scheduleTimeout(seconds: TimeInterval) {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) { [weak self] in
+                self?.finish(.unavailable())
+            }
+        }
+
+        func finish(_ transcript: RecorderLocalAudioTranscript) {
+            lock.lock()
+            guard !didFinish else {
+                lock.unlock()
+                return
+            }
+            didFinish = true
+            let taskToCancel = task
+            lock.unlock()
+            taskToCancel?.cancel()
+            continuation.resume(returning: transcript)
+        }
+    }
+    #endif
+
+    private static func encryptRecorderMedia(_ plaintext: Data) throws -> RecorderEncryptedMedia {
+        let keyData: Data
+        do {
+            keyData = try KeychainHelper.loadOrCreateRecorderMediaKey()
+        } catch {
+            throw RecorderRawMediaEncryptionError.mediaEncryptionKeyUnavailable(error.localizedDescription)
+        }
+        do {
+            let sealedBox = try AES.GCM.seal(plaintext, using: SymmetricKey(data: keyData))
+            let nonce = sealedBox.nonce.withUnsafeBytes { Data($0) }
+            let ciphertext = sealedBox.ciphertext
+            let ciphertextSha256 = sha256Hex(ciphertext)
+            let envelope: [String: Any] = [
+                "algorithm": "aes-256-gcm",
+                "keyId": recorderMediaEncryptionKeyId,
+                "nonce": nonce.base64EncodedString(),
+                "tag": sealedBox.tag.base64EncodedString(),
+                "ciphertextSha256": "sha256:\(ciphertextSha256)",
+            ]
+            return RecorderEncryptedMedia(
+                ciphertext: ciphertext,
+                ciphertextSha256: ciphertextSha256,
+                envelope: envelope
+            )
+        } catch {
+            throw RecorderRawMediaEncryptionError.mediaEncryptionFailed(error.localizedDescription)
+        }
+    }
+
+    private static func transcribeRecorderAudioLocallyIfAvailable(
+        fileURL: URL,
+        startedAt: Date,
+        endedAt: Date
+    ) async -> RecorderLocalAudioTranscript {
+        #if canImport(Speech)
+        guard #available(macOS 10.15, *) else {
+            return .unavailable()
+        }
+        guard SFSpeechRecognizer.authorizationStatus() == .authorized else {
+            return .unavailable()
+        }
+        guard let recognizer = SFSpeechRecognizer(locale: Locale.current),
+              recognizer.isAvailable else {
+            return .unavailable()
+        }
+        let request = SFSpeechURLRecognitionRequest(url: fileURL)
+        request.shouldReportPartialResults = false
+        request.requiresOnDeviceRecognition = true
+
+        return await withCheckedContinuation { continuation in
+            let completion = RecorderSpeechRecognitionCompletion(continuation)
+            completion.scheduleTimeout(seconds: 20)
+            let task = recognizer.recognitionTask(with: request) { result, error in
+                if let result, result.isFinal {
+                    completion.finish(
+                        recorderLocalAudioTranscript(
+                            from: result,
+                            startedAt: startedAt,
+                            endedAt: endedAt
+                        )
+                    )
+                    return
+                }
+                if error != nil {
+                    completion.finish(.unavailable())
+                }
+            }
+            completion.setTask(task)
+        }
+        #else
+        return .unavailable()
+        #endif
+    }
+
+    #if canImport(Speech)
+    @available(macOS 10.15, *)
+    private static func recorderLocalAudioTranscript(
+        from result: SFSpeechRecognitionResult,
+        startedAt: Date,
+        endedAt: Date
+    ) -> RecorderLocalAudioTranscript {
+        let formatted = result.bestTranscription.formattedString
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !formatted.isEmpty else { return .unavailable() }
+        let chunkDuration = max(endedAt.timeIntervalSince(startedAt), 0.001)
+        let speechSegments = result.bestTranscription.segments
+            .enumerated()
+            .compactMap { index, segment -> RecorderLocalAudioTranscriptSegment? in
+                let text = segment.substring.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                let offsetStart = min(max(segment.timestamp, 0), chunkDuration)
+                let offsetEnd = min(max(segment.timestamp + max(segment.duration, 0.001), offsetStart + 0.001), chunkDuration)
+                return RecorderLocalAudioTranscriptSegment(
+                    idSuffix: "\(index + 1)",
+                    startedAt: startedAt.addingTimeInterval(offsetStart),
+                    endedAt: startedAt.addingTimeInterval(offsetEnd),
+                    text: text
+                )
+            }
+        return RecorderLocalAudioTranscript(
+            status: "local_complete",
+            localTranscriberName: "apple-speech-on-device",
+            localTranscriberVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            transcriptionTerminalState: nil,
+            segments: speechSegments.isEmpty
+                ? RecorderLocalAudioTranscript.localComplete(
+                    text: formatted,
+                    startedAt: startedAt,
+                    endedAt: endedAt
+                ).segments
+                : speechSegments
+        )
+    }
+    #endif
+
+    private static func buildEncryptedRecorderAudioChunkEnvelope(
+        source: String,
+        startedAt: Date,
+        endedAt: Date,
+        temporaryFileURL: URL,
+        transcript: RecorderLocalAudioTranscript = .unavailable(),
+        recorderRoot: URL = FoundationProgressStore.defaultAppSupportURL()
+            .appendingPathComponent("recorder", isDirectory: true)
+    ) throws -> [String: Any] {
+        let plaintext = try Data(contentsOf: temporaryFileURL)
+        try? FileManager.default.removeItem(at: temporaryFileURL)
+        guard !plaintext.isEmpty else {
+            throw RecorderAudioCaptureError.emptyAudioFile
+        }
+        let encryptedAudio = try encryptRecorderMedia(plaintext)
+        let endedTimestamp = recorderIsoTimestamp(endedAt)
+        let startedTimestamp = recorderIsoTimestamp(startedAt)
+        let day = String(startedTimestamp.prefix(10))
+        let audioId = "audio-\(UUID().uuidString.lowercased())"
+        let assetId = "asset-\(UUID().uuidString.lowercased())"
+        let transcriptSegments = transcript.segments.map { $0.payload(audioId: audioId) }
+        let relativePath = "media/audio/\(day)/\(assetId).m4a.enc"
+        let fileURL = recorderRoot.appendingPathComponent(relativePath, isDirectory: false)
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try encryptedAudio.ciphertext.write(to: fileURL, options: [.atomic])
+        return [
+            "id": audioId,
+            "startedAt": startedTimestamp,
+            "endedAt": endedTimestamp,
+            "source": source,
+            "transcriptStatus": transcript.status,
+            "consentGrantId": NSNull(),
+            "visibleNoticeId": NSNull(),
+            "rawAudioIndicatorState": "visible_indicator_active",
+            "localTranscriberName": recorderJsonString(transcript.localTranscriberName),
+            "localTranscriberVersion": recorderJsonString(transcript.localTranscriberVersion),
+            "transcriptionTerminalState": recorderJsonString(transcript.transcriptionTerminalState),
+            "redactionStatus": "not_redacted",
+            "privacyState": "raw_local",
+            "audioAsset": [
+                "id": assetId,
+                "relativePath": relativePath,
+                "sha256": encryptedAudio.ciphertextSha256,
+                "byteSize": encryptedAudio.ciphertext.count,
+                "encrypted": true,
+                "encryption": encryptedAudio.envelope,
+                "createdAt": endedTimestamp,
+            ],
+            "transcriptSegments": transcriptSegments,
+        ]
+    }
+
+    nonisolated private static func recorderIsoTimestamp(_ date: Date) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: date)
@@ -8319,11 +9670,348 @@ final class AgenticViewModel: ObservableObject {
             .joined()
     }
 
+    private static func recorderJsonString(_ value: String?) -> Any {
+        value ?? NSNull()
+    }
+
     private static func currentRecorderPermissionProbe() -> [(id: String, state: String)] {
         [
             ("screenRecording", CGPreflightScreenCaptureAccess() ? "granted" : "denied"),
             ("accessibility", AXIsProcessTrusted() ? "granted" : "denied"),
+            ("clipboard", "granted"),
+            ("microphone", currentRecorderMicrophonePermissionState()),
+            ("systemAudio", currentRecorderSystemAudioPermissionState()),
         ]
+    }
+
+    private static func currentRecorderMicrophonePermissionState() -> String {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return "granted"
+        case .denied:
+            return "denied"
+        case .restricted:
+            return "restricted"
+        case .notDetermined:
+            return "not_determined"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
+    private static func currentRecorderSystemAudioPermissionState() -> String {
+        #if canImport(ScreenCaptureKit)
+        if #available(macOS 13.0, *) {
+            return CGPreflightScreenCaptureAccess() ? "granted" : "denied"
+        }
+        #endif
+        return "unavailable"
+    }
+
+    private static func recorderTemporaryAudioFileURL() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-recorder-audio", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        return directory.appendingPathComponent("\(UUID().uuidString.lowercased()).m4a", isDirectory: false)
+    }
+
+    private static func recorderClipboardContentType(from pasteboardTypes: [String]) -> String {
+        let typeSet = Set(pasteboardTypes)
+        if typeSet.contains("public.file-url") || typeSet.contains("NSFilenamesPboardType") {
+            return "file"
+        }
+        if typeSet.contains("public.url") {
+            return "url"
+        }
+        if typeSet.contains(NSPasteboard.PasteboardType.string.rawValue) {
+            return "text"
+        }
+        if typeSet.contains("public.png") || typeSet.contains("public.tiff") {
+            return "image"
+        }
+        return "unknown"
+    }
+
+    #if DEBUG
+    static func recorderBrowserURLAppleScriptSourceForTesting(bundleIdentifier: String) -> String? {
+        recorderBrowserURLAppleScriptSource(bundleIdentifier: bundleIdentifier)
+    }
+
+    static func recorderBrowserURLAppleScriptRootCauseForTesting(errorNumber: Int?) -> String {
+        let info: NSDictionary? = errorNumber.map { [NSAppleScript.errorNumber: $0] as NSDictionary }
+        return recorderBrowserURLAppleScriptRootCause(errorInfo: info)
+    }
+
+    func buildEncryptedRecorderMicrophoneAudioChunkForTesting(
+        plaintext: Data,
+        startedAt: Date = Date(timeIntervalSince1970: 1_782_680_400),
+        endedAt: Date = Date(timeIntervalSince1970: 1_782_680_430),
+        recorderRoot: URL
+    ) throws -> [String: Any] {
+        let tempURL = try Self.recorderTemporaryAudioFileURL()
+        try plaintext.write(to: tempURL, options: [.atomic])
+        return try Self.buildEncryptedRecorderAudioChunkEnvelope(
+            source: "microphone",
+            startedAt: startedAt,
+            endedAt: endedAt,
+            temporaryFileURL: tempURL,
+            recorderRoot: recorderRoot
+        )
+    }
+
+    func buildEncryptedRecorderSystemAudioChunkForTesting(
+        plaintext: Data,
+        startedAt: Date = Date(timeIntervalSince1970: 1_782_680_400),
+        endedAt: Date = Date(timeIntervalSince1970: 1_782_680_430),
+        recorderRoot: URL
+    ) throws -> [String: Any] {
+        let tempURL = try Self.recorderTemporaryAudioFileURL()
+        try plaintext.write(to: tempURL, options: [.atomic])
+        return try Self.buildEncryptedRecorderAudioChunkEnvelope(
+            source: "system_audio",
+            startedAt: startedAt,
+            endedAt: endedAt,
+            temporaryFileURL: tempURL,
+            recorderRoot: recorderRoot
+        )
+    }
+
+    func buildEncryptedRecorderMicrophoneAudioChunkWithLocalTranscriptForTesting(
+        plaintext: Data,
+        transcriptText: String,
+        startedAt: Date = Date(timeIntervalSince1970: 1_782_680_400),
+        endedAt: Date = Date(timeIntervalSince1970: 1_782_680_430),
+        recorderRoot: URL
+    ) throws -> [String: Any] {
+        let tempURL = try Self.recorderTemporaryAudioFileURL()
+        try plaintext.write(to: tempURL, options: [.atomic])
+        return try Self.buildEncryptedRecorderAudioChunkEnvelope(
+            source: "microphone",
+            startedAt: startedAt,
+            endedAt: endedAt,
+            temporaryFileURL: tempURL,
+            transcript: RecorderLocalAudioTranscript.localComplete(
+                text: transcriptText,
+                startedAt: startedAt,
+                endedAt: endedAt,
+                transcriberName: "agentic30-local-transcriber-test",
+                transcriberVersion: "0.0.0-test"
+            ),
+            recorderRoot: recorderRoot
+        )
+    }
+
+    @discardableResult
+    func sendRecorderAudioChunkForTesting(
+        _ audio: [String: Any],
+        captureMode: String = "background",
+        automatic: Bool = true
+    ) -> Bool {
+        sendRecorderAudioChunkEnvelope(
+            audio,
+            captureMode: captureMode,
+            automatic: automatic
+        )
+    }
+
+    func recordRecorderClipboardTriggerForTesting(
+        changeCount: Int,
+        pasteboardTypes: [String] = [],
+        occurredAt: Date = Date(timeIntervalSince1970: 0),
+        appName: String? = "Agentic30Tests",
+        windowTitle: String? = "Clipboard Trigger Test",
+        contentText: String? = nil
+    ) {
+        recordRecorderClipboardTrigger(
+            changeCount: changeCount,
+            pasteboardTypes: pasteboardTypes,
+            occurredAt: occurredAt,
+            appName: appName,
+            windowTitle: windowTitle,
+            contentText: contentText
+        )
+    }
+    #endif
+
+    private static func currentRecorderMetadataProbe() -> [(id: String, status: String, rootCause: String?, message: String)] {
+        let metadata = currentRecorderRuntimeMetadata()
+        return [
+            (
+                id: "browserMetadata",
+                status: metadata.browserURL == nil ? "degraded" : "available",
+                rootCause: metadata.browserURL == nil ? metadata.browserRootCause : nil,
+                message: metadata.browserURL == nil
+                    ? "Swift runtime probe could not read a browser URL through local Apple Events or AX; recorder will run with less browser context."
+                    : "Swift runtime probe can read the current browser URL locally."
+            ),
+            (
+                id: "documentMetadata",
+                status: metadata.documentPath == nil ? "degraded" : "available",
+                rootCause: metadata.documentPath == nil ? metadata.documentRootCause : nil,
+                message: metadata.documentPath == nil
+                    ? "Swift AX runtime probe could not read a document path; recorder will run with less document context."
+                    : "Swift AX runtime probe can read the current document path."
+            ),
+        ]
+    }
+
+    private struct RecorderRuntimeMetadata {
+        let browserURL: String?
+        let documentPath: String?
+        let browserRootCause: String
+        let documentRootCause: String
+    }
+
+    private static func currentRecorderRuntimeMetadata() -> RecorderRuntimeMetadata {
+        guard let app = NSWorkspace.shared.frontmostApplication else {
+            return RecorderRuntimeMetadata(
+                browserURL: nil,
+                documentPath: nil,
+                browserRootCause: "frontmost_application_unavailable",
+                documentRootCause: "frontmost_application_unavailable"
+            )
+        }
+        let browserAppleEventsProbe = recorderBrowserURLFromKnownApplication(app)
+        guard AXIsProcessTrusted() else {
+            return RecorderRuntimeMetadata(
+                browserURL: browserAppleEventsProbe.url,
+                documentPath: nil,
+                browserRootCause: browserAppleEventsProbe.url == nil
+                    ? (browserAppleEventsProbe.rootCause ?? "accessibility_permission_missing")
+                    : "",
+                documentRootCause: "accessibility_permission_missing"
+            )
+        }
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        let focusedWindow = axElementAttribute("AXFocusedWindow", from: appElement)
+        let candidates = axMetadataCandidates(from: focusedWindow) + axMetadataCandidates(from: appElement)
+        let browserURL = browserAppleEventsProbe.url ?? candidates.first(where: isHttpURLString)
+        let documentPath = candidates.compactMap(documentPathString(from:)).first
+        return RecorderRuntimeMetadata(
+            browserURL: browserURL,
+            documentPath: documentPath,
+            browserRootCause: browserURL == nil
+                ? (browserAppleEventsProbe.rootCause ?? "browser_url_ax_attribute_unavailable")
+                : "",
+            documentRootCause: documentPath == nil ? "document_path_ax_attribute_unavailable" : ""
+        )
+    }
+
+    private struct RecorderBrowserURLProbe {
+        let url: String?
+        let rootCause: String?
+    }
+
+    private static func recorderBrowserURLFromKnownApplication(_ app: NSRunningApplication) -> RecorderBrowserURLProbe {
+        guard let bundleIdentifier = app.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let source = recorderBrowserURLAppleScriptSource(bundleIdentifier: bundleIdentifier) else {
+            return RecorderBrowserURLProbe(url: nil, rootCause: nil)
+        }
+        var errorInfo: NSDictionary?
+        guard let descriptor = NSAppleScript(source: source)?.executeAndReturnError(&errorInfo) else {
+            return RecorderBrowserURLProbe(
+                url: nil,
+                rootCause: recorderBrowserURLAppleScriptRootCause(errorInfo: errorInfo)
+            )
+        }
+        let value = descriptor.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !value.isEmpty else {
+            return RecorderBrowserURLProbe(url: nil, rootCause: "browser_url_apple_events_empty")
+        }
+        guard isHttpURLString(value) else {
+            return RecorderBrowserURLProbe(url: nil, rootCause: "browser_url_apple_events_invalid_url")
+        }
+        return RecorderBrowserURLProbe(url: value, rootCause: nil)
+    }
+
+    private static func recorderBrowserURLAppleScriptSource(bundleIdentifier: String) -> String? {
+        let cleanBundleIdentifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanBundleIdentifier.isEmpty else { return nil }
+        switch cleanBundleIdentifier {
+        case "com.apple.Safari",
+             "com.apple.SafariTechnologyPreview":
+            return """
+            tell application id "\(cleanBundleIdentifier)"
+                if (count of documents) is 0 then return ""
+                return URL of front document
+            end tell
+            """
+        case "com.google.Chrome",
+             "com.google.Chrome.canary",
+             "org.chromium.Chromium",
+             "com.brave.Browser",
+             "com.microsoft.edgemac",
+             "company.thebrowser.Browser",
+             "com.vivaldi.Vivaldi",
+             "com.operasoftware.Opera",
+             "com.naver.Whale":
+            return """
+            tell application id "\(cleanBundleIdentifier)"
+                if (count of windows) is 0 then return ""
+                return URL of active tab of front window
+            end tell
+            """
+        default:
+            return nil
+        }
+    }
+
+    private static func recorderBrowserURLAppleScriptRootCause(errorInfo: NSDictionary?) -> String {
+        let errorNumber = errorInfo?[NSAppleScript.errorNumber] as? Int
+        if errorNumber == -1743 {
+            return "browser_url_apple_events_permission_denied"
+        }
+        if errorNumber == -600 {
+            return "browser_url_apple_events_application_unavailable"
+        }
+        return "browser_url_apple_events_unavailable"
+    }
+
+    private static func axMetadataCandidates(from element: AXUIElement?) -> [String] {
+        guard let element else { return [] }
+        return [
+            "AXURL",
+            "AXDocument",
+            "AXFilename",
+            "AXTitle",
+        ].compactMap { axStringAttribute($0, from: element) }
+    }
+
+    private static func axElementAttribute(_ attribute: String, from element: AXUIElement) -> AXUIElement? {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard result == .success, let value else { return nil }
+        guard CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return (value as! AXUIElement)
+    }
+
+    private static func axStringAttribute(_ attribute: String, from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard result == .success, let value else { return nil }
+        if let url = value as? URL {
+            return url.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        }
+        if let string = value as? String {
+            return string.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        }
+        return nil
+    }
+
+    private static func isHttpURLString(_ value: String) -> Bool {
+        guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https"
+    }
+
+    private static func documentPathString(from value: String) -> String? {
+        if isHttpURLString(value) { return nil }
+        if let url = URL(string: value), url.isFileURL {
+            return url.path.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        }
+        return value.hasPrefix("/") ? value : nil
     }
 
     private enum RecorderFrameCaptureError: LocalizedError {
@@ -8339,6 +10027,34 @@ final class AgenticViewModel: ObservableObject {
                 return "ScreenCaptureKit did not return a capturable display."
             case .jpegEncodingFailed:
                 return "ScreenCaptureKit frame could not be encoded as JPEG."
+            }
+        }
+    }
+
+    private enum RecorderRawMediaEncryptionError: LocalizedError {
+        case mediaEncryptionKeyUnavailable(String)
+        case mediaEncryptionFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .mediaEncryptionKeyUnavailable(let message):
+                return "ERR_RECORDER_MEDIA_KEY_UNAVAILABLE: \(message)"
+            case .mediaEncryptionFailed(let message):
+                return "ERR_RECORDER_MEDIA_ENCRYPTION_FAILED: \(message)"
+            }
+        }
+    }
+
+    private enum RecorderAudioCaptureError: LocalizedError {
+        case microphoneRecorderStartFailed
+        case emptyAudioFile
+
+        var errorDescription: String? {
+            switch self {
+            case .microphoneRecorderStartFailed:
+                return "ERR_RECORDER_AUDIO_MICROPHONE_RECORDER_START_FAILED: AVAudioRecorder could not start microphone recording."
+            case .emptyAudioFile:
+                return "ERR_RECORDER_AUDIO_EMPTY_MEDIA_FILE: microphone recorder produced an empty audio file."
             }
         }
     }
@@ -9882,6 +11598,7 @@ final class AgenticViewModel: ObservableObject {
         if started {
             connectionLabel = "Switching workspace..."
             isConnected = false
+            stopRecorderClipboardCollector()
             sidecar.stop()
             sidecar.start()
         } else {
@@ -9915,6 +11632,7 @@ final class AgenticViewModel: ObservableObject {
         if isChangingPrefetchTarget, started {
             connectionLabel = "Switching workspace..."
             isConnected = false
+            stopRecorderClipboardCollector()
             selectedSessionID = nil
             sidecar.stop()
             started = false
@@ -9955,6 +11673,7 @@ final class AgenticViewModel: ObservableObject {
         if started {
             connectionLabel = "Choose a project workspace"
             isConnected = false
+            stopRecorderClipboardCollector()
             selectedSessionID = nil
             sidecar.stop()
             started = false
@@ -9998,6 +11717,7 @@ final class AgenticViewModel: ObservableObject {
         connectionLabel = "Choose a project workspace"
         isConnected = false
         if started {
+            stopRecorderClipboardCollector()
             selectedSessionID = nil
             sidecar.stop()
             started = false
@@ -10368,6 +12088,7 @@ final class AgenticViewModel: ObservableObject {
         case "sidecar_status":
             connectionLabel = event.message ?? connectionLabel
             isConnected = false
+            stopRecorderClipboardCollector()
             integrationStatusChecking = false
             officeHoursSessionCreateInFlight = false
             PostHogTelemetry.capture("mac_sidecar_status", properties: [
@@ -10377,6 +12098,7 @@ final class AgenticViewModel: ObservableObject {
             let message = event.message ?? "실행 보조 앱이 예기치 않게 중단됐습니다."
             connectionLabel = message
             isConnected = false
+            stopRecorderClipboardCollector()
             integrationStatusChecking = false
             officeHoursSessionCreateInFlight = false
             finishExaMcpConnectAfterSidecarInterruption()
@@ -10439,7 +12161,6 @@ final class AgenticViewModel: ObservableObject {
             triggerUITestingDynamicResearchRefreshIfRequested()
             #endif
             refreshPresentationState()
-            requestCodexWarmupIfNeeded()
             requestBipReadinessCheck()
             requestInitialBipGateIfNeeded()
             flushStartupQueuedActionIfPossible()
@@ -10461,7 +12182,6 @@ final class AgenticViewModel: ObservableObject {
                 }
                 recordStartupSessionAppearIfNeeded(source: "sessions_snapshot")
                 refreshPresentationState()
-                requestCodexWarmupIfNeeded()
             }
         case "session_created":
             if let session = event.session {
@@ -10473,7 +12193,6 @@ final class AgenticViewModel: ObservableObject {
                 pruneSentPromptPreviews(for: session)
                 detectDimensionTransitionToast(in: session)
                 refreshPresentationState()
-                requestCodexWarmupIfNeeded()
                 flushStartupQueuedActionIfPossible()
             }
         case "curriculum_original_question_reframed":
@@ -10576,7 +12295,8 @@ final class AgenticViewModel: ObservableObject {
                 stepIndex: event.stepIndex,
                 totalSteps: event.totalSteps,
                 etaSeconds: event.etaSeconds,
-                foundCount: event.foundCount
+                foundCount: event.foundCount,
+                elapsedMs: event.elapsedMs
             )
             scanResult = nil
             day1SurfaceReview = nil
@@ -10585,7 +12305,6 @@ final class AgenticViewModel: ObservableObject {
             day1SurfaceReviewError = nil
             scanProviderLimitNotice = nil
             scanBlockedNotice = nil
-            scanDegradedNotice = nil
             pendingAgentic30GitignoreConsent = nil
         case "workspace_scan_provider_limited":
             if let raw = event.provider,
@@ -10623,7 +12342,6 @@ final class AgenticViewModel: ObservableObject {
                 clearWorkspaceScanResultCache(root: event.scanRoot)
             }
             scanProviderLimitNotice = nil
-            scanDegradedNotice = nil
             pendingAgentic30GitignoreConsent = nil
             let provider = event.provider.flatMap(AgentProvider.init(rawValue:)) ?? selectedProvider
             let nextProvider = event.nextProvider.flatMap(AgentProvider.init(rawValue:))
@@ -10641,7 +12359,9 @@ final class AgenticViewModel: ObservableObject {
                 nextProvider: nextProvider,
                 availableProviders: availableProviders,
                 providerReadiness: providerReadiness,
-                errorKind: event.errorKind
+                errorKind: event.errorKind,
+                abortCause: event.abortCause,
+                retryAttempt: event.retryAttempt
             )
             setScanProgress(
                 "Workspace scan blocked.",
@@ -10649,7 +12369,8 @@ final class AgenticViewModel: ObservableObject {
                 stepIndex: event.stepIndex ?? 2,
                 totalSteps: event.totalSteps ?? 3,
                 etaSeconds: nil,
-                foundCount: event.foundCount
+                foundCount: event.foundCount,
+                elapsedMs: event.elapsedMs
             )
             let properties: [String: Any] = [
                 "workspace_basename": ((event.scanRoot ?? workspaceRoot) as NSString).lastPathComponent,
@@ -10703,7 +12424,8 @@ final class AgenticViewModel: ObservableObject {
                 stepIndex: event.stepIndex,
                 totalSteps: event.totalSteps,
                 etaSeconds: event.etaSeconds,
-                foundCount: event.foundCount
+                foundCount: event.foundCount,
+                elapsedMs: event.elapsedMs
             )
         case "workspace_scan_result":
             finishWorkspaceScanTiming()
@@ -10714,7 +12436,8 @@ final class AgenticViewModel: ObservableObject {
                 stepIndex: event.stepIndex ?? 3,
                 totalSteps: event.totalSteps ?? 3,
                 etaSeconds: event.etaSeconds,
-                foundCount: event.foundCount
+                foundCount: event.foundCount,
+                elapsedMs: event.elapsedMs
             )
             let result = WorkspaceScanResult(
                 icp: event.icp,
@@ -10736,16 +12459,6 @@ final class AgenticViewModel: ObservableObject {
             )
             scanResult = result
             scanBlockedNotice = nil
-            // Fail-open degraded scan: completed on local-only signals because
-            // provider verification could not run. Day 1 still proceeds (result
-            // is non-error above); surface a NON-blocking advisory notice so the
-            // user can reconnect a provider for a precise scan. Any normal
-            // (non-degraded) or failed result clears it.
-            if event.error == nil, event.degraded == true {
-                scanDegradedNotice = makeScanDegradedNotice(event: event, fallbackRoot: event.scanRoot ?? workspaceRoot)
-            } else {
-                scanDegradedNotice = nil
-            }
             pendingAgentic30GitignoreConsent = event.agentic30Gitignore?.needsConsent == true
                 ? event.agentic30Gitignore
                 : nil
@@ -10892,6 +12605,12 @@ final class AgenticViewModel: ObservableObject {
             }
         case "recorder_raw_api_token_issued":
             handleRecorderRawApiTokenIssued(event)
+        case "recorder_audit_events":
+            if let recorderAuditSource = event.recorderAuditSource {
+                self.recorderAuditSource = recorderAuditSource
+            }
+            recorderAuditRefreshing = false
+            recorderAuditLastError = nil
         case "recorder_control_state":
             if let controlState = event.controlState {
                 recorderControlState = controlState
@@ -10900,6 +12619,8 @@ final class AgenticViewModel: ObservableObject {
                 recorderCaptureReadiness = readiness
             }
             reconcileRecorderAutoCaptureWithReadiness()
+            reconcileRecorderClipboardCollectorWithControlState()
+            reconcileRecorderAudioCollectorsWithControlState()
             recorderControlRefreshing = false
             recorderControlActionInFlight = nil
             recorderControlLastError = nil
@@ -10913,6 +12634,12 @@ final class AgenticViewModel: ObservableObject {
             if recorderAutoCaptureRunning {
                 recorderAutoCaptureLastError = nil
             }
+        case "recorder_audio_chunk_recorded":
+            recorderAudioChunkInFlight = false
+            recorderMicrophoneAudioChunkInFlight = false
+            recorderSystemAudioChunkInFlight = false
+            recorderAudioCaptureLastError = nil
+            updateRecorderAudioCaptureRunning()
         case "recorder_frame_captures":
             if let frames = event.frames {
                 replaceRecorderFrameCaptures(frames)
@@ -11651,6 +13378,20 @@ final class AgenticViewModel: ObservableObject {
                 pendingRecorderFrameImageRequestID = nil
                 recorderFrameImageLastError = event.message ?? "캡처 이미지 요청이 실패했습니다."
             }
+            if recorderAudioChunkInFlight {
+                recorderAudioChunkInFlight = false
+                recorderMicrophoneAudioChunkInFlight = false
+                recorderSystemAudioChunkInFlight = false
+                recorderAudioCaptureLastError = event.message ?? "Audio chunk 기록 요청이 실패했습니다."
+                stopRecorderMicrophoneCollector(
+                    reason: "audio_ingest_failed",
+                    clearError: false
+                )
+                stopRecorderSystemAudioCollector(
+                    reason: "audio_ingest_failed",
+                    clearError: false
+                )
+            }
             if recorderPipesRefreshing || recorderPipeSchedulerRunning || !recorderPipeActionInFlight.isEmpty {
                 recorderPipesRefreshing = false
                 recorderPipeSchedulerRunning = false
@@ -11896,7 +13637,6 @@ final class AgenticViewModel: ObservableObject {
                 runtime: ChatSessionRuntime(
                     codexThreadId: nil,
                     codexThreadMeta: nil,
-                    codexWarm: nil,
                     startupTiming: nil,
                     iddDocumentType: "day1_step",
                     iddMode: "office_hours",
@@ -11943,7 +13683,6 @@ final class AgenticViewModel: ObservableObject {
                 runtime: ChatSessionRuntime(
                     codexThreadId: nil,
                     codexThreadMeta: nil,
-                    codexWarm: nil,
                     iddDocumentType: "icp"
                 )
             )
@@ -11966,7 +13705,6 @@ final class AgenticViewModel: ObservableObject {
             return ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "day1_step",
                 iddMode: "office_hours",
@@ -12893,7 +14631,6 @@ final class AgenticViewModel: ObservableObject {
             runtime: ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "program_v2_daily_cards",
                 iddMode: "office_hours",
@@ -13163,7 +14900,6 @@ final class AgenticViewModel: ObservableObject {
             runtime: ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "day1_step",
                 iddMode: "office_hours",
@@ -13340,7 +15076,6 @@ final class AgenticViewModel: ObservableObject {
             runtime: ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "day1_step",
                 iddMode: "office_hours",
@@ -13455,7 +15190,6 @@ final class AgenticViewModel: ObservableObject {
             runtime: ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "day2_step",
                 iddMode: "office_hours",
@@ -13546,7 +15280,6 @@ final class AgenticViewModel: ObservableObject {
             runtime: ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "day1_step",
                 iddMode: "office_hours",
@@ -13620,7 +15353,6 @@ final class AgenticViewModel: ObservableObject {
             runtime: ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "day1_step",
                 iddMode: "office_hours",
@@ -13720,7 +15452,6 @@ final class AgenticViewModel: ObservableObject {
             runtime: ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "day1_step",
                 iddMode: "office_hours",
@@ -13915,7 +15646,6 @@ final class AgenticViewModel: ObservableObject {
         let runtime = ChatSessionRuntime(
             codexThreadId: nil,
             codexThreadMeta: nil,
-            codexWarm: nil,
             startupTiming: nil,
             iddDocumentType: nil,
             iddMode: nil,
@@ -14002,7 +15732,6 @@ final class AgenticViewModel: ObservableObject {
         var runtime = sessions[sessionIndex].runtime ?? ChatSessionRuntime(
             codexThreadId: nil,
             codexThreadMeta: nil,
-            codexWarm: nil,
             startupTiming: nil,
             iddDocumentType: "day1_step",
             iddMode: "office_hours",
@@ -14072,7 +15801,6 @@ final class AgenticViewModel: ObservableObject {
                 session.runtime = ChatSessionRuntime(
                     codexThreadId: nil,
                     codexThreadMeta: nil,
-                    codexWarm: nil,
                     startupTiming: nil,
                     iddDocumentType: docType,
                     iddMode: "day1_handoff"
@@ -14098,7 +15826,6 @@ final class AgenticViewModel: ObservableObject {
                 runtime: ChatSessionRuntime(
                     codexThreadId: nil,
                     codexThreadMeta: nil,
-                    codexWarm: nil,
                     startupTiming: nil,
                     iddDocumentType: docType,
                     iddMode: "day1_handoff"
@@ -14431,7 +16158,6 @@ final class AgenticViewModel: ObservableObject {
             sessions[sessionIndex].runtime = ChatSessionRuntime(
                 codexThreadId: nil,
                 codexThreadMeta: nil,
-                codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "day1_step",
                 iddMode: "office_hours",
@@ -15009,6 +16735,7 @@ final class AgenticViewModel: ObservableObject {
             sheetRowsRead: nil,
             docCharsRead: nil,
             elapsedMs: elapsedMs,
+            contextMetrics: nil,
             phase: nil,
             toolName: nil,
             summary: nil,
@@ -15026,7 +16753,8 @@ final class AgenticViewModel: ObservableObject {
         detail: String? = nil,
         progressText: String? = nil,
         requestId: String? = nil,
-        elapsedMs: Int? = nil
+        elapsedMs: Int? = nil,
+        contextMetrics: OfficeHoursContextMetrics? = nil
     ) {
         let status = OfficeHoursLiveStatus(
             sessionId: sessionId,
@@ -15037,6 +16765,7 @@ final class AgenticViewModel: ObservableObject {
             messageId: nil,
             requestId: requestId,
             elapsedMs: elapsedMs,
+            contextMetrics: contextMetrics,
             updatedAt: .now
         )
         officeHoursLiveStatusBySession[sessionId] = status
@@ -15081,7 +16810,6 @@ final class AgenticViewModel: ObservableObject {
         ], authSession: macAuthSession)
         recordStartupSessionAppearIfNeeded(source: "session_created")
         refreshPresentationState()
-        requestCodexWarmupIfNeeded()
         requestInitialBipGateIfNeeded()
         flushStartupQueuedActionIfPossible()
     }
@@ -15406,58 +17134,6 @@ final class AgenticViewModel: ObservableObject {
         return merged
     }
 
-    private func requestCodexWarmupIfNeeded() {
-        guard isConnected else { return }
-        guard ProcessInfo.processInfo.environment["AGENTIC30_DISABLE_CODEX_WARMUP"] != "1" else { return }
-        guard let session = selectedSession else { return }
-        guard session.provider == .codex else { return }
-        guard let officeHours = session.runtime?.officeHours,
-              officeHours.active == true,
-              let officeHoursContext = officeHours.context?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !officeHoursContext.isEmpty else { return }
-        guard session.runtime?.codexWarm?.state != "warming" else { return }
-        let officeHoursSource = officeHours.source?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let warmupKey = codexWarmupRequestKey(
-            sessionID: session.id,
-            context: officeHoursContext,
-            day: officeHours.day,
-            source: officeHoursSource
-        )
-        guard !requestedWarmSessionKeys.contains(warmupKey) else { return }
-
-        requestedWarmSessionKeys.insert(warmupKey)
-        var payload: [String: Any] = [
-            "type": "warm_session",
-            "sessionId": session.id,
-            "purpose": "office_hours_question",
-            "context": officeHoursContext,
-        ]
-        if let day = officeHours.day {
-            payload["day"] = day
-        }
-        if let source = officeHoursSource,
-           !source.isEmpty {
-            payload["source"] = source
-        }
-        sidecar.send(payload: payload)
-    }
-
-    private func codexWarmupRequestKey(
-        sessionID: String,
-        context: String,
-        day: Int?,
-        source: String?
-    ) -> String {
-        [
-            sessionID,
-            context,
-            day.map(String.init) ?? "",
-            source ?? "",
-        ]
-            .map { "\($0.count):\($0)" }
-            .joined(separator: "|")
-    }
-
     private func appendSentPromptPreview(sessionID: String, prompt: String) {
         var nextPreviews = sentPromptPreviews
         var previews = nextPreviews[sessionID] ?? []
@@ -15584,9 +17260,6 @@ final class AgenticViewModel: ObservableObject {
             appendSidecarOutput(sessionID: status.sessionId, summary: progressText)
         }
         maybePostQuestionReadyNotification(for: status)
-        if status.stage == "question_ready", selectedSession?.id == status.sessionId {
-            requestCodexWarmupIfNeeded()
-        }
     }
 
     /// requestIds already turned into a local notification this app run; the
@@ -17117,7 +18790,6 @@ private extension AgenticViewModel {
         pendingWorkspaceScanRoot = nil
         pendingWorkspaceScanProvider = nil
         workspaceSetupTelemetryGate = WorkspaceSetupTelemetryGate()
-        requestedWarmSessionKeys = []
         requestedInitialBipGate = false
         requestedInitialBipMission = false
         activeOnboardingWorkspacePrefetchFingerprint = nil
@@ -17424,19 +19096,13 @@ struct SidecarEvent: Decodable {
     let day1GoalSelection: Day1GoalSelection?
     let day1SurfaceReview: Day1SurfaceReview?
     let agentic30Gitignore: Agentic30GitignoreState?
-    // Fail-open degraded-scan markers (additive). Set on a workspace_scan_result
-    // the sidecar completed on LOCAL-only signals because provider verification
-    // could not run (no auth / usage limit / run error) but local canonical docs
-    // existed. The result is otherwise a normal scan result and advances Day 1;
-    // `degraded == true` lets the host surface a non-blocking "local-only scan,
-    // reconnect for a precise scan" warning. Absent on normal or blocked scans.
-    let degraded: Bool?
-    let degradedReason: String?
-    let degradedProvider: String?
-    /// Advisory recovery payload attached to a degraded workspace_scan_result.
-    /// Same shape as the blocked notice but non-blocking (see
-    /// `WorkspaceScanDegradedNoticePayload`).
-    let scanBlockedNotice: WorkspaceScanDegradedNoticePayload?
+    // Workspace-scan abort diagnostics (additive). Set on a workspace_scan_blocked
+    // envelope. `abortCause` (soft_timeout | hard_deadline | external) lets the
+    // recovery UI tell a real timeout (our wall-clock budget) from an SDK/network
+    // abort; `retryAttempt` echoes the attempt number so the UI escalates past an
+    // extended-budget retry instead of looping on the same provider.
+    let abortCause: String?
+    let retryAttempt: Int?
     let dayProgress: DayProgress?
     let dayReviews: [String: DayReview]?
     let officeHoursMemory: OfficeHoursMemorySummary?
@@ -17451,6 +19117,7 @@ struct SidecarEvent: Decodable {
     let frames: [RecorderFrameCaptureReceipt]?
     let recorderRawApi: RecorderRawApiStatus?
     let recorderRawApiToken: RecorderRawApiToken?
+    let recorderAuditSource: RecorderAuditSource?
     let pipes: [RecorderPipeDefinition]?
     let runs: [RecorderPipeRun]?
     let pipeRun: RecorderPipeRun?
@@ -18082,6 +19749,12 @@ struct SidecarEvent: Decodable {
     let sheetRowsRead: Int?
     let docCharsRead: Int?
     let elapsedMs: Int?
+    let contextMetrics: OfficeHoursContextMetrics?
+    let questionIndex: Int?
+    let answeredQuestionCount: Int?
+    let expectedQuestionCount: Int?
+    let questionElapsedMs: Int?
+    let requestReadyLatencyMs: Int?
     let stepIndex: Int?
     let totalSteps: Int?
     let etaSeconds: Int?
@@ -18166,10 +19839,8 @@ struct SidecarEvent: Decodable {
         day1GoalSelection: Day1GoalSelection? = nil,
         day1SurfaceReview: Day1SurfaceReview? = nil,
         agentic30Gitignore: Agentic30GitignoreState? = nil,
-        degraded: Bool? = nil,
-        degradedReason: String? = nil,
-        degradedProvider: String? = nil,
-        scanBlockedNotice: WorkspaceScanDegradedNoticePayload? = nil,
+        abortCause: String? = nil,
+        retryAttempt: Int? = nil,
         dayProgress: DayProgress? = nil,
         dayReviews: [String: DayReview]? = nil,
         officeHoursMemory: OfficeHoursMemorySummary? = nil,
@@ -18209,6 +19880,12 @@ struct SidecarEvent: Decodable {
         sheetRowsRead: Int?,
         docCharsRead: Int?,
         elapsedMs: Int?,
+        contextMetrics: OfficeHoursContextMetrics? = nil,
+        questionIndex: Int? = nil,
+        answeredQuestionCount: Int? = nil,
+        expectedQuestionCount: Int? = nil,
+        questionElapsedMs: Int? = nil,
+        requestReadyLatencyMs: Int? = nil,
         stepIndex: Int? = nil,
         totalSteps: Int? = nil,
         etaSeconds: Int? = nil,
@@ -18288,10 +19965,8 @@ struct SidecarEvent: Decodable {
         self.day1GoalSelection = day1GoalSelection
         self.day1SurfaceReview = day1SurfaceReview
         self.agentic30Gitignore = agentic30Gitignore
-        self.degraded = degraded
-        self.degradedReason = degradedReason
-        self.degradedProvider = degradedProvider
-        self.scanBlockedNotice = scanBlockedNotice
+        self.abortCause = abortCause
+        self.retryAttempt = retryAttempt
         self.dayProgress = dayProgress
         self.dayReviews = dayReviews
         self.officeHoursMemory = officeHoursMemory
@@ -18306,6 +19981,7 @@ struct SidecarEvent: Decodable {
         self.frames = nil
         self.recorderRawApi = nil
         self.recorderRawApiToken = nil
+        self.recorderAuditSource = nil
         self.pipes = nil
         self.runs = nil
         self.pipeRun = nil
@@ -18346,6 +20022,12 @@ struct SidecarEvent: Decodable {
         self.sheetRowsRead = sheetRowsRead
         self.docCharsRead = docCharsRead
         self.elapsedMs = elapsedMs
+        self.contextMetrics = contextMetrics
+        self.questionIndex = questionIndex
+        self.answeredQuestionCount = answeredQuestionCount
+        self.expectedQuestionCount = expectedQuestionCount
+        self.questionElapsedMs = questionElapsedMs
+        self.requestReadyLatencyMs = requestReadyLatencyMs
         self.stepIndex = stepIndex
         self.totalSteps = totalSteps
         self.etaSeconds = etaSeconds
@@ -18613,6 +20295,12 @@ extension SidecarEvent {
             messageId: messageId?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
             requestId: requestId?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
             elapsedMs: elapsedMs,
+            contextMetrics: contextMetrics,
+            questionIndex: questionIndex,
+            answeredQuestionCount: answeredQuestionCount,
+            expectedQuestionCount: expectedQuestionCount,
+            questionElapsedMs: questionElapsedMs,
+            requestReadyLatencyMs: requestReadyLatencyMs,
             updatedAt: .now
         )
     }
@@ -18713,10 +20401,8 @@ extension SidecarEvent {
         case day1GoalSelection
         case day1SurfaceReview
         case agentic30Gitignore
-        case degraded
-        case degradedReason
-        case degradedProvider
-        case scanBlockedNotice
+        case abortCause
+        case retryAttempt
         case dayProgress
         case dayReviews
         case officeHoursMemory
@@ -18735,6 +20421,8 @@ extension SidecarEvent {
         case recorderRawApi
         case recorderRawApiSnake = "recorder_raw_api"
         case recorderRawApiToken = "token"
+        case recorderAuditSource
+        case recorderAuditSourceSnake = "recorder_audit_source"
         case pipes
         case runs
         case pipeRun
@@ -18777,6 +20465,12 @@ extension SidecarEvent {
         case sheetRowsRead
         case docCharsRead
         case elapsedMs
+        case contextMetrics
+        case questionIndex
+        case answeredQuestionCount
+        case expectedQuestionCount
+        case questionElapsedMs
+        case requestReadyLatencyMs
         case stepIndex
         case totalSteps
         case etaSeconds
@@ -18863,14 +20557,8 @@ extension SidecarEvent {
         day1SituationSummary = Self.decodeIfPresent(Day1SituationSummary.self, from: container, forKey: .day1SituationSummary)
         day1GoalSelection = Self.decodeIfPresent(Day1GoalSelection.self, from: container, forKey: .day1GoalSelection)
         day1SurfaceReview = Self.decodeIfPresent(Day1SurfaceReview.self, from: container, forKey: .day1SurfaceReview)
-        degraded = Self.decodeIfPresent(Bool.self, from: container, forKey: .degraded)
-        degradedReason = Self.decodeIfPresent(String.self, from: container, forKey: .degradedReason)
-        degradedProvider = Self.decodeIfPresent(String.self, from: container, forKey: .degradedProvider)
-        scanBlockedNotice = Self.decodeIfPresent(
-            WorkspaceScanDegradedNoticePayload.self,
-            from: container,
-            forKey: .scanBlockedNotice
-        )
+        abortCause = Self.decodeIfPresent(String.self, from: container, forKey: .abortCause)
+        retryAttempt = Self.decodeIfPresent(Int.self, from: container, forKey: .retryAttempt)
         let decodedAgentic30Gitignore = Self.decodeIfPresent(
             Agentic30GitignoreState.self,
             from: container,
@@ -18894,6 +20582,8 @@ extension SidecarEvent {
         recorderRawApi = Self.decodeIfPresent(RecorderRawApiStatus.self, from: container, forKey: .recorderRawApi)
             ?? Self.decodeIfPresent(RecorderRawApiStatus.self, from: container, forKey: .recorderRawApiSnake)
         recorderRawApiToken = Self.decodeIfPresent(RecorderRawApiToken.self, from: container, forKey: .recorderRawApiToken)
+        recorderAuditSource = Self.decodeIfPresent(RecorderAuditSource.self, from: container, forKey: .recorderAuditSource)
+            ?? Self.decodeIfPresent(RecorderAuditSource.self, from: container, forKey: .recorderAuditSourceSnake)
         pipes = Self.decodeIfPresent([RecorderPipeDefinition].self, from: container, forKey: .pipes)
         runs = Self.decodeIfPresent([RecorderPipeRun].self, from: container, forKey: .runs)
         pipeRun = Self.decodeIfPresent(RecorderPipeRun.self, from: container, forKey: .pipeRun)
@@ -18938,6 +20628,12 @@ extension SidecarEvent {
         sheetRowsRead = Self.decodeIfPresent(Int.self, from: container, forKey: .sheetRowsRead)
         docCharsRead = Self.decodeIfPresent(Int.self, from: container, forKey: .docCharsRead)
         elapsedMs = Self.decodeIfPresent(Int.self, from: container, forKey: .elapsedMs)
+        contextMetrics = Self.decodeIfPresent(OfficeHoursContextMetrics.self, from: container, forKey: .contextMetrics)
+        questionIndex = Self.decodeIfPresent(Int.self, from: container, forKey: .questionIndex)
+        answeredQuestionCount = Self.decodeIfPresent(Int.self, from: container, forKey: .answeredQuestionCount)
+        expectedQuestionCount = Self.decodeIfPresent(Int.self, from: container, forKey: .expectedQuestionCount)
+        questionElapsedMs = Self.decodeIfPresent(Int.self, from: container, forKey: .questionElapsedMs)
+        requestReadyLatencyMs = Self.decodeIfPresent(Int.self, from: container, forKey: .requestReadyLatencyMs)
         stepIndex = Self.decodeIfPresent(Int.self, from: container, forKey: .stepIndex)
         totalSteps = Self.decodeIfPresent(Int.self, from: container, forKey: .totalSteps)
         etaSeconds = Self.decodeIfPresent(Int.self, from: container, forKey: .etaSeconds)

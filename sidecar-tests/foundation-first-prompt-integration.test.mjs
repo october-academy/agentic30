@@ -254,7 +254,7 @@ test("Foundation chat trivial greeting runs through provider", async () => {
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.5" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     ws.send(JSON.stringify({
       type: "submit_user_input",

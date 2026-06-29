@@ -53,6 +53,17 @@ function envelope(overrides = {}) {
   };
 }
 
+function encryptionEnvelope(sha256) {
+  const normalizedSha256 = String(sha256).startsWith("sha256:") ? sha256 : `sha256:${sha256}`;
+  return {
+    algorithm: "aes-256-gcm",
+    keyId: "test-media-key",
+    nonce: Buffer.alloc(12, 1).toString("base64"),
+    tag: Buffer.alloc(16, 2).toString("base64"),
+    ciphertextSha256: normalizedSha256,
+  };
+}
+
 test("recordFrameCaptureEnvelope writes media and frame rows with redacted FTS only", async () => {
   const { store } = await makeStore();
   try {
@@ -144,6 +155,69 @@ test("recordFrameCaptureEnvelope rejects duplicate ids before SQLite constraint 
       (error) => error instanceof RecorderIngestError
         && error.code === "ERR_RECORDER_INGEST_DUPLICATE_FRAME",
     );
+  } finally {
+    store.close();
+  }
+});
+
+test("recordFrameCaptureEnvelope requires encryption for automatic raw frame capture", async () => {
+  const { store } = await makeStore();
+  try {
+    assert.throws(
+      () => recordFrameCaptureEnvelope(store, envelope({
+        id: "frame-auto",
+        captureMode: "automatic",
+        captureTrigger: "auto_arm",
+        snapshot: {
+          id: "asset-auto",
+          relativePath: "media/frames/2026-06-27/frame-auto.jpg",
+          sha256: "sha256:snapshot-auto",
+          byteSize: 12345,
+          encrypted: false,
+        },
+      })),
+      (error) => error instanceof RecorderIngestError
+        && error.code === "ERR_RECORDER_MEDIA_ENCRYPTION_REQUIRED",
+    );
+    assert.equal(store.getRecord("frames", "frame-auto"), null);
+
+    assert.throws(
+      () => recordFrameCaptureEnvelope(store, envelope({
+        id: "frame-auto-missing-envelope",
+        captureMode: "automatic",
+        captureTrigger: "auto_arm",
+        snapshot: {
+          id: "asset-auto-missing-envelope",
+          relativePath: "media/frames/2026-06-27/frame-auto-missing-envelope.jpg",
+          sha256: "d".repeat(64),
+          byteSize: 12345,
+          encrypted: true,
+        },
+      })),
+      (error) => error instanceof RecorderIngestError
+        && error.code === "ERR_RECORDER_MEDIA_ENCRYPTION_ENVELOPE_REQUIRED",
+    );
+    assert.equal(store.getRecord("frames", "frame-auto-missing-envelope"), null);
+
+    const result = recordFrameCaptureEnvelope(store, envelope({
+      id: "frame-auto-encrypted",
+      captureMode: "automatic",
+      captureTrigger: "auto_arm",
+      snapshot: {
+        id: "asset-auto-encrypted",
+        relativePath: "media/frames/2026-06-27/frame-auto-encrypted.jpg",
+        sha256: "e".repeat(64),
+        byteSize: 12345,
+        encrypted: true,
+        encryption: encryptionEnvelope("e".repeat(64)),
+      },
+    }));
+    assert.equal(result.mediaAsset.encrypted, 1);
+    assert.equal(result.mediaAsset.encryption_key_id, "test-media-key");
+    assert.equal(result.mediaAsset.encryption_alg, "aes-256-gcm");
+    const media = store.getRecord("media_assets", "asset-auto-encrypted");
+    assert.equal(media.encryption_key_id, "test-media-key");
+    assert.equal(media.encryption_nonce, Buffer.alloc(12, 1).toString("base64"));
   } finally {
     store.close();
   }
