@@ -213,17 +213,30 @@ export function deterministicOfficeHoursEvidenceJudge({
 // both fail here, regardless of the doc text or the provider-reported score.
 // Infra errors (status==="error") keep their own status but record the debt.
 function applyHardEvidenceGate(result, evidenceState) {
-  if (!result || officeHoursEvidenceHasHardEvidence(evidenceState)) return result;
+  if (!result) return result;
+  // P1-1: split the verdict into three orthogonal facts so "doc is good but
+  // there is no hard evidence" is distinguishable from "the doc itself is below
+  // bar". Promotion to canonical `.agentic30/docs/` requires BOTH. These are
+  // additive — the legacy status/passed/score contract is unchanged below.
+  const hardEvidenceSatisfied = officeHoursEvidenceHasHardEvidence(evidenceState);
+  // docQualityPassed = the judge's OWN doc-quality verdict, read before the gate
+  // caps it. An infra error cannot assert doc quality.
+  const docQualityPassed = result.status === "error" ? false : Boolean(result.passed);
+  const canonicalizationAllowed = docQualityPassed && hardEvidenceSatisfied;
+  const splitFields = { docQualityPassed, hardEvidenceSatisfied, canonicalizationAllowed };
+
+  if (hardEvidenceSatisfied) return { ...result, ...splitFields };
   const debt = appendJudgeDebt(result.evidenceDebt, OFFICE_HOURS_HARD_EVIDENCE_MISSING_DEBT);
   // Infra errors keep their own status/score (0); only record the debt.
   if (result.status === "error") {
-    return { ...result, evidenceDebt: debt, evidence_debt: debt };
+    return { ...result, ...splitFields, evidenceDebt: debt, evidence_debt: debt };
   }
   // Any non-error verdict without hard evidence is forced to a failed save with
   // a capped score, so we never leave a "10/10 but blocked" contradiction.
   const cappedScore = Math.min(clampNumber(result.score, 0, 10), OFFICE_HOURS_EVIDENCE_JUDGE_PASS_SCORE - 1);
   return {
     ...result,
+    ...splitFields,
     status: "failed",
     passed: false,
     score: cappedScore,

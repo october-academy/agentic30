@@ -103,7 +103,7 @@ test("planning-phase ICP routes to office-hours", () => {
   assert.equal(selection.id, "office-hours");
   assert.equal(selection.phase, "planning");
   assert.equal(selection.decisionKind, "customer");
-  assert.match(selection.promptText, /Office Hours \(YC\)/);
+  assert.match(selection.promptText, /Office Hours \(OA Partner\)/);
   assert.match(selection.reason, /planning phase/);
 });
 
@@ -224,7 +224,7 @@ test("buildSpecialistInjection embeds id, phase, decision and prompt body (fallb
     doc: { type: "icp", title: "ICP" },
   });
   const injection = buildSpecialistInjection({ ...selection, vendor: NO_VENDOR });
-  assert.match(injection, /Auto-routed specialist: Office Hours \(YC\) \(office-hours\)/);
+  assert.match(injection, /Auto-routed specialist: Office Hours \(OA Partner\) \(office-hours\)/);
   assert.match(injection, /Phase: planning/);
   assert.match(injection, /Decision: customer/);
   assert.match(injection, /Demand reality/);
@@ -376,7 +376,7 @@ test("buildIddDocumentPrompt with specialistInjection swaps in the routed specia
       specialistInjection: buildSpecialistInjection({ ...selection, vendor: NO_VENDOR }),
     },
   );
-  assert.match(prompt, /Auto-routed specialist: Office Hours \(YC\)/);
+  assert.match(prompt, /Auto-routed specialist: Office Hours \(OA Partner\)/);
   assert.match(prompt, /라우팅된 specialist 모드의 사고 방식을 그대로 한 가지 질문으로/);
   assert.doesNotMatch(prompt, /gstack office-hours 벤치마크/);
 });
@@ -407,7 +407,7 @@ test("buildOfficeHoursDocsSystemPrompt accepts and embeds specialistInjection (f
     specialistInjection: buildSpecialistInjection({ ...selection, vendor: NO_VENDOR }),
   });
   assert.match(sys, /Auto-routed specialist mode/);
-  assert.match(sys, /Office Hours \(YC\)/);
+  assert.match(sys, /Office Hours \(OA Partner\)/);
   assert.match(sys, /Office Hours document strategist/);
 });
 

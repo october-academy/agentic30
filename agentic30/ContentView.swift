@@ -1716,20 +1716,7 @@ struct OfficeHoursSubmittedPromptSnapshotPolicy {
            !signalId.isEmpty {
             return "signal:\(signalId)"
         }
-        guard prompt.generation?.docType == "day1_candidate_unblock" else { return nil }
-        let question = normalizedQuestionText(for: prompt)
-        guard !question.isEmpty else { return nil }
-        return "day1_candidate_unblock:\(question)"
-    }
-
-    private nonisolated static func normalizedQuestionText(for prompt: StructuredPromptRequest) -> String {
-        prompt.questions
-            .map(\.question)
-            .joined(separator: " ")
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return nil
     }
 
     private nonisolated static func isOfficeHoursPrompt(_ prompt: StructuredPromptRequest) -> Bool {
@@ -1781,50 +1768,6 @@ private struct OfficeHoursEvidenceDraft: Identifiable, Hashable {
     let mode: OfficeHoursEvidenceDraftMode
 
     var id: String { "\(mode.rawValue)-\(commitment.id)" }
-}
-
-// R2: WAIT-state attempt-evidence draft. The ValidationAttempt (not the commitment
-// ledger) owns Day-1 get_users action/customer/goal proof; after gather completes
-// the attempt sits in a WAIT state and surfaces nextAction={kind:"wait", reason}.
-// The draft carries the attempt CAS pointer + the WAIT reason so the sheet can scope
-// to the grade that reason demands. A′ receipt rail: only the `action` reason is
-// reachable in production (swift_upload receipt → record_action_proof); customer_outcome
-// / goal show an honest disabled state until a recipient/provider adapter exists.
-private struct OfficeHoursAttemptEvidenceDraft: Identifiable, Hashable {
-    let attemptId: String
-    let revision: Int
-    let waitReason: String        // "action" | "customer_outcome" | "goal"
-    let sessionId: String
-
-    var id: String { "\(attemptId)-\(revision)-\(waitReason)" }
-
-    // Reason → reducer transition (mirrors office-hours-contract requiredGradeForWaitReason).
-    var transition: String {
-        switch waitReason {
-        case "action": return "record_action_proof"
-        case "customer_outcome": return "record_customer_outcome"
-        case "goal": return "record_goal_proof"
-        default: return ""
-        }
-    }
-
-    var title: String {
-        switch waitReason {
-        case "action": return "행동 증거 첨부"
-        case "customer_outcome": return "고객 반응 첨부"
-        case "goal": return "목표 증거 첨부"
-        default: return "증거 첨부"
-        }
-    }
-
-    var detail: String {
-        switch waitReason {
-        case "action": return "DM/이메일/통화/공유 링크 등 실제로 외부 행동을 했다는 증거를 붙입니다."
-        case "customer_outcome": return "고객이 답장/거절/무응답 마감/이탈 등 어떻게 반응했는지 증거를 붙입니다."
-        case "goal": return "활성/핵심 흐름 완료/결제/계약/재사용 등 목표 행동이 실제로 일어났다는 증거를 붙입니다."
-        default: return "증거를 붙입니다."
-        }
-    }
 }
 
 struct OfficeHoursTimelineBuilder {
@@ -2393,8 +2336,6 @@ struct ContentView: View {
     @State private var officeHoursEvidenceDraft: OfficeHoursEvidenceDraft?
     @State private var officeHoursDailyCardEvidenceDraft: OfficeHoursDailyCardEvidenceDraft?
     @State private var officeHoursDailyCardReplacementDraft: OfficeHoursDailyCardReplacementDraft?
-    @State private var officeHoursAttemptEvidenceDraft: OfficeHoursAttemptEvidenceDraft?
-    @State private var officeHoursAttemptAbandonDraft: OfficeHoursAttemptEvidenceDraft?
     @FocusState private var focusedOfficeHoursStructuredFreeTextID: String?
 
     private static let officeHoursQuestionOutputRowID = "office-hours-question-output-row"
@@ -3290,52 +3231,6 @@ struct ContentView: View {
                 },
                 onCancel: {
                     officeHoursEvidenceDraft = nil
-                }
-            )
-        }
-        .sheet(item: $officeHoursAttemptEvidenceDraft) { draft in
-            OfficeHoursAttemptEvidenceSheet(
-                draft: draft,
-                onSubmit: { bytes, declaredMediaType in
-                    // A′ receipt rail: hand the picked artifact bytes to the async 2-step
-                    // submit (ingest → receipt → graded transition). The VM owns the ingest
-                    // continuation; we just fire-and-forget here (the day_progress_state
-                    // reply re-renders the affordance on success/failure).
-                    Task {
-                        _ = await viewModel.submitOfficeHoursAttemptEvidence(
-                            attemptId: draft.attemptId,
-                            expectedRevision: draft.revision,
-                            transition: draft.transition,
-                            bytes: bytes,
-                            declaredMediaType: declaredMediaType,
-                            sessionId: draft.sessionId
-                        )
-                    }
-                    officeHoursAttemptEvidenceDraft = nil
-                },
-                onAbandon: {
-                    officeHoursAttemptEvidenceDraft = nil
-                    officeHoursAttemptAbandonDraft = draft
-                },
-                onCancel: {
-                    officeHoursAttemptEvidenceDraft = nil
-                }
-            )
-        }
-        .sheet(item: $officeHoursAttemptAbandonDraft) { draft in
-            OfficeHoursAttemptAbandonSheet(
-                draft: draft,
-                onAbandon: { reason in
-                    _ = viewModel.abandonOfficeHoursAttempt(
-                        attemptId: draft.attemptId,
-                        expectedRevision: draft.revision,
-                        reason: reason,
-                        sessionId: draft.sessionId
-                    )
-                    officeHoursAttemptAbandonDraft = nil
-                },
-                onCancel: {
-                    officeHoursAttemptAbandonDraft = nil
                 }
             )
         }
@@ -5462,9 +5357,6 @@ struct ContentView: View {
                             if shouldRenderOfficeHoursCommitmentBar(session: session, activeDay: activeDay) {
                                 officeHoursCommitmentBar(session: session, activeDay: activeDay)
                             }
-                            if let waitDraft = officeHoursAttemptWaitDraft(session: session) {
-                                officeHoursAttemptWaitAffordance(draft: waitDraft)
-                            }
                         } else if viewModel.day1GoalSelection == nil {
                             officeHoursTutorHead(session: session, activeDay: activeDay)
                             officeHoursGoalSelectionBlock(session: session, day1Content: day1Content)
@@ -7006,11 +6898,6 @@ struct ContentView: View {
         officeHoursCompletedAnswerSummaries(session: session).count
     }
 
-    // R1.b 인터뷰 완료 판정. 권위는 사이드카 ValidationAttempt projection에서
-    // 파생된 runtime.officeHours.nextAction.kind 다 — kind != "card" 이면 게더
-    // (6슬롯) 인터뷰가 끝난 것. nextAction이 아직 없으면(레거시/초기) 답변 수
-    // 폴백. smart-skip으로 정원보다 적은 답변으로도 정상 종결될 수 있어, 카운트만
-    // 보면 종결된 인터뷰가 영구 미완(5/6 blocked)으로 읽힌다.
     private func officeHoursInterviewGatherComplete(session: ChatSession?) -> Bool {
         guard let session else { return false }
         if let kind = session.runtime?.officeHours?.nextAction?.kind?
@@ -7024,71 +6911,6 @@ struct ContentView: View {
         guard let session else { return false }
         if officeHoursInterviewGatherComplete(session: session) { return true }
         return officeHoursCompletedQuestionCount(session: session) >= selectedOfficeHoursMode.questionCount
-    }
-
-    // R2: build the WAIT-state attempt-evidence draft when the locked Day-1 attempt
-    // is past gather and awaiting real proof. Returns nil unless the host-derived
-    // nextAction.kind == "wait" with a known reason AND a CAS pointer is present.
-    private func officeHoursAttemptWaitDraft(session: ChatSession?) -> OfficeHoursAttemptEvidenceDraft? {
-        guard let session,
-              let officeHours = session.runtime?.officeHours,
-              let nextAction = officeHours.nextAction,
-              (nextAction.kind?.trimmingCharacters(in: .whitespacesAndNewlines)) == "wait",
-              let reason = nextAction.waitReason?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
-              ["action", "customer_outcome", "goal"].contains(reason),
-              let attemptId = officeHours.attemptId?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
-              let revision = officeHours.revision
-        else { return nil }
-        return OfficeHoursAttemptEvidenceDraft(
-            attemptId: attemptId,
-            revision: revision,
-            waitReason: reason,
-            sessionId: session.id
-        )
-    }
-
-    @ViewBuilder
-    private func officeHoursAttemptWaitAffordance(draft: OfficeHoursAttemptEvidenceDraft) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("증거 대기")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
-                    .tracking(1.2)
-                    .textCase(.uppercase)
-                Spacer(minLength: 0)
-            }
-            Text(draft.title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-            Text(draft.detail)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                Button(draft.title) {
-                    officeHoursAttemptEvidenceDraft = draft
-                }
-                .keyboardShortcut(.defaultAction)
-                .accessibilityIdentifier("opendesign.officeHours.attempt.attachProof")
-                Button("포기 / 보류") {
-                    officeHoursAttemptAbandonDraft = draft
-                }
-                .accessibilityIdentifier("opendesign.officeHours.attempt.abandon")
-                Spacer(minLength: 0)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(OpenDesignOfficeHoursColor.amber.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(OpenDesignOfficeHoursColor.amber.opacity(0.32), lineWidth: 1)
-        )
-        .accessibilityIdentifier("opendesign.officeHours.attempt.waitAffordance")
     }
 
     // 카운터 표기용 분모. terminal 종결로 정원보다 적은 답변으로 끝난 인터뷰는
@@ -9236,7 +9058,7 @@ struct ContentView: View {
                         .frame(width: 4, height: 14)
                     Text(
                         allowsDefaultSubmit
-                            ? "Agentic30 추천 실행안"
+                            ? "기본 실행안"
                             : hasOptions && requiresPrimaryText ? "1. 방법 선택 · 2. 행동 입력" : isRequiredTextOnly || requiresPrimaryText ? "행동 입력" : hasOptions ? "도움안 선택" : "하나 선택"
                     )
                         .font(.system(size: 12, weight: .medium))
@@ -9860,7 +9682,7 @@ struct ContentView: View {
               officeHoursDefaultSubmitOptionInfo(prompt) != nil else {
             return "제출"
         }
-        return "추천안으로 진행"
+        return "기본안 제출"
     }
 
     private func officeHoursDefaultSubmitOptionInfo(
@@ -16168,199 +15990,6 @@ private struct OfficeHoursEvidenceResolutionSheet: View {
         }
         .padding(20)
         .frame(width: 460)
-    }
-}
-
-// R2: reason-scoped evidence-attach sheet for the WAIT-state ValidationAttempt.
-// Mirrors OfficeHoursEvidenceResolutionSheet's URL/file-picker pattern, but the
-// kind picker is scoped to the grade the WAIT reason demands (action vs outcome vs
-// goal) and it submits office_hours_attempt_evidence (NOT commitment evidence).
-private struct OfficeHoursAttemptEvidenceSheet: View {
-    let draft: OfficeHoursAttemptEvidenceDraft
-    /// A′ receipt rail: the sheet hands UP the picked artifact bytes + a declared media type.
-    /// The VM ingests them (host signs a `swift_upload` receipt) and submits the receipt.
-    /// There is NO kind/ref anymore — the claim is host-fixed to `message.sent`.
-    let onSubmit: (Data, String) -> Void
-    let onAbandon: () -> Void
-    let onCancel: () -> Void
-
-    @State private var pickedFileURL: URL?
-    @State private var isPresentingFilePicker = false
-    @State private var pickError: String?
-
-    init(
-        draft: OfficeHoursAttemptEvidenceDraft,
-        onSubmit: @escaping (Data, String) -> Void,
-        onAbandon: @escaping () -> Void,
-        onCancel: @escaping () -> Void
-    ) {
-        self.draft = draft
-        self.onSubmit = onSubmit
-        self.onAbandon = onAbandon
-        self.onCancel = onCancel
-    }
-
-    /// Only the action grade is reachable in production: a `swift_upload` receipt can only
-    /// satisfy `record_action_proof` (claim `message.sent`). customer_outcome / goal need a
-    /// recipient/provider adapter that does not exist yet, so they show an honest disabled state.
-    private var isActionGrade: Bool { draft.waitReason == "action" }
-
-    /// image/pdf only — the host re-detects the real media type from the bytes, but we declare
-    /// a best-effort type from the extension and restrict the picker so users don't attach junk.
-    private static func declaredMediaType(for url: URL) -> String {
-        switch url.pathExtension.lowercased() {
-        case "png": return "image/png"
-        case "jpg", "jpeg": return "image/jpeg"
-        case "gif": return "image/gif"
-        case "webp": return "image/webp"
-        case "pdf": return "application/pdf"
-        default: return "application/octet-stream"
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(draft.title)
-                    .font(.system(size: 16, weight: .semibold))
-                Text(draft.detail)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if isActionGrade {
-                actionEvidenceBody
-            } else {
-                unsupportedGradeBody
-            }
-        }
-        .padding(20)
-        .frame(width: 460)
-    }
-
-    // MARK: Action grade — pick a file, hand bytes up.
-
-    @ViewBuilder
-    private var actionEvidenceBody: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 8) {
-                Text(pickedFileURL?.lastPathComponent ?? "선택된 파일 없음")
-                    .font(.system(size: 12))
-                    .foregroundStyle(pickedFileURL == nil ? .secondary : .primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-                Button("파일 선택…") {
-                    guard !isPresentingFilePicker else { return }
-                    isPresentingFilePicker = true
-                    pickError = nil
-                    AgenticOpenPanelPresenter.present { panel in
-                        panel.canChooseFiles = true
-                        panel.canChooseDirectories = false
-                        panel.allowsMultipleSelection = false
-                        panel.allowedContentTypes = [.png, .jpeg, .gif, .webP, .pdf]
-                        panel.message = "행동 증거(스크린샷·캡처·PDF)를 선택해줘"
-                    } completion: { response, url in
-                        isPresentingFilePicker = false
-                        guard response == .OK, let url else { return }
-                        pickedFileURL = url
-                    }
-                }
-                .disabled(isPresentingFilePicker)
-                .accessibilityIdentifier("opendesign.officeHours.attempt.filePicker")
-            }
-
-            if let pickError {
-                Text(pickError)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack {
-                Button("포기 / 보류", action: onAbandon)
-                    .accessibilityIdentifier("opendesign.officeHours.attempt.sheetAbandon")
-                Spacer()
-                Button("취소", action: onCancel)
-                Button("증거 저장") {
-                    guard let url = pickedFileURL else { return }
-                    do {
-                        let bytes = try Data(contentsOf: url)
-                        guard !bytes.isEmpty else {
-                            pickError = "선택한 파일이 비어 있습니다."
-                            return
-                        }
-                        onSubmit(bytes, Self.declaredMediaType(for: url))
-                    } catch {
-                        pickError = "파일을 읽지 못했습니다: \(error.localizedDescription)"
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                // The 2-step submit requires real bytes — stay disabled until a file is picked.
-                .disabled(pickedFileURL == nil)
-                .accessibilityIdentifier("opendesign.officeHours.attempt.submit")
-            }
-        }
-    }
-
-    // MARK: customer_outcome / goal — honest disabled state (no receipt minter yet).
-
-    @ViewBuilder
-    private var unsupportedGradeBody: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("고객 반응·목표 증거는 외부 연동(수신자 콜백/제공자 이벤트)이 필요해요. 지금은 행동 증거만 첨부할 수 있어요.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("opendesign.officeHours.attempt.unsupportedGrade")
-
-            HStack {
-                Button("포기 / 보류", action: onAbandon)
-                    .accessibilityIdentifier("opendesign.officeHours.attempt.sheetAbandon")
-                Spacer()
-                Button("취소", action: onCancel)
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-    }
-}
-
-// R2: abandon/block escape for a WAIT-state attempt (the only free-text fail path).
-// canStartNewAttempt blocks a fresh interview while one attempt is in WAIT, so a
-// founder who cannot attach proof must abandon to free the lane.
-private struct OfficeHoursAttemptAbandonSheet: View {
-    let draft: OfficeHoursAttemptEvidenceDraft
-    let onAbandon: (String) -> Void
-    let onCancel: () -> Void
-
-    @State private var abandonReason = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("포기 / 보류 사유")
-                    .font(.system(size: 16, weight: .semibold))
-                Text("이 시도를 닫고 새 시도를 시작할 수 있게 사유를 남깁니다.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            TextField("왜 이 시도를 포기/보류하는지", text: $abandonReason)
-                .textFieldStyle(.roundedBorder)
-            HStack {
-                Spacer()
-                Button("취소", action: onCancel)
-                Button("포기 처리") {
-                    onAbandon(abandonReason)
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(abandonReason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(20)
-        .frame(width: 460)
-        .accessibilityIdentifier("opendesign.officeHours.attempt.abandonSheet")
     }
 }
 

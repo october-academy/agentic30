@@ -459,6 +459,46 @@ test("clampOfficeHoursContext preserves locked get_users markers when prepended 
   assert.match(prompt, /do not ask a mode gate, product-stage gate, or goal-selection question/);
 });
 
+test("office-hours P0 gstack-port: OA Partner Voice, decision-brief, and Phase 6 handoff", () => {
+  const prompt = buildOfficeHoursChatSystemPrompt("/workspace", {
+    provider: "codex",
+    context: "target solo founder",
+  });
+
+  // C-1: OA Partner Voice rule (em dash + AI-vocab ban) injected into the common path.
+  assert.match(prompt, /OA Partner Voice/);
+  assert.match(prompt, /em dash\(—\)를 절대 쓰지 않는다/);
+  assert.match(prompt, /delve, robust, comprehensive/);
+
+  // C-1: AskUserQuestion decision-brief framing (D/ELI10/Completeness/✅❌/Net),
+  // reasoned internally, never exposed as a visible prefix.
+  assert.match(prompt, /OA Partner decision-brief/);
+  assert.match(prompt, /ELI10/);
+  assert.match(prompt, /Completeness/);
+  assert.match(prompt, /Never expose `D:`, `ELI10:`, `Net:`/);
+
+  // Phase 6 handoff: OA Partner plea + Agentic Garage + builder blog, and an
+  // explicit ban on the original YC / Garry Tan plea (non-goal).
+  assert.match(prompt, /Phase 6 handoff/);
+  assert.match(prompt, /Agentic Garage/);
+  assert.match(prompt, /luma\.com\/agentic_garage\?period=past/);
+  assert.match(prompt, /agentic30\.app\/blog/);
+  assert.match(prompt, /YC, Y Combinator, Garry Tan, ycombinator\.com은 절대 언급하지 않는다/);
+});
+
+test("office-hours specialist no longer instructs scanning the workspace (C-2)", async () => {
+  const { buildPrompt } = await import("../sidecar/specialists/office-hours.mjs");
+  const withoutObs = buildPrompt({ doc: { title: "ICP" }, observations: "" });
+  // C-2: the empty-observations fallback must not tell a tool-blocked model to
+  // scan README/docs/source/git — it must rely only on injected context.
+  assert.doesNotMatch(withoutObs, /워크스페이스 README\/docs\/main source\/git log를 짧게 훑어/);
+  assert.match(withoutObs, /주입된 관찰만 사용한다/);
+  assert.match(withoutObs, /워크스페이스를 직접 훑지 말고/);
+  // Injected observations still flow through verbatim.
+  const withObs = buildPrompt({ doc: { title: "ICP" }, observations: "관찰: 결제 1건 확인됨" });
+  assert.match(withObs, /관찰: 결제 1건 확인됨/);
+});
+
 test("clampOfficeHoursContext leaves a within-limit context untouched", () => {
   const small = ["DAY1_LOCKED_GOAL", "Goal lane: get_users / 활성 사용자 100명 모으기"].join("\n");
   assert.equal(clampOfficeHoursContext(small), small);

@@ -1,7 +1,7 @@
 import {
   EVIDENCE_KIND_GRADE,
   REJECTED_EVIDENCE_KINDS,
-} from "./office-hours-contract.mjs";
+} from "./office-hours-evidence-vocabulary.mjs";
 
 export const RECORDER_EVIDENCE_REVIEW_SCHEMA_VERSION = 1;
 

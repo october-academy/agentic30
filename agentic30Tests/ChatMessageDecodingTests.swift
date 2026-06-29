@@ -405,7 +405,7 @@ struct ChatMessageDecodingTests {
         let payload = """
         {
           "header": "후보 확보",
-          "question_id": "get_users_first_candidate_unblock",
+          "question_id": "get_users_first_candidate",
           "question": "아직 후보가 없다면 오늘 30분 안에 어떤 한 줄 요청을 보낼 건가요?",
           "helperText": "범주가 아니라 실행 문장을 적습니다.",
           "options": [

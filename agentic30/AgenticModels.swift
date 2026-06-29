@@ -509,13 +509,8 @@ struct OfficeHoursRuntime: Codable, Hashable {
     var calendarDay: Int?
     var workedDayReason: String?
     var promptSnapshots: [OfficeHoursStoredPromptSnapshot]?
-    /// R1.b ValidationAttempt 권위 포인터. 사이드카(office-hours-attempt-store)가
-    /// locked Day-1 get_users 인터뷰를 이벤트 스토어로 진행시키고, 그 식별자/리비전을
-    /// 여기로 carry-forward 한다. Mac은 완료를 카운트가 아니라 nextAction.kind로 판정.
     var attemptId: String? = nil
     var revision: Int? = nil
-    /// 호스트가 projection에서 파생한, READ-ONLY 표시용 다음 액션(nextAttemptAction 미러).
-    /// kind != "card" 이면 게더(6슬롯) 인터뷰가 끝난 것 = 완료 신호.
     var nextAction: OfficeHoursNextAction? = nil
     /// answered / total(=6) 게더 진행도.
     var gatherProgress: OfficeHoursGatherProgress? = nil

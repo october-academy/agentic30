@@ -636,15 +636,15 @@ struct OpenDesignDayContentTests {
             sessionID: "session",
             requestId: "request-1",
             question: question,
-            docType: "day1_candidate_unblock",
-            signalId: "get_users_first_candidate_unblock"
+            docType: "day1_step",
+            signalId: "get_users_first_candidate"
         )
         let retryPrompt = makeOfficeHoursPrompt(
             sessionID: "session",
             requestId: "request-2",
             question: question,
-            docType: "day1_candidate_unblock",
-            signalId: "get_users_first_candidate_unblock"
+            docType: "day1_step",
+            signalId: "get_users_first_candidate"
         )
         let snapshot = OfficeHoursSubmittedPromptSnapshot(
             sessionId: "session",
@@ -675,15 +675,15 @@ struct OpenDesignDayContentTests {
             sessionID: "session",
             requestId: "request-1",
             question: question,
-            docType: "day1_candidate_unblock",
-            signalId: "get_users_first_candidate_unblock"
+            docType: "day1_step",
+            signalId: "get_users_first_candidate"
         )
         let retryPrompt = makeOfficeHoursPrompt(
             sessionID: "session",
             requestId: "request-2",
             question: question,
-            docType: "day1_candidate_unblock",
-            signalId: "get_users_first_candidate_unblock"
+            docType: "day1_step",
+            signalId: "get_users_first_candidate"
         )
         let staleSnapshot = OfficeHoursSubmittedPromptSnapshot(
             sessionId: "session",

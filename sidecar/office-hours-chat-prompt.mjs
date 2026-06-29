@@ -73,7 +73,7 @@ export function buildOfficeHoursChatPrompt({ context = "", userPrompt = "" } = {
       ? "Day 2+ Office Hours다. Day 1에서 고른 30일 목표와 live digest를 바탕으로 오늘 목표 달성 행동을 좁힌다."
       : isLockedDay1GoalFlow
         ? "Day 1 locked goal Office Hours다. 잠긴 목표 블록(goal type/text/customer/problem/validation action)만 인터뷰 대상으로 삼는다."
-        : "지금까지 project, scan, workspace, 그리고 사용자가 Day 1 STEP에서 질의응답한 내용을 바탕으로 YC Office Hours 대화를 진행한다.",
+        : "지금까지 project, scan, workspace, 그리고 사용자가 Day 1 STEP에서 질의응답한 내용을 바탕으로 OA Partner Office Hours 대화를 진행한다.",
     isDay2GoalDrivenFlow
       ? "첫 응답은 live digest를 짧게 브리핑한 뒤, 30일 목표를 향한 오늘의 가장 작은 외부 행동을 강제하는 질문 정확히 1개만 물어본다."
       : isLockedDay1GoalFlow
@@ -103,6 +103,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
   context = "",
   provider = "codex",
   projectContextBrief = "",
+  effectorContext = "",
 } = {}) {
   // Provider's Office Hours asking mechanism — single source of truth lives in
   // office-hours-structured-input.mjs. `structuredInputTool` is interpolated as
@@ -168,9 +169,11 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
     "Price questions are not strong money signals. Treat \"얼마예요?\" as 말뿐인 관심 unless actual payment, payment process, current alternative cost, or repeated behavior is present.",
     `After Q1, each ${structuredInputTool} call must contain exactly one question, 2-4 options, allowFreeText: true, requiresFreeText: false, and generation.mode "office_hours_tool" with a stable signalId/signalLabel.`,
     "Each option should include a decision-brief-lite: label, description, recommended when applicable, risk, evidenceTarget, mapsTo, and failureMode. Keep label/description useful even if the host ignores extra metadata.",
+    "When composing each option, reason internally through the OA Partner decision-brief: D(이 옵션이 가리키는 결정), ELI10(10살도 이해할 한 줄 설명), Completeness(아직 빠진 정보), ✅/❌(이 선택의 득과 실), Net(추천 한 줄). Fold that reasoning into the natural Korean description. Never expose `D:`, `ELI10:`, `Net:`, or any of these labels as visible prefixes — the user only sees one easy Korean sentence.",
     "Option descriptions must name at least one of: selected outcome, concrete risk, evidence that will be captured, or the remaining evidence gap.",
     "In user-visible Korean copy, follow docs/JARGON.md: prefer plain action words over jargon. Say 고객 후보 instead of ICP, 현재 대안 instead of status quo, 작은 유료 진입점 instead of wedge, 작업 흐름 instead of workflow, and 제외 신호 instead of Anti-ICP unless the user's own wording requires the term.",
     "During the Korean UI copy self-check, reject any Office Hours visible text that says 닫을까요, 닫을까, 닫게, Day를 닫, 증거 마감, evidence-closing, close the Day, or commitment close. Rewrite it with 마무리, 정리, or 상태 정하기 while preserving the same decision.",
+    "OA Partner Voice: 사용자에게 보이는 모든 한국어 출력(structured input 카드 copy와 자유 prose 답변 모두)에서 em dash(—)를 절대 쓰지 않는다. 끊을 때는 쉼표, 마침표, 또는 줄바꿈을 쓴다. delve, robust, comprehensive, leverage, seamless, in today's landscape 같은 AI 상투 어휘와 그 한국어 직역(깊이 파고들다, 견고한, 포괄적인, 활용하다, 매끄러운)을 쓰지 않는다. 직설적이고 짧게, 메이커가 동료에게 말하듯 쓴다.",
     buildOfficeHoursUiCopyContractPrompt(),
     "Optionally attach an emphasis array to the question to highlight key spans. Each item is { phrase, style }: phrase MUST be an exact substring of the question text; style is strong (key nouns, numbers, quotes), mark (warnings, deadlines, the single most important phrase), or code (file names, paths, code tokens). Use 1-5 spans, never more, and never emphasize most of the sentence.",
     "For a free-text chat reply (no structured input card), you may emphasize key spans of your reply with an emphasis sentinel block appended at the very end. Do NOT use inline markup like ** or ==; only the sentinel block. Wire format: the visible reply body, then a new line `===EMPHASIS===`, then a JSON array `[{ \"phrase\": \"<exact substring of the reply>\", \"style\": \"strong|mark|code\" }]`, then `===END===`. style is strong (key nouns, numbers, quotes), mark (warnings, deadlines, the single most important phrase), or code (file names, paths, code tokens). phrase MUST be an exact substring of the reply body. Use 1-5 spans, never more, never emphasize most of the reply, and omit the block entirely when nothing needs emphasis. The host strips this block so the user only sees the reply body.",
@@ -186,6 +189,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
     "대안 비교 must contain 최소안, 이상안, and 다른 관점. Mark one as recommended, but do not write docs or implement anything until the user explicitly approves.",
     "Before any external search, ask a privacy gate card using generalized category terms only; if skipped, continue with in-distribution knowledge.",
     "Do not edit files or write artifacts unless the user explicitly asks for implementation or document writing later.",
+    "OA Partner 마무리(Phase 6 handoff): 인터뷰가 commitment 또는 대안 비교로 마무리될 때, 새 structured input 카드 없이 짧은 prose로 닫는다. (1) 이번 세션에서 사용자가 실제로 한 말 한 가지를 그대로 인용해 되짚는다. 일반 칭찬은 쓰지 말고 구체적인 행동·선택만 짚는다. (2) October Academy Partner로서 한 문장 권유: 함께 만드는 빌더 모임 Agentic Garage(https://luma.com/agentic_garage?period=past)에 참여해보라고 권한다. (3) 빌더 리소스로 https://agentic30.app/blog 를 한 줄로 안내한다. YC, Y Combinator, Garry Tan, ycombinator.com은 절대 언급하지 않는다. em dash 없이 직설적인 OA Partner Voice를 유지한다.",
   ];
   const writeDesignDocRules = isWriteDesignDocFlow
     ? [
@@ -274,6 +278,10 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
     `Workspace root: ${workspaceRootValue || ""}`,
     specialistInjection ? `\n${specialistInjection}` : "",
     projectContextBrief ? `\n${projectContextBrief}` : "",
+    // gstack effector phases (landscape / second-opinion / external context /
+    // alternatives), assembled by the host as a PURE read-only context block. It
+    // carries its own C-3 guard so the model never turns it into a question/card.
+    effectorContext ? `\n${effectorContext}` : "",
     context ? `\n## Day 1 STEP Office Hours Context\n${clampOfficeHoursContext(context)}` : "",
   ].filter(Boolean).join("\n");
 }

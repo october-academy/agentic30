@@ -26,20 +26,6 @@ import { WebSocket } from "ws";
 import { projectDocPath } from "../sidecar/project-doc-paths.mjs";
 import { refreshProjectContextCache } from "../sidecar/project-context-cache.mjs";
 import { selectStructuredResponse, OFFICE_HOURS_ARC_PERSONAS } from "./office-hours-arc-simulation.mjs";
-// A′ receipt cutover: the graded attempt-evidence transitions now require a host-SIGNED
-// receipt. The arc mints them the same way production/eval would — swift_upload bytes for
-// action proof (via the daemon's ingest command) and SYNTHETIC provider/recipient receipts
-// for customer/goal (production has no such adapter yet; the arc signs against the shared
-// host store to exercise the full verify→consume→commit plumbing end to end). This is
-// eval-epoch evidence — it never pollutes a real funnel.
-import { projectAttempt } from "../sidecar/office-hours-attempt-store.mjs";
-import { signEvidenceReceipt } from "../sidecar/office-hours-evidence-receipt.mjs";
-import { resolveHostIdentity, resolveEvidenceSigningKey } from "../sidecar/office-hours-host-identity.mjs";
-import { deriveEvidenceContractId } from "../sidecar/office-hours-evidence-binding.mjs";
-import { deriveEvidenceIdentity, registerArtifact } from "../sidecar/office-hours-artifact-registry.mjs";
-
-// A real PNG header + filler — a "screenshot" artifact for the swift-upload action rail.
-const ARC_PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("arc-day1-capture")]);
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LIVE_DEFAULT = process.env.AGENTIC30_RUN_LIVE_PROVIDER_EVAL === "1";
@@ -324,114 +310,6 @@ export function buildDay1LockedGoalContext({ day, goal, onboarding, projectConte
   return lines.join("\n");
 }
 
-// ── R2: simulated graded attempt-evidence submission ────────────────────────
-// Read the post-gather WAIT DTO and submit the matching graded proof through the
-// office_hours_attempt_evidence command. Maps the WAIT reason → transition + a
-// graded (non-rejected, non-payment) evidence kind, so the attempt accumulates the
-// real action→outcome→goal chain across days. No-op (records a skip) if the session
-// is not in a WAIT state (e.g. still gathering, or already resolved).
-const ATTEMPT_EVIDENCE_STEP_BY_REASON = Object.freeze({
-  // action proof: a founder-uploaded screenshot via the real swift_upload ingress.
-  action: { transition: "record_action_proof", origin: "swift_upload" },
-  // customer outcome: a verified recipient reply (synthetic recipient_callback in eval).
-  customer_outcome: { transition: "record_customer_outcome", origin: "recipient_callback", verifiedClaims: ["recipient.replied"] },
-  // goal proof: a verified provider metric/conversion (synthetic provider_event in eval),
-  // NOT a payment kind — keeps the strong-payment gate honest.
-  goal: { transition: "record_goal_proof", origin: "provider_event", verifiedClaims: ["goal.metric_observed"] },
-});
-
-// Ingest founder bytes through the daemon → host-signed swift_upload action receipt token.
-async function arcIngestActionReceipt({ ws, events, workspaceRoot, attemptId }) {
-  const offset = events.length;
-  ws.send(JSON.stringify({
-    type: "office_hours_ingest_evidence",
-    workspaceRoot,
-    attemptId,
-    evidence: { bytesBase64: ARC_PNG_BYTES.toString("base64"), declaredMediaType: "image/png" },
-  }));
-  const ev = await waitForEventAfter(events, offset, (e) => e.type === "office_hours_evidence_ingested" && e.attemptId === attemptId, 30_000).catch(() => null);
-  if (!ev || ev.success === false) throw new Error(`ingest failed: ${ev?.error || "timeout"}`);
-  return ev.receiptToken;
-}
-
-// Sign a SYNTHETIC higher-tier receipt against the SHARED host store the daemon verifies
-// with (eval-epoch only — production has no recipient/provider adapter yet, so the arc
-// stands in for a verified inbound/provider confirmation to drive the customer/goal
-// plumbing end to end). It registers the artifact so the handler's single-use consume
-// succeeds, and derives the evidenceContractId from durable attempt state.
-async function arcSignSyntheticReceipt({ workspaceRoot, attemptId, origin, verifiedClaims }) {
-  const { installActorId, projectId } = await resolveHostIdentity({ workspaceRoot });
-  const { keyId, secret } = await resolveEvidenceSigningKey({ workspaceRoot });
-  const snapshot = await projectAttempt({ workspaceRoot, attemptId });
-  const evidenceContractId = deriveEvidenceContractId(snapshot.projection);
-  const sha = "d".repeat(64);
-  const account = origin === "provider_event" ? "arc_provider_acct" : undefined;
-  const providerEventId = origin === "provider_event" ? `arc_evt_${attemptId}` : undefined;
-  const callbackNonce = origin === "recipient_callback" ? `arc_nonce_${attemptId}` : undefined;
-  const evidenceIdentity = deriveEvidenceIdentity({ origin, providerAccount: account, providerEventId, callbackNonce, actorId: installActorId, sha256: sha });
-  const artifactId = `arc_art_${attemptId}_${origin}`;
-  await registerArtifact({ workspaceRoot }, { evidenceIdentity, artifactId, sha256: sha, origin, mediaType: "application/json", byteLength: 256 });
-  return signEvidenceReceipt({
-    evidenceIdentity, artifactId, projectId, attemptId, actorId: installActorId, evidenceContractId,
-    sha256: sha, byteLength: 256, declaredMediaType: "application/json", detectedMediaType: "application/json",
-    contentValidation: "arc_synthetic_provider", origin,
-    issuedAt: new Date(Date.now() - 60_000).toISOString(),
-    expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
-    verifiedClaims,
-  }, { secret, keyId });
-}
-
-async function maybeSubmitAttemptEvidence({ ws, events, sessionId, day, captured, workspaceRoot }) {
-  const session = latestSession(events, sessionId);
-  const officeHours = session?.runtime?.officeHours;
-  const nextAction = officeHours?.nextAction;
-  const attemptId = String(officeHours?.attemptId || "").trim();
-  const expectedRevision = officeHours?.revision;
-  if (!attemptId || nextAction?.kind !== "wait") {
-    captured.attemptEvidenceSubmissions.push({ day, skipped: true, reason: nextAction?.kind || "no_attempt" });
-    return;
-  }
-  const step = ATTEMPT_EVIDENCE_STEP_BY_REASON[nextAction.reason];
-  if (!step) {
-    captured.attemptEvidenceSubmissions.push({ day, skipped: true, reason: `unmapped:${nextAction.reason}` });
-    return;
-  }
-  const requestId = `arc-attempt-evidence-${day}-${step.transition}`;
-  // Mint the host-signed receipt the cutover now requires (no more sim:// self-attest).
-  let receiptToken;
-  try {
-    receiptToken = step.origin === "swift_upload"
-      ? await arcIngestActionReceipt({ ws, events, workspaceRoot, attemptId })
-      : await arcSignSyntheticReceipt({ workspaceRoot, attemptId, origin: step.origin, verifiedClaims: step.verifiedClaims });
-  } catch (err) {
-    captured.attemptEvidenceSubmissions.push({ day, waitReason: nextAction.reason, transition: step.transition, success: false, error: `receipt: ${err?.message || err}` });
-    return;
-  }
-  const offset = events.length;
-  ws.send(JSON.stringify({
-    type: "office_hours_attempt_evidence",
-    // The attempt lives in the throwaway SANDBOX workspace (seed.root) — every arc
-    // command targets it (sending the source project path would resolve to a workspace
-    // where the attempt does not exist).
-    workspaceRoot,
-    sessionId,
-    attemptId,
-    expectedRevision,
-    transition: step.transition,
-    requestId,
-    evidence: { receipt: receiptToken },
-  }));
-  const result = await waitForEventAfter(events, offset, (e) => e.type === "day_progress_state", 30_000).catch(() => null);
-  captured.attemptEvidenceSubmissions.push({
-    day,
-    waitReason: nextAction.reason,
-    transition: step.transition,
-    origin: step.origin,
-    success: result ? result.success !== false : false,
-    error: result?.error || (result ? "" : "timeout"),
-  });
-}
-
 // ── one day of office-hours, capturing cards ────────────────────────────────
 async function runOfficeHoursDay({ ws, events, sessionId, day, maxTurns, persona, baseTurn, answeredRequestIds, context, perTurnTimeoutMs }) {
   const dayLog = { day, questions: [], assistantMessages: [], outcome: "", repeatedSignals: [] };
@@ -552,11 +430,7 @@ export async function runRealProjectArc(projectPath, {
   perTurnTimeoutMs = 200_000,
   goalOverride = null,
   projectContextOverride = null,
-  // R2 measurement: after gather completes (WAIT DTO), submit a synthetic-but-GRADED
-  // action/goal proof through the new office_hours_attempt_evidence command so the
-  // attempt captures real graded evidence (not plan-only). Pass `false` to reproduce
-  // the R1.b-baseline arc (no attempt-evidence step) for a before/after judge diff.
-  attemptEvidence = true,
+  attemptEvidence = false,
 } = {}) {
   const persona = OFFICE_HOURS_ARC_PERSONAS[personaId];
   const runId = new Date().toISOString().replaceAll(/[:.]/g, "-");
@@ -567,9 +441,6 @@ export async function runRealProjectArc(projectPath, {
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "a30-real-arc-app-"));
   await writeBipConfig(appSupportPath, seed.root);
 
-  // Share a host identity/key store between this arc process (it signs synthetic
-  // customer/goal receipts) and the spawned daemon (it verifies them). The daemon
-  // inherits AGENTIC30_HOST_STORE_DIR via the `...process.env` spread below.
   process.env.AGENTIC30_HOST_STORE_DIR = path.join(appSupportPath, "host-store");
 
   const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", seed.root], {
@@ -577,8 +448,8 @@ export async function runRealProjectArc(projectPath, {
     env: {
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
-      // ★metric_epoch: every funnel event this arc's daemon emits is stamped "eval" so
-      // synthetic arc runs can NEVER pollute the real production N (A′ step 4 integrity).
+      // Every funnel event this arc's daemon emits is stamped "eval" so synthetic arc
+      // runs can never pollute the real production N.
       AGENTIC30_METRIC_EPOCH: "eval",
       AGENTIC30_CODEX_MODEL: process.env.AGENTIC30_CODEX_MODEL || "gpt-5.4-mini",
       ...(mode === "stub" ? { AGENTIC30_TEST_STUB_PROVIDER: "1", AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1" } : {}),
@@ -593,7 +464,7 @@ export async function runRealProjectArc(projectPath, {
   // grounding invariants treat the run as thin-context (no fabricated names allowed,
   // first_candidate must force a named free-text capture). Stamp it explicitly so
   // computeGroundingInvariants reads the real injection state rather than guessing.
-  const captured = { runId, mode, label, projectPath: path.resolve(projectPath), days: [], onboardingAnswered: 0, errors: [], attemptEvidenceSubmissions: [], attemptEvidenceEnabled: attemptEvidence === true, hasGoal: Boolean(seed.day1Goal), hasProjectContext: Boolean(seed.projectContext), verifiedCandidateHintsInjected: false };
+  const captured = { runId, mode, label, projectPath: path.resolve(projectPath), days: [], onboardingAnswered: 0, errors: [], attemptEvidenceSubmissions: [], attemptEvidenceEnabled: false, attemptEvidenceRequested: attemptEvidence === true, hasGoal: Boolean(seed.day1Goal), hasProjectContext: Boolean(seed.projectContext), verifiedCandidateHintsInjected: false };
   const events = [];
   let ws;
   try {
@@ -628,16 +499,12 @@ export async function runRealProjectArc(projectPath, {
         });
         captured.days.push(dayLog);
         baseTurn += turnsUsed;
-        // R2: after gather completes the attempt sits in a WAIT state and surfaces
-        // nextAction={kind:"wait", reason}. Submit a synthetic-but-GRADED proof
-        // through the office_hours_attempt_evidence command so the attempt captures
-        // real action/customer/goal proof (vs plan-only) — this is what moves
-        // evidence_use/goal_alignment in the judge. The grading + provenance path is
-        // identical to production; only the `ref` is a sim:// locator (the harness
-        // cannot attach a real screenshot). Payment is intentionally NOT used for
-        // goal proof, to keep the strong-payment anti-gaming gate honest.
         if (attemptEvidence) {
-          await maybeSubmitAttemptEvidence({ ws, events, sessionId, day, captured, workspaceRoot: seed.root });
+          captured.attemptEvidenceSubmissions.push({
+            day,
+            skipped: true,
+            reason: "attempt_evidence_removed",
+          });
         }
         // commit the day so memory/commitment carries to the next day
         const offset = events.length;
@@ -647,15 +514,6 @@ export async function runRealProjectArc(projectPath, {
           commitmentText: persona.commitment.text, commitment: persona.commitment,
         }));
         await waitForEventAfter(events, offset, (e) => e.type === "day_progress_state", 30_000);
-        // Measurement honesty (R2): the day's evidence is the reducer-graded R2
-        // attempt evidence captured above (maybeSubmitAttemptEvidence →
-        // office_hours_attempt_evidence). The legacy synthetic `proof_ledger_append
-        // {status:"verified", strength:"strong"}` injection was REMOVED — it fabricated
-        // verified strong evidence the ValidationAttempt reducer never accepted, which
-        // both violated R2's grading-authority boundary and gamed the judge's
-        // evidence_use the same way the strong-payment anti-gaming gate is built to
-        // reject. The honest attempt evidence (execution-grade on Day 1, not strong
-        // customer outcome) is what the judge now reads.
       } catch (e) { captured.errors.push(`day${day}: ${e.message}`); }
     }
   } catch (e) {
@@ -704,7 +562,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (a === "--max-turns") opts.maxTurnsPerDay = Number(argv[++i]);
     else if (a === "--goal-file") opts.goalOverride = readJsonSync(argv[++i]);
     else if (a === "--context-file") opts.projectContextOverride = readJsonSync(argv[++i]);
-    // R2 before/after: --no-attempt-evidence reproduces the R1.b-baseline arc.
     else if (a === "--no-attempt-evidence") opts.attemptEvidence = false;
     else if (a === "--attempt-evidence") opts.attemptEvidence = true;
   }

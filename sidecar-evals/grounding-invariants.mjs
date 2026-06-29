@@ -6,20 +6,11 @@
 // options (NO LLM), computed per run. It is the PRIMARY signal; the judge stays
 // secondary.
 //
-// Shares the generic-category matcher with the host validator (Deliverable B) via
-// sidecar/office-hours-first-candidate-grounding.mjs — the classification is
-// byte-for-byte identical on both sides (the spec's hard requirement). This module
-// adds only the per-run aggregation over `captured.days[].questions`.
+// The first-candidate classifier is local to this eval harness. The Day-1 runtime no
+// longer has a host validator for this card; the LLM card prompt owns generation.
 //
 // Pure: no I/O. Input is the `captured` object real-project-arc.mjs writes
 // (captured.days[].questions[] = { signalId, header, question, options[], allowFreeText, ... }).
-
-import {
-  classifyFirstCandidateCard,
-  isNoCandidateBlockerLabel,
-  carriesSpecificIdentity,
-  isGenericSourcingOptionLabel,
-} from "../sidecar/office-hours-first-candidate-grounding.mjs";
 
 const FIRST_CANDIDATE_SIGNAL_IDS = Object.freeze(new Set([
   "get_users_first_candidate",
@@ -41,6 +32,49 @@ function normalizeSignalId(card = {}) {
 
 function isFirstCandidateCard(card = {}) {
   return FIRST_CANDIDATE_SIGNAL_IDS.has(normalizeSignalId(card));
+}
+
+function normalizedText(value) {
+  return String(value || "").trim();
+}
+
+function isNoCandidateBlockerLabel(label = "") {
+  const text = normalizedText(label);
+  return /아직\s*후보\s*없|후보\s*없|없음|못\s*정함|미정/.test(text);
+}
+
+function carriesSpecificIdentity(text = "") {
+  const normalized = normalizedText(text);
+  return /@[\w.\-가-힣]{2,}/.test(normalized)
+    || /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b/.test(normalized)
+    || /[가-힣]{2,4}\s*(님|대표|멘토|개발자|창업자|디자이너|학생|고객)/.test(normalized);
+}
+
+function isGenericSourcingOptionLabel(label = "") {
+  const text = normalizedText(label);
+  return /지인|소개|커뮤니티|모임|채널|세그먼트|비슷한\s*사람|연락\s*가능한\s*사람|어디서|찾기/.test(text);
+}
+
+function classifyFirstCandidateCard(card = {}) {
+  const options = Array.isArray(card?.options) ? card.options : [];
+  const blockerCount = options.filter((option) => isNoCandidateBlockerLabel(option?.label)).length;
+  const nonBlockerOptions = options.filter((option) => !isNoCandidateBlockerLabel(option?.label));
+  const nonBlockerText = nonBlockerOptions
+    .map((option) => [option?.label, option?.description].map(normalizedText).filter(Boolean).join(" "))
+    .filter(Boolean);
+  const genericOnly = nonBlockerText.length > 0
+    && nonBlockerText.every((text) => isGenericSourcingOptionLabel(text) && !carriesSpecificIdentity(text));
+  const promptText = [
+    card?.question,
+    card?.freeTextPlaceholder,
+    ...nonBlockerText,
+  ].map(normalizedText).filter(Boolean).join(" ");
+  const forcesSpecificity = /실명|핸들|구체적|정확한|정확히|누구|스레드|thread/i.test(promptText);
+  return {
+    blockerCount,
+    genericOnly,
+    forcesSpecificity,
+  };
 }
 
 function allCards(captured = {}) {

@@ -56,11 +56,10 @@ export function normalizeSessionForStartup(session) {
   return next;
 }
 
-// SCHEMA v2 (R1.b): the locked Day-1 get_users office-hours runtime is authored
-// by the ValidationAttempt event store. Strip the dead count/doc-readiness
-// authority fields a v1 persisted session may carry; preserve the {attemptId,
-// revision} store pointer (and all other runtime keys) so a daemon restart
-// recovers the attempt. No migration of legacy turn logs — the store is authority.
+// Runtime-only completion/readiness stamps are recomputed from durable turn memory
+// on startup. Keep the persisted context/source metadata, but drop transient
+// completion fields so a restart does not mistake stale UI runtime for an active
+// pending card.
 function normalizeOfficeHoursRuntimeShapeForStartup(runtime) {
   if (!runtime || typeof runtime !== "object") return runtime;
   const officeHours = runtime.officeHours;

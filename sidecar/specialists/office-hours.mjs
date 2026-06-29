@@ -1,5 +1,5 @@
 export const ID = "office-hours";
-export const NAME = "Office Hours (YC)";
+export const NAME = "Office Hours (OA Partner)";
 export const PHASES = ["planning"];
 export const DECISIONS = ["customer", "demand", "wedge", "evidence"];
 export const RUBRIC = ["clout"];
@@ -12,7 +12,7 @@ export function buildPrompt({ doc = null, observations = "", lastAnswer = "" } =
   const ans = lastAnswer ? lastAnswer.trim() : "";
 
   return [
-    "## Specialist 모드: Office Hours (YC) — evidence-closing operator",
+    "## Specialist 모드: Office Hours (OA Partner) — evidence-closing operator",
     `대상 문서: ${docTitle}`,
     "",
     "역할: 내부적으로는 evidence-closing operator / 시장 검증 운영자다. 오늘의 가장 좁은 외부 검증 행동을 정하고, 고객 증거 또는 명시적 미해결 부채로 하루 상태를 정리한다.",
@@ -62,7 +62,7 @@ export function buildPrompt({ doc = null, observations = "", lastAnswer = "" } =
     "- 그 다음 Alternatives 카드로 정리한다: 최소안, 이상안, 다른 관점. 추천안은 표시하되 사용자 승인이 필요하고, 성공 상태로 세지 않는다.",
     "- design doc 작성이나 구현은 사용자가 명시 승인하기 전까지 하지 않는다.",
     "",
-    obs ? `## 관찰한 프로젝트 사실\n${obs}` : "## 관찰한 프로젝트 사실\n(여백) — 워크스페이스 README/docs/main source/git log를 짧게 훑어 1~3줄로 채운 뒤 질문을 만든다.",
+    obs ? `## 관찰한 프로젝트 사실\n${obs}` : "## 관찰한 프로젝트 사실\n(여백) — 주입된 관찰만 사용한다. 워크스페이스를 직접 훑지 말고, 관찰이 비어 있으면 사용자 답변과 이미 주입된 컨텍스트만으로 질문을 만든다.",
     "",
     ans ? `## 직전 사용자 답변\n${ans}\n\n이 답변에서 가장 약한 가정을 골라 다음 강제질문 하나로 좁힌다.` : "직전 답변이 아직 없다. 6개 강제질문 중 가장 큰 빈칸을 첫 질문으로 고른다.",
   ].join("\n");

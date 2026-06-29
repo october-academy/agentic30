@@ -3785,13 +3785,6 @@ final class AgenticViewModel: ObservableObject {
     /// Sessions with a candidate generation in flight (`status: "generating"`), so the
     /// close can show a "약속 준비 중" loader instead of a bare empty card.
     @Published private(set) var officeHoursCommitmentCandidatesGenerating: Set<String> = []
-    /// A′ receipt rail (step 1): in-flight `office_hours_ingest_evidence` requests keyed by
-    /// attemptId. The sidecar echoes `attemptId` (not a requestId) on the matching
-    /// `office_hours_evidence_ingested` reply, so we key the continuation by attempt and
-    /// guard against a concurrent second ingest for the same attempt (fail-closed: the new
-    /// caller gets an error rather than stomping the pending continuation). MainActor-isolated
-    /// — only touched from `handle(_:)` and the `async` ingest, both on the main actor.
-    private var officeHoursEvidenceIngestContinuations: [String: CheckedContinuation<String, Error>] = [:]
     /// Soft guidance from the interview gate: set when the sidecar withholds an interview
     /// close (needsCommitment) and asks for one next customer action; cleared on the next
     /// successful (non-blocked) day_progress_state so the nudge never lingers.
@@ -5674,162 +5667,6 @@ final class AgenticViewModel: ObservableObject {
                 "note": note.trimmingCharacters(in: .whitespacesAndNewlines),
             ],
         ])
-    }
-
-    /// A′ receipt rail: failure modes for the 2-step evidence submit (ingest → graded
-    /// transition). Surfaced to the sheet so a failed ingest does not silently no-op.
-    enum OfficeHoursEvidenceError: LocalizedError {
-        case notConnected
-        case invalidArguments
-        /// A second ingest for the SAME attempt is already in flight (fail-closed: the
-        /// store keys continuations by attemptId, so we refuse rather than stomp it).
-        case ingestAlreadyInFlight
-        /// The sidecar replied `office_hours_evidence_ingested` with `success: false`.
-        case ingestFailed(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .notConnected: return "실행 보조 앱에 연결되어 있지 않습니다."
-            case .invalidArguments: return "증거 제출에 필요한 값이 비어 있습니다."
-            case .ingestAlreadyInFlight: return "이 시도의 증거 업로드가 이미 진행 중입니다."
-            case .ingestFailed(let detail): return detail.isEmpty ? "증거 업로드에 실패했습니다." : detail
-            }
-        }
-    }
-
-    /// A′ receipt rail (step 1): upload the picked artifact bytes so the SIDECAR persists
-    /// them and signs a host-owned `swift_upload` receipt (claim host-fixed to
-    /// `message.sent`). Returns the receipt token to hand to `office_hours_attempt_evidence`
-    /// as `evidence.receipt`. The sidecar echoes `attemptId` (not a requestId) on the
-    /// matching `office_hours_evidence_ingested` reply, so we await keyed by attempt and
-    /// refuse a concurrent second ingest for the same attempt. Never logs the bytes.
-    func ingestOfficeHoursEvidence(
-        attemptId: String,
-        bytes: Data,
-        declaredMediaType: String,
-        workspaceRoot explicitRoot: String? = nil
-    ) async -> Result<String, Error> {
-        guard isConnected else { return .failure(OfficeHoursEvidenceError.notConnected) }
-        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
-        let id = attemptId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !root.isEmpty, !id.isEmpty, !bytes.isEmpty else {
-            return .failure(OfficeHoursEvidenceError.invalidArguments)
-        }
-        guard officeHoursEvidenceIngestContinuations[id] == nil else {
-            return .failure(OfficeHoursEvidenceError.ingestAlreadyInFlight)
-        }
-        let payload: [String: Any] = [
-            "type": "office_hours_ingest_evidence",
-            "workspaceRoot": root,
-            "attemptId": id,
-            "evidence": [
-                "bytesBase64": bytes.base64EncodedString(),
-                "declaredMediaType": declaredMediaType.trimmingCharacters(in: .whitespacesAndNewlines),
-            ],
-        ]
-        do {
-            let token = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
-                officeHoursEvidenceIngestContinuations[id] = continuation
-                if !sidecar.send(payload: payload) {
-                    officeHoursEvidenceIngestContinuations.removeValue(forKey: id)
-                    continuation.resume(throwing: OfficeHoursEvidenceError.notConnected)
-                }
-            }
-            return .success(token)
-        } catch {
-            return .failure(error)
-        }
-    }
-
-    /// R2: the ValidationAttempt is the SINGLE writer for Day-1 get_users action/
-    /// customer/goal proof. After gather completes the attempt sits in a WAIT state
-    /// (runtime.officeHours.nextAction.kind == "wait"); this routes a graded proof
-    /// through the `office_hours_attempt_evidence` command with the attempt CAS token
-    /// (expectedRevision). A′ CUTOVER (no compat): a graded transition is gated by a
-    /// host-SIGNED `swift_upload` receipt, NOT a self-attested {kind,ref}. So this is a
-    /// 2-step send: (1) ingest the picked bytes → receipt token, (2) submit with
-    /// `evidence: { receipt: token }`. The sidecar reducer is the grading authority —
-    /// a missing/rejected receipt fails closed there. Returns the ingest result so the
-    /// sheet can surface an upload failure instead of silently no-op'ing.
-    @discardableResult
-    func submitOfficeHoursAttemptEvidence(
-        attemptId: String,
-        expectedRevision: Int,
-        transition: String,
-        bytes: Data,
-        declaredMediaType: String,
-        sessionId: String? = nil,
-        workspaceRoot explicitRoot: String? = nil
-    ) async -> Result<Void, Error> {
-        guard isConnected else { return .failure(OfficeHoursEvidenceError.notConnected) }
-        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
-        let id = attemptId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let tx = transition.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !root.isEmpty, !id.isEmpty, !tx.isEmpty else {
-            return .failure(OfficeHoursEvidenceError.invalidArguments)
-        }
-        // Step 1: ingest bytes → host-signed receipt token.
-        let ingest = await ingestOfficeHoursEvidence(
-            attemptId: id,
-            bytes: bytes,
-            declaredMediaType: declaredMediaType,
-            workspaceRoot: root
-        )
-        let receiptToken: String
-        switch ingest {
-        case .success(let token): receiptToken = token
-        case .failure(let error): return .failure(error)
-        }
-        // Step 2: submit the receipt (NO kind/ref — the legacy self-attested payload is gone).
-        var payload: [String: Any] = [
-            "type": "office_hours_attempt_evidence",
-            "workspaceRoot": root,
-            "attemptId": id,
-            "expectedRevision": expectedRevision,
-            "transition": tx,
-            "requestId": UUID().uuidString,
-            "evidence": [
-                "receipt": receiptToken,
-            ],
-        ]
-        if let sid = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines), !sid.isEmpty {
-            payload["sessionId"] = sid
-        }
-        guard sidecar.send(payload: payload) else {
-            return .failure(OfficeHoursEvidenceError.notConnected)
-        }
-        return .success(())
-    }
-
-    /// R2 WAIT escape: abandon the open attempt (the only free-text fail path). Lets a
-    /// founder who closed Day-1 timeboxed but cannot attach proof free the lane so a
-    /// new attempt can start (canStartNewAttempt blocks while one is in WAIT).
-    @discardableResult
-    func abandonOfficeHoursAttempt(
-        attemptId: String,
-        expectedRevision: Int,
-        reason: String,
-        sessionId: String? = nil,
-        workspaceRoot explicitRoot: String? = nil
-    ) -> Bool {
-        guard isConnected else { return false }
-        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
-        let id = attemptId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !root.isEmpty, !id.isEmpty, !trimmedReason.isEmpty else { return false }
-        var payload: [String: Any] = [
-            "type": "office_hours_attempt_evidence",
-            "workspaceRoot": root,
-            "attemptId": id,
-            "expectedRevision": expectedRevision,
-            "transition": "abandon_attempt",
-            "requestId": UUID().uuidString,
-            "abandonReason": trimmedReason,
-        ]
-        if let sid = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines), !sid.isEmpty {
-            payload["sessionId"] = sid
-        }
-        return sidecar.send(payload: payload)
     }
 
     @discardableResult
@@ -11013,21 +10850,6 @@ final class AgenticViewModel: ObservableObject {
             )
             scanResult = updated
             persistWorkspaceScanResultCache(updated, root: gitignore.scanRoot ?? event.scanRoot)
-        case "office_hours_evidence_ingested":
-            // A′ receipt rail (step 1) reply: resolve the pending ingest continuation keyed
-            // by the echoed attemptId. success → receipt token; failure → surfaced error.
-            if let attemptId = event.attemptId?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !attemptId.isEmpty,
-               let continuation = officeHoursEvidenceIngestContinuations.removeValue(forKey: attemptId) {
-                if event.success == true,
-                   let token = event.receiptToken?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !token.isEmpty {
-                    continuation.resume(returning: token)
-                } else {
-                    let detail = event.error ?? event.message ?? ""
-                    continuation.resume(throwing: OfficeHoursEvidenceError.ingestFailed(detail))
-                }
-            }
         case "day_progress_state":
             if event.success == false { return }
             if let dp = event.dayProgress { dayProgress = dp }
@@ -12303,20 +12125,6 @@ final class AgenticViewModel: ObservableObject {
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt") else {
             return nil
         }
-        if CommandLine.arguments.contains("--ui-testing-seed-office-hours-candidate-unblock") {
-            return Self.makeUITestingOfficeHoursCandidateUnblockPrompt(
-                sessionID: requestedSessionID,
-                requestId: "ui-test-office-hours-candidate-unblock",
-                createdAt: createdAt
-            )
-        }
-        if CommandLine.arguments.contains("--ui-testing-seed-office-hours-get-users-icp-value") {
-            return Self.makeUITestingOfficeHoursGetUsersIcpValuePrompt(
-                sessionID: requestedSessionID,
-                requestId: "ui-test-office-hours-get-users-icp-value",
-                createdAt: createdAt
-            )
-        }
         if CommandLine.arguments.contains("--ui-testing-seed-office-hours-get-users-evidence") {
             return Self.makeUITestingOfficeHoursGetUsersEvidencePrompt(
                 sessionID: requestedSessionID,
@@ -12340,57 +12148,6 @@ final class AgenticViewModel: ObservableObject {
         #else
         return nil
         #endif
-    }
-
-    private static func makeUITestingOfficeHoursGetUsersIcpValuePrompt(
-        sessionID requestedSessionID: String,
-        requestId: String,
-        createdAt: Date
-    ) -> StructuredPromptRequest {
-        let prompt = StructuredPromptQuestion(
-            questionId: "get_users_active_user_definition",
-            header: "첫 고객과 첫 가치",
-            question: "Agentic30가 오늘 첫 고객 후보 1명에게 바로 줄 도움을 만들까요?",
-            helperText: "기본안으로 바로 진행됩니다. 다른 후보·채널·요청이 이미 있을 때만 한 줄로 바꾸세요.",
-            options: [
-                StructuredPromptOption(
-                    label: "첫 고객에게 줄 도움 만들기",
-                    description: "후보 찾기, 첫 요청문, 15분 도움 제공안, 남길 흔적을 한 번에 묶습니다.",
-                    preview: nil,
-                    nextIntent: "help_first_customer_request",
-                    recommended: true
-                ),
-            ],
-            multiSelect: false,
-            allowFreeText: true,
-            requiresFreeText: false,
-            allowsEmptySubmit: true,
-            freeTextPlaceholder: "선택사항: 다른 후보·채널·요청문이 있으면 한 줄 수정",
-            primaryTextInput: StructuredPromptPrimaryTextInput(
-                label: "필요하면 한 줄 수정",
-                placeholder: "선택사항: 후보·채널·요청문",
-                required: false,
-                submitLabel: "추천안으로 진행",
-                validationMessage: "입력하지 않아도 추천안으로 진행됩니다."
-            ),
-            textMode: .short
-        )
-        return StructuredPromptRequest(
-            requestId: requestId,
-            sessionId: requestedSessionID,
-            toolName: "agentic30_request_user_input",
-            title: "Office Hours",
-            createdAt: createdAt,
-            questions: [prompt],
-            generation: StructuredPromptGeneration(
-                mode: "office_hours",
-                docType: "day1_step",
-                signalId: "get_users_active_user_definition",
-                signalLabel: "첫 고객과 첫 가치",
-                dimensionStepIndex: 1,
-                dimensionTotal: 1
-            )
-        )
     }
 
     private static func makeUITestingOfficeHoursGetUsersActionPrompt(
@@ -12451,57 +12208,6 @@ final class AgenticViewModel: ObservableObject {
                 signalLabel: "오늘 줄 도움",
                 dimensionStepIndex: 2,
                 dimensionTotal: 3
-            )
-        )
-    }
-
-    private static func makeUITestingOfficeHoursCandidateUnblockPrompt(
-        sessionID requestedSessionID: String,
-        requestId: String,
-        createdAt: Date
-    ) -> StructuredPromptRequest {
-        let prompt = StructuredPromptQuestion(
-            questionId: "get_users_first_candidate_unblock",
-            header: "첫 고객 도움 만들기",
-            question: "아직 후보가 없다면 Agentic30가 고객 후보 1명과 첫 도움 요청까지 바로 만들까요?",
-            helperText: "기본안으로 바로 진행됩니다. 이미 떠오른 사람·채널·검색어가 있을 때만 한 줄로 바꾸세요.",
-            options: [
-                StructuredPromptOption(
-                    label: "후보 찾기와 첫 도움 요청 만들기",
-                    description: "검색어, 후보 조건, 보낼 요청, 남길 흔적을 한 번에 묶습니다.",
-                    preview: nil,
-                    nextIntent: "find_candidate_in_thread_or_community",
-                    recommended: true
-                ),
-            ],
-            multiSelect: false,
-            allowFreeText: true,
-            requiresFreeText: false,
-            allowsEmptySubmit: true,
-            freeTextPlaceholder: "선택사항: 사람·채널·검색어가 있으면 한 줄 수정",
-            primaryTextInput: StructuredPromptPrimaryTextInput(
-                label: "필요하면 한 줄 수정",
-                placeholder: "선택사항: 사람·채널·검색어·보낼 요청",
-                required: false,
-                submitLabel: "추천안으로 진행",
-                validationMessage: "입력하지 않아도 추천안으로 진행됩니다."
-            ),
-            textMode: .short
-        )
-        return StructuredPromptRequest(
-            requestId: requestId,
-            sessionId: requestedSessionID,
-            toolName: "agentic30_request_user_input",
-            title: "Office Hours",
-            createdAt: createdAt,
-            questions: [prompt],
-            generation: StructuredPromptGeneration(
-                mode: "office_hours",
-                docType: "day1_candidate_unblock",
-                signalId: "get_users_first_candidate_unblock",
-                signalLabel: "첫 고객 도움",
-                dimensionStepIndex: 1,
-                dimensionTotal: 1
             )
         )
     }
@@ -14558,8 +14264,7 @@ final class AgenticViewModel: ObservableObject {
         structuredPromptDraftBySession.removeValue(forKey: sessionId)
         refreshPresentationState()
 
-        if prompt.generation?.signalId == "get_users_active_user_definition"
-            || prompt.generation?.signalId == "get_users_first_candidate_unblock" {
+        if prompt.generation?.signalId == "get_users_active_user_definition" {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 900_000_000)
                 guard let self,
@@ -18412,18 +18117,6 @@ struct SidecarEvent: Decodable {
     // commitment is always the founder's resolved text (user-origin gate).
     let commitmentCandidates: [String]?
 
-    // office_hours_evidence_ingested (A′ receipt rail step 1): the sidecar persisted
-    // the uploaded bytes and signed a host-owned `swift_upload` receipt (claim fixed to
-    // `message.sent`). The host echoes `attemptId` (NOT a requestId) so the VM keys the
-    // pending-ingest continuation by attempt. `receiptToken` is then handed straight to
-    // `office_hours_attempt_evidence` as `evidence.receipt`. `success == false` carries
-    // `error` (shared field below) instead. attemptId/workspaceRoot are shared above.
-    let receiptToken: String?
-    let artifactId: String?
-    let sha256: String?
-    let detectedMediaType: String?
-    let attemptId: String?
-
     init(
         type: String,
         title: String? = nil,
@@ -18545,12 +18238,7 @@ struct SidecarEvent: Decodable {
         integrationStatus: IntegrationStatusSnapshot? = nil,
         exaMcpConnect: ExaMcpConnectResult? = nil,
         mcpOauthConnect: McpOauthConnectResult? = nil,
-        commitmentCandidates: [String]? = nil,
-        receiptToken: String? = nil,
-        artifactId: String? = nil,
-        sha256: String? = nil,
-        detectedMediaType: String? = nil,
-        attemptId: String? = nil
+        commitmentCandidates: [String]? = nil
     ) {
         self.type = type
         self.title = title
@@ -18688,11 +18376,6 @@ struct SidecarEvent: Decodable {
         self.exaMcpConnect = exaMcpConnect
         self.mcpOauthConnect = mcpOauthConnect
         self.commitmentCandidates = commitmentCandidates
-        self.receiptToken = receiptToken
-        self.artifactId = artifactId
-        self.sha256 = sha256
-        self.detectedMediaType = detectedMediaType
-        self.attemptId = attemptId
     }
 
     var bipMissionProgress: BipMissionProgress? {
@@ -19128,12 +18811,6 @@ extension SidecarEvent {
         case integrationStatus
         case exaMcpConnect
         case mcpOauthConnect
-        // A′ receipt rail (office_hours_evidence_ingested).
-        case attemptId
-        case receiptToken
-        case artifactId
-        case sha256
-        case detectedMediaType
     }
 
     init(from decoder: Decoder) throws {
@@ -19300,14 +18977,6 @@ extension SidecarEvent {
         integrationStatus = Self.decodeIfPresent(IntegrationStatusSnapshot.self, from: container, forKey: .integrationStatus)
         exaMcpConnect = Self.decodeIfPresent(ExaMcpConnectResult.self, from: container, forKey: .exaMcpConnect)
         mcpOauthConnect = Self.decodeIfPresent(McpOauthConnectResult.self, from: container, forKey: .mcpOauthConnect)
-        // A′ receipt rail (office_hours_evidence_ingested): success → receiptToken etc.;
-        // failure → success:false + error (shared field decoded above).
-        attemptId = Self.decodeIfPresent(String.self, from: container, forKey: .attemptId)
-        receiptToken = Self.decodeIfPresent(String.self, from: container, forKey: .receiptToken)
-        artifactId = Self.decodeIfPresent(String.self, from: container, forKey: .artifactId)
-        sha256 = Self.decodeIfPresent(String.self, from: container, forKey: .sha256)
-        detectedMediaType = Self.decodeIfPresent(String.self, from: container, forKey: .detectedMediaType)
-
         if type == "workspace_gitignore_result" {
             agentic30Gitignore = Agentic30GitignoreState(
                 status: status ?? "error",

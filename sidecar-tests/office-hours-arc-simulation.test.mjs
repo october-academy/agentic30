@@ -6,6 +6,7 @@ import {
   G2_FOUNDATION_EVIDENCE,
   G4_PAID_ASK_EVIDENCE,
   G4_FIRST_VALUE_SNAPSHOT,
+  DAY1_GET_USERS_LADDER_SIGNALS,
   selectStructuredResponse,
   summarizeArcRun,
   runOfficeHoursArcSimulation,
@@ -92,8 +93,9 @@ test("G2 foundation evidence supplies all three gate conditions", () => {
 });
 
 test("summarizeArcRun reports day coverage and gate block/pass history", () => {
+  const day1Questions = DAY1_GET_USERS_LADDER_SIGNALS.map((signalId, turn) => ({ turn, signalId }));
   const summary = summarizeArcRun({
-    days: [{ day: 1, questions: [] }, { day: 7, questions: [] }],
+    days: [{ day: 1, questions: day1Questions }, { day: 7, questions: [] }],
     onboardingAnswered: 1,
     expectedGateBlock: "G4",
     gate: { gateBlocked: { gateId: "G4", requiredEvidence: [{ id: "paid_ask_strong_evidence" }] } },
@@ -111,6 +113,8 @@ test("summarizeArcRun reports day coverage and gate block/pass history", () => {
   assert.deepEqual(summary.gatesBlocked, ["G2", "G4"]);
   assert.deepEqual(summary.gatesPassed, ["G2", "G4"]);
   assert.equal(summary.gateProbesPassed, true);
+  assert.deepEqual(summary.day1GetUsersLadderSignals, DAY1_GET_USERS_LADDER_SIGNALS);
+  assert.equal(summary.day1GetUsersLadderPassed, true);
   assert.equal(summary.evidenceSubmissions, 2);
   assert.equal(summary.passed, true);
 
@@ -153,14 +157,16 @@ test("selectStructuredResponse falls back to persona free text for open question
 });
 
 test("summarizeArcRun requires the expected gate id and zero errors to pass", () => {
+  const day1Questions = DAY1_GET_USERS_LADDER_SIGNALS.map((signalId, turn) => ({ turn, signalId }));
   const pass = summarizeArcRun({
-    days: [{ day: 1, questions: [{ turn: 0 }] }],
+    days: [{ day: 1, questions: day1Questions }],
     onboardingAnswered: 1,
     expectedGateBlock: "G2",
     gate: { gateBlocked: { gateId: "G2", requiredEvidence: [{ id: "foundation_closure_closed" }] } },
     errors: [],
   });
   assert.equal(pass.gateBlockWorks, true);
+  assert.equal(pass.day1GetUsersLadderPassed, true);
   assert.equal(pass.passed, true);
   assert.deepEqual(pass.gateRequiredEvidence, ["foundation_closure_closed"]);
 

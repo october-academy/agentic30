@@ -51,6 +51,7 @@ import {
   resolveDailyOfficeHoursDigestPath,
   selectedExternalOfficeHoursSources,
 } from "./daily-office-hours-digest.mjs";
+import { computeOfficeHoursEffectorContext } from "./office-hours-effector-host.mjs";
 import {
   applyMorningBriefingLiveSync,
   appendMorningBriefingRunLog,
@@ -488,51 +489,6 @@ import {
   buildSpecialistInjection,
   selectSpecialist,
 } from "./specialist-router.mjs";
-// R1.b cutover — ValidationAttempt event store + pure contract are the runtime
-// authority for the locked Day-1 get_users office-hours flow. No legacy turn-log
-// migration: attempts are seeded fresh and resumed by store lookup only.
-import {
-  startAttempt,
-  commitAttemptEvent,
-  supersedeAnswer,
-  projectAttempt,
-  projectAttemptFromEvents,
-  loadAttemptLog,
-  markPosted,
-  pendingDeliveries,
-} from "./office-hours-attempt-store.mjs";
-// A′ evidence receipt cutover (host-owned authorities): the graded attempt-evidence
-// transitions are gated by a host-SIGNED receipt, not a self-attested {kind,ref}. The
-// coordinator verifies + derives the reducer evidence record; the ingress mints a
-// receipt from real bytes; the registry enforces single-use.
-import { prepareReceiptEvidence } from "./office-hours-evidence-coordinator.mjs";
-import { ingestSwiftUpload } from "./office-hours-evidence-ingress.mjs";
-import { deriveEvidenceContractId } from "./office-hours-evidence-binding.mjs";
-import { GRADED_ATTEMPT_EVIDENCE_TRANSITIONS } from "./office-hours-evidence-policy.mjs";
-import { consumeArtifact } from "./office-hours-artifact-registry.mjs";
-// A′ step 4: the authoritative outcome-capture funnel — versioned domain events (NO raw
-// data) with metric_epoch separation so synthetic eval runs never pollute real N.
-import { emitOfficeHoursFunnelEvent, TRANSITION_TO_FUNNEL_STAGE } from "./office-hours-funnel.mjs";
-import {
-  nextAttemptAction,
-  cardDefinition,
-  canonicalCardForSignal,
-  isAcceptableDay1Close,
-  payloadHashOf as officeHoursPayloadHashOf,
-  VALIDATION_ATTEMPT_ACTIVE_STATES,
-  // R2/A′: ValidationAttempt owns Day-1 action/customer/goal proof. The host routes the
-  // graded transitions through commitAttemptEvent; grading is the reducer's authority and
-  // the receipt coordinator derives the host-minted kind, so the handler no longer calls
-  // gradeEvidence/requiredGradeForTransition directly.
-} from "./office-hours-contract.mjs";
-import {
-  FIRST_CANDIDATE_SIGNAL_ID,
-  FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID,
-  shouldValidateFirstCandidatePayload,
-  classifyFirstCandidatePayload,
-  buildCanonicalFirstCandidateCard,
-  buildNoCandidateUnblockCard,
-} from "./office-hours-first-candidate-host.mjs";
 import { describeVendor as describeGstackVendor } from "./vendor-skill-loader.mjs";
 import {
   buildFirstPromptForDay,
@@ -751,7 +707,6 @@ const state = {
   },
 };
 
-let workspaceOnboardingHypothesisWarmup = null;
 const iddDocumentQueueInFlight = new Map();
 const chatBipExternalContextCache = new Map();
 
@@ -789,42 +744,6 @@ try {
   await ensureUserInputDirs(appSupportPath);
   await clearUserInputArtifacts(appSupportPath);
   await loadSessions();
-  // R1.b: re-post the durable office-hours outbox BEFORE syncPendingUserInputRequests.
-  // A commit that crashed between writing the event and writing/consuming the
-  // response file leaves a pending|posted delivery; re-writing the response file
-  // (atomic) and re-marking it posted recovers the blocked submit idempotently.
-  // clearUserInputArtifacts above wiped the prior response files, so this restores
-  // exactly the committed responses (consumed/canceled deliveries are excluded).
-  try {
-    const deliveries = await pendingDeliveries({ workspaceRoot });
-    for (const delivery of deliveries) {
-      const responsePayload = delivery.responsePayload;
-      if (!responsePayload || typeof responsePayload !== "object") continue;
-      const sessionId = String(responsePayload.sessionId || delivery.sessionId || "").trim();
-      const deliveryRequestId = String(responsePayload.requestId || delivery.requestId || "").trim();
-      if (!sessionId || !deliveryRequestId) continue;
-      await writeUserInputResponse(appSupportPath, {
-        sessionId,
-        requestId: deliveryRequestId,
-        response: responsePayload.response ?? responsePayload,
-      });
-      // markPosted is delivery bookkeeping (the response file IS already written =
-      // the run will resume). A failure here is non-fatal but must NOT be swallowed
-      // silently: log it (the delivery stays pending and a later boot re-posts
-      // idempotently). Per-delivery so one bad record doesn't block the others.
-      await markPosted({ workspaceRoot, attemptId: delivery.attemptId, eventId: delivery.eventId })
-        .catch((error) => captureSidecarLog("office_hours attempt mark-posted failed (boot re-post)", "warn", {
-          operation: "office_hours_attempt_mark_posted_boot",
-          attemptId: delivery.attemptId,
-          ...errorTelemetryProperties(error),
-        }));
-    }
-  } catch (error) {
-    captureSidecarLog("office_hours attempt outbox re-post failed", "error", {
-      operation: "office_hours_attempt_outbox_repost",
-      ...errorTelemetryProperties(error),
-    });
-  }
   state.bipCoach = mergeBipConfigIntoCoachState(
     await loadBipCoachState(bipCoachFilePath),
     currentBipConfig(),
@@ -1689,25 +1608,7 @@ async function handleClientMessage(socket, payload) {
         return;
       }
       if (session.pendingUserInput) {
-        if (isObsoleteRigidDay1GetUsersPendingRequest(session.pendingUserInput)) {
-          const obsoleteRequestId = String(session.pendingUserInput.requestId || "").trim();
-          if (obsoleteRequestId) {
-            await deleteUserInputArtifacts(appSupportPath, session.id, obsoleteRequestId).catch(() => {});
-            state.resolvedUserInputIds.add(obsoleteRequestId);
-            await clearOfficeHoursPendingQuestionForSession(
-              session,
-              obsoleteRequestId,
-              "obsolete_day1_get_users_pending_start",
-            );
-          }
-          session.pendingUserInput = null;
-          if (session.status === "awaiting_input") {
-            session.status = "idle";
-          }
-          session.error = null;
-          touch(session);
-          await persistSessions();
-        } else if (isOfficeHoursStructuredInputMode(session.pendingUserInput?.generation?.mode)) {
+        if (isOfficeHoursStructuredInputMode(session.pendingUserInput?.generation?.mode)) {
           await broadcastOfficeHoursStartNoop(session);
           return;
         } else {
@@ -1717,8 +1618,7 @@ async function handleClientMessage(socket, payload) {
       if (
         session.runtime?.officeHours?.active === true
         && !session.error
-        // R1.b: gather complete = the ValidationAttempt projection's nextAction is
-        // no longer a card. Restarting a completed interview would re-run the run.
+        // Restarting a completed interview would re-run the provider.
         && Boolean(session.runtime.officeHours.nextAction?.kind)
         && session.runtime.officeHours.nextAction.kind !== "card"
       ) {
@@ -1810,73 +1710,8 @@ async function handleClientMessage(socket, payload) {
       const source = String(session.runtime?.officeHours?.source || "office_hours_revision");
       const context = activeOfficeHoursContext(session);
 
-      // R1.b: a revision of an already-committed gather answer is an
-      // answer_superseded control event (pre-action only). The original answer's
-      // eventId == the original submit requestId == this prompt's requestId.
-      const reviseAttemptId = String(answeredGeneration?.attemptId || session.runtime?.officeHours?.attemptId || "").trim();
-      if (reviseAttemptId) {
-        const snapshot = await projectAttempt({ workspaceRoot, attemptId: reviseAttemptId });
-        if (!snapshot) {
-          throw new Error(`Office Hours answer revision could not project attempt ${reviseAttemptId}.`);
-        }
-        const reviseAt = new Date().toISOString();
-        const command = buildAttemptCommandFromCard(
-          promptRequest,
-          response,
-          answeredGeneration?.signalId || "",
-          {
-            responseText: userResponseText,
-            responseDescription: userResponseDescription,
-            questionText: officeHoursStructuredQuestionText,
-            at: reviseAt,
-          },
-        );
-        if (!command) {
-          throw new Error(
-            `Office Hours answer revision could not build a replacement command for signal ${answeredGeneration?.signalId || "(none)"}.`,
-          );
-        }
-        const targetEvent = (snapshot.effectiveEvents || [])
-          .find((e) => e && e.eventId === requestId);
-        if (!targetEvent) {
-          throw new Error(`Office Hours answer revision target ${requestId} is not in the attempt's effective branch.`);
-        }
-        const expectedTargetPayloadHash = officeHoursPayloadHashOf({
-          eventId: String(targetEvent.eventId || ""),
-          type: String(targetEvent.type || ""),
-          fields: targetEvent.fields && typeof targetEvent.fields === "object" ? targetEvent.fields : {},
-          audit: {
-            questionText: typeof targetEvent.audit?.questionText === "string" ? targetEvent.audit.questionText : "",
-            responseText: typeof targetEvent.audit?.responseText === "string" ? targetEvent.audit.responseText : "",
-            responseDescription: typeof targetEvent.audit?.responseDescription === "string" ? targetEvent.audit.responseDescription : "",
-            promptSnapshot: targetEvent.audit?.promptSnapshot ?? null,
-            submissions: Array.isArray(targetEvent.audit?.submissions) ? targetEvent.audit.submissions : [],
-          },
-        });
-        const result = await supersedeAnswer({
-          workspaceRoot,
-          attemptId: reviseAttemptId,
-          expectedRevision: snapshot.revision,
-          targetEventId: requestId,
-          cardType: command.cardType,
-          transition: command.type,
-          expectedTargetPayloadHash,
-          replacement: { type: command.type, fields: command.fields, at: reviseAt },
-        });
-        if (session.runtime?.officeHours) {
-          session.runtime.officeHours.attemptId = reviseAttemptId;
-          session.runtime.officeHours.revision = result.revision;
-          const wireDTO = deriveOfficeHoursWireDTO(result.projection);
-          if (wireDTO) {
-            session.runtime.officeHours.nextAction = wireDTO.nextAction;
-            session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
-            session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
-          }
-        }
-      }
-
-      // Transcript rebuild only (Mac history display). The committed answer is the
-      // attempt event; the turn log is regenerated for visible history.
+      // Transcript rebuild only. Office Hours cards now share the same turn-log
+      // authority across build_product / get_users / make_money.
       const revision = await reviseOfficeHoursTurn({
         workspaceRoot,
         requestId,
@@ -2167,8 +2002,6 @@ async function handleClientMessage(socket, payload) {
         && answeredGenerationDocType === "day1_doc_handoff_judge";
       const isDay1HandoffClarityResponse = answeredGenerationMode === "office_hours"
         && answeredGenerationDocType === DAY1_HANDOFF_CLARITY_DOC_TYPE;
-      const isDay1CandidateUnblockResponse = answeredGenerationMode === "office_hours"
-        && answeredGenerationDocType === "day1_candidate_unblock";
       const answeredSignalId = answeredGeneration?.signalId ? String(answeredGeneration.signalId) : null;
       const answeredSignalLabel = answeredGeneration?.signalLabel ? String(answeredGeneration.signalLabel) : null;
       const isOfficeHoursStructuredInputResponse = isOfficeHoursStructuredInputMode(
@@ -2209,19 +2042,7 @@ async function handleClientMessage(socket, payload) {
       const hasNonBlockingOfficeHoursCardRun = hasActiveRun
         && isCodexOfficeHoursNonBlockingPendingInput(session, pendingUserInput);
       const hasBlockingActiveRun = hasActiveRun && !hasNonBlockingOfficeHoursCardRun;
-      // R1.b: the ValidationAttempt event store is the runtime authority for the
-      // locked Day-1 get_users flow. A gather card answer is COMMITTED to the store
-      // (idempotent on requestId, CAS-guarded on the pending generation token) BEFORE
-      // the response file is written, then the delivery is marked posted. No fail-open
-      // catch: a commit failure rejects the submit. The pending generation carries the
-      // {attemptId, expectedRevision, cardType, transition} stamped at promotion time.
-      let answeredGenerationAttemptId = String(answeredGeneration?.attemptId || "").trim();
-      let attemptCommitSignalId = answeredGeneration?.signalId || "";
-      let attemptCommitExpectedRevision = Number.isInteger(answeredGeneration?.expectedRevision)
-        ? answeredGeneration.expectedRevision
-        : Number.parseInt(String(answeredGeneration?.expectedRevision ?? ""), 10);
-      let officeHoursAttemptProjectionAfterAnswer = null;
-      // Non-get_users completion bookkeeping (count + Day-1 doc-readiness).
+      // Generic Office Hours completion bookkeeping (count + Day-1 doc-readiness).
       let officeHoursProgressAfterAnswer = null;
       let officeHoursDocumentReadinessAfterAnswer = null;
       let officeHoursNeedsDocumentReadinessFollowup = false;
@@ -2239,371 +2060,8 @@ async function handleClientMessage(socket, payload) {
             terminal: false,
           }),
         );
-        if (!answeredGenerationAttemptId && isDay1CandidateUnblockResponse) {
-          const ensured = await ensureOfficeHoursAttemptForSession(session, {
-            day: session.runtime?.officeHours?.day,
-            source: session.runtime?.officeHours?.source || "",
-          });
-          if (!ensured?.attemptId || !ensured?.projection) {
-            throw new Error("office hours candidate unblock answer cannot recover an active get_users attempt");
-          }
-          const action = nextAttemptAction(ensured.projection);
-          if (action?.kind !== "card" || action.cardType !== "candidate_selection") {
-            throw new Error(
-              `office hours candidate unblock answer cannot advance while attempt action is ${action?.kind || "(none)"}${action?.cardType ? `/${action.cardType}` : ""}`,
-            );
-          }
-          answeredGenerationAttemptId = ensured.attemptId;
-          attemptCommitSignalId = FIRST_CANDIDATE_SIGNAL_ID;
-          attemptCommitExpectedRevision = ensured.revision;
-        }
-        if (answeredGenerationAttemptId) {
-          // ── Locked get_users gather answer → commit-before-response ──────────────
-          if (session.runtime?.officeHours) {
-            session.runtime.officeHours.answerCommitInFlightRequestId = requestId;
-          }
-          if (hasNonBlockingOfficeHoursCardRun) {
-            await abortActiveOfficeHoursRunAtQuestionCap(session);
-          }
-          const commitAt = new Date().toISOString();
-          const command = buildAttemptCommandFromCard(
-            pendingUserInput,
-            response,
-            attemptCommitSignalId,
-            {
-              responseText: userResponseText,
-              responseDescription: userResponseDescription,
-              questionText: officeHoursStructuredQuestionText,
-              at: commitAt,
-            },
-          );
-          if (!command) {
-            throw new Error(
-              `office hours submit could not build an attempt command for signal ${attemptCommitSignalId || "(none)"}`,
-            );
-          }
-          if (command.type === "candidate_blocker") {
-            if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
-              delete session.runtime.officeHours.answerCommitInFlightRequestId;
-            }
-            const snapshot = await projectAttempt({ workspaceRoot, attemptId: answeredGenerationAttemptId });
-            if (!snapshot) {
-              throw new Error(`office hours candidate blocker could not project attempt ${answeredGenerationAttemptId}`);
-            }
-            if (session.runtime?.officeHours) {
-              session.runtime.officeHours.attemptId = answeredGenerationAttemptId;
-              session.runtime.officeHours.revision = snapshot.revision;
-              const wireDTO = deriveOfficeHoursWireDTO(snapshot.projection);
-              if (wireDTO) {
-                session.runtime.officeHours.nextAction = wireDTO.nextAction;
-                session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
-                session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
-              }
-            }
-            try {
-              await appendOfficeHoursTurn({
-                workspaceRoot,
-                turn: {
-                  day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day),
-                  sessionId: session.id,
-                  requestId,
-                  mode: answeredGeneration?.mode || "office_hours_structured_input",
-                  signalId: answeredGeneration?.signalId || "",
-                  signalLabel: answeredGeneration?.signalLabel || "",
-                  questionText: officeHoursStructuredQuestionText,
-                  responseText: userResponseText,
-                  responseDescription: userResponseDescription,
-                  promptSnapshot: pendingUserInput,
-                  submissions: response.responses,
-                  blocker: true,
-                },
-              });
-              await clearOfficeHoursPendingQuestionForSession(session, requestId, "candidate_blocker");
-            } catch (error) {
-              telemetry.captureException(error, {
-                operation: "office_hours_candidate_blocker_turn_append",
-                session_id: session.id,
-              });
-            }
-            await refreshOfficeHoursRuntimePromptSnapshots(session).catch((error) => {
-              reportError(error, {
-                operation: "office_hours_prompt_snapshot_refresh",
-                session_id: session.id,
-                provider: session.provider,
-                request_id: requestId,
-                day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day) || 0,
-              });
-            });
-            await writeUserInputResponse(appSupportPath, {
-              sessionId: session.id,
-              requestId,
-              response,
-            });
-            await abortActiveOfficeHoursRunAtQuestionCap(session);
-            if (!hasBlockingActiveRun) {
-              await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
-            }
-            state.resolvedUserInputIds.add(requestId);
-            session.pendingUserInput = null;
-            await attachDay1CandidateUnblockPrompt(session, {
-              previousRequestId: requestId,
-              blockerReason: command.fields.blockerReason,
-              nextUnblockAction: command.fields.nextUnblockAction,
-            });
-            await persistSessions();
-            telemetry.captureEvent("mac_sidecar_office_hours_candidate_blocker_received", {
-              session_id: session.id,
-              provider: session.provider,
-              request_id: requestId,
-              attempt_id: answeredGenerationAttemptId,
-              revision: snapshot.revision,
-            });
-            broadcast({ type: "session_updated", session });
-            return;
-          }
-          const autoCommands = buildAutoAttemptCommandsFromCard(pendingUserInput, response, {
-            baseRequestId: requestId,
-            answeredSignalId: attemptCommitSignalId,
-            responseText: userResponseText,
-            responseDescription: userResponseDescription,
-            questionText: officeHoursStructuredQuestionText,
-            at: commitAt,
-          });
-          const result = await commitAttemptEvent({
-            workspaceRoot,
-            attemptId: answeredGenerationAttemptId,
-            expectedRevision: attemptCommitExpectedRevision,
-            event: {
-              type: command.type,
-              fields: command.fields,
-              at: commitAt,
-              requestId,
-              sessionId: session.id,
-              audit: command.audit,
-            },
-            responsePayload: { sessionId: session.id, requestId, response },
-          });
-          let latestProjection = result.projection;
-          let latestRevision = result.revision;
-          for (const autoCommand of autoCommands) {
-            const autoResult = await commitAttemptEvent({
-              workspaceRoot,
-              attemptId: answeredGenerationAttemptId,
-              expectedRevision: latestRevision,
-              event: {
-                type: autoCommand.type,
-                fields: autoCommand.fields,
-                at: autoCommand.at,
-                requestId: autoCommand.requestId,
-                sessionId: session.id,
-                audit: autoCommand.audit,
-              },
-            });
-            latestProjection = autoResult.projection;
-            latestRevision = autoResult.revision;
-          }
-          if (session.runtime?.officeHours) {
-            session.runtime.officeHours.attemptId = answeredGenerationAttemptId;
-            session.runtime.officeHours.revision = latestRevision;
-            const wireDTO = deriveOfficeHoursWireDTO(latestProjection);
-            if (wireDTO) {
-              session.runtime.officeHours.nextAction = wireDTO.nextAction;
-              session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
-              session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
-            }
-            if (isDay1CandidateUnblockResponse) {
-              session.runtime.officeHours.candidateBlocker = {
-                ...(session.runtime.officeHours.candidateBlocker || {}),
-                unblockAnswer: userResponseText,
-                unblockAnswerDescription: userResponseDescription,
-                unblockRequestId: requestId,
-                updatedAt: commitAt,
-              };
-            }
-          }
-          officeHoursAttemptProjectionAfterAnswer = latestProjection;
-          state.resolvedUserInputIds.add(requestId);
-          // Transcript turn (Mac history display only — NOT authority). Regenerable
-          // from the committed event audit; appended best-effort.
-          try {
-            await appendOfficeHoursTurn({
-              workspaceRoot,
-              turn: {
-                day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day),
-                sessionId: session.id,
-                requestId,
-                mode: answeredGeneration?.mode || "office_hours_structured_input",
-                signalId: answeredGeneration?.signalId || "",
-                signalLabel: answeredGeneration?.signalLabel || "",
-                questionText: officeHoursStructuredQuestionText,
-                responseText: userResponseText,
-                responseDescription: userResponseDescription,
-                promptSnapshot: pendingUserInput,
-                submissions: response.responses,
-              },
-            });
-            await clearOfficeHoursPendingQuestionForSession(session, requestId, "answer_submitted");
-          } catch (error) {
-            telemetry.captureException(error, {
-              operation: "office_hours_turn_append",
-              session_id: session.id,
-            });
-          }
-          await refreshOfficeHoursRuntimePromptSnapshots(session).catch((error) => {
-            reportError(error, {
-              operation: "office_hours_prompt_snapshot_refresh",
-              session_id: session.id,
-              provider: session.provider,
-              request_id: requestId,
-              day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day) || 0,
-            });
-          });
-          const writePostedAttemptResponse = async () => {
-            // Commit succeeded → write the response file (atomic) THEN mark posted.
-            await writeUserInputResponse(appSupportPath, {
-              sessionId: session.id,
-              requestId,
-              response,
-            });
-            await markPosted({ workspaceRoot, attemptId: answeredGenerationAttemptId, eventId: requestId })
-              .catch((error) => {
-                telemetry.captureException(error, {
-                  operation: "office_hours_attempt_mark_posted",
-                  session_id: session.id,
-                  request_id: requestId,
-                });
-              });
-            if (!hasBlockingActiveRun) {
-              await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
-            }
-          };
-          state.resolvedUserInputIds.add(requestId);
-          session.pendingUserInput = null;
-          const predicates = attemptCompletionPredicates(officeHoursAttemptProjectionAfterAnswer);
-          const officeHoursGatherComplete = predicates.gatherComplete;
-          session.status = officeHoursGatherComplete
-            ? "idle"
-            : hasBlockingActiveRun || Boolean(iddContinuationPromptForRun) ? "running" : "idle";
-          if (officeHoursGatherComplete) {
-            session.error = null;
-            await abortActiveOfficeHoursRunAtQuestionCap(session);
-          }
-          touch(session);
-          await persistSessions();
-          telemetry.captureEvent("mac_sidecar_structured_input_received", {
-            session_id: session.id,
-            provider: session.provider,
-            request_id: requestId,
-            response_count: Array.isArray(payload.responses) ? payload.responses.length : 0,
-          });
-          if (officeHoursGatherComplete) {
-            await writePostedAttemptResponse();
-            emitOfficeHoursStatus(session, { stage: "completed", requestId });
-            telemetry.captureEvent("mac_sidecar_office_hours_gather_complete", {
-              session_id: session.id,
-              provider: session.provider,
-              attempt_id: answeredGenerationAttemptId,
-              revision: latestRevision,
-              source: session.runtime?.officeHours?.source || "",
-            });
-            // Funnel denominator: a completed gather = an eligible Day-1 commitment exists.
-            emitOfficeHoursFunnelEvent(telemetry, "commitment_scheduled", {
-              attemptId: answeredGenerationAttemptId,
-              transition: "schedule_execution",
-              occurredAt: new Date().toISOString(),
-            });
-            if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
-              delete session.runtime.officeHours.answerCommitInFlightRequestId;
-            }
-            broadcast({ type: "session_updated", session });
-            return;
-          }
-          await abortActiveOfficeHoursRunAtQuestionCap(session);
-          const attachedLockedGetUsersNextCard = await attachLockedGetUsersNextAttemptCard(session, {
-            projection: officeHoursAttemptProjectionAfterAnswer,
-            attemptId: answeredGenerationAttemptId,
-            revision: latestRevision,
-            previousRequestId: requestId,
-          });
-          if (attachedLockedGetUsersNextCard) {
-            await writePostedAttemptResponse();
-            if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
-              delete session.runtime.officeHours.answerCommitInFlightRequestId;
-            }
-            await persistSessions();
-            broadcast({ type: "session_updated", session });
-            return;
-          }
-          const shouldRunGetUsersContinuation = !hasActiveRun && Boolean(userResponseText);
-          const shouldQueueGetUsersContinuation = hasNonBlockingOfficeHoursCardRun && Boolean(userResponseText);
-          let getUsersLadderState = {};
-          let nextAction = null;
-          try {
-            nextAction = nextAttemptAction(officeHoursAttemptProjectionAfterAnswer);
-          } catch {
-            nextAction = null;
-          }
-          if (nextAction?.kind === "card") {
-            const nextCard = cardDefinition(nextAction.cardType);
-            const nextSignalId = nextCard?.legacySignalId || "";
-            const answeredSignals = (officeHoursAttemptProjectionAfterAnswer.appliedTransitions || [])
-              .map((t) => {
-                for (const ct of ["activation_definition", "candidate_selection", "current_alternative", "action_request", "evidence_contract", "commitment"]) {
-                  const def = cardDefinition(ct);
-                  if (def?.transition === t) return def.legacySignalId;
-                }
-                return "";
-              })
-              .filter(Boolean);
-            getUsersLadderState = {
-              getUsersAnsweredSignalIds: answeredSignals,
-              getUsersNextSignalId: nextSignalId,
-            };
-          }
-          if (shouldQueueGetUsersContinuation) {
-            if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
-              delete session.runtime.officeHours.answerCommitInFlightRequestId;
-            }
-            enqueueSilentPrompt(
-              session,
-              buildOfficeHoursStructuredInputContinuationPrompt({
-                responseText: userResponseText,
-                responseDescription: userResponseDescription,
-                ...getUsersLadderState,
-              }),
-              { executionIntent: "chat" },
-            );
-            session.status = "running";
-            await persistSessions();
-            broadcast({ type: "session_updated", session });
-            return;
-          }
-          if (!shouldRunGetUsersContinuation) {
-            await writePostedAttemptResponse();
-            if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
-              delete session.runtime.officeHours.answerCommitInFlightRequestId;
-            }
-            broadcast({ type: "session_updated", session });
-            return;
-          }
-          await writePostedAttemptResponse();
-          if (session.runtime?.officeHours?.answerCommitInFlightRequestId === requestId) {
-            delete session.runtime.officeHours.answerCommitInFlightRequestId;
-          }
-          await runPrompt(
-            session,
-            buildOfficeHoursStructuredInputContinuationPrompt({
-              responseText: userResponseText,
-              responseDescription: userResponseDescription,
-              ...getUsersLadderState,
-            }),
-            { displayUserMessage: false, defaultTitle: session.title },
-          );
-          return;
-        }
-        // ── Non-attempt office-hours answer (non-get_users locked Day-1 lanes,
-        // Day2+, terminal-alternatives) ── Day 1 still uses the count cap, but
-        // must pass handoff clarity before any document-readiness follow-up.
+        // Day 1 still uses the count cap, but must pass handoff clarity before
+        // any document-readiness follow-up.
         const officeHoursTerminalAnswered = !isDay1DocHandoffJudgeResponse
           && !isDay1HandoffClarityResponse
           && isOfficeHoursTerminalAlternativesRequest(pendingUserInput);
@@ -2644,22 +2102,7 @@ async function handleClientMessage(socket, payload) {
             day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day) || 0,
           });
         });
-        // R2 doc-readiness leak gate (CRUX): the locked Day-1 get_users lane is
-        // owned end-to-end by the ValidationAttempt projection — its completion is
-        // attemptCompletionPredicates ONLY and it must NEVER issue a
-        // day1_document_readiness_followup. A get_users card can reach this
-        // non-attempt branch when the provider emitted it through the tool channel
-        // without the {attemptId} promotion stamp (codex's tool path vs the inline
-        // promote path); without this guard the count-based gate re-issues
-        // doc-readiness on turns 6,7 (observed in the LIVE max-turns-8 arc), which
-        // blocks the attempt from reaching WAIT + the evidence step. Discriminate by
-        // the DURABLE persisted context (not attemptId presence — that pointer can be
-        // transiently absent), mirroring officeHoursRuntimeGatherComplete. Also honor a
-        // durable lane signal (open get_users attempt / day1-goal.json goalType) so a
-        // single clamp that evicted the `Goal lane: get_users` marker can never
-        // re-leak day1_document_readiness_followup onto the get_users ladder.
-        const submitIsLockedGetUsers = await isDurableLockedGetUsersLane(session);
-        if (!isDay1DocHandoffJudgeResponse && !isDay1HandoffClarityResponse && !submitIsLockedGetUsers) {
+        if (!isDay1DocHandoffJudgeResponse && !isDay1HandoffClarityResponse) {
           officeHoursProgressAfterAnswer = await getOfficeHoursQuestionProgress(session, {
             currentRequestId: requestId,
           });
@@ -2716,59 +2159,6 @@ async function handleClientMessage(socket, payload) {
           { previousRequestId: requestId },
         );
         await persistSessions();
-        broadcast({ type: "session_updated", session });
-        return;
-      }
-
-      if (isDay1CandidateUnblockResponse) {
-        try {
-          await appendOfficeHoursTurn({
-            workspaceRoot,
-            turn: {
-              day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day),
-              sessionId: session.id,
-              requestId,
-              mode: answeredGeneration?.mode || "office_hours_structured_input",
-              signalId: answeredGeneration?.signalId || "",
-              signalLabel: answeredGeneration?.signalLabel || "",
-              questionText: officeHoursStructuredQuestionText,
-              responseText: userResponseText,
-              responseDescription: userResponseDescription,
-              promptSnapshot: pendingUserInput,
-              submissions: response.responses,
-            },
-          });
-          await clearOfficeHoursPendingQuestionForSession(session, requestId, "answer_submitted");
-        } catch (error) {
-          telemetry.captureException(error, {
-            operation: "office_hours_candidate_unblock_turn_append",
-            session_id: session.id,
-            request_id: requestId,
-          });
-        }
-        session.status = "idle";
-        session.error = null;
-        session.runtime = {
-          ...(session.runtime || {}),
-          officeHours: {
-            ...(session.runtime?.officeHours || {}),
-            active: true,
-            candidateBlocker: {
-              ...(session.runtime?.officeHours?.candidateBlocker || {}),
-              unblockAnswer: userResponseText,
-              unblockAnswerDescription: userResponseDescription,
-              unblockRequestId: requestId,
-              updatedAt: new Date().toISOString(),
-            },
-          },
-        };
-        touch(session);
-        await persistSessions();
-        telemetry.captureEvent("mac_sidecar_office_hours_candidate_unblock_answer_recorded", {
-          session_id: session.id,
-          provider: session.provider,
-          request_id: requestId,
-        });
         broadcast({ type: "session_updated", session });
         return;
       }
@@ -3074,10 +2464,6 @@ async function handleClientMessage(socket, payload) {
       const shouldQueueOfficeHoursContinuation = hasNonBlockingOfficeHoursCardRun
         && isOfficeHoursStructuredInputResponse
         && Boolean(userResponseText);
-      // R1.b: the locked Day-1 get_users flow is handled in the ValidationAttempt
-      // branch above (which returns early with reducer-derived ladder state). This
-      // continuation path serves only non-attempt office-hours flows (non-get_users
-      // locked Day-1 lanes, Day2+), which carry no reducer ladder gate.
       const getUsersLadderState = {};
       if (shouldQueueOfficeHoursContinuation) {
         enqueueSilentPrompt(
@@ -3389,14 +2775,6 @@ async function handleClientMessage(socket, payload) {
     }
     case "day_progress_patch": {
       await handleDayProgressPatch(socket, payload);
-      return;
-    }
-    case "office_hours_ingest_evidence": {
-      await handleOfficeHoursIngestEvidence(socket, payload);
-      return;
-    }
-    case "office_hours_attempt_evidence": {
-      await handleOfficeHoursAttemptEvidence(socket, payload);
       return;
     }
     case "office_hours_commitment_evidence": {
@@ -5537,335 +4915,12 @@ async function sendOfficeHoursEvidenceState(socket, root, { broadcastToAll = tru
   await emitProgramNotificationSchedule(socket, root, { broadcastToAll });
 }
 
-// ── R2: ValidationAttempt owns Day-1 action/customer/goal proof ───────────────
-// The six evidence transitions the reducer defines, routed through the SAME store
-// writer (commitAttemptEvent) the gather submit uses. The host does NO grading: it
-// (a) resolves the attempt, (b) asserts the transition is legal for the current
-// nextAttemptAction shape (fail-closed pre-filter — the reducer is the authority),
-// (c) requires a non-empty `ref` for evidence-grade kinds (mirrors the legacy
-// normalizeEvidence locator requirement so "kind only, no artifact" fails before
-// commit), then (d) commits. CAS via expectedRevision; requestId == eventId for
-// store idempotency. A rejected kind / wrong grade / illegal state makes the
-// reducer throw → success:false (NO fail-open, NO soften).
-const OFFICE_HOURS_ATTEMPT_EVIDENCE_TRANSITIONS = Object.freeze(new Set([
-  "record_action_proof",
-  "record_customer_outcome",
-  "record_goal_proof",
-  "record_negative_outcome",
-  "expire_no_response",
-  "abandon_attempt",
-]));
-// The four GRADED transitions (which require a host-signed receipt) come from the
-// single acceptance policy (GRADED_ATTEMPT_EVIDENCE_TRANSITIONS) — no duplicated set
-// here. expire_no_response / abandon_attempt carry no evidence record.
-
-// Host artifact INGRESS (A′ step 6 public surface). Accept founder-provided bytes for a
-// graded attempt transition, persist + sign a receipt HOST-side, and return the receipt
-// token the founder then submits via office_hours_attempt_evidence. The claim/origin/kind
-// are host-fixed inside the adapter; the client supplies ONLY bytes (+ an advisory media
-// type). Minimal-scope: the sole adapter is swift_upload (founder action proof) — uploaded
-// bytes back a `message.sent` receipt and nothing higher.
-async function handleOfficeHoursIngestEvidence(socket, payload = {}) {
-  const root = resolveDay1GoalWorkspaceRoot(payload);
-  const attemptId = String(payload.attemptId ?? payload.attempt_id ?? "").trim();
-  const at = new Date().toISOString();
-  try {
-    if (!attemptId) throw new Error("attemptId is required.");
-    const evidence = payload.evidence && typeof payload.evidence === "object" && !Array.isArray(payload.evidence)
-      ? payload.evidence
-      : payload;
-    const base64 = String(evidence.bytesBase64 ?? evidence.artifactBase64 ?? payload.bytesBase64 ?? "").trim();
-    if (!base64) throw new Error("ingest requires evidence bytes (bytesBase64).");
-    const declaredMediaType = String(evidence.declaredMediaType ?? evidence.mediaType ?? "").trim();
-    let bytes;
-    try {
-      bytes = Buffer.from(base64, "base64");
-    } catch {
-      throw new Error("bytesBase64 is not valid base64.");
-    }
-    if (!bytes || bytes.length === 0) throw new Error("decoded artifact is empty.");
-    // Derive the evidence contract id from DURABLE attempt state (must be defined).
-    const snapshot = await projectAttempt({ workspaceRoot: root, attemptId });
-    if (!snapshot) throw new Error(`attempt ${attemptId} not found.`);
-    const evidenceContractId = deriveEvidenceContractId(snapshot.projection);
-    const result = await ingestSwiftUpload({ workspaceRoot: root }, {
-      bytes,
-      declaredMediaType,
-      attemptId,
-      evidenceContractId,
-      now: at,
-    });
-    // Telemetry carries only metadata — never the bytes (P1 #20 redaction).
-    telemetry.captureEvent("mac_sidecar_office_hours_evidence_ingest", {
-      workspace_basename: path.basename(root),
-      attempt_id: attemptId,
-      media_type: result.detectedMediaType,
-      byte_length: result.byteLength,
-    });
-    // Funnel: a capture was acquired (host-signed receipt minted). No bytes/token leave here.
-    emitOfficeHoursFunnelEvent(telemetry, "evidence_ingested", {
-      attemptId,
-      detectedMediaType: result.detectedMediaType,
-      occurredAt: at,
-    });
-    send(socket, {
-      type: "office_hours_evidence_ingested",
-      workspaceRoot: root,
-      attemptId,
-      receiptToken: result.receiptToken,
-      artifactId: result.artifactId,
-      sha256: result.sha256,
-      detectedMediaType: result.detectedMediaType,
-      success: true,
-    });
-  } catch (error) {
-    telemetry.captureException(error, { operation: "office_hours_ingest_evidence" });
-    send(socket, {
-      type: "office_hours_evidence_ingested",
-      workspaceRoot: root,
-      attemptId,
-      success: false,
-      error: formatError(error),
-    });
-  }
-}
-
-async function handleOfficeHoursAttemptEvidence(socket, payload = {}) {
-  const root = resolveDay1GoalWorkspaceRoot(payload);
-  const sessionId = String(payload.sessionId ?? payload.session_id ?? "").trim();
-  const attemptId = String(payload.attemptId ?? payload.attempt_id ?? "").trim();
-  const transition = String(payload.transition ?? payload.type ?? "").trim();
-  const requestId = String(payload.requestId ?? payload.request_id ?? "").trim();
-  const at = new Date().toISOString();
-  try {
-    if (!attemptId) throw new Error("attemptId is required.");
-    if (!requestId) throw new Error("requestId is required (== eventId for store idempotency).");
-    if (!OFFICE_HOURS_ATTEMPT_EVIDENCE_TRANSITIONS.has(transition)) {
-      throw new Error(`unsupported attempt-evidence transition: ${transition || "(none)"}`);
-    }
-    const expectedRevisionRaw = payload.expectedRevision ?? payload.expected_revision;
-    const expectedRevision = Number.isInteger(expectedRevisionRaw)
-      ? expectedRevisionRaw
-      : Number.parseInt(String(expectedRevisionRaw ?? ""), 10);
-    if (!Number.isInteger(expectedRevision)) {
-      throw new Error("expectedRevision (CAS token) is required and must be an integer.");
-    }
-
-    // (a) Resolve the attempt; fail-closed if the pointer is dangling.
-    const snapshot = await projectAttempt({ workspaceRoot: root, attemptId });
-    if (!snapshot) throw new Error(`attempt ${attemptId} not found.`);
-    // (b) Legality pre-filter against the typed nextAction union. nextAttemptAction
-    // THROWS for a corrupt/unmapped state — do not swallow.
-    const currentAction = nextAttemptAction(snapshot.projection);
-    if (transition === "abandon_attempt") {
-      // abandon is legal from any active/suspended (NOT terminal) state.
-      if (currentAction.kind === "terminal") {
-        throw new Error("abandon_attempt is illegal: the attempt is already resolved (terminal).");
-      }
-    } else if (currentAction.kind !== "wait") {
-      // The five proof/deadline transitions are only legal from a WAIT state.
-      throw new Error(
-        `transition ${transition} requires a WAIT state, but the attempt is "${currentAction.kind}".`,
-      );
-    }
-
-    // (c) Build the reducer fields per transition + host-side ref-presence/grade
-    // pre-check for evidence-grade transitions.
-    const fields = {};
-    let preAppend;
-    if (GRADED_ATTEMPT_EVIDENCE_TRANSITIONS.has(transition)) {
-      // A′ CUTOVER (NO COMPAT): a graded transition is gated by a host-SIGNED evidence
-      // receipt, not a self-attested {kind,ref}. The verify → exact-transition dry-run →
-      // single-use consume → append all run INSIDE the attempt-store lock via `preAppend`,
-      // against the SAME projection the commit appends to — so a concurrent same-attempt
-      // event cannot land between verification and append (which would burn a valid
-      // receipt, or let a stale receipt advance a superseded contract). The legacy
-      // gradeEvidence({kind}) path is GONE; a raw {kind,ref} payload fails receipt_required.
-      const evidence = payload.evidence && typeof payload.evidence === "object" && !Array.isArray(payload.evidence)
-        ? payload.evidence
-        : null;
-      const receiptToken = String(
-        evidence?.receipt ?? evidence?.receiptToken ?? payload.receipt ?? payload.receiptToken ?? "",
-      ).trim();
-      preAppend = async ({ events, meta, projection }) => {
-        // Verify against the CURRENT (locked) projection — derives evidenceContractId from
-        // the exact contract state this commit will append to. Throws receipt_required (no
-        // token) / receipt_rejected / receipt_insufficient_for_<transition> fail-closed.
-        const prepared = await prepareReceiptEvidence({
-          workspaceRoot: root,
-          attemptId,
-          transition,
-          projection,
-          receiptToken,
-          now: at,
-        });
-        const candidateEvent = {
-          eventId: requestId,
-          type: transition,
-          fields: prepared.fields,
-          at,
-          requestId,
-          sessionId: sessionId || "",
-          audit: { source: "office_hours_attempt_evidence", transition, evidenceKind: prepared.fields.evidence?.kind || "" },
-        };
-        try {
-          // Exact-transition dry-run through the pure projector — an illegal from-state
-          // throws HERE, before the single-use consume, so a valid receipt is never burned.
-          projectAttemptFromEvents([...events, candidateEvent], meta);
-        } catch (dryErr) {
-          throw new Error(`transition ${transition} would not apply cleanly: ${dryErr?.message || dryErr}`);
-        }
-        // Single-use consume, still inside the attempt-store lock (requestId == registry
-        // eventId): an exact retry is idempotent, a cross-attempt replay is artifact_reuse.
-        const consumed = await consumeArtifact({ workspaceRoot: root }, {
-          evidenceIdentity: prepared.evidenceIdentity,
-          attemptId,
-          evidenceContractId: prepared.evidenceContractId,
-          eventId: requestId,
-          sha256: prepared.fields.evidence.sha256,
-          origin: prepared.fields.evidence.origin,
-        });
-        if (!consumed.ok) throw new Error(`evidence artifact rejected: ${consumed.rejection}`);
-        return prepared.fields;
-      };
-    } else if (transition === "expire_no_response") {
-      const responseDueAt = String(payload.responseDueAt ?? payload.response_due_at ?? snapshot.projection?.responseDueAt ?? "").trim();
-      if (!responseDueAt) throw new Error("expire_no_response requires responseDueAt.");
-      fields.responseDueAt = responseDueAt;
-      fields.now = at;
-    } else if (transition === "abandon_attempt") {
-      const abandonReason = String(payload.abandonReason ?? payload.abandon_reason ?? payload.reason ?? payload.note ?? "").replace(/\s+/g, " ").trim();
-      if (!abandonReason) throw new Error("abandon_attempt requires an abandonReason.");
-      fields.abandonReason = abandonReason;
-    }
-
-    // (d) Commit through the single store writer. The reducer does ALL grading +
-    // legality enforcement; a rejected kind / wrong grade / illegal transition
-    // throws here (fail-closed). CAS via expectedRevision; requestId == eventId.
-    const result = await commitAttemptEvent({
-      workspaceRoot: root,
-      attemptId,
-      expectedRevision,
-      event: {
-        type: transition,
-        fields,
-        at,
-        requestId,
-        sessionId,
-        audit: {
-          source: "office_hours_attempt_evidence",
-          transition,
-          evidenceKind: fields.evidence?.kind || "",
-        },
-      },
-      responsePayload: { sessionId, requestId, transition },
-      // Graded transitions verify+consume INSIDE the lock (closes the dry-run↔commit
-      // TOCTOU); expire/abandon carry no receipt and pass plain fields.
-      ...(preAppend ? { preAppend } : {}),
-    });
-
-    // Refresh the session runtime DTO if this attempt is the active session pointer.
-    const session = sessionId ? state.sessions.get(sessionId) : null;
-    if (session?.runtime?.officeHours
-      && String(session.runtime.officeHours.attemptId || "").trim() === attemptId) {
-      session.runtime.officeHours.revision = result.revision;
-      const wireDTO = deriveOfficeHoursWireDTO(result.projection);
-      if (wireDTO) {
-        session.runtime.officeHours.nextAction = wireDTO.nextAction;
-        session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
-        session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
-      }
-      touch(session);
-      await persistSessions();
-      await markPosted({ workspaceRoot: root, attemptId, eventId: requestId }).catch((error) => {
-        telemetry.captureException(error, {
-          operation: "office_hours_attempt_evidence_mark_posted",
-          session_id: sessionId,
-          request_id: requestId,
-        });
-      });
-      broadcast({ type: "session_updated", session });
-    } else {
-      // No live session pointer (e.g. headless arc / daemon restart): still mark the
-      // delivery posted so the store outbox does not re-deliver.
-      await markPosted({ workspaceRoot: root, attemptId, eventId: requestId }).catch((error) => {
-        telemetry.captureException(error, {
-          operation: "office_hours_attempt_evidence_mark_posted",
-          request_id: requestId,
-        });
-      });
-    }
-
-    telemetry.captureEvent("mac_sidecar_office_hours_attempt_evidence", {
-      workspace_basename: path.basename(root),
-      transition,
-      applied: result.applied === true,
-      revision: result.revision,
-      evidence_kind: fields.evidence?.kind || "",
-    });
-    // Funnel: a proof actually LANDED (applied), with the host-derived grade/trust-tier
-    // read from the committed projection slot. No raw data leaves here. Idempotent retries
-    // (applied:false) do NOT re-emit.
-    const funnelStage = TRANSITION_TO_FUNNEL_STAGE[transition];
-    if (funnelStage && result.applied === true) {
-      const slotByTransition = {
-        record_action_proof: "actionProof",
-        record_customer_outcome: "customerOutcome",
-        record_negative_outcome: "negativeOutcome",
-        record_goal_proof: "goalProof",
-      };
-      const slot = result.projection?.[slotByTransition[transition]] || {};
-      emitOfficeHoursFunnelEvent(telemetry, funnelStage, {
-        attemptId,
-        transition,
-        trustTier: slot.trustTier || "",
-        grade: slot.grade || "",
-        evidenceClass: slot.origin || "",
-        occurredAt: at,
-      });
-    }
-    // Project the now-updated attempt evidence into the Evidence OS read model.
-    await sendOfficeHoursEvidenceState(socket, root);
-  } catch (error) {
-    telemetry.captureException(error, { operation: "office_hours_attempt_evidence" });
-    send(socket, { type: "day_progress_state", workspaceRoot: root, success: false, error: formatError(error) });
-  }
-}
-
 async function handleOfficeHoursCommitmentEvidence(socket, payload = {}) {
   const root = resolveDay1GoalWorkspaceRoot(payload);
   const commitmentId = String(payload.commitmentId ?? payload.commitment_id ?? "").trim();
   const evidence = normalizeCommitmentEvidencePayload(payload.evidence ?? payload);
-  // ★R2 two-writer fix (fail-closed): the ValidationAttempt is the SOLE writer for
-  // Day-1 get_users action/customer/goal proof. A payload that carries an attemptId
-  // belongs to that lane — it MUST go through office_hours_attempt_evidence, never
-  // the legacy commitment writer (two authorities grading the same Day-1 concern is
-  // the renormalization failure mode R0 killed). Reject rather than soften.
-  const attemptId = String(payload.attemptId ?? payload.attempt_id ?? "").trim();
-  if (attemptId) {
-    const error = new Error(
-      "office_hours_commitment_evidence rejects an attempt-scoped payload: route Day-1 get_users proof through office_hours_attempt_evidence.",
-    );
-    telemetry.captureException(error, { operation: "office_hours_commitment_evidence_attempt_rejected" });
-    send(socket, { type: "day_progress_state", workspaceRoot: root, success: false, error: formatError(error) });
-    return;
-  }
   try {
     if (!commitmentId) throw new Error("commitmentId is required.");
-    // FIX 3 (two-writer reverse-lookup, fail-closed): the attemptId-on-payload reject
-    // above is bypassable by omitting the field. The ROBUST guard is a workspace
-    // reverse-lookup: if THIS workspace holds an open (non-terminal) get_users
-    // attempt, that attempt is the SOLE Day-1 writer and any commitment-evidence
-    // submission for this workspace would be a SECOND authority grading the same
-    // Day-1 get_users concern (the renormalization failure R0 killed). Reject it.
-    // Non-get_users / Day2+ commitments (no open get_users attempt in the workspace)
-    // fall through and grade normally. A store/projection error PROPAGATES — it is
-    // never swallowed into a pass.
-    if (await workspaceHasOpenGetUsersAttempt(root)) {
-      throw new Error(
-        "office_hours_commitment_evidence is refused while an open get_users ValidationAttempt owns Day-1 proof for this workspace: route the proof through office_hours_attempt_evidence.",
-      );
-    }
     await gradeCommitment({
       workspaceRoot: root,
       commitmentId,
@@ -6748,11 +5803,18 @@ async function runPrompt(
         provider: session.provider,
       });
       const officeHoursProjectContextBrief = await buildOfficeHoursProjectContextBrief(workspaceRoot);
+      // Host EFFECTS (port-on-top): assemble the gstack effector phases as a pure
+      // read-only context block. Graceful — degrades to "" when nothing is available.
+      const officeHoursEffectorContext = await computeOfficeHoursEffectorContext({
+        workspaceRoot,
+        context: officeHoursContext,
+      }).catch(() => "");
       systemPromptOverride = buildOfficeHoursChatSystemPrompt(workspaceRoot, {
         specialistInjection: officeHoursSpecialistInjection,
         context: officeHoursContext,
         provider: session.provider,
         projectContextBrief: officeHoursProjectContextBrief,
+        effectorContext: officeHoursEffectorContext,
       });
       if (routedSpecialist) {
         telemetry.captureEvent("mac_sidecar_specialist_routed", {
@@ -6980,7 +6042,7 @@ async function runPrompt(
       throw officeHoursStructuredInputToolState.contractError;
     }
     if (officeHoursContext) {
-      if (isLockedDay1GetUsersContext(officeHoursContext) && officeHoursRuntimeGatherComplete(session)) {
+      if (officeHoursRuntimeGatherComplete(session)) {
         assistantMessage.state = "final";
         session.status = "idle";
         session.error = null;
@@ -8262,17 +7324,10 @@ async function prepareDailyOfficeHoursDigest(session, {
   return digest;
 }
 
-// DEFERRED EXTRACTION POINT (Step 2, Deliverable D): a `## Verified Candidate
-// Hints` section would be injected HERE — alongside the project-context brief — to
-// feed the locked Day-1 get_users first_candidate card grounded option ids (the
-// prompt's hints-present branch + the contract's candidateHintId field are already
-// wired and dormant-but-ready). It is intentionally NOT built yet: agent-work-history
-// events are the founder's OWN dev activity (prompt|command|file_edit) with no
-// person/handle/counterparty field, so there is no honest customer-contact source to
-// extract names from. The eventual source is the gated BIP Research Radar web-search
-// flow, not a name-extractor over dev prompts (that surfaces coworkers/vendors and
-// lowers icp_fit). Until then the host forces an honest named free-text capture
-// (office-hours-first-candidate-host.mjs). No extractor module exists by design.
+// Candidate hints would be injected HERE alongside the project-context brief.
+// They are intentionally not built yet: agent-work-history events are the
+// founder's own dev activity (prompt|command|file_edit) with no honest
+// customer-contact source.
 async function buildOfficeHoursProjectContextBrief(workspaceRoot) {
   if (!workspaceRoot) return "";
   const projectContext = await loadProjectContextCache({ workspaceRoot }).catch(() => null);
@@ -9375,11 +8430,6 @@ async function challengeElapsedOfficeHoursDay() {
   return resolved?.calendarDay ?? null;
 }
 
-async function challengeWorkedOfficeHoursDay() {
-  const resolved = await challengeOfficeHoursDayResolution();
-  return resolved?.workedDay ?? null;
-}
-
 async function loadDayProgressForOfficeHoursDayResolution() {
   if (state.dayProgress) return state.dayProgress;
   if (!workspaceRoot) return null;
@@ -9474,574 +8524,9 @@ async function buildOfficeHoursCyclePreamble(day = null) {
   }
 }
 
-// ── R1.b ValidationAttempt runtime authority — pure helpers ───────────────────
-// These translate between the locked Day-1 get_users office-hours card surface and
-// the event store / pure contract. They are the ONLY bridge: every host completion
-// / promotion / ordering decision routes through projectAttempt + nextAttemptAction
-// + attemptCompletionPredicates. No turn-count / terminalAnswered / doc-readiness
-// authority survives in this flow.
-
-// Map a (legacy/prefixed) signalId to the canonical card type, or "" when it is
-// not one of the six locked get_users gather slots.
-function officeHoursCardTypeForSignal(signalId = "") {
-  return canonicalCardForSignal(signalId);
-}
-
-// Build the reducer command for a gather card answer. The card's transition +
-// requiredFields come from the FINAL contract; the user's free-text answer fills
-// every required field (the reducer enforces non-empty), while the full structured
-// answer lands in audit so the transcript can be regenerated from the event log.
-// `schedule_execution` (the commitment slot) needs a parseable FUTURE dueAt; the
-// commitment is a same-day timebox, so we derive dueAt = end of the commit day and
-// keep the user's words in commitmentNote. Returns null for non-gather signals.
-// Resolve the candidateHintId for an answered candidate_selection card: find the
-// pending card's selected option (by label) and read its grounded hint id. Returns
-// "" when the answer was free-text or the picked option carried no hint id (the
-// empty-hints reality). Pure; tolerant of missing shapes.
-function resolveCandidateHintIdFromCard(pendingUserInput, response) {
-  const question = Array.isArray(pendingUserInput?.questions) ? pendingUserInput.questions[0] : null;
-  const options = Array.isArray(question?.options) ? question.options : [];
-  if (!options.length) return "";
-  const responses = Array.isArray(response?.responses) ? response.responses : [];
-  const selectedLabels = new Set(
-    responses.flatMap((entry) =>
-      Array.isArray(entry?.selectedOptions) ? entry.selectedOptions.map((label) => String(label || "").trim()) : [],
-    ).filter(Boolean),
-  );
-  if (!selectedLabels.size) return "";
-  for (const option of options) {
-    const label = String(option?.label || "").trim();
-    if (!label || !selectedLabels.has(label)) continue;
-    const hintId = String(
-      option?.candidateHintId
-        || option?.candidate_hint_id
-        || option?.candidateId
-        || option?.candidate_id
-        || "",
-    ).trim();
-    if (hintId) return hintId;
-  }
-  return "";
-}
-
-function snakeKey(key = "") {
-  return String(key || "").replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
-}
-
-function selectedOptionsFromResponse(response) {
-  const labels = [];
-  for (const entry of response?.responses || []) {
-    const selectedOptions = Array.isArray(entry?.selectedOptions) ? entry.selectedOptions : [];
-    for (const value of selectedOptions) {
-      const label = String(value || "").trim();
-      if (label && !isOtherTextOptionLabel(label)) labels.push(label);
-    }
-  }
-  return labels;
-}
-
-function selectedPromptOptions(pendingUserInput, response) {
-  const question = Array.isArray(pendingUserInput?.questions) ? pendingUserInput.questions[0] : null;
-  const options = Array.isArray(question?.options) ? question.options : [];
-  if (!options.length) return [];
-  const selectedLabels = new Set(selectedOptionsFromResponse(response));
-  if (!selectedLabels.size) return [];
-  return options.filter((option) => selectedLabels.has(String(option?.label || "").trim()));
-}
-
-function optionAnswerText(option = {}) {
-  if (!option || typeof option !== "object") return "";
-  return String(
-    option.answerText
-      || option.answer_text
-      || option.defaultAnswer
-      || option.default_answer
-      || option.value
-      || option.commitmentNote
-      || option.commitment_note
-      || "",
-  ).trim();
-}
-
-function selectedOptionAnswerText(pendingUserInput, response) {
-  const values = selectedPromptOptions(pendingUserInput, response)
-    .map(optionAnswerText)
-    .filter(Boolean);
-  return values.join("\n");
-}
-
-function selectedOptionAttemptFields(pendingUserInput, response, fieldNames = []) {
-  const fields = {};
-  const selected = selectedPromptOptions(pendingUserInput, response);
-  for (const option of selected) {
-    for (const key of fieldNames) {
-      const direct = option?.[key];
-      const snake = option?.[snakeKey(key)];
-      const value = direct != null ? direct : snake;
-      const text = String(value || "").trim();
-      if (text && !fields[key]) fields[key] = text;
-    }
-  }
-  return fields;
-}
-
-function selectedOptionAutoTransitions(pendingUserInput, response) {
-  const commands = [];
-  const selected = selectedPromptOptions(pendingUserInput, response);
-  for (const option of selected) {
-    const transitions = Array.isArray(option?.autoTransitions)
-      ? option.autoTransitions
-      : Array.isArray(option?.auto_transitions)
-        ? option.auto_transitions
-        : [];
-    for (const transition of transitions) {
-      commands.push({ option, transition });
-    }
-  }
-  return commands;
-}
-
-function buildFutureDueAt(at = "") {
-  const atMs = Date.parse(at);
-  const baseMs = Number.isFinite(atMs) ? atMs : Date.now();
-  return new Date(baseMs + 24 * 60 * 60 * 1000).toISOString();
-}
-
-function normalizeAutoAttemptFields(type = "", fields = {}, {
-  at = "",
-  fallbackAnswer = "",
-} = {}) {
-  const normalized = {};
-  if (fields && typeof fields === "object" && !Array.isArray(fields)) {
-    for (const [key, value] of Object.entries(fields)) {
-      const cleanKey = String(key || "").trim();
-      const cleanValue = String(value ?? "").trim();
-      if (cleanKey && cleanValue) normalized[cleanKey] = cleanValue;
-    }
-  }
-  if (type === "schedule_execution") {
-    if (!normalized.dueAt) normalized.dueAt = buildFutureDueAt(at);
-    if (!normalized.commitmentNote && fallbackAnswer) {
-      normalized.commitmentNote = fallbackAnswer;
-    }
-  }
-  return normalized;
-}
-
-function buildAutoAttemptCommandsFromCard(pendingUserInput, response, {
-  baseRequestId = "",
-  answeredSignalId = "",
-  responseText = "",
-  responseDescription = "",
-  questionText = "",
-  at = new Date().toISOString(),
-} = {}) {
-  const transitions = selectedOptionAutoTransitions(pendingUserInput, response);
-  const cardType = officeHoursCardTypeForSignal(answeredSignalId);
-  const fallbackAnswer = String(responseText || selectedOptionAnswerText(pendingUserInput, response) || "").trim();
-  if (!transitions.length) {
-    if (cardType === "activation_definition" && fallbackAnswer) {
-      transitions.push(
-        {
-          option: { answerText: fallbackAnswer },
-          transition: {
-            type: "select_candidate",
-            fields: { candidate: fallbackAnswer },
-            auditText: fallbackAnswer,
-          },
-        },
-        {
-          option: { answerText: fallbackAnswer },
-          transition: {
-            type: "record_alternative",
-            fields: {
-              currentAlternative: "아직 확인 전입니다. 오늘 작은 도움 제공 후 반응에서 실제 대안을 확인합니다.",
-            },
-            auditText: "선택 없이 직접 입력한 ICP 문장으로 후보와 현재 대안을 보강한다.",
-          },
-        },
-        {
-          option: { answerText: fallbackAnswer },
-          transition: {
-            type: "define_action_contract",
-            fields: {
-              externalAction: "오늘 ICP 후보 1명에게 실제 자료나 막힌 화면을 받아 Agentic30가 15분 안에 바로 쓸 수 있는 결과로 바꿔 준다.",
-              attemptThreshold: "후보 1명에게 도움 제안 1회 또는 실제 자료 1개 수신",
-              successCondition: "상대가 결과물을 확인하고 다음 행동, 사용 가능 여부, 또는 거절 이유를 답한다.",
-            },
-            auditText: "직접 입력한 ICP에 대해 오늘 줄 도움을 기본 실행안으로 잡는다.",
-          },
-        },
-        {
-          option: { answerText: fallbackAnswer },
-          transition: {
-            type: "define_evidence_contract",
-            fields: {
-              expectedProofKind: "screen_capture_with_note",
-              evidenceLocation: ".agentic30/day1-notes.md",
-            },
-            auditText: "실행 흔적은 화면 캡처와 로컬 메모로 남긴다.",
-          },
-        },
-        {
-          option: { answerText: fallbackAnswer },
-          transition: {
-            type: "schedule_execution",
-            fields: {
-              commitmentNote: "오늘 ICP 후보 1명에게 작은 실행 도움을 제안하고 결과 화면 캡처와 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
-            },
-            auditText: "오늘 줄 도움을 바로 실행하고 로컬 흔적으로 닫는다.",
-          },
-        },
-      );
-    } else if (cardType === "evidence_contract" && fallbackAnswer) {
-      transitions.push({
-        option: { answerText: fallbackAnswer },
-        transition: {
-          type: "schedule_execution",
-          fields: { commitmentNote: fallbackAnswer },
-          auditText: fallbackAnswer,
-        },
-      });
-    }
-  }
-  if (!transitions.length) return [];
-  const optionAnswer = selectedOptionAnswerText(pendingUserInput, response);
-  return transitions.map(({ option, transition }, index) => {
-    const type = String(transition?.type || transition?.transition || "").trim();
-    if (!type) {
-      throw new Error("office hours auto transition is missing type");
-    }
-    const fields = normalizeAutoAttemptFields(type, transition?.fields, {
-      at,
-      fallbackAnswer: optionAnswer || responseText,
-    });
-    if (!Object.keys(fields).length) {
-      throw new Error(`office hours auto transition ${type} has no fields`);
-    }
-    const auditText = String(
-      transition?.auditText
-        || transition?.audit_text
-        || optionAnswer
-        || responseText
-        || optionAnswerText(option)
-        || "",
-    ).trim();
-    return {
-      type,
-      fields,
-      at,
-      requestId: `${String(baseRequestId || "request").trim()}::auto:${index + 1}:${type}`,
-      audit: {
-        questionText: String(questionText || ""),
-        responseText: auditText,
-        responseDescription: String(responseDescription || ""),
-        promptSnapshot: pendingUserInput ?? null,
-        submissions: Array.isArray(response?.responses) ? response.responses : [],
-      },
-    };
-  });
-}
-
-function isDay1CandidateUnblockPrompt(pendingUserInput = {}) {
-  const generation = pendingUserInput?.generation || {};
-  if (String(generation.docType || generation.doc_type || "").trim() === "day1_candidate_unblock") {
-    return true;
-  }
-  const question = Array.isArray(pendingUserInput?.questions) ? pendingUserInput.questions[0] : null;
-  return structuredPromptQuestionId(question) === FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID;
-}
-
-function buildAttemptCommandFromCard(pendingUserInput, response, answeredSignalId, {
-  responseText = "",
-  responseDescription = "",
-  questionText = "",
-  at = new Date().toISOString(),
-} = {}) {
-  const cardType = officeHoursCardTypeForSignal(answeredSignalId);
-  if (!cardType) return null;
-  const card = cardDefinition(cardType);
-  if (!card) return null;
-  const primaryTextAnswer = card.transition === "select_candidate"
-    ? primaryTextInputResponseText(pendingUserInput, response)
-    : "";
-  const isCandidateBlocker = card.transition === "select_candidate"
-    && !isDay1CandidateUnblockPrompt(pendingUserInput)
-    && hasNoCandidateBlockerResponse(pendingUserInput, response);
-  const optionAnswer = selectedOptionAnswerText(pendingUserInput, response);
-  const answer = primaryTextAnswer || optionAnswer || String(responseText || "").trim();
-  if (!answer && !isCandidateBlocker) return null;
-  const required = Array.isArray(card.requiredFields) ? card.requiredFields : [];
-  const fields = {};
-  let transition = card.transition;
-  if (isCandidateBlocker) {
-    transition = "candidate_blocker";
-    fields.blockerReason = "아직 후보 없음";
-    fields.nextUnblockAction = "오늘 바로 연락할 수 있는 전업 1인 개발자 1명의 실명·핸들 또는 특정 스레드 URL을 찾는다.";
-  } else if (card.transition === "schedule_execution") {
-    // dueAt must parse AND be strictly future relative to `at` (contract guard).
-    fields.dueAt = buildFutureDueAt(at);
-    fields.commitmentNote = answer;
-  } else {
-    const optionFields = selectedOptionAttemptFields(pendingUserInput, response, required);
-    for (const key of required) {
-      fields[key] = optionFields[key] || answer;
-    }
-  }
-  // Step 2 (additive): thread a grounded candidate hint id through select_candidate
-  // when the answered candidate_selection card carried one (a `## Verified Candidate
-  // Hints` grounded option). Harmless no-op while hints are empty — the field is
-  // allowlisted on the transition but never required, so cards 4-6 + Day-2 gain a
-  // stable candidate ref only when extraction exists. select_candidate allowedFields
-  // already includes candidateHintId (office-hours-contract.mjs).
-  if (card.transition === "select_candidate") {
-    const candidateHintId = resolveCandidateHintIdFromCard(pendingUserInput, response);
-    if (candidateHintId) fields.candidateHintId = candidateHintId;
-  }
-  const audit = {
-    questionText: String(questionText || ""),
-    responseText: answer || "아직 후보 없음",
-    responseDescription: String(responseDescription || ""),
-    promptSnapshot: pendingUserInput ?? null,
-    submissions: Array.isArray(response?.responses) ? response.responses : [],
-  };
-  return { type: transition, fields, audit, cardType };
-}
-
-// Separation-of-concerns completion predicates (no count gate, no doc-readiness).
-// gatherComplete: the six-slot interview is done (next action is no longer a card).
-// acceptableDay1Close: a real Day-1 disposition (action proof / timeboxed lease /
-// blocked / carried). attemptResolved: terminal (succeeded|failed).
-function attemptCompletionPredicates(projection) {
-  if (!projection || typeof projection !== "object") {
-    return { gatherComplete: false, acceptableDay1Close: false, attemptResolved: false };
-  }
-  // No fail-open: a corrupt projection must surface (fail-closed). Swallowing the
-  // throw here would silently report not-complete and wedge the flow / leak to legacy.
-  const action = nextAttemptAction(projection);
-  const gatherComplete = Boolean(action) && action.kind !== "card";
-  const acceptableDay1Close = isAcceptableDay1Close(projection) === true;
-  const attemptResolved = action?.kind === "terminal";
-  return { gatherComplete, acceptableDay1Close, attemptResolved };
-}
-
-// Project the locked Day-1 get_users wire DTO carried to the Mac client. The host
-// authority pointer ({attemptId, revision}) plus a derived, READ-ONLY display:
-// nextAction (mirrors nextAttemptAction) + gatherProgress {answered, total}. No
-// terminalAnswered / documentReadiness — the Mac decides completion from
-// nextAction.kind.
-function deriveOfficeHoursWireDTO(projection) {
-  if (!projection || typeof projection !== "object") return null;
-  // No fail-open: a corrupt projection must throw, not silently become nextAction=null
-  // (the Mac decides completion from nextAction.kind — a null would wedge the client).
-  const nextAction = nextAttemptAction(projection);
-  const total = VALIDATION_ATTEMPT_ACTIVE_STATES.length;
-  const appliedTransitions = Array.isArray(projection.appliedTransitions)
-    ? projection.appliedTransitions
-    : [];
-  const gatherTransitions = new Set([
-    "define_activation",
-    "select_candidate",
-    "record_alternative",
-    "define_action_contract",
-    "define_evidence_contract",
-    "schedule_execution",
-  ]);
-  const answered = Math.min(
-    total,
-    appliedTransitions.filter((t) => gatherTransitions.has(t)).length,
-  );
-  // R2: surface whether the attempt is in an acceptable Day-1 close disposition
-  // (action proof attached / timeboxed execution lease / blocked / carried) so the
-  // Mac can show "오늘 닫기 가능" without re-deriving. Fail-closed by design: a
-  // scheduled attempt carrying a corrupt/past dueAt makes isAcceptableDay1Close
-  // THROW (ERR_INVALID_DUE_AT) — we do NOT swallow it (a swallow would wedge the
-  // client with a silently-false close flag). The gather submit guarantees a valid
-  // future dueAt (buildAttemptCommandFromCard: dueAt = commitAt + 24h), so in
-  // practice this never fires for a freshly scheduled attempt.
-  const acceptableDay1Close = isAcceptableDay1Close(projection) === true;
-  return {
-    nextAction,
-    gatherProgress: { answered, total },
-    acceptableDay1Close,
-  };
-}
-
-function stampLockedGetUsersAttemptProjection(session = null, {
-  attemptId = "",
-  revision = 0,
-  projection = null,
-} = {}) {
-  if (!session?.runtime?.officeHours || !attemptId || !projection) return null;
-  session.runtime.officeHours.attemptId = attemptId;
-  session.runtime.officeHours.revision = revision;
-  const wireDTO = deriveOfficeHoursWireDTO(projection);
-  if (wireDTO) {
-    session.runtime.officeHours.nextAction = wireDTO.nextAction;
-    session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
-    session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
-  }
-  return wireDTO;
-}
-
-async function recoverLockedGetUsersAttemptForSession(session = null) {
-  if (!session?.runtime?.officeHours) return null;
-  const existingId = String(session.runtime.officeHours.attemptId || "").trim();
-  if (existingId) {
-    const snapshot = await projectAttempt({ workspaceRoot, attemptId: existingId });
-    if (snapshot) {
-      return {
-        attemptId: existingId,
-        revision: snapshot.revision,
-        projection: snapshot.projection,
-        snapshot,
-      };
-    }
-  }
-  const recovered = await findOpenGetUsersAttempt(session.id) || await findOpenGetUsersAttempt();
-  if (!recovered?.attemptId) return null;
-  const snapshot = await projectAttempt({ workspaceRoot, attemptId: recovered.attemptId });
-  if (!snapshot) return null;
-  return {
-    attemptId: recovered.attemptId,
-    revision: snapshot.revision,
-    projection: snapshot.projection,
-    snapshot,
-  };
-}
-
-// Resolve (or fabricate) the ValidationAttempt for a session in the locked Day-1
-// get_users flow. NO legacy turn-log migration: (a) reuse the session's pointer;
-// (b) recover the pointer from the store (daemon restart / prior session) by
-// scanning for a non-terminal get_users attempt in this workspace; (c) start a
-// fresh attempt. Fail-closed: a lost race on startAttempt re-scans, then throws.
-async function ensureOfficeHoursAttemptForSession(session, {
-  day = null,
-  source = "",
-} = {}) {
-  if (!session?.runtime?.officeHours) {
-    throw new Error("ensureOfficeHoursAttemptForSession requires an active office-hours runtime");
-  }
-  const existingId = String(session.runtime.officeHours.attemptId || "").trim();
-  if (existingId) {
-    const snapshot = await projectAttempt({ workspaceRoot, attemptId: existingId });
-    if (snapshot) {
-      session.runtime.officeHours.attemptId = existingId;
-      session.runtime.officeHours.revision = snapshot.revision;
-      return { attemptId: existingId, revision: snapshot.revision, projection: snapshot.projection };
-    }
-    // Pointer references a non-existent attempt — fall through to recover/start.
-  }
-  const recovered = await findOpenGetUsersAttempt(session.id);
-  if (recovered) {
-    session.runtime.officeHours.attemptId = recovered.attemptId;
-    session.runtime.officeHours.revision = recovered.revision;
-    return recovered;
-  }
-  const attemptId = randomUUID();
-  try {
-    const record = await startAttempt({
-      workspaceRoot,
-      goalLane: "get_users",
-      day: normalizeOfficeHoursDay(day) || normalizeOfficeHoursDay(session.runtime.officeHours.day) || null,
-      source: String(source || session.runtime.officeHours.source || ""),
-      sessionId: session.id,
-      attemptId,
-    });
-    session.runtime.officeHours.attemptId = record.attemptId;
-    session.runtime.officeHours.revision = record.revision;
-    const snapshot = await projectAttempt({ workspaceRoot, attemptId: record.attemptId });
-    if (!snapshot) {
-      // Fail-closed: a just-started attempt must be readable. A null projection here
-      // means a store write was lost — surface it, do not propagate a null authority.
-      throw new Error(`ensureOfficeHoursAttemptForSession: attempt ${record.attemptId} unreadable immediately after startAttempt`);
-    }
-    return { attemptId: record.attemptId, revision: record.revision, projection: snapshot.projection };
-  } catch (error) {
-    if (error?.code === "ERR_ATTEMPT_ALREADY_OPEN") {
-      // A concurrent caller opened one between our scan and startAttempt, or a
-      // restored pending card was rebound to a fresh session id while the durable
-      // attempt still belongs to the original session. The attempt store enforces a
-      // single non-terminal get_users attempt per workspace, so the workspace-wide
-      // fallback is the same authority startAttempt refused to duplicate.
-      const raced = await findOpenGetUsersAttempt(session.id) || await findOpenGetUsersAttempt();
-      if (raced) {
-        session.runtime.officeHours.attemptId = raced.attemptId;
-        session.runtime.officeHours.revision = raced.revision;
-        return raced;
-      }
-    }
-    throw error;
-  }
-}
-
-// Scan the store for a single non-terminal get_users attempt THIS session created,
-// to re-attach to after a daemon restart that dropped the in-memory pointer. Filter
-// by createdSessionId (the session's stable id, preserved across restart): never
-// hijack another session's in-flight attempt in the same workspace.
-async function findOpenGetUsersAttempt(sessionId = "") {
-  const wantSessionId = String(sessionId || "").trim();
-  const log = await loadAttemptLog({ workspaceRoot });
-  for (const record of Object.values(log.attempts || {})) {
-    if (String(record?.goalLane || "get_users") !== "get_users") continue;
-    if (wantSessionId && String(record?.createdSessionId || "") !== wantSessionId) continue;
-    const snapshot = await projectAttempt({ workspaceRoot, attemptId: record.attemptId });
-    if (!snapshot) continue;
-    const action = (() => {
-      try {
-        return nextAttemptAction(snapshot.projection);
-      } catch {
-        return null;
-      }
-    })();
-    if (action && action.kind !== "terminal") {
-      return { attemptId: record.attemptId, revision: snapshot.revision, projection: snapshot.projection };
-    }
-  }
-  return null;
-}
-
-// FIX 3 (two-writer reverse-lookup): does THIS workspace hold ANY non-terminal
-// get_users ValidationAttempt, regardless of which session created it? The legacy
-// commitment writer must defer to the attempt whenever one is open — the attempt is
-// the SOLE Day-1 get_users writer. Unlike findOpenGetUsersAttempt (session-scoped,
-// for restart recovery) this scans every get_users attempt in the workspace and
-// returns true for gathering / WAIT / blocked / carried (everything except terminal
-// succeeded|failed — the same boundary canStartNewAttempt uses). Fail-closed: a
-// store/projection error propagates (the caller must NOT swallow it into a pass).
-async function workspaceHasOpenGetUsersAttempt(root = workspaceRoot) {
-  const log = await loadAttemptLog({ workspaceRoot: root });
-  for (const record of Object.values(log.attempts || {})) {
-    if (String(record?.goalLane || "get_users") !== "get_users") continue;
-    const snapshot = await projectAttempt({ workspaceRoot: root, attemptId: record.attemptId });
-    if (!snapshot) continue;
-    // nextAttemptAction THROWS for a corrupt/unmapped state — do not swallow; a
-    // workspace with an unreadable attempt must surface, not silently pass the legacy
-    // commitment writer.
-    const action = nextAttemptAction(snapshot.projection);
-    if (action && action.kind !== "terminal") return true;
-  }
-  return false;
-}
-
-// Host-side completion read. For the locked Day-1 get_users flow the authority is
-// the projection-derived nextAction (no longer a card). Non-get_users lanes keep
-// their count/terminal completion stamps (this cut is scoped to get_users).
 function officeHoursRuntimeGatherComplete(session = null) {
   const officeHours = session?.runtime?.officeHours;
   if (!officeHours) return false;
-  // Discriminate the lane by the persisted CONTEXT, not by attemptId presence: the
-  // attemptId pointer can be transiently absent after a daemon restart (before
-  // ensureOfficeHoursAttemptForSession re-attaches), but the get_users context is
-  // durable. A get_users session must NEVER read the legacy completion stamps.
-  if (isLockedDay1GetUsersContext(officeHours.context || "")) {
-    // Authority is the projection-derived nextAction ONLY. If it is absent (not
-    // persisted across restart), report not-complete so the flow re-derives it from
-    // the store rather than leaking to terminalAnswered/completedByExpectedCount.
-    const kind = String(officeHours.nextAction?.kind || "").trim();
-    return kind === "" ? false : kind !== "card";
-  }
-  // Non-get_users lanes keep their legacy count/terminal completion stamps.
   const kind = String(officeHours.nextAction?.kind || "").trim();
   if (kind) return kind !== "card";
   return officeHours.completedByExpectedCount === true || officeHours.terminalAnswered === true;
@@ -10050,40 +8535,15 @@ function officeHoursRuntimeGatherComplete(session = null) {
 function attachOfficeHoursRuntime(runtime = {}, officeHours = null) {
   if (!officeHours) return runtime || {};
   const prior = runtime?.officeHours;
-  const priorRevision = Number.parseInt(String(prior?.revision ?? ""), 10);
-  const incomingRevision = Number.parseInt(String(officeHours?.revision ?? ""), 10);
-  const preserveLockedGetUsersProjection = isLockedDay1GetUsersContext(
-    prior?.context || officeHours?.context || "",
-  )
-    && Number.isFinite(priorRevision)
-    && (!Number.isFinite(incomingRevision) || priorRevision > incomingRevision);
   return {
     ...(runtime || {}),
     officeHours: {
-      // R1.b: the host owns the {attemptId, revision} authority pointer. A
-      // provider runtime update must never clobber it — carry it forward from the
-      // prior runtime when the incoming officeHours object does not set it.
-      ...(prior?.attemptId && !officeHours.attemptId
-        ? { attemptId: prior.attemptId, revision: prior.revision }
-        : {}),
-      // The submit handler stamps terminalAnswered on the LIVE session
-      // runtime mid-run (when the 대안 비교 closing card is answered); the
-      // run-end re-attach passes the run-START officeHours object, so the
-      // stamp must be carried forward or the completion signal dies between
-      // the closing answer and the run's incomplete-interview check.
+      // The submit handler stamps terminalAnswered on the LIVE session runtime
+      // mid-run (when the 대안 비교 closing card is answered); the run-end
+      // re-attach passes the run-START officeHours object, so carry it forward.
       ...(prior?.terminalAnswered === true ? { terminalAnswered: true } : {}),
       ...(prior?.documentReadiness ? { documentReadiness: prior.documentReadiness } : {}),
       ...officeHours,
-      ...(preserveLockedGetUsersProjection
-        ? {
-          attemptId: prior.attemptId,
-          revision: prior.revision,
-          nextAction: prior.nextAction,
-          gatherProgress: prior.gatherProgress,
-          acceptableDay1Close: prior.acceptableDay1Close,
-          candidateBlocker: prior.candidateBlocker,
-        }
-        : {}),
       active: true,
     },
   };
@@ -10605,53 +9065,6 @@ async function attachDay1DocumentReadinessFollowupPrompt(session = null, readine
   return request;
 }
 
-async function attachDay1CandidateUnblockPrompt(session = null, {
-  previousRequestId = "",
-  blockerReason = "아직 후보 없음",
-  nextUnblockAction = "",
-} = {}) {
-  if (!session?.id) return null;
-  session.runtime = {
-    ...(session.runtime || {}),
-    officeHours: {
-      ...(session.runtime?.officeHours || {}),
-      active: true,
-      candidateBlocker: {
-        blockerReason: String(blockerReason || "아직 후보 없음"),
-        nextUnblockAction: String(nextUnblockAction || ""),
-        previousRequestId: String(previousRequestId || ""),
-        updatedAt: new Date().toISOString(),
-      },
-    },
-  };
-  const input = buildNoCandidateUnblockCard({
-    sessionId: session.id,
-    provider: session.provider,
-    toolName: CODEX_STRUCTURED_INPUT_TOOL,
-  });
-  const request = await createUserInputRequest(appSupportPath, {
-    sessionId: session.id,
-    ...input,
-  });
-  session.pendingUserInput = request;
-  session.status = "awaiting_input";
-  session.error = null;
-  touch(session);
-  await persistOfficeHoursPendingQuestion(session, request, "day1_candidate_unblock");
-  emitOfficeHoursStatus(session, {
-    stage: "question_ready",
-    requestId: request.requestId,
-    progressText: "후보 확보 질문 준비 완료",
-  });
-  telemetry.captureEvent("mac_sidecar_office_hours_candidate_unblock_created", {
-    session_id: session.id,
-    provider: session.provider,
-    request_id: request.requestId,
-    previous_request_id: previousRequestId || "",
-  });
-  return request;
-}
-
 function assessDay1OfficeHoursCompletionClarity(session = null, readinessResult = {}) {
   if (!session?.runtime?.officeHours) return null;
   const priorClarity = session.runtime?.day1HandoffClarity || {};
@@ -10954,10 +9367,9 @@ async function persistOfficeHoursPendingQuestion(session = null, request = null,
 }
 
 function shouldReissueOfficeHoursMissingFreeTextPrompt(pendingUserInput = null, missingQuestion = null) {
-  if (!isOfficeHoursStructuredInputMode(pendingUserInput?.generation?.mode)) return false;
-  const docType = String(pendingUserInput?.generation?.docType || "").trim().toLowerCase();
-  return docType === "day1_candidate_unblock"
-    || structuredPromptQuestionId(missingQuestion) === FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID;
+  void pendingUserInput;
+  void missingQuestion;
+  return false;
 }
 
 async function reissueOfficeHoursMissingFreeTextPrompt(session = null, pendingUserInput = null, {
@@ -10965,7 +9377,7 @@ async function reissueOfficeHoursMissingFreeTextPrompt(session = null, pendingUs
   validationMessage = "",
 } = {}) {
   if (!session?.id || !pendingUserInput?.requestId) return null;
-  const requestTemplate = normalizeDay1CandidateUnblockRequest(pendingUserInput) || pendingUserInput;
+  const requestTemplate = pendingUserInput;
   if (state.activeRuns.has(session.id)) {
     await stopSession(session.id);
   }
@@ -11039,18 +9451,6 @@ async function clearOfficeHoursPendingQuestionForSession(session = null, request
   }
 }
 
-function isObsoleteRigidDay1GetUsersPendingRequest(request = null) {
-  if (!isOfficeHoursStructuredRequest(request)) return false;
-  const generation = request?.generation || {};
-  const signalId = String(generation.signalId || generation.signal_id || "").trim();
-  if (!signalId.startsWith("get_users_")) return false;
-  const question = Array.isArray(request.questions) ? request.questions[0] : null;
-  const primaryInput = question?.primaryTextInput || question?.primary_text_input || {};
-  if (primaryInput?.required === true || question?.requiresFreeText === true) return true;
-  const dimensionTotal = Number(generation.dimensionTotal ?? generation.dimension_total ?? 0);
-  return dimensionTotal === 6;
-}
-
 function shouldFailDetachedOfficeHoursPendingSession(session = null) {
   if (!session?.id) return false;
   if (session.pendingUserInput) return false;
@@ -11070,14 +9470,6 @@ async function shouldKeepOfficeHoursPendingWithoutInputArtifact(session = null, 
   if (!day) return false;
   const requestId = String(pending.requestId || "").trim();
   if (!requestId) return false;
-  if (isObsoleteRigidDay1GetUsersPendingRequest(pending)) {
-    await clearOfficeHoursPendingQuestionForSession(
-      session,
-      requestId,
-      "obsolete_day1_get_users_pending_without_artifact",
-    );
-    return false;
-  }
   try {
     const [savedPending, turnLog] = await Promise.all([
       loadOfficeHoursPendingQuestion({ workspaceRoot, day }),
@@ -11265,23 +9657,6 @@ async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
     return false;
   }
 
-  if (isObsoleteRigidDay1GetUsersPendingRequest(pending.request)) {
-    const obsoleteRequestId = String(pending?.request?.requestId || "").trim();
-    await clearOfficeHoursPendingQuestion({
-      workspaceRoot,
-      day,
-      requestId: obsoleteRequestId,
-    });
-    telemetry.captureEvent("mac_sidecar_office_hours_obsolete_day1_pending_cleared", {
-      session_id: session.id,
-      provider: session.provider,
-      request_id: obsoleteRequestId,
-      day,
-      source,
-    });
-    return false;
-  }
-
   if (!isOfficeHoursInterviewActiveForDay(dayProgress, day)) {
     await failOfficeHoursPendingQuestionState(session, {
       runKey,
@@ -11301,9 +9676,7 @@ async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
       ...pending.request,
       sessionId: session.id,
     };
-    request = prepareOfficeHoursStructuredInputRequest(
-      normalizeDay1CandidateUnblockRequest(restoreRequest) || restoreRequest,
-    );
+    request = prepareOfficeHoursStructuredInputRequest(restoreRequest);
   } catch (error) {
     telemetry.captureException(error, {
       operation: "office_hours_pending_question_restore_prepare",
@@ -11341,67 +9714,6 @@ async function restoreOfficeHoursPendingQuestionIfAvailable(session, {
   }
 
   if (officeHoursPendingQuestionAlreadyAnswered(turnLog, day, request)) {
-    const answeredAttemptId = String(
-      request?.generation?.attemptId
-        || request?.generation?.attempt_id
-        || "",
-    ).trim();
-    if (isLockedDay1GetUsersContext(context) && answeredAttemptId) {
-      const snapshot = await projectAttempt({ workspaceRoot, attemptId: answeredAttemptId });
-      if (snapshot) {
-        const restoredRuntime = buildOfficeHoursRuntime(context, source, day, selectedSources, runtimeMetadata);
-        const expected = parseExpectedOfficeHoursQuestionCount(restoredRuntime.context);
-        if (expected > 0) {
-          restoredRuntime.expectedQuestionCount = expected;
-        }
-        restoredRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
-          resumeTurns,
-          session.id,
-        );
-        restoredRuntime.promptSnapshots = buildOfficeHoursRuntimePromptSnapshots(
-          session,
-          resumeTurns,
-          day,
-        );
-        session.runtime = attachOfficeHoursRuntime(session.runtime, restoredRuntime);
-        stampLockedGetUsersAttemptProjection(session, {
-          attemptId: answeredAttemptId,
-          revision: snapshot.revision,
-          projection: snapshot.projection,
-        });
-        const action = nextAttemptAction(snapshot.projection);
-        if (action?.kind === "card") {
-          await attachLockedGetUsersNextAttemptCard(session, {
-            projection: snapshot.projection,
-            attemptId: answeredAttemptId,
-            revision: snapshot.revision,
-            previousRequestId: request.requestId,
-          });
-          const seeded = seedOfficeHoursTranscriptFromTurns(session, resumeTurns);
-          await persistSessions();
-          broadcast({ type: "session_updated", session });
-          telemetry.captureEvent("mac_sidecar_office_hours_answered_pending_regenerated", {
-            session_id: session.id,
-            provider: session.provider,
-            stale_request_id: request.requestId,
-            attempt_id: answeredAttemptId,
-            revision: snapshot.revision,
-            next_card_type: action.cardType || "",
-            seeded,
-          });
-          return true;
-        }
-        await clearOfficeHoursPendingQuestionForSession(session, request.requestId, "answered_pending_gather_complete");
-        session.pendingUserInput = null;
-        session.status = "idle";
-        session.error = null;
-        touch(session);
-        await persistSessions();
-        emitOfficeHoursStatus(session, { stage: "completed", requestId: request.requestId });
-        broadcast({ type: "session_updated", session });
-        return true;
-      }
-    }
     await failOfficeHoursPendingQuestionState(session, {
       runKey,
       day,
@@ -11549,26 +9861,6 @@ function emitOfficeHoursStatus(session, {
 // a hard upper bound: hitting it is completion, while stopping before it without
 // a pending card is a failure.
 async function detectIncompleteOfficeHoursInterview(session, context) {
-  // R1.b: for the locked Day-1 get_users flow the ValidationAttempt projection is
-  // authority. The interview is incomplete iff the attempt is still gathering
-  // (nextAction.kind === "card") when the run ended with no card on deck. No
-  // turn-count read in this path.
-  if (isLockedDay1GetUsersContext(context)) {
-    const attemptId = String(session?.runtime?.officeHours?.attemptId || "").trim();
-    if (!attemptId) return null;
-    // Fail-closed: do NOT swallow store/projection errors. projectAttempt returns
-    // null only for a genuinely absent attempt (→ nothing incomplete); a store ERR_*
-    // or a corrupt projection must surface, not be masked as "complete".
-    const snapshot = await projectAttempt({ workspaceRoot, attemptId });
-    if (!snapshot) return null;
-    const action = nextAttemptAction(snapshot.projection);
-    if (!action || action.kind !== "card") return null;
-    const dto = deriveOfficeHoursWireDTO(snapshot.projection);
-    const answered = dto?.gatherProgress?.answered ?? 0;
-    const total = dto?.gatherProgress?.total ?? VALIDATION_ATTEMPT_ACTIVE_STATES.length;
-    return { expected: total, answered };
-  }
-  // Non-locked office-hours (Day2+): expected-count detection preserved.
   const progress = await getOfficeHoursQuestionProgress(session, { context });
   if (!progress.expected || progress.complete) return null;
   return { expected: progress.expected, answered: progress.answered };
@@ -11677,56 +9969,6 @@ function isOfficeHoursStructuredRequest(request = null) {
   return String(request.title || "").trim().toLowerCase() === "office hours";
 }
 
-function officeHoursStructuredRequestSignalId(request = null) {
-  if (!request || typeof request !== "object") return "";
-  const generation = request.generation && typeof request.generation === "object" && !Array.isArray(request.generation)
-    ? request.generation
-    : {};
-  const signalId = String(generation.signalId || generation.signal_id || "").trim();
-  if (signalId) return signalId;
-  const firstQuestion = Array.isArray(request.questions) ? request.questions[0] : null;
-  return structuredPromptQuestionId(firstQuestion);
-}
-
-function normalizeDay1CandidateUnblockRequest(request = null) {
-  if (!request || typeof request !== "object") return null;
-  const generation = request.generation && typeof request.generation === "object" && !Array.isArray(request.generation)
-    ? request.generation
-    : {};
-  const docType = String(generation.docType || generation.doc_type || "").trim();
-  const signalId = String(generation.signalId || generation.signal_id || "").trim();
-  if (docType !== "day1_candidate_unblock" && signalId !== FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID) {
-    return null;
-  }
-
-  const {
-    attemptId: _attemptId,
-    expectedRevision: _expectedRevision,
-    cardType: _cardType,
-    transition: _transition,
-    ...safeGeneration
-  } = generation;
-
-  return {
-    ...request,
-    generation: {
-      ...safeGeneration,
-      mode: "office_hours",
-      docType: "day1_candidate_unblock",
-      signalId: FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID,
-      signalLabel: "후보 확보",
-      previousSignalId: FIRST_CANDIDATE_SIGNAL_ID,
-    },
-    questions: (Array.isArray(request.questions) ? request.questions : []).map((question, index) => index === 0
-      ? {
-          ...question,
-          questionId: FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID,
-          header: question.header || "후보 확보",
-        }
-      : question),
-  };
-}
-
 function createOfficeHoursStructuredInputToolState() {
   return {
     pendingOutputSeen: false,
@@ -11753,568 +9995,19 @@ function recordOfficeHoursStructuredInputToolEvent(toolState, event = {}) {
 }
 
 function assertOfficeHoursPendingUserInputAttached(session, toolState) {
+  void session;
   if (!toolState?.pendingOutputSeen || session?.pendingUserInput) return;
-  if (
-    isLockedDay1GetUsersContext(String(session?.runtime?.officeHours?.context || ""))
-    && officeHoursRuntimeGatherComplete(session)
-  ) {
-    return;
-  }
   throw new Error("structured input tool returned pending_user_input but no pending request was attachable");
-}
-
-// True for the one flow that owns a host-decided ladder: the locked Day-1
-// get_users goal interview. Mirrors the submit-handler check (line ~2253) so the
-// promote path and the continuation path agree on when the host stamps slots.
-function isLockedDay1GetUsersContext(context = "") {
-  return isOfficeHoursLockedDay1GoalContext(context)
-    && /Goal lane:\s*get_users\b/i.test(String(context || ""));
-}
-
-// Defense-in-depth: the locked Day-1 get_users lane must be recognizable even if
-// a clamp lost the `Goal lane: get_users` / DAY1_LOCKED_GOAL markers from the
-// runtime context (the markers are clampable; the lane is not). A get_users lane
-// is durable when EITHER an open (non-terminal) get_users ValidationAttempt
-// exists for this workspace OR day1-goal.json records goalType==="get_users".
-// Fail-closed: a store/projection error from workspaceHasOpenGetUsersAttempt
-// propagates (callers must not swallow it into a false). Returns true so the
-// doc-readiness gate and the locked-get_users discrimination keep honoring the
-// lane after the context regex degrades.
-async function isDurableLockedGetUsersLane(session = null, { root = workspaceRoot } = {}) {
-  if (isLockedDay1GetUsersContext(String(session?.runtime?.officeHours?.context || ""))) {
-    return true;
-  }
-  if (await workspaceHasOpenGetUsersAttempt(root)) return true;
-  const day1Goal = await loadDay1GoalSelection({ workspaceRoot: root }).catch(() => null);
-  return String(day1Goal?.goalType || "") === "get_users";
-}
-
-function officeHoursLockedGetUsersSignalLabel(signalId = "") {
-  switch (String(signalId || "").trim()) {
-    case "get_users_active_user_definition":
-      return "첫 고객과 첫 가치";
-    case "get_users_first_candidate":
-      return "첫 고객 보강";
-    case "get_users_current_alternative":
-      return "현재 방식 보강";
-    case "get_users_today_request":
-      return "오늘 줄 도움";
-    case "get_users_evidence_format":
-      return "흔적과 마감";
-    case "get_users_day1_commitment":
-      return "오늘 실행";
-    default:
-      return "";
-  }
-}
-
-function lockedGetUsersVisibleDimension(cardType = "") {
-  switch (String(cardType || "").trim()) {
-    case "activation_definition":
-      return { dimensionStepIndex: 1, dimensionTotal: 1 };
-    case "candidate_selection":
-    case "current_alternative":
-      return { dimensionStepIndex: 1, dimensionTotal: 3 };
-    case "action_request":
-      return { dimensionStepIndex: 2, dimensionTotal: 3 };
-    case "evidence_contract":
-    case "commitment":
-      return { dimensionStepIndex: 3, dimensionTotal: 3 };
-    default:
-      return { dimensionStepIndex: 1, dimensionTotal: 3 };
-  }
-}
-
-function lockedGetUsersHostCardSpec(cardType = "") {
-  switch (String(cardType || "").trim()) {
-    case "activation_definition":
-      return {
-        question:
-          "Agentic30가 오늘 첫 고객 후보 1명에게 바로 줄 도움을 만들까요?",
-        helperText: "기본안으로 바로 진행됩니다. 다른 후보·채널·요청이 이미 있을 때만 한 줄로 바꾸세요.",
-        freeTextPlaceholder: "선택사항: 다른 후보·채널·요청문이 있으면 한 줄 수정",
-        allowsEmptySubmit: true,
-        primaryTextInput: {
-          label: "필요하면 한 줄 수정",
-          placeholder: "선택사항: 다른 후보·채널·요청문",
-          required: false,
-          submitLabel: "추천안으로 진행",
-          validationMessage: "입력하지 않아도 추천안으로 진행됩니다.",
-        },
-        options: [
-          {
-            label: "첫 고객에게 줄 도움 만들기",
-            description: "후보 찾기, 첫 요청문, 15분 도움 제공안, 남길 흔적까지 Agentic30가 한 번에 묶습니다.",
-            answerText: "전업 1인 개발자가 Agentic30 도움으로 오늘 연락할 첫 고객 후보와 보낼 요청을 확정하면 첫 가치 사용자로 본다.",
-            activationDefinition: "전업 1인 개발자가 Agentic30 도움으로 오늘 연락할 첫 고객 후보와 보낼 요청을 확정하면 첫 가치 사용자로 본다.",
-            candidate: "AI/macOS 앱을 만들었지만 첫 고객 후보와 첫 요청 문장이 막힌 전업 1인 개발자",
-            currentAlternative: "커뮤니티 글, Threads 검색, 지인 조언을 훑지만 실제로 보낼 요청문까지 가지 못한다.",
-            externalAction: "오늘 후보 1명에게 도움 요청을 보내고 Agentic30가 첫 고객 요청문 또는 15분 실행 결과물을 만들어 준다.",
-            attemptThreshold: "후보 1명에게 도움 제안 1회",
-            successCondition: "상대가 요청문이나 결과물을 보고 다음 행동, 사용 가능 여부, 또는 거절 이유를 답한다.",
-            expectedProofKind: "screen_capture_with_note",
-            evidenceLocation: ".agentic30/day1-notes.md",
-            commitmentNote: "오늘 첫 고객 후보 1명에게 도움 요청을 보내고 결과 화면 캡처와 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
-            recommended: true,
-            evidenceTarget: "후보 조건, 보낼 요청문, 실제 연락 흔적",
-            autoTransitions: [
-              {
-                type: "select_candidate",
-                fields: {
-                  candidate: "AI/macOS 앱을 만들었지만 첫 고객 후보와 첫 요청 문장이 막힌 전업 1인 개발자",
-                },
-                auditText: "첫 고객을 못 찾는 AI 앱 개발자를 ICP 후보로 둔다.",
-              },
-              {
-                type: "record_alternative",
-                fields: {
-                  currentAlternative: "커뮤니티 글, Threads 검색, 지인 조언을 훑지만 실제로 보낼 요청문까지 가지 못한다.",
-                },
-                auditText: "현재는 커뮤니티/검색/조언을 훑지만 고객 요청까지 못 가는 상태로 본다.",
-              },
-              {
-                type: "define_action_contract",
-                fields: {
-                  externalAction: "오늘 후보 1명에게 도움 요청을 보내고 Agentic30가 첫 고객 요청문 또는 15분 실행 결과물을 만들어 준다.",
-                  attemptThreshold: "후보 1명에게 도움 제안 1회",
-                  successCondition: "상대가 요청문이나 결과물을 보고 다음 행동, 사용 가능 여부, 또는 거절 이유를 답한다.",
-                },
-                auditText: "후보 1명에게 바로 줄 도움을 실행안으로 둔다.",
-              },
-              {
-                type: "define_evidence_contract",
-                fields: {
-                  expectedProofKind: "screen_capture_with_note",
-                  evidenceLocation: ".agentic30/day1-notes.md",
-                },
-                auditText: "로컬 메모와 화면 캡처로 오늘 실행 흔적을 남긴다.",
-              },
-              {
-                type: "schedule_execution",
-                fields: {
-                  commitmentNote: "오늘 첫 고객 후보 1명에게 도움 요청을 보내고 결과 화면 캡처와 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
-                },
-                auditText: "추천 가치안 그대로 오늘 실행을 닫는다.",
-              },
-            ],
-          },
-        ],
-      };
-    case "current_alternative":
-      return {
-        question: "이 ICP가 지금 억지로 버티는 일을 Agentic30가 무엇부터 덜어줄까요?",
-        helperText: "현재 대안 자체를 맞히는 것보다, 오늘 줄 도움의 형태를 고릅니다.",
-        freeTextPlaceholder: "선택사항: 실제로 쓰는 도구나 반복 작업을 알면 보강",
-        primaryTextInput: {
-          label: "버티는 방식 보강",
-          placeholder: "선택사항: 도구/방법 + 불편함",
-          required: false,
-          submitLabel: "선택한 도움으로 진행",
-          validationMessage: "보강 입력은 선택사항입니다.",
-        },
-        options: [
-          {
-            label: "수동 정리 시간을 줄여줌",
-            description: "노트, 문서, 스프레드시트에 흩어진 맥락을 실행안으로 압축해 줍니다.",
-            answerText: "노트·문서·스프레드시트에 흩어진 맥락을 직접 정리하느라 시간을 쓰고 있어 Agentic30가 실행안으로 압축해 준다.",
-            recommended: true,
-            evidenceTarget: "도구 이름과 반복되는 수동 작업",
-          },
-          {
-            label: "AI 채팅 반복 설명을 줄여줌",
-            description: "매번 긴 맥락을 설명하지 않게 오늘 할 일과 요청문을 대신 정리합니다.",
-            answerText: "ChatGPT, Claude, Codex에 매번 맥락을 다시 설명하며 버티고 있어 Agentic30가 오늘 할 일과 요청문을 대신 정리한다.",
-            evidenceTarget: "반복 입력되는 맥락과 결과물",
-          },
-          {
-            label: "사람에게 묻기 전 초안을 만들어줌",
-            description: "멘토·커뮤니티에 물어보기 전에 보낼 질문과 판단 기준을 먼저 만듭니다.",
-            answerText: "멘토, 동료, 커뮤니티에 방향을 묻고 있어 Agentic30가 먼저 보낼 질문과 판단 기준을 만들어 준다.",
-            evidenceTarget: "물어보는 채널과 빈도",
-          },
-          {
-            label: "아직 모름 — 도움 반응으로 확인",
-            description: "대안을 묻는 인터뷰 대신 작은 도움을 먼저 주고 반응에서 대안을 확인합니다.",
-            answerText: "현재 대안은 아직 모르므로 작은 실행 도움을 먼저 제공하고 반응에서 실제 대안을 확인한다.",
-            evidenceTarget: "오늘 물어볼 대안 질문",
-          },
-        ],
-      };
-    case "action_request":
-      return {
-        question: "오늘 이 ICP에게 Agentic30가 어떤 도움을 바로 제공할까요?",
-        helperText: "방법보다 상대가 오늘 얻는 결과를 고릅니다. 선택만 해도 실행 계약이 만들어집니다.",
-        freeTextPlaceholder: "선택사항: 특정 채널, 시간, 보낼 문장을 알고 있으면 보강",
-        primaryTextInput: {
-          label: "도움 방식 보강",
-          placeholder: "선택사항: 시간, 채널, 보낼 문장",
-          required: false,
-          submitLabel: "선택한 도움 제공",
-          validationMessage: "보강 입력은 선택사항입니다.",
-        },
-        options: [
-          {
-            label: "15분 실행 결과물 만들어주기",
-            description: "상대의 문서·코드·메모 하나를 받아 바로 쓸 수 있는 결과로 바꿔 줍니다.",
-            answerText: "오늘 ICP에게 실제 자료 1개를 보내 달라고 요청하고 Agentic30가 15분 안에 바로 쓸 수 있는 결과로 바꿔 준다.",
-            externalAction: "실제 자료 1개를 받아 Agentic30가 15분 안에 바로 쓸 수 있는 결과로 바꿔 준다.",
-            attemptThreshold: "자료 1개와 15분 실행",
-            successCondition: "상대가 결과물을 확인하고 다음 행동 또는 사용 가능 여부를 답한다.",
-            recommended: true,
-            evidenceTarget: "사용한 자료와 완료 화면",
-          },
-          {
-            label: "고객 요청 DM을 대신 완성해주기",
-            description: "상대가 오늘 실제 고객에게 보낼 한 줄 요청을 바로 보낼 수 있게 만듭니다.",
-            answerText: "오늘 ICP가 실제 고객에게 보낼 한 줄 요청을 Agentic30가 완성해 주고, 상대가 그대로 보내거나 수정해 보낸다.",
-            externalAction: "실제 고객에게 보낼 한 줄 요청을 완성해 준다.",
-            attemptThreshold: "오늘 보낼 요청문 1개",
-            successCondition: "상대가 요청문을 보내거나 보낼 수 없는 이유를 답한다.",
-            evidenceTarget: "시간·빈도·비용 답변",
-          },
-          {
-            label: "막힌 화면을 보고 다음 행동 정리",
-            description: "화면 공유나 캡처를 받아 막힌 지점과 바로 할 다음 행동을 정리합니다.",
-            answerText: "오늘 ICP에게 막힌 화면 캡처나 짧은 화면 공유를 요청하고 Agentic30가 다음 행동 1개를 정리해 준다.",
-            externalAction: "막힌 화면 캡처나 짧은 화면 공유를 받아 다음 행동 1개를 정리해 준다.",
-            attemptThreshold: "막힌 화면 1개 또는 15분 화면 공유",
-            successCondition: "상대가 다음 행동을 이해하고 실행 가능하다고 답한다.",
-            evidenceTarget: "막힌 화면과 원인 메모",
-          },
-        ],
-      };
-    case "evidence_contract":
-      return {
-        question: "도움을 줬다는 흔적과 오늘 마감은 무엇이면 충분할까요?",
-        helperText: "내일 다시 판단할 수 있는 가장 단순한 흔적을 고릅니다. 선택하면 Day 1 실행안이 닫힙니다.",
-        freeTextPlaceholder: "선택사항: 저장 위치나 파일명을 알고 있으면 보강",
-        primaryTextInput: {
-          label: "흔적 보강",
-          placeholder: "선택사항: 캡처/답장/메모 위치",
-          required: false,
-          submitLabel: "선택한 흔적으로 Day 1 닫기",
-          validationMessage: "보강 입력은 선택사항입니다.",
-        },
-        options: [
-          {
-            label: "로컬 메모 + 화면 캡처로 닫기",
-            description: "도움을 준 결과 화면과 짧은 판단 메모만 남깁니다.",
-            answerText: "결과 화면 캡처와 짧은 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
-            expectedProofKind: "screen_capture_with_note",
-            evidenceLocation: ".agentic30/day1-notes.md",
-            recommended: true,
-            evidenceTarget: "화면 캡처와 로컬 메모 위치",
-            autoTransitions: [
-              {
-                type: "schedule_execution",
-                fields: {
-                  commitmentNote: "오늘 ICP 후보 1명에게 선택한 도움을 제공하고 결과 화면 캡처와 로컬 메모를 .agentic30/day1-notes.md에 남긴다.",
-                },
-                auditText: "로컬 메모와 화면 캡처로 오늘 실행을 닫는다.",
-              },
-            ],
-          },
-          {
-            label: "DM/댓글 답장만 남기기",
-            description: "상대가 보인 반응, 거절, 다음 약속을 그대로 남깁니다.",
-            answerText: "DM 또는 댓글 답장 캡처와 거절/수락 이유를 .agentic30/day1-notes.md에 남긴다.",
-            expectedProofKind: "message_reply_capture",
-            evidenceLocation: ".agentic30/day1-notes.md",
-            evidenceTarget: "답장 캡처와 거절 이유",
-            autoTransitions: [
-              {
-                type: "schedule_execution",
-                fields: {
-                  commitmentNote: "오늘 ICP 후보 1명에게 도움 요청을 보내고 DM/댓글 답장이나 거절 이유를 .agentic30/day1-notes.md에 남긴다.",
-                },
-                auditText: "DM/댓글 답장이나 거절 이유로 오늘 실행을 닫는다.",
-              },
-            ],
-          },
-          {
-            label: "보낸 요청문과 내일 확인 시각 고정",
-            description: "오늘 실행이 발송까지라면 요청문, 채널, 내일 확인 시각만 남깁니다.",
-            answerText: "오늘 보낸 요청문, 보낸 채널, 내일 확인 시각을 .agentic30/day1-notes.md에 남긴다.",
-            expectedProofKind: "message_log",
-            evidenceLocation: ".agentic30/day1-notes.md",
-            evidenceTarget: "요청문, 채널, 확인 시각",
-            autoTransitions: [
-              {
-                type: "schedule_execution",
-                fields: {
-                  commitmentNote: "오늘 ICP 후보 1명에게 도움 요청을 보내고 요청문, 채널, 내일 확인 시각을 .agentic30/day1-notes.md에 남긴다.",
-                },
-                auditText: "보낸 요청문과 내일 확인 시각으로 오늘 실행을 닫는다.",
-              },
-            ],
-          },
-        ],
-      };
-    case "commitment":
-      return {
-        question: "오늘 어떤 도움 실행으로 끝낼까요?",
-        helperText: "선택하면 그 실행안으로 Day 1을 닫습니다. 세부 이름이나 시간은 있으면 보강하세요.",
-        freeTextPlaceholder: "선택사항: 정확한 사람, 시간, 채널을 알고 있으면 보강",
-        primaryTextInput: {
-          label: "실행 세부 보강",
-          placeholder: "선택사항: 시간 + 후보 + 채널",
-          required: false,
-          submitLabel: "선택한 실행으로 Day 1 닫기",
-          validationMessage: "보강 입력은 선택사항입니다.",
-        },
-        options: [
-          {
-            label: "오늘 DM 보내고 15분 도움 제공",
-            description: "후보에게 작은 실행 도움을 제안하고 답장/결과를 로컬에 남깁니다.",
-            answerText: "오늘 후보 1명에게 DM으로 15분 실행 도움을 제안하고 답장 또는 결과 화면을 .agentic30/day1-notes.md에 남긴다.",
-            recommended: true,
-            evidenceTarget: "DM 캡처와 로컬 노트",
-          },
-          {
-            label: "막힌 화면 캡처를 받아 다음 행동 제공",
-            description: "후보의 막힌 화면을 받아 바로 다음 행동 하나를 정리해 줍니다.",
-            answerText: "오늘 후보에게 막힌 화면 캡처를 요청하고 Agentic30가 다음 행동 하나를 정리해 .agentic30/day1-notes.md에 남긴다.",
-            evidenceTarget: "화면 공유 요청과 응답",
-          },
-          {
-            label: "후보 1명 찾고 첫 요청까지 작성",
-            description: "후보가 약하면 찾기와 첫 요청 작성을 오늘 실행으로 둡니다.",
-            answerText: "오늘 후보 1명을 찾고 첫 도움 요청 문장을 작성해 발송 준비 또는 발송 캡처를 .agentic30/day1-notes.md에 남긴다.",
-            evidenceTarget: "새 후보와 연락 경로",
-          },
-          {
-            label: "오늘은 초안만 만들고 내일 발송",
-            description: "지금 발송이 어렵다면 내일 보낼 사람/문장/흔적 위치만 고정합니다.",
-            answerText: "오늘은 내일 보낼 후보 1명과 도움 요청 문장을 확정하고 .agentic30/day1-notes.md에 남긴다.",
-            evidenceTarget: "이월 사유와 다음 시각",
-          },
-        ],
-      };
-    default:
-      return null;
-  }
-}
-
-function buildLockedGetUsersHostCard(session, {
-  attemptId = "",
-  expectedRevision = 0,
-  cardType = "",
-  transition = "",
-} = {}) {
-  const card = cardDefinition(cardType);
-  const signalId = card?.legacySignalId || "";
-  if (!signalId) {
-    throw new Error(`locked get_users host card could not resolve signal for card ${cardType || "(empty)"}`);
-  }
-  const attemptToken = {
-    attemptId: String(attemptId || ""),
-    expectedRevision: Number(expectedRevision) || 0,
-    cardType: String(cardType || ""),
-    transition: String(transition || card?.transition || ""),
-  };
-  if (String(cardType || "") === "candidate_selection") {
-    return buildCanonicalFirstCandidateCard({
-      sessionId: session?.id || "",
-      provider: session?.provider || "codex",
-      toolName: CODEX_STRUCTURED_INPUT_TOOL,
-      attemptToken,
-    });
-  }
-  const spec = lockedGetUsersHostCardSpec(cardType);
-  if (!spec) {
-    throw new Error(`locked get_users host card missing copy for card ${cardType || "(empty)"}`);
-  }
-  const label = officeHoursLockedGetUsersSignalLabel(signalId);
-  return {
-    sessionId: String(session?.id || ""),
-    toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: "Office Hours",
-    questions: [
-      {
-        questionId: signalId,
-        header: label,
-        question: spec.question,
-        helperText: spec.helperText,
-        freeTextPlaceholder: spec.freeTextPlaceholder,
-        options: spec.options,
-        multiSelect: false,
-        allowFreeText: true,
-        requiresFreeText: false,
-        ...(spec.allowsEmptySubmit === true ? { allowsEmptySubmit: true } : {}),
-        primaryTextInput: spec.primaryTextInput,
-        textMode: "short",
-      },
-    ],
-    generation: {
-      mode: "office_hours_inline",
-      docType: "day1_step",
-      signalId,
-      signalLabel: label,
-      ...lockedGetUsersVisibleDimension(cardType),
-      ...attemptToken,
-    },
-  };
-}
-
-async function attachLockedGetUsersNextAttemptCard(session, {
-  projection = null,
-  attemptId = "",
-  revision = 0,
-  previousRequestId = "",
-} = {}) {
-  const action = nextAttemptAction(projection);
-  if (action?.kind !== "card") return null;
-  const card = cardDefinition(action.cardType);
-  if (!card?.legacySignalId) {
-    throw new Error(`locked get_users next action references unknown card ${action.cardType || "(empty)"}`);
-  }
-  const payload = buildLockedGetUsersHostCard(session, {
-    attemptId,
-    expectedRevision: revision,
-    cardType: action.cardType,
-    transition: card.transition,
-  });
-  const request = await createUserInputRequest(
-    appSupportPath,
-    prepareOfficeHoursStructuredInputRequest(payload),
-  );
-  session.pendingUserInput = request;
-  session.status = "awaiting_input";
-  session.error = null;
-  touch(session);
-  await persistOfficeHoursPendingQuestion(session, request, "locked_get_users_next_card");
-  emitOfficeHoursStatus(session, {
-    stage: "question_ready",
-    requestId: request.requestId,
-    progressText: `${officeHoursLockedGetUsersSignalLabel(card.legacySignalId) || "다음 질문"} 준비 완료`,
-  });
-  telemetry.captureEvent("mac_sidecar_office_hours_locked_get_users_host_card_created", {
-    session_id: session.id,
-    provider: session.provider,
-    previous_request_id: previousRequestId,
-    request_id: request.requestId,
-    attempt_id: attemptId,
-    revision,
-    card_type: action.cardType,
-    signal_id: card.legacySignalId,
-  });
-  return request;
 }
 
 async function prepareOfficeHoursStructuredInputRequestForSession(session, request, {
   source = "sync_pending_user_input_requests",
 } = {}) {
-  const candidateUnblockRequest = normalizeDay1CandidateUnblockRequest(request);
-  if (candidateUnblockRequest) {
-    return prepareOfficeHoursStructuredInputRequest(candidateUnblockRequest);
-  }
-
-  const context = activeOfficeHoursContext(session);
-  if (!isLockedDay1GetUsersContext(context)) {
-    return prepareOfficeHoursStructuredInputRequest(request);
-  }
-
-  const rawSignalId = String(request?.generation?.signalId || request?.generation?.signal_id || "").trim();
-  if (rawSignalId === "get_users_first_candidate_name" || rawSignalId === "office_hours_get_users_first_candidate_name") {
-    throw new Error(
-      "Office Hours structured input contract violation: get_users_first_candidate_name is not a valid locked get_users signal; use get_users_first_candidate.",
-    );
-  }
-
-  const ensured = await ensureOfficeHoursAttemptForSession(session, {
-    day: session.runtime?.officeHours?.day,
-    source: session.runtime?.officeHours?.source,
-  });
-  const snapshot = await projectAttempt({ workspaceRoot, attemptId: ensured.attemptId });
-  if (!snapshot) {
-    throw new Error(`locked get_users ${source} could not project attempt ${ensured.attemptId}`);
-  }
-  const action = nextAttemptAction(snapshot.projection);
-  if (action.kind !== "card") {
-    const error = new Error(`locked get_users ${source} received a structured card while attempt action is ${action.kind}`);
-    error.code = "ERR_LOCKED_GET_USERS_STALE_CARD_AFTER_WAIT";
-    error.actionKind = action.kind;
-    error.action_kind = action.kind;
-    throw error;
-  }
-  const card = cardDefinition(action.cardType);
-  const canonicalSignalId = card?.legacySignalId || "";
-  if (!canonicalSignalId) {
-    throw new Error(`locked get_users ${source} could not resolve a canonical signal for card ${action.cardType}`);
-  }
-
-  const attemptToken = {
-    attemptId: ensured.attemptId,
-    expectedRevision: snapshot.revision,
-    cardType: action.cardType,
-    transition: card?.transition || "",
-  };
-  const hostPayload = buildLockedGetUsersHostCard(session, {
-    attemptId: ensured.attemptId,
-    expectedRevision: snapshot.revision,
-    cardType: action.cardType,
-    transition: card?.transition || "",
-  });
-  let prepared = {
-    ...hostPayload,
-    requestId: request.requestId,
-    createdAt: request.createdAt,
-    toolName: request.toolName || hostPayload.toolName,
-    generation: {
-      ...(hostPayload.generation || {}),
-      mode: request.generation?.mode || hostPayload.generation?.mode || "office_hours_tool",
-      docType: request.generation?.docType || hostPayload.generation?.docType || "day1_step",
-      signalId: canonicalSignalId,
-      signalLabel: officeHoursLockedGetUsersSignalLabel(canonicalSignalId)
-        || hostPayload.generation?.signalLabel
-        || "",
-      ...lockedGetUsersVisibleDimension(action.cardType),
-      ...attemptToken,
-    },
-  };
-
-  if (shouldValidateFirstCandidatePayload(prepared, context)) {
-    const firstQuestion = Array.isArray(prepared.questions) ? prepared.questions[0] : null;
-    const classification = classifyFirstCandidatePayload(prepared);
-    if (!classification || classification.genericOnly || !classification.forcesSpecificity) {
-      telemetry.captureEvent("mac_sidecar_office_hours_first_candidate_rejected", {
-        session_id: session.id,
-        provider: session.provider,
-        reason: !classification ? "no_question" : classification.genericOnly ? "generic_only" : "not_specific",
-        source,
-      });
-      prepared = buildCanonicalFirstCandidateCard({
-        sessionId: session.id,
-        provider: session.provider,
-        toolName: prepared.toolName,
-        attemptToken,
-      });
-      prepared = {
-        ...prepared,
-        requestId: request.requestId,
-        createdAt: request.createdAt,
-        generation: {
-          ...(prepared.generation || {}),
-          mode: request.generation?.mode || "office_hours_tool",
-          docType: request.generation?.docType || "day1_step",
-          signalId: canonicalSignalId,
-          signalLabel: officeHoursLockedGetUsersSignalLabel(canonicalSignalId),
-          ...attemptToken,
-        },
-      };
-    }
-  }
-
-  return prepareOfficeHoursStructuredInputRequest(prepared);
+  void session;
+  void source;
+  return prepareOfficeHoursStructuredInputRequest(request);
 }
 
-// HOST HARD-STAMP: compute the canonical next ladder signalId for the locked Day-1
-// get_users flow from the session's already-answered turns. The host — not the
-// model — owns slot identity/order, so this value is stamped onto the emitted card
-// regardless of what the model put in generation.signalId. Returns "" for
-// non-locked flows (no stamp). Throws (fail-closed, per the contract) when the next
-// slot cannot be determined inside a locked get_users flow: silently guessing the
-// slot is exactly the bug this replaces.
 async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMessage, {
   context = "",
   source = "provider_result",
@@ -12325,108 +10018,13 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
     && /generated_by:\s*office-hours|handoff_for:\s*plan-ceo-review|CEO Review Handoff/i.test(String(assistantMessage.content || ""))) {
     return null;
   }
-  // R1.b: the ValidationAttempt projection — not a turn-log scan — owns slot
-  // identity/order for the locked Day-1 get_users flow. Resolve (or seed) the
-  // attempt, read the next action; promote a card only while gathering.
-  const isLockedGetUsers = isLockedDay1GetUsersContext(context);
-  let ladderSignalOverride = "";
-  let attemptToken = null;
-  if (isLockedGetUsers) {
-    const ensured = await ensureOfficeHoursAttemptForSession(session, {
-      day: session.runtime?.officeHours?.day,
-      source: session.runtime?.officeHours?.source,
-    });
-    const snapshot = await projectAttempt({ workspaceRoot, attemptId: ensured.attemptId });
-    if (!snapshot) {
-      throw new Error(`locked get_users promote could not project attempt ${ensured.attemptId}`);
-    }
-    let action = null;
-    try {
-      action = nextAttemptAction(snapshot.projection);
-    } catch (error) {
-      throw new Error(`locked get_users promote could not derive next action: ${error?.message || error}`);
-    }
-    if (action.kind !== "card") {
-      // Gather complete (wait/terminal/blocked/carried): do not open a new card.
-      // The host surfaces the close from the projection-derived runtime DTO.
-      if (session.runtime?.officeHours) {
-        session.runtime.officeHours.attemptId = ensured.attemptId;
-        session.runtime.officeHours.revision = snapshot.revision;
-        const wireDTO = deriveOfficeHoursWireDTO(snapshot.projection);
-        if (wireDTO) {
-          session.runtime.officeHours.nextAction = wireDTO.nextAction;
-          session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
-          session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
-        }
-      }
-      return null;
-    }
-    const card = cardDefinition(action.cardType);
-    ladderSignalOverride = card?.legacySignalId || "";
-    attemptToken = {
-      attemptId: ensured.attemptId,
-      expectedRevision: snapshot.revision,
-      cardType: action.cardType,
-      transition: card?.transition || "",
-      signalId: ladderSignalOverride,
-    };
-  }
-  let payload = buildOfficeHoursInlineStructuredPromptPayload({
+  const payload = buildOfficeHoursInlineStructuredPromptPayload({
     sessionId: session.id,
     provider: session.provider,
     assistantMessage,
     context,
-    ladderSignalOverride,
   });
   if (!payload) return null;
-  // ★ Stamp the CAS token onto generation BEFORE createUserInputRequest so the
-  // user-input validator (passthrough), workspace-memory persist/restore, and the
-  // submit handler all read the exact revision the user's card is bound to (GO-7).
-  if (attemptToken) {
-    payload.generation = {
-      ...(payload.generation || {}),
-      attemptId: attemptToken.attemptId,
-      expectedRevision: attemptToken.expectedRevision,
-      cardType: attemptToken.cardType,
-      transition: attemptToken.transition,
-    };
-  }
-
-  // ── Host-enforced honest first_candidate (Deliverable B) ────────────────────
-  // GPT-5.5 Pro: prompt wording alone is insufficient — the model can still emit a
-  // generic-category sourcing card. With NO `## Verified Candidate Hints` injected
-  // (today's reality), the host validates the first_candidate card with the SAME
-  // deterministic matcher the grounding harness uses, rejects a generic-only card,
-  // and substitutes the canonical free-text + single-blocker card. Fail-closed, no
-  // silent accept. A card that already forces a named free-text capture (or carries
-  // grounded hint options) is never false-rejected.
-  if (shouldValidateFirstCandidatePayload(payload, context)) {
-    const classification = classifyFirstCandidatePayload(payload);
-    const firstQuestion = Array.isArray(payload.questions) ? payload.questions[0] : null;
-    if (!classification || classification.genericOnly || !classification.forcesSpecificity) {
-      const fallback = buildCanonicalFirstCandidateCard({
-        sessionId: session.id,
-        provider: session.provider,
-        toolName: payload.toolName,
-        attemptToken: attemptToken
-          ? {
-              attemptId: attemptToken.attemptId,
-              expectedRevision: attemptToken.expectedRevision,
-              cardType: attemptToken.cardType,
-              transition: attemptToken.transition,
-            }
-          : null,
-      });
-      telemetry.captureEvent("mac_sidecar_office_hours_first_candidate_rejected", {
-        session_id: session.id,
-        provider: session.provider,
-        reason: !classification ? "no_question" : classification.genericOnly ? "generic_only" : "not_specific",
-        source,
-      });
-      payload = fallback;
-    }
-  }
-
   const request = await createUserInputRequest(
     appSupportPath,
     prepareOfficeHoursStructuredInputRequest(payload),
@@ -12684,13 +10282,10 @@ async function runOfficeHours(session, {
       if (completedExpectedCount > 0) {
         completedRuntime.expectedQuestionCount = completedExpectedCount;
       }
-      const completedIsGetUsers = isLockedDay1GetUsersContext(completedRuntime.context);
-      if (!completedIsGetUsers) {
-        completedRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
-          completedSnapshotTurns,
-          session.id,
-        );
-      }
+      completedRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
+        completedSnapshotTurns,
+        session.id,
+      );
       completedRuntime.promptSnapshots = buildOfficeHoursRuntimePromptSnapshots(
         session,
         completedSnapshotTurns,
@@ -12699,43 +10294,36 @@ async function runOfficeHours(session, {
       const completedSnapshotTerminal = hasOfficeHoursTerminalResumeTurn(completedSnapshotTurns);
       const completedSnapshotCapReached = completedExpectedCount > 0
         && completedSnapshotTurns.length >= completedExpectedCount;
-      if (!completedIsGetUsers && completedSnapshotTerminal) {
+      if (completedSnapshotTerminal) {
         completedRuntime.terminalAnswered = true;
       }
       session.runtime = attachOfficeHoursRuntime(session.runtime, completedRuntime);
       if (!session.title || session.title === "New Session") {
         session.title = "Office Hours";
       }
-      if (completedIsGetUsers) {
-        // R1.b: get_users carries the ValidationAttempt pointer + derived display.
-        // No count/terminal/doc-readiness authority.
-        const ensured = await ensureOfficeHoursAttemptForSession(session, {
-          day: runtimeDay,
-          source,
+      if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: completedSnapshotCapReached })) {
+        const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
+          writeDebtReport: true,
         });
-        const snapshot = await projectAttempt({ workspaceRoot, attemptId: ensured.attemptId });
-        if (snapshot && session.runtime?.officeHours) {
-          session.runtime.officeHours.attemptId = ensured.attemptId;
-          session.runtime.officeHours.revision = snapshot.revision;
-          const wireDTO = deriveOfficeHoursWireDTO(snapshot.projection);
-          if (wireDTO) {
-            session.runtime.officeHours.nextAction = wireDTO.nextAction;
-            session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
-            session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
-          }
-        }
-      } else {
-        // Non-get_users lanes keep the count cap, but handoff clarity gates
-        // document readiness.
-        if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: completedSnapshotCapReached })) {
-          const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
-            writeDebtReport: true,
+        const completionClarity = assessDay1OfficeHoursCompletionClarity(session, readiness);
+        if (completionClarity) {
+          await attachDay1OfficeHoursCompletionClarityPrompt(session, completionClarity, {
+            previousRequestId: completedRuntime.promptSnapshots?.at(-1)?.requestId || "",
+            reason: "completed_snapshot",
           });
-          const completionClarity = assessDay1OfficeHoursCompletionClarity(session, readiness);
-          if (completionClarity) {
-            await attachDay1OfficeHoursCompletionClarityPrompt(session, completionClarity, {
+          await persistSessions();
+          broadcast({ type: "session_updated", session });
+          const followupRun = state.activeRuns.get(session.id);
+          if (followupRun?.runKey === runKey) {
+            state.activeRuns.delete(session.id);
+          }
+          return;
+        } else {
+          const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
+          if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
+            session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
+            await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
               previousRequestId: completedRuntime.promptSnapshots?.at(-1)?.requestId || "",
-              reason: "completed_snapshot",
             });
             await persistSessions();
             broadcast({ type: "session_updated", session });
@@ -12744,29 +10332,14 @@ async function runOfficeHours(session, {
               state.activeRuns.delete(session.id);
             }
             return;
-          } else {
-            const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
-            if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
-              session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
-              await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
-                previousRequestId: completedRuntime.promptSnapshots?.at(-1)?.requestId || "",
-              });
-              await persistSessions();
-              broadcast({ type: "session_updated", session });
-              const followupRun = state.activeRuns.get(session.id);
-              if (followupRun?.runKey === runKey) {
-                state.activeRuns.delete(session.id);
-              }
-              return;
-            }
           }
-          completedRuntime.documentReadiness = session.runtime.officeHours.documentReadiness;
         }
-        if (completedSnapshotCapReached) {
-          session.runtime.officeHours.completedByExpectedCount = true;
-          session.runtime.officeHours.completedQuestionCount = completedSnapshotTurns.length;
-          session.runtime.officeHours.expectedQuestionCount = completedExpectedCount;
-        }
+        completedRuntime.documentReadiness = session.runtime.officeHours.documentReadiness;
+      }
+      if (completedSnapshotCapReached) {
+        session.runtime.officeHours.completedByExpectedCount = true;
+        session.runtime.officeHours.completedQuestionCount = completedSnapshotTurns.length;
+        session.runtime.officeHours.expectedQuestionCount = completedExpectedCount;
       }
       session.status = "idle";
       session.error = null;
@@ -12938,7 +10511,6 @@ async function runOfficeHours(session, {
     // terminal route a relaunch would re-run the provider on a finished
     // interview.
     const officeHoursResumeTerminal = hasOfficeHoursTerminalResumeTurn(officeHoursResumeTurns);
-    const officeHoursResumeIsGetUsers = isLockedDay1GetUsersContext(officeHoursRuntime.context);
     let officeHoursResumeWrapUp = officeHoursResumeTerminal
       || (officeHoursExpectedQuestionCount > 0
         && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount);
@@ -12952,9 +10524,6 @@ async function runOfficeHours(session, {
       // with the prior session. Skipped when the session already carries real
       // answer rows (same-daemon retry) so turns are never duplicated.
       const officeHoursResumeSeeded = seedOfficeHoursTranscriptFromTurns(session, officeHoursResumeTurns);
-      // Non-get_users lanes: the resume-turn counter feeds the count-based
-      // completion detector. The locked Day-1 get_users lane ignores it (the
-      // ValidationAttempt projection is authority).
       officeHoursRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
         officeHoursResumeTurns,
         session.id,
@@ -12964,80 +10533,6 @@ async function runOfficeHours(session, {
         officeHoursResumeTurns,
         runtimeDay,
       );
-      if (officeHoursResumeIsGetUsers) {
-        session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
-        if (!session.title || session.title === "New Session") {
-          session.title = "Office Hours";
-        }
-        const recoveredAttempt = await recoverLockedGetUsersAttemptForSession(session);
-        if (recoveredAttempt?.projection) {
-          const wireDTO = stampLockedGetUsersAttemptProjection(session, recoveredAttempt);
-          const predicates = attemptCompletionPredicates(recoveredAttempt.projection);
-          officeHoursResumeWrapUp = predicates.gatherComplete;
-          if (!predicates.gatherComplete) {
-            const action = wireDTO?.nextAction || nextAttemptAction(recoveredAttempt.projection);
-            const expectedSignalId = action?.kind === "card"
-              ? cardDefinition(action.cardType)?.legacySignalId || ""
-              : "";
-            if (
-              expectedSignalId
-              && isOfficeHoursStructuredRequest(session.pendingUserInput)
-              && officeHoursStructuredRequestSignalId(session.pendingUserInput) === expectedSignalId
-            ) {
-              const request = await writeUserInputRequest(
-                appSupportPath,
-                prepareOfficeHoursStructuredInputRequest({
-                  ...session.pendingUserInput,
-                  sessionId: session.id,
-                }),
-              );
-              session.pendingUserInput = request;
-              session.status = "awaiting_input";
-              session.error = null;
-              touch(session);
-              await persistOfficeHoursPendingQuestion(session, request, "locked_get_users_resume_existing_card");
-              await persistSessions();
-              broadcast({ type: "session_updated", session });
-              emitOfficeHoursStatus(session, {
-                stage: "question_ready",
-                requestId: request.requestId,
-                progressText: `${officeHoursLockedGetUsersSignalLabel(expectedSignalId) || "다음 질문"} 준비 완료`,
-              });
-              telemetry.captureEvent("mac_sidecar_office_hours_locked_get_users_resume_card_restored", {
-                session_id: session.id,
-                provider: session.provider,
-                request_id: request.requestId,
-                attempt_id: recoveredAttempt.attemptId,
-                revision: recoveredAttempt.revision,
-                signal_id: expectedSignalId,
-                source: String(source || ""),
-              });
-              const resumeCardRun = state.activeRuns.get(session.id);
-              if (resumeCardRun?.runKey === runKey) {
-                state.activeRuns.delete(session.id);
-              }
-              return;
-            }
-
-            const attached = await attachLockedGetUsersNextAttemptCard(session, {
-              projection: recoveredAttempt.projection,
-              attemptId: recoveredAttempt.attemptId,
-              revision: recoveredAttempt.revision,
-              previousRequestId: officeHoursRuntime.promptSnapshots?.at(-1)?.requestId || "",
-            });
-            if (!attached) {
-              throw new Error("locked get_users resume could not attach the next pending card");
-            }
-            await persistSessions();
-            broadcast({ type: "session_updated", session });
-            const resumeCardRun = state.activeRuns.get(session.id);
-            if (resumeCardRun?.runKey === runKey) {
-              state.activeRuns.delete(session.id);
-            }
-            return;
-          }
-        }
-      }
       telemetry.captureEvent("mac_sidecar_office_hours_resumed", {
         session_id: session.id,
         provider: session.provider,
@@ -13052,49 +10547,38 @@ async function runOfficeHours(session, {
         // Skip the provider run: a wrap-up prompt would re-bill on every relaunch
         // until the interview step closes. Settle the session idle with the seeded
         // transcript; the commitment bar carries the close from here.
-        const wrapUpIsGetUsers = officeHoursResumeIsGetUsers;
         const officeHoursResumeCapReached = officeHoursExpectedQuestionCount > 0
           && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount;
-        if (!wrapUpIsGetUsers && officeHoursResumeTerminal) {
-          // Non-get_users lane: restore the prior session's terminal stamp from
-          // the durable turn flag so the count-based completion gate treats a
-          // smart-skip conclusion (fewer answers than expected) as done.
+        if (officeHoursResumeTerminal) {
           officeHoursRuntime.terminalAnswered = true;
         }
         session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
         if (!session.title || session.title === "New Session") {
           session.title = "Office Hours";
         }
-        if (wrapUpIsGetUsers) {
-          // R1.b: completion authority is the ValidationAttempt projection — not
-          // the turn count or any doc-readiness gate (both removed for get_users).
-          const ensured = await ensureOfficeHoursAttemptForSession(session, {
-            day: runtimeDay,
-            source,
+        if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: officeHoursResumeCapReached })) {
+          const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
+            writeDebtReport: true,
           });
-          const snapshot = await projectAttempt({ workspaceRoot, attemptId: ensured.attemptId });
-          if (snapshot && session.runtime?.officeHours) {
-            session.runtime.officeHours.attemptId = ensured.attemptId;
-            session.runtime.officeHours.revision = snapshot.revision;
-            const wireDTO = deriveOfficeHoursWireDTO(snapshot.projection);
-            if (wireDTO) {
-              session.runtime.officeHours.nextAction = wireDTO.nextAction;
-              session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
-              session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
-            }
-          }
-        } else {
-          // Non-get_users lanes keep the count cap, but handoff clarity gates
-          // document readiness.
-          if (shouldGateDay1OfficeHoursDocumentReadiness(session, { capReached: officeHoursResumeCapReached })) {
-            const readiness = await evaluateAndStampDay1OfficeHoursDocumentReadiness(session, {
-              writeDebtReport: true,
+          const completionClarity = assessDay1OfficeHoursCompletionClarity(session, readiness);
+          if (completionClarity) {
+            await attachDay1OfficeHoursCompletionClarityPrompt(session, completionClarity, {
+              previousRequestId: officeHoursRuntime.promptSnapshots?.at(-1)?.requestId || "",
+              reason: "resume_wrap_up",
             });
-            const completionClarity = assessDay1OfficeHoursCompletionClarity(session, readiness);
-            if (completionClarity) {
-              await attachDay1OfficeHoursCompletionClarityPrompt(session, completionClarity, {
+            await persistSessions();
+            broadcast({ type: "session_updated", session });
+            const followupRun = state.activeRuns.get(session.id);
+            if (followupRun?.runKey === runKey) {
+              state.activeRuns.delete(session.id);
+            }
+            return;
+          } else {
+            const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
+            if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
+              session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
+              await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
                 previousRequestId: officeHoursRuntime.promptSnapshots?.at(-1)?.requestId || "",
-                reason: "resume_wrap_up",
               });
               await persistSessions();
               broadcast({ type: "session_updated", session });
@@ -13103,28 +10587,13 @@ async function runOfficeHours(session, {
                 state.activeRuns.delete(session.id);
               }
               return;
-            } else {
-              const readinessFollowupCount = Number.parseInt(session.runtime?.documentReadinessFollowupCount ?? 0, 10) || 0;
-              if (readiness?.ready !== true && readinessFollowupCount < OFFICE_HOURS_DOCUMENT_READINESS_FOLLOWUP_CAP) {
-                session.runtime = { ...(session.runtime || {}), documentReadinessFollowupCount: readinessFollowupCount + 1 };
-                await attachDay1DocumentReadinessFollowupPrompt(session, readiness, {
-                  previousRequestId: officeHoursRuntime.promptSnapshots?.at(-1)?.requestId || "",
-                });
-                await persistSessions();
-                broadcast({ type: "session_updated", session });
-                const followupRun = state.activeRuns.get(session.id);
-                if (followupRun?.runKey === runKey) {
-                  state.activeRuns.delete(session.id);
-                }
-                return;
-              }
             }
           }
-          if (officeHoursResumeCapReached) {
-            session.runtime.officeHours.completedByExpectedCount = true;
-            session.runtime.officeHours.completedQuestionCount = officeHoursResumeTurns.length;
-            session.runtime.officeHours.expectedQuestionCount = officeHoursExpectedQuestionCount;
-          }
+        }
+        if (officeHoursResumeCapReached) {
+          session.runtime.officeHours.completedByExpectedCount = true;
+          session.runtime.officeHours.completedQuestionCount = officeHoursResumeTurns.length;
+          session.runtime.officeHours.expectedQuestionCount = officeHoursExpectedQuestionCount;
         }
         session.status = "idle";
         session.error = null;
@@ -13209,26 +10678,6 @@ async function runOfficeHours(session, {
     );
     officeHoursRuntime.dayClosePolicy = dayClosePolicy;
     session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
-    // R1.b: seed (or recover) the ValidationAttempt for the locked Day-1 get_users
-    // flow BEFORE the provider run so promotion stamps the correct CAS token and
-    // the runtime carries the authority pointer + projection-derived display.
-    if (isLockedDay1GetUsersContext(officeHoursRuntime.context)) {
-      const ensured = await ensureOfficeHoursAttemptForSession(session, {
-        day: runtimeDay,
-        source,
-      });
-      const startSnapshot = await projectAttempt({ workspaceRoot, attemptId: ensured.attemptId });
-      if (startSnapshot && session.runtime?.officeHours) {
-        session.runtime.officeHours.attemptId = ensured.attemptId;
-        session.runtime.officeHours.revision = startSnapshot.revision;
-        const wireDTO = deriveOfficeHoursWireDTO(startSnapshot.projection);
-        if (wireDTO) {
-          session.runtime.officeHours.nextAction = wireDTO.nextAction;
-          session.runtime.officeHours.gatherProgress = wireDTO.gatherProgress;
-          session.runtime.officeHours.acceptableDay1Close = wireDTO.acceptableDay1Close;
-        }
-      }
-    }
     touch(session);
     await persistSessions();
     broadcast({ type: "session_updated", session });
@@ -13317,6 +10766,10 @@ async function runOfficeHours(session, {
       warmup_used: officeHoursWarmUsed,
     });
     const officeHoursProjectContextBrief = await buildOfficeHoursProjectContextBrief(workspaceRoot);
+    const officeHoursEffectorContext = await computeOfficeHoursEffectorContext({
+      workspaceRoot,
+      context: officeHoursRuntime.context,
+    }).catch(() => "");
     const result = await runProviderStream({
       provider: session.provider,
       sessionRuntime: session.runtime,
@@ -13386,6 +10839,7 @@ async function runOfficeHours(session, {
         context: officeHoursRuntime.context,
         provider: session.provider,
         projectContextBrief: officeHoursProjectContextBrief,
+        effectorContext: officeHoursEffectorContext,
       }),
       onRunEvent: (event) => {
         if (isStructuredInputResponseRunEvent(event)) {
@@ -14047,17 +11501,6 @@ function mergeProviderRuntime(currentRuntime = {}, providerRuntime = {}) {
     if (Object.prototype.hasOwnProperty.call(currentRuntime || {}, key)) {
       merged[key] = currentRuntime[key];
     }
-  }
-  // R1.b: the host owns the ValidationAttempt pointer ({attemptId, revision}). A
-  // provider runtime must never clobber it — carry it forward when the provider's
-  // officeHours object (if any) omits the pointer the host already holds.
-  const priorPointer = currentRuntime?.officeHours?.attemptId;
-  if (priorPointer && merged.officeHours && !merged.officeHours.attemptId) {
-    merged.officeHours = {
-      ...merged.officeHours,
-      attemptId: priorPointer,
-      revision: currentRuntime.officeHours.revision,
-    };
   }
   return merged;
 }
@@ -16780,22 +14223,6 @@ async function currentWorkspaceOnboardingHypothesis() {
   return state.workspaceOnboardingHypothesis;
 }
 
-function scheduleWorkspaceOnboardingHypothesisWarmup() {
-  if (state.workspaceOnboardingHypothesis || workspaceOnboardingHypothesisWarmup) {
-    return;
-  }
-  workspaceOnboardingHypothesisWarmup = currentWorkspaceOnboardingHypothesis()
-    .catch((error) => {
-      telemetry.captureException(error, {
-        operation: "workspaceOnboardingHypothesisWarmup",
-    });
-      return null;
-    })
-    .finally(() => {
-      workspaceOnboardingHypothesisWarmup = null;
-    });
-}
-
 function normalizeDay1HandoffPayload(value = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const clean = (key, max = 4000) => String(source[key] || "").trim().slice(0, max);
@@ -17060,77 +14487,6 @@ async function startDay1DocHandoff({
   return session;
 }
 
-function buildDay1HandoffJudgeBlockedStructuredInput(result = {}) {
-  const judge = result?.judgeResult || {};
-  const followUps = Array.isArray(judge.followUpQuestions)
-    ? judge.followUpQuestions.map((question) => cleanShortText(question, 180)).filter(Boolean)
-    : [];
-  const debts = Array.isArray(judge.evidenceDebt)
-    ? judge.evidenceDebt.map((debt) => cleanShortText(debt, 96)).filter(Boolean).slice(0, 3)
-    : [];
-  const score = Number.isFinite(Number(judge.score)) ? Number(judge.score) : 0;
-  const primaryQuestion = followUps[0] || "문서 리뷰 기준을 넘기려면 어떤 증거를 먼저 보완할까요?";
-
-  return {
-    toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: "Office Hours 저장 전 근거 보완",
-    intro: {
-      title: "문서 저장 전 근거 보완",
-      body: `문서 judge 점수는 ${score}/10이고 기준은 8/10입니다. 정식 문서 저장 전 필요한 증거를 하나 고르세요.`,
-      bullets: debts.length ? debts : ["열린 약속, 비용 숫자, 유료 진입점 중 하나를 더 좁혀야 합니다."],
-    },
-    questions: [
-      {
-        questionId: "day1_doc_handoff_judge_blocked",
-        header: "저장 전 증거",
-        question: primaryQuestion,
-        helperText: "지금 답할 수 있는 가장 구체적인 보완 방향 하나를 선택하세요.",
-        options: [
-          {
-            label: "실명 고객 3명에게 결제 요청 발송 완료",
-            description: "실명 후보 3명에게 가격/계약 조건을 포함한 결제 요청을 보냈고 캡처와 보낸 시각으로 확인할 수 있습니다.",
-            evidenceTarget: "실명 고객 3명에게 보낸 결제 요청 캡처와 보낸 시각",
-            failureMode: "오늘 3명에게 가격/계약 조건이 담긴 결제 요청을 못 보내면 이번 cycle은 실패입니다.",
-            mapsTo: "GOAL.activation_action",
-            nextIntent: "actual_payment_or_contract",
-          },
-          {
-            label: "열린 약속부터 추적",
-            description: "실명 후보, 날짜, 완료 조건이 있는 약속을 다음 Office Hours 근거로 삼습니다.",
-            nextIntent: "track_open_commitment",
-          },
-          {
-            label: "비용을 숫자로 확정",
-            description: "잃은 시간, 미룬 결정, 놓친 돈 중 하나를 숫자로 고정해 문제 압박을 보강합니다.",
-            nextIntent: "quantify_pressure_cost",
-          },
-          {
-            label: "유료 진입점 1개로 축소",
-            description: "이번 주에 보여주거나 팔 수 있는 가장 작은 작업 단위 하나로 문서 범위를 줄입니다.",
-            nextIntent: "narrow_paid_entry",
-          },
-          {
-            label: "증거 없음으로 보류",
-            description: "아직 정식 문서로 저장하지 않고, 먼저 실제 고객 행동 증거를 모읍니다.",
-            nextIntent: "defer_until_hard_evidence",
-          },
-        ],
-        multiSelect: false,
-        allowFreeText: false,
-        requiresFreeText: false,
-        textMode: "short",
-      },
-    ],
-    generation: {
-      mode: "office_hours",
-      docType: "day1_doc_handoff_judge",
-      signalId: "day1_doc_handoff_judge_blocked",
-      signalLabel: "저장 전 근거 보완",
-      dimensionTotal: 6,
-    },
-  };
-}
-
 async function writeAllDay1DocHandoff({
   sessionId = "",
   provider = "",
@@ -17372,14 +14728,6 @@ async function refreshProjectContextFromRequest(payload = {}) {
     confidence: projectContext.confidence,
   });
   return projectContext;
-}
-
-function cachedWorkspaceOnboardingHypothesisForIddDoc(doc) {
-  if (doc?.type !== "icp") {
-    return null;
-  }
-  scheduleWorkspaceOnboardingHypothesisWarmup();
-  return state.workspaceOnboardingHypothesis ?? null;
 }
 
 async function startIddDocumentQueue(options = {}) {
@@ -18466,84 +15814,6 @@ function day1AlignmentPlanReadyForWorkspaceScan(plan) {
   return readiness.status === "ready" && plan?.qualityGate?.passed === true;
 }
 
-async function broadcastWorkspaceScanInsufficientEvidence(scanRoot, {
-  day1AlignmentPlan = null,
-  evidenceBundle = null,
-  scanResult = {},
-  foundCount = 0,
-} = {}) {
-  const bundle = evidenceBundle || await buildWorkspaceScanEvidenceBundle({
-    workspaceRoot: scanRoot,
-    scanResult,
-  }).catch(() => null);
-  const readiness = day1AlignmentPlan?.readiness || {
-    status: "blocked",
-    missingFields: ["targetUser", "problem", "validationAction"],
-    fieldEvidence: {},
-    rootCause: "고객/문제/활성 행동 quote 근거가 부족해 Day 1 질문을 구성할 수 없습니다.",
-  };
-  const missingFields = Array.isArray(readiness.missingFields) ? readiness.missingFields : [];
-  const rootCause = String(readiness.rootCause || "필수 근거가 부족해 Day 1 질문을 구성할 수 없습니다.");
-  const localFindings = summarizeWorkspaceScanLocalFindings(bundle || {});
-  telemetry.captureEvent("mac_sidecar_workspace_scan_blocked", {
-    scan_root: scanRoot,
-    reason: "insufficient_evidence",
-    readiness_status: readiness.status || "blocked",
-    missing_fields: missingFields,
-    local_found_count: foundCount || localFindings.localFoundCount,
-  });
-  captureSidecarLog("workspace scan blocked: insufficient evidence", "warn", {
-    operation: "runWorkspaceScan",
-    scan_root: scanRoot,
-    reason: "insufficient_evidence",
-    readiness_status: readiness.status || "blocked",
-    missing_fields: missingFields,
-    root_cause: truncateTelemetryString(rootCause),
-    local_found_count: foundCount || localFindings.localFoundCount,
-  });
-  markWorkspaceSetupFailed(
-    scanRoot,
-    Object.assign(new Error(`workspace scan blocked: insufficient evidence: ${rootCause}`), {
-      code: "workspace_scan_blocked",
-    }),
-    {
-      scan_block_reason: "insufficient_evidence",
-      missing_fields: missingFields,
-      error_kind: "workspace_scan_insufficient_evidence",
-    },
-  );
-  broadcastWorkspaceScanProgress(
-    scanRoot,
-    missingFields.length
-      ? `scan.blocked · ${missingFields.map(workspaceScanMissingFieldLabel).join(", ")} 근거 부족으로 Day 1 질문 구성 불가`
-      : "scan.blocked · 근거 품질 재작업이 필요해 Day 1 질문 구성 불가",
-    {
-      stage: "blocked",
-      stepIndex: 3,
-      totalSteps: 3,
-      foundCount: foundCount || localFindings.localFoundCount,
-      missingFields,
-      rootCause,
-    },
-  );
-  broadcast({
-    type: "workspace_scan_blocked",
-    scanRoot,
-    reason: "insufficient_evidence",
-    message: rootCause,
-    stage: "blocked",
-    stepIndex: 3,
-    totalSteps: 3,
-    localFoundCount: foundCount || localFindings.localFoundCount,
-    localFindings,
-    missingFields,
-    rootCause,
-    day1AlignmentReadiness: readiness,
-    day1AlignmentPlan,
-    errorKind: "workspace_scan_insufficient_evidence",
-  });
-}
-
 function workspaceScanMissingFieldLabel(field) {
   if (field === "targetUser") return "고객";
   if (field === "problem") return "문제";
@@ -18821,15 +16091,6 @@ function normalizeWorkspaceScanDocs(docs = {}) {
   return result;
 }
 
-function normalizeWorkspaceScanResult(input, scanRoot) {
-  const result = emptyWorkspaceScanResult();
-  if (!input || typeof input !== "object") return result;
-  for (const key of Object.keys(result)) {
-    result[key] = normalizeWorkspaceScanPath(input[key], scanRoot, key);
-  }
-  return result;
-}
-
 function normalizeWorkspaceSituationSignals(input, scanRoot) {
   const fields = [
     "channels",
@@ -18907,35 +16168,10 @@ function normalizeSignalNeedle(value) {
   return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function normalizeWorkspaceScanPath(value, scanRoot, role = "") {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.toLowerCase() === "null") return null;
-  if (!isCanonicalProjectDocPath(trimmed, role)) return null;
-  if (path.isAbsolute(trimmed) || trimmed.includes("\0")) return null;
-  const resolved = path.resolve(scanRoot, trimmed);
-  if (!resolved.startsWith(`${path.resolve(scanRoot)}${path.sep}`) && resolved !== path.resolve(scanRoot)) {
-    return null;
-  }
-  try {
-    const stat = fsSync.statSync(resolved);
-    if (!stat.isFile() || !isWorkspaceScanTextPath(trimmed, role)) return null;
-  } catch {
-    return null;
-  }
-  return path.relative(scanRoot, resolved).split(path.sep).join(path.posix.sep);
-}
-
 function isCanonicalProjectDocPath(relativePath, role = "") {
   const canonical = projectDocPath(role);
   if (!canonical) return false;
   return String(relativePath || "").trim().replace(/\\/g, "/").toLowerCase() === canonical.toLowerCase();
-}
-
-function isWorkspaceScanTextPath(relativePath, role = "") {
-  const value = String(relativePath || "");
-  if (role === "sheet") return /\.(?:md|mdx|txt|rst|adoc|json|yaml|yml)$/i.test(value);
-  return /\.(?:md|mdx|txt|rst|adoc)$/i.test(value);
 }
 
 async function mergeWorkspaceScanResultsForRoot(scanRoot, ...results) {
@@ -21641,15 +18877,6 @@ function makeMessage({
   return message;
 }
 
-function buildProviderAuthActionsForFailures(failures = []) {
-  const text = failures.join("\n").toLowerCase();
-  const providers = [];
-  if (text.includes("claude") && looksLikeProviderAuthError(text)) providers.push("claude");
-  if (text.includes("codex") && looksLikeProviderAuthError(text)) providers.push("codex");
-  if (text.includes("gemini") && looksLikeProviderAuthError(text)) providers.push("gemini");
-  return buildProviderAuthActions(providers);
-}
-
 function buildProviderAuthActionsForError(provider, error) {
   const text = String(error || "").toLowerCase();
   if (!looksLikeProviderAuthError(text)) return [];
@@ -21781,43 +19008,11 @@ async function suppressOfficeHoursRequestAfterQuestionCap(session, request, acti
   if (isDay1DocHandoffJudgeRequest(request) || isDay1HandoffClarityRequest(request)) {
     return false;
   }
-  // R1.b: the locked Day-1 get_users flow uses the ValidationAttempt projection
-  // (a stray card after gather-complete is suppressed). Non-get_users lanes keep
-  // the count-based cap + Day-1 follow-up exemptions.
-  const isGetUsers = isLockedDay1GetUsersContext(
-    String(session?.runtime?.officeHours?.context || ""),
-  );
-  let countProgress = null;
-  if (isGetUsers) {
-    const attemptId = String(
-      session?.runtime?.officeHours?.attemptId
-        || request?.generation?.attemptId
-        || request?.generation?.attempt_id
-        || "",
-    ).trim();
-    let gatherComplete = officeHoursRuntimeGatherComplete(session);
-    if (!gatherComplete && attemptId) {
-      const snapshot = await projectAttempt({ workspaceRoot, attemptId });
-      if (snapshot) {
-        const action = nextAttemptAction(snapshot.projection);
-        gatherComplete = Boolean(action) && action.kind !== "card";
-        if (gatherComplete) {
-          stampLockedGetUsersAttemptProjection(session, {
-            attemptId,
-            revision: snapshot.revision,
-            projection: snapshot.projection,
-          });
-        }
-      }
-    }
-    if (!gatherComplete) return false;
-  } else {
-    if (isDay1DocumentReadinessFollowupRequest(request)) {
-      return false;
-    }
-    countProgress = await getOfficeHoursQuestionProgress(session);
-    if (!countProgress.capReached) return false;
+  if (isDay1DocumentReadinessFollowupRequest(request)) {
+    return false;
   }
+  const countProgress = await getOfficeHoursQuestionProgress(session);
+  if (!countProgress.capReached) return false;
 
   let completionClarity = null;
   if (countProgress && shouldGateDay1OfficeHoursDocumentReadiness(session, countProgress)) {
@@ -21846,16 +19041,10 @@ async function suppressOfficeHoursRequestAfterQuestionCap(session, request, acti
     });
     return true;
   }
-  if (countProgress) {
-    stampOfficeHoursExpectedCountCompletion(session, countProgress);
-  }
+  stampOfficeHoursExpectedCountCompletion(session, countProgress);
   await abortActiveOfficeHoursRunAtQuestionCap(session);
   touch(session);
-  if (countProgress) {
-    emitOfficeHoursQuestionCapCompleted(session, countProgress, request.requestId);
-  } else {
-    emitOfficeHoursStatus(session, { stage: "completed", requestId: request.requestId });
-  }
+  emitOfficeHoursQuestionCapCompleted(session, countProgress, request.requestId);
   return true;
 }
 
@@ -21868,49 +19057,8 @@ async function syncPendingUserInputRequests() {
     if (state.resolvedUserInputIds.has(request.requestId)) continue;
     const session = state.sessions.get(request.sessionId);
     if (!session) continue;
-    if (
-      session.runtime?.officeHours?.active === true
-      && isObsoleteRigidDay1GetUsersPendingRequest(request)
-    ) {
-      await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId).catch(() => {});
-      state.resolvedUserInputIds.add(request.requestId);
-      activeRequestIds.delete(request.requestId);
-      if (session.pendingUserInput?.requestId === request.requestId) {
-        session.pendingUserInput = null;
-      }
-      await clearOfficeHoursPendingQuestionForSession(
-        session,
-        request.requestId,
-        "obsolete_day1_get_users_pending_artifact",
-      );
-      if (session.status === "awaiting_input") {
-        session.status = "idle";
-      }
-      session.error = null;
-      touch(session);
-      changedSessions.add(session.id);
-      continue;
-    }
     if (await suppressOfficeHoursRequestAfterQuestionCap(session, request, activeRequestIds)) {
       changedSessions.add(session.id);
-      continue;
-    }
-    const lockedGetUsersAnswerCommitInFlightRequestId = session.runtime?.officeHours?.active === true
-      && isLockedDay1GetUsersContext(String(session.runtime.officeHours.context || ""))
-      ? String(session.runtime.officeHours.answerCommitInFlightRequestId || "")
-      : "";
-    if (lockedGetUsersAnswerCommitInFlightRequestId) {
-      if (request.requestId !== lockedGetUsersAnswerCommitInFlightRequestId) {
-        await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId);
-        state.resolvedUserInputIds.add(request.requestId);
-        activeRequestIds.delete(request.requestId);
-        await clearOfficeHoursPendingQuestionForSession(
-          session,
-          request.requestId,
-          "locked_get_users_answer_commit_in_flight",
-        );
-        changedSessions.add(session.id);
-      }
       continue;
     }
     if (
@@ -21931,21 +19079,6 @@ async function syncPendingUserInputRequests() {
       continue;
     }
     const pendingAlreadyAttached = session.pendingUserInput?.requestId === request.requestId;
-    if (
-      session.runtime?.officeHours?.active === true
-      && isLockedDay1GetUsersContext(String(session.runtime.officeHours.context || ""))
-      && session.pendingUserInput?.requestId
-      && activeRequestIds.has(session.pendingUserInput.requestId)
-      && !pendingAlreadyAttached
-      && isOfficeHoursStructuredRequest(session.pendingUserInput)
-    ) {
-      await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId);
-      state.resolvedUserInputIds.add(request.requestId);
-      activeRequestIds.delete(request.requestId);
-      changedSessions.add(session.id);
-      continue;
-    }
-
     let nextRequest = request;
     if (session.runtime?.officeHours?.active === true) {
       try {
@@ -21962,34 +19095,6 @@ async function syncPendingUserInputRequests() {
           }
         }
       } catch (error) {
-        if (
-          error?.code === "ERR_LOCKED_GET_USERS_STALE_CARD_AFTER_WAIT"
-          && session.runtime?.officeHours?.active === true
-          && isLockedDay1GetUsersContext(activeOfficeHoursContext(session))
-        ) {
-          await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId).catch(() => {});
-          state.resolvedUserInputIds.add(request.requestId);
-          activeRequestIds.delete(request.requestId);
-          if (session.pendingUserInput?.requestId === request.requestId) {
-            session.pendingUserInput = null;
-          }
-          await clearOfficeHoursPendingQuestionForSession(
-            session,
-            request.requestId,
-            "locked_get_users_stale_card_after_wait",
-          );
-          session.status = "idle";
-          session.error = null;
-          await abortActiveOfficeHoursRunAtQuestionCap(session);
-          touch(session);
-          changedSessions.add(session.id);
-          emitOfficeHoursStatus(session, {
-            stage: "completed",
-            requestId: request.requestId,
-            detail: "locked_get_users_stale_card_after_wait",
-          });
-          continue;
-        }
         const message = formatError(error);
         await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId).catch(() => {});
         state.resolvedUserInputIds.add(request.requestId);
@@ -22020,25 +19125,6 @@ async function syncPendingUserInputRequests() {
         continue;
       }
     } else if (pendingAlreadyAttached) {
-      continue;
-    }
-    if (
-      session.runtime?.officeHours?.active === true
-      && isLockedDay1GetUsersContext(activeOfficeHoursContext(session))
-      && session.pendingUserInput?.requestId
-      && session.pendingUserInput.requestId !== request.requestId
-      && isOfficeHoursStructuredRequest(session.pendingUserInput)
-      && isOfficeHoursStructuredRequest(request)
-    ) {
-      await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId);
-      state.resolvedUserInputIds.add(request.requestId);
-      activeRequestIds.delete(request.requestId);
-      await clearOfficeHoursPendingQuestionForSession(
-        session,
-        request.requestId,
-        "locked_get_users_stale_request_suppressed",
-      );
-      changedSessions.add(session.id);
       continue;
     }
     if (
@@ -22205,6 +19291,8 @@ function matchingUserInputResponseEntry(responses = [], question = {}, index = 0
   return responses[index] || null;
 }
 
+const GET_USERS_FIRST_CANDIDATE_SIGNAL_ID = "get_users_first_candidate";
+
 function findMissingRequiredFreeTextQuestion(response) {
   const responses = Array.isArray(response.responses) ? response.responses : [];
   const questions = Array.isArray(response.questions) ? response.questions : [];
@@ -22215,7 +19303,7 @@ function findMissingRequiredFreeTextQuestion(response) {
       const selectedOptions = Array.isArray(entry?.selectedOptions) ? entry.selectedOptions : [];
       if (freeText) return false;
       if (
-        structuredPromptQuestionId(question) === FIRST_CANDIDATE_SIGNAL_ID
+        structuredPromptQuestionId(question) === GET_USERS_FIRST_CANDIDATE_SIGNAL_ID
         && selectedOptions.some(isNoCandidateBlockerSelectionLabel)
       ) {
         return false;
@@ -22239,10 +19327,7 @@ function officeHoursRequiredFreeTextValidationMessage(question = {}, fallback = 
   const primaryTextInput = normalizeResponsePrimaryTextInput(question);
   if (primaryTextInput?.validationMessage) return primaryTextInput.validationMessage;
   const questionId = structuredPromptQuestionId(question);
-  if (questionId === FIRST_CANDIDATE_UNBLOCK_SIGNAL_ID) {
-    return "시간, 채널, 찾는 방법, 보낼 요청을 적어야 합니다.";
-  }
-  if (questionId === FIRST_CANDIDATE_SIGNAL_ID) {
+  if (questionId === GET_USERS_FIRST_CANDIDATE_SIGNAL_ID) {
     return "실명·핸들 또는 구체적 스레드와 오늘 보낼 요청을 입력해야 합니다.";
   }
   return fallback;
@@ -22261,31 +19346,6 @@ function normalizeResponsePrimaryTextInput(question = {}) {
     submitLabel: String(input.submitLabel || input.submit_label || "").trim(),
     validationMessage: String(input.validationMessage || input.validation_message || "").trim(),
   };
-}
-
-function responseEntryForFirstQuestion(pendingUserInput, response) {
-  const question = Array.isArray(pendingUserInput?.questions) ? pendingUserInput.questions[0] : null;
-  if (!question) return { question: null, entry: null };
-  const responses = Array.isArray(response?.responses) ? response.responses : [];
-  const entry = responses.find((candidate) => String(candidate?.question || "") === String(question.question || ""))
-    || responses[0]
-    || null;
-  return { question, entry };
-}
-
-function primaryTextInputResponseText(pendingUserInput, response) {
-  const { question, entry } = responseEntryForFirstQuestion(pendingUserInput, response);
-  if (!normalizeResponsePrimaryTextInput(question)) return "";
-  if (!entry || Array.isArray(entry?.selectedOptions) && entry.selectedOptions.some(isNoCandidateBlockerSelectionLabel)) {
-    return "";
-  }
-  return String(entry?.freeText || "").trim();
-}
-
-function hasNoCandidateBlockerResponse(pendingUserInput, response) {
-  const { entry } = responseEntryForFirstQuestion(pendingUserInput, response);
-  const selectedOptions = Array.isArray(entry?.selectedOptions) ? entry.selectedOptions : [];
-  return selectedOptions.some(isNoCandidateBlockerSelectionLabel);
 }
 
 function isNoCandidateBlockerSelectionLabel(label = "") {

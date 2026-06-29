@@ -14,6 +14,10 @@
 //     allowFreeText?: boolean,           // default false
 //     requiresFreeText?: boolean,        // default false
 //     freeTextPlaceholder?: string,
+//     questionId?: string,
+//     intent?: string,
+//     signalId?: string,
+//     signalLabel?: string,
 //     textMode?: "short" | "long"        // default "short"
 //   }
 // At least one of options.length > 0 OR allowFreeText === true must hold.
@@ -48,6 +52,33 @@ export function validateInlineDecision(decision, { logger = console } = {}) {
     requiresFreeText: decision.requiresFreeText === true,
     freeTextPlaceholder:
       typeof decision.freeTextPlaceholder === "string" ? decision.freeTextPlaceholder : null,
+    questionId: typeof decision.questionId === "string"
+      ? decision.questionId.trim().slice(0, 96)
+      : null,
+    question_id: typeof decision.question_id === "string"
+      ? decision.question_id.trim().slice(0, 96)
+      : null,
+    intent: typeof decision.intent === "string"
+      ? decision.intent.trim().slice(0, 96)
+      : null,
+    questionIntent: typeof decision.questionIntent === "string"
+      ? decision.questionIntent.trim().slice(0, 96)
+      : null,
+    question_intent: typeof decision.question_intent === "string"
+      ? decision.question_intent.trim().slice(0, 96)
+      : null,
+    signalId: typeof decision.signalId === "string"
+      ? decision.signalId.trim().slice(0, 96)
+      : null,
+    signal_id: typeof decision.signal_id === "string"
+      ? decision.signal_id.trim().slice(0, 96)
+      : null,
+    signalLabel: typeof decision.signalLabel === "string"
+      ? decision.signalLabel.trim().slice(0, 160)
+      : null,
+    signal_label: typeof decision.signal_label === "string"
+      ? decision.signal_label.trim().slice(0, 160)
+      : null,
     textMode: decision.textMode === "long" ? "long" : "short",
   };
 }

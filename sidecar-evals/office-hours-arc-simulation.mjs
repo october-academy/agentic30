@@ -34,6 +34,14 @@ import { appendActiveUserSnapshot } from "../sidecar/active-users-snapshot.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LIVE_DEFAULT = process.env.AGENTIC30_RUN_LIVE_PROVIDER_EVAL === "1";
+export const DAY1_GET_USERS_LADDER_SIGNALS = Object.freeze([
+  "get_users_active_user_definition",
+  "get_users_first_candidate",
+  "get_users_current_alternative",
+  "get_users_today_request",
+  "get_users_evidence_format",
+  "get_users_day1_commitment",
+]);
 
 /**
  * Persona answer scripts. Each answer is consumed in order as the session asks
@@ -223,7 +231,7 @@ export const G4_FIRST_VALUE_SNAPSHOT = Object.freeze({
  *   label             human-readable phase note (report only)
  */
 export const DEFAULT_ARC_PLAN = Object.freeze([
-  { day: 1, runOfficeHours: true, maxTurns: 6, commit: true, expectGateBlock: null, label: "ICP/문제 정렬 + 첫 커밋" },
+  { day: 1, runOfficeHours: true, maxTurns: 6, lockedGoal: "get_users", commit: true, expectGateBlock: null, label: "ICP/문제 정렬 + 첫 커밋" },
   { day: 2, runOfficeHours: true, maxTurns: 3, commit: true, expectGateBlock: null, label: "demand source 확인" },
   { day: 3, runOfficeHours: true, maxTurns: 3, commit: true, expectGateBlock: null, label: "Mom Test 접촉" },
   { day: 4, runOfficeHours: true, maxTurns: 3, commit: true, expectGateBlock: null, label: "wedge 정리" },
@@ -312,6 +320,14 @@ export function summarizeArcRun(captured = {}) {
   const gateProbesPassed = gateHistory.every((g) => g.ok === true);
   const gatesBlocked = gateHistory.filter((g) => g.kind === "block" && g.ok).map((g) => g.expected);
   const gatesPassed = gateHistory.filter((g) => g.kind === "pass" && g.ok).map((g) => g.expected);
+  const day1 = days.find((d) => d.day === 1) || null;
+  const day1GetUsersLadderSignals = (day1?.questions || [])
+    .map((q) => String(q.signalId || ""))
+    .filter(Boolean);
+  const day1GetUsersLadderPassed =
+    day1GetUsersLadderSignals.length === DAY1_GET_USERS_LADDER_SIGNALS.length
+    && DAY1_GET_USERS_LADDER_SIGNALS.every((signalId, index) =>
+      day1GetUsersLadderSignals[index] === signalId);
   return {
     onboardingDrained,
     forcingQuestionsCaptured: forcingQuestions,
@@ -328,9 +344,15 @@ export function summarizeArcRun(captured = {}) {
     gatesBlocked,
     gatesPassed,
     gateProbesPassed,
+    day1GetUsersLadderExpected: [...DAY1_GET_USERS_LADDER_SIGNALS],
+    day1GetUsersLadderSignals,
+    day1GetUsersLadderPassed,
     evidenceSubmissions: Array.isArray(captured.evidenceSubmissions) ? captured.evidenceSubmissions.length : 0,
     errors: captured.errors || [],
-    passed: gateBlockWorks && gateProbesPassed && (captured.errors || []).length === 0,
+    passed: gateBlockWorks
+      && gateProbesPassed
+      && day1GetUsersLadderPassed
+      && (captured.errors || []).length === 0,
   };
 }
 
@@ -369,6 +391,16 @@ async function waitForEventAfter(events, offset, predicate, timeoutMs = 60_000) 
 }
 const latestSession = (events, sid) => [...events].reverse().find((e) => e.session?.id === sid)?.session;
 const finalAssistants = (s) => (s?.messages ?? []).filter((m) => m.role === "assistant" && m.state === "final");
+
+async function waitForSessionSettled(events, sessionId, offset = 0, timeoutMs = 60_000) {
+  const current = latestSession(events, sessionId);
+  if (offset <= 0 && current && current.status !== "running") return current;
+  const event = await waitForEventAfter(events, offset, (e) =>
+    e.type === "session_updated"
+    && e.session?.id === sessionId
+    && e.session.status !== "running", timeoutMs);
+  return event?.session || latestSession(events, sessionId) || null;
+}
 
 /** Pull the current pending structured-input request for a session, if any. */
 function pendingInputFor(events, sessionId) {
@@ -427,6 +459,39 @@ async function writeBipConfig(appSupportPath, root) {
   }, null, 2));
 }
 
+function buildLockedGetUsersDay1OfficeHoursContext(persona = {}) {
+  const commitment = persona.commitment || {};
+  return [
+    "DAY1_LOCKED_GOAL",
+    "Flow contract: locked Day 1 goal interview.",
+    "Office Hours mode: Startup",
+    "Office Hours day: 1",
+    "Expected question count: 6",
+    "Goal lane: get_users",
+    "Goal text: 30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+    `Customer: ${persona.label || "전업 1인 개발자"}`,
+    "Problem: 수익 0 상태의 1인 개발자가 실제 고객 행동 없이 빌드로 도망친다.",
+    `Known first candidate: ${persona.firstCandidate || commitment.customer || ""}`,
+    `Validation action: ${commitment.text || "오늘 실명 후보 1명에게 요청을 보낸다."}`,
+    "Required ladder: active-user-definition -> first_candidate -> current_alternative -> today_request -> evidence_format -> day1_commitment.",
+  ].filter((line) => String(line || "").trim()).join("\n");
+}
+
+function officeHoursStartFieldsForStep(step = {}, persona = {}) {
+  if (step.lockedGoal === "get_users") {
+    return {
+      source: "day1_interview_goal_locked",
+      selectedSources: ["git"],
+      context: buildLockedGetUsersDay1OfficeHoursContext(persona),
+    };
+  }
+  return {
+    source: "manual",
+    selectedSources: ["git"],
+    context: "",
+  };
+}
+
 // ── Session drivers ───────────────────────────────────────────────────────────
 
 /** Answer one pending structured input as the persona; returns the question shape. */
@@ -472,7 +537,17 @@ async function drainOnboarding({ ws, events, sessionId, persona, answeredRequest
 
 const isOfficeHoursMode = (mode) => /office_hours/i.test(String(mode || ""));
 
-async function runOfficeHoursDay({ ws, events, sessionId, day, maxTurns, persona, baseTurn, answeredRequestIds }) {
+async function runOfficeHoursDay({
+  ws,
+  events,
+  sessionId,
+  day,
+  maxTurns,
+  persona,
+  baseTurn,
+  answeredRequestIds,
+  startFields = {},
+}) {
   const dayLog = { day, questions: [], assistantMessages: [], outcome: "", eventTypesSeen: [], repeatedQuestionSignals: [] };
   const startOffset = events.length;
   const pendingFromEvent = (e) => {
@@ -485,8 +560,9 @@ async function runOfficeHoursDay({ ws, events, sessionId, day, maxTurns, persona
     sessionId,
     day,
     visiblePrompt: `Day ${day} Office Hours`,
-    source: "manual",
-    selectedSources: ["git"],
+    source: startFields.source || "manual",
+    selectedSources: Array.isArray(startFields.selectedSources) ? startFields.selectedSources : ["git"],
+    ...(startFields.context ? { context: startFields.context } : {}),
   }));
   const seenSignals = new Set();
   let turn = 0;
@@ -511,7 +587,9 @@ async function runOfficeHoursDay({ ws, events, sessionId, day, maxTurns, persona
     if (question.signalId && seenSignals.has(question.signalId)) dayLog.repeatedQuestionSignals.push(question.signalId);
     if (question.signalId) seenSignals.add(question.signalId);
     dayLog.questions.push({ turn, requestId: pending.requestId, ...question });
-    const terminal = Boolean(pending.terminal) || /대안|마무리|정리|alternatives/i.test(question.header);
+    const terminalSignal = /office_hours_alternatives|future_fit|day1_completion|completion/i.test(question.signalId);
+    const terminalHeader = /마무리|정리|alternatives/i.test(question.header);
+    const terminal = Boolean(pending.terminal) || terminalSignal || terminalHeader;
     if (terminal) { dayLog.outcome = `terminal@${turn}`; break; }
   }
   if (!dayLog.outcome) dayLog.outcome = `maxTurns(${maxTurns})`;
@@ -576,14 +654,24 @@ export async function runOfficeHoursArcSimulation({
     const sessionId = created.session.id;
 
     const answeredRequestIds = new Set();
+    const onboardingOffset = events.length;
     captured.onboardingAnswered = await drainOnboarding({ ws, events, sessionId, persona, answeredRequestIds });
+    await waitForSessionSettled(events, sessionId, onboardingOffset, 60_000);
 
     let baseTurn = captured.onboardingAnswered;
     for (const step of plan) {
       if (step.runOfficeHours) {
         try {
           const { dayLog, turnsUsed } = await runOfficeHoursDay({
-            ws, events, sessionId, day: step.day, maxTurns: step.maxTurns || 4, persona, baseTurn, answeredRequestIds,
+            ws,
+            events,
+            sessionId,
+            day: step.day,
+            maxTurns: step.maxTurns || 4,
+            persona,
+            baseTurn,
+            answeredRequestIds,
+            startFields: officeHoursStartFieldsForStep(step, persona),
           });
           captured.days.push(dayLog);
           baseTurn += turnsUsed;
@@ -680,6 +768,7 @@ export async function runOfficeHoursArcSimulation({
 
   const summary = summarizeArcRun(captured);
   await fs.writeFile(path.join(runDir, "captured.json"), JSON.stringify(captured, null, 2) + "\n");
+  await fs.writeFile(path.join(runDir, "events.json"), JSON.stringify(events, null, 2) + "\n");
   await fs.writeFile(path.join(runDir, "report.md"), renderArcReport(captured, summary, persona));
   await fs.rm(workspaceRoot, { recursive: true, force: true });
   await fs.rm(appSupportPath, { recursive: true, force: true });
@@ -701,6 +790,7 @@ function renderArcReport(captured, summary, persona) {
     `- days covered (1~30 arc): ${summary.daysCovered.join(", ") || "(none)"} · max day reached: ${summary.maxDayReached}`,
     `- gates blocked (probe ok): ${summary.gatesBlocked.join(", ") || "(none)"} · gates passed (probe ok): ${summary.gatesPassed.join(", ") || "(none)"}`,
     `- evidence submission batches: ${summary.evidenceSubmissions} · all gate probes matched: ${summary.gateProbesPassed}`,
+    `- Day 1 get_users LLM ladder: ${summary.day1GetUsersLadderPassed ? "matched" : "missing"} · ${summary.day1GetUsersLadderSignals.join(" -> ") || "(none)"}`,
     `- gate-block expected: ${summary.gateBlockExpected || "(none)"} · observed: ${summary.gateBlockObserved || "(none)"} · works: ${summary.gateBlockWorks}`,
     summary.gateRequiredEvidence.length ? `- gate required evidence: ${summary.gateRequiredEvidence.join(", ")}` : "",
     summary.errors.length ? `- errors: ${summary.errors.join("; ")}` : "",

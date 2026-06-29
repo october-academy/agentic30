@@ -64,6 +64,118 @@ const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
 const DEFAULT_CURSOR_MODEL = "composer-2.5";
 export const CODEX_BINARY_NOT_INSTALLED_ERROR_CODE = "ERR_CODEX_BINARY_NOT_INSTALLED";
 export const OFFICE_HOURS_QUESTION_EXECUTION_MODE = "office_hours_question";
+const STUB_GET_USERS_DAY1_LADDER_CARDS = Object.freeze([
+  {
+    signalId: "get_users_active_user_definition",
+    signalLabel: "Day 1 get_users 활성 사용자 정의",
+    header: "활성 사용자 기준",
+    question: "get_users에서 활성 사용자 1명은 어떤 행동을 끝낸 사람인가요?",
+    helperText: "100명을 셀 기준이 될 완료 행동을 한 문장으로 고정합니다.",
+    options: [
+      {
+        label: "핵심 행동을 끝낸 사람",
+        description: "가입이나 방문이 아니라 첫 가치를 끝까지 경험한 사람을 셉니다.",
+      },
+      {
+        label: "다시 돌아온 사람",
+        description: "하루 뒤 다시 열어 같은 행동을 반복한 사람을 셉니다.",
+      },
+    ],
+  },
+  {
+    signalId: "get_users_first_candidate",
+    signalLabel: "Day 1 get_users 첫 후보",
+    header: "첫 후보",
+    question: "오늘 바로 요청할 실명 후보 1명은 누구인가요?",
+    helperText: "이름, 채널, 오늘 보낼 요청까지 적을 수 있는 사람이어야 합니다.",
+    options: [
+      {
+        label: "실명 후보 1명을 적는다",
+        description: "이름과 채널을 적고 오늘 연락할 수 있는 사람으로 고정합니다.",
+      },
+      {
+        label: "공개 채널 후보를 적는다",
+        description: "실명은 아니어도 오늘 DM이나 댓글로 요청할 대상을 고정합니다.",
+      },
+    ],
+  },
+  {
+    signalId: "get_users_current_alternative",
+    signalLabel: "Day 1 get_users 현재 대안",
+    header: "현재 대안",
+    question: "그 후보는 지금 이 문제를 무엇으로 해결하고 있나요?",
+    helperText: "돈, 시간, 반복 행동이 들어간 현재 대안을 먼저 확인합니다.",
+    options: [
+      {
+        label: "돈을 쓰는 대안이 있다",
+        description: "유료 도구, 유료 커뮤니티, 외주처럼 돈이 이미 움직입니다.",
+      },
+      {
+        label: "시간을 쓰는 대안이 있다",
+        description: "노션, 스프레드시트, 수작업처럼 반복 시간이 들어갑니다.",
+      },
+      {
+        label: "대안이 아직 약하다",
+        description: "불편은 있지만 돈이나 반복 시간은 아직 확인하지 못했습니다.",
+      },
+    ],
+  },
+  {
+    signalId: "get_users_today_request",
+    signalLabel: "Day 1 get_users 오늘 요청",
+    header: "오늘 요청",
+    question: "오늘 그 후보에게 어떤 한 문장을 보낼 건가요?",
+    helperText: "데모 소개보다 과거 행동이나 현재 대안을 묻는 요청으로 좁힙니다.",
+    options: [
+      {
+        label: "30분 통화를 요청한다",
+        description: "오늘 대화 시간을 잡고 과거 행동을 묻습니다.",
+      },
+      {
+        label: "DM으로 과거 행동을 묻는다",
+        description: "지금 쓰는 대안과 최근 시도를 짧게 묻습니다.",
+      },
+    ],
+  },
+  {
+    signalId: "get_users_evidence_format",
+    signalLabel: "Day 1 get_users 증거 형식",
+    header: "증거 형식",
+    question: "오늘 요청이 실제로 나갔다는 흔적은 무엇으로 남길 건가요?",
+    helperText: "나중에 스스로 확인할 수 있는 캡처, URL, 원문 메모 중 하나를 고릅니다.",
+    options: [
+      {
+        label: "메시지 캡처",
+        description: "보낸 시간과 상대가 보이는 화면 캡처를 남깁니다.",
+      },
+      {
+        label: "답장 원문 메모",
+        description: "상대 답장을 원문 그대로 적고 출처를 함께 남깁니다.",
+      },
+      {
+        label: "공개 URL",
+        description: "댓글이나 게시물처럼 다시 열 수 있는 URL을 남깁니다.",
+      },
+    ],
+  },
+  {
+    signalId: "get_users_day1_commitment",
+    signalLabel: "Day 1 get_users 오늘 약속",
+    header: "오늘 약속",
+    question: "오늘 끝낼 가장 좁은 get_users 약속을 한 줄로 고정해 주세요.",
+    helperText: "후보, 채널, 요청, 남길 흔적이 모두 들어가야 합니다.",
+    options: [
+      {
+        label: "오늘 보낸다",
+        description: "오늘 실제 요청을 보내고 흔적을 남깁니다.",
+      },
+      {
+        label: "오늘 통화 시간을 잡는다",
+        description: "대화 자체가 어렵다면 오늘 일정 확정까지 끝냅니다.",
+      },
+    ],
+  },
+]);
 const CODEX_CLI_VERSION_TIMEOUT_MS = 2500;
 const DEFAULT_CLAUDE_MODEL = "claude-opus-4-8";
 const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
@@ -248,7 +360,11 @@ export async function runProviderStream({
         onRunEvent?.({ phase: "provider.stub_response", provider });
         return { runtime: sessionRuntime };
       }
-      const stubRequest = await createStubOfficeHoursUserInputRequest({ sessionIdForMcp });
+      const stubRequest = await createStubOfficeHoursUserInputRequest({
+        sessionIdForMcp,
+        sessionRuntime,
+        prompt,
+      });
       if (stubRequest) {
         onRunEvent?.({
           phase: "provider.stub_user_input_request",
@@ -261,7 +377,7 @@ export async function runProviderStream({
       onRunEvent?.({ phase: "provider.stub_response", provider });
       return { runtime: sessionRuntime };
     }
-    const stubText = buildStubResponse(prompt);
+    const stubText = buildStubResponse(prompt, { sessionRuntime });
     onTextReplace?.(stubText);
     const stubRequest = await createStubIddUserInputRequest({
       sessionRuntime,
@@ -2255,9 +2371,13 @@ export function resolveGeminiThinkingLevel(model = "") {
   return candidate.toUpperCase();
 }
 
-function buildStubResponse(prompt) {
+function buildStubResponse(prompt, { sessionRuntime = {} } = {}) {
   const contexts = extractStubContextFiles(prompt);
   const value = String(prompt || "");
+  const day1GetUsersCard = nextStubGetUsersDay1LadderCard({ prompt: value, sessionRuntime });
+  if (day1GetUsersCard) {
+    return buildStubOfficeHoursInlineDecisionResponse(day1GetUsersCard);
+  }
   if (value.includes("MORNING_BRIEFING_VERDICT_JSON")) {
     const numberFor = (pattern, fallback = 0) => {
       const match = value.match(pattern);
@@ -2423,6 +2543,66 @@ function buildStubResponse(prompt) {
   });
 }
 
+function isLockedGetUsersDay1OfficeHoursPrompt(prompt = "", sessionRuntime = {}) {
+  const context = String(sessionRuntime?.officeHours?.context || "");
+  const source = String(sessionRuntime?.officeHours?.source || "");
+  const haystack = `${String(prompt || "")}\n${context}`;
+  return (
+    source === "day1_interview_goal_locked"
+    || /Flow contract:\s*locked Day 1 goal interview/i.test(haystack)
+    || /DAY1_LOCKED_GOAL/i.test(haystack)
+  ) && /Goal lane:\s*get_users\b/i.test(haystack);
+}
+
+function collectStubAnsweredOfficeHoursSignals(sessionRuntime = {}) {
+  const snapshots = Array.isArray(sessionRuntime?.officeHours?.promptSnapshots)
+    ? sessionRuntime.officeHours.promptSnapshots
+    : [];
+  return new Set(
+    snapshots
+      .filter((snapshot) => Array.isArray(snapshot?.submissions) && snapshot.submissions.length > 0)
+      .map((snapshot) =>
+        String(
+          snapshot?.prompt?.generation?.signalId
+            || snapshot?.prompt?.generation?.signal_id
+            || snapshot?.generation?.signalId
+            || snapshot?.generation?.signal_id
+            || snapshot?.prompt?.questions?.[0]?.questionId
+            || snapshot?.prompt?.questions?.[0]?.question_id
+            || "",
+        ).trim())
+      .filter(Boolean),
+  );
+}
+
+function nextStubGetUsersDay1LadderCard({ prompt = "", sessionRuntime = {} } = {}) {
+  if (!isLockedGetUsersDay1OfficeHoursPrompt(prompt, sessionRuntime)) return null;
+  const answered = collectStubAnsweredOfficeHoursSignals(sessionRuntime);
+  return STUB_GET_USERS_DAY1_LADDER_CARDS.find((card) => !answered.has(card.signalId)) || null;
+}
+
+function buildStubOfficeHoursInlineDecisionResponse(card = {}) {
+  return [
+    "Office Hours 질문을 선택지 카드로 준비했습니다.",
+    INLINE_DECISION_SENTINEL_START,
+    JSON.stringify({
+      questionId: card.signalId,
+      signalId: card.signalId,
+      signalLabel: card.signalLabel,
+      intent: card.signalId,
+      header: card.header,
+      question: card.question,
+      helperText: card.helperText,
+      options: card.options,
+      multiSelect: false,
+      allowFreeText: true,
+      requiresFreeText: false,
+      textMode: "short",
+    }),
+    INLINE_DECISION_SENTINEL_END,
+  ].join("\n");
+}
+
 function buildStubWorkspaceScanResponse(prompt) {
   const bundle = extractStubWorkspaceScanEvidenceBundle(prompt);
   const evidencePathsUsed = collectStubWorkspaceScanEvidencePaths(bundle);
@@ -2549,8 +2729,38 @@ async function createStubIddUserInputRequest({
   );
 }
 
-async function createStubOfficeHoursUserInputRequest({ sessionIdForMcp } = {}) {
+async function createStubOfficeHoursUserInputRequest({
+  sessionIdForMcp,
+  sessionRuntime = {},
+  prompt = "",
+} = {}) {
   if (!sessionIdForMcp) return null;
+  const day1GetUsersCard = nextStubGetUsersDay1LadderCard({ prompt, sessionRuntime });
+  if (day1GetUsersCard) {
+    return createUserInputRequest(appSupportPath, {
+      sessionId: sessionIdForMcp,
+      toolName: CODEX_STRUCTURED_INPUT_TOOL,
+      title: "Office Hours",
+      generation: {
+        mode: "office_hours_tool",
+        signalId: day1GetUsersCard.signalId,
+        signalLabel: day1GetUsersCard.signalLabel,
+      },
+      questions: [
+        {
+          questionId: day1GetUsersCard.signalId,
+          header: day1GetUsersCard.header,
+          question: day1GetUsersCard.question,
+          helperText: day1GetUsersCard.helperText,
+          options: day1GetUsersCard.options,
+          multiSelect: false,
+          allowFreeText: true,
+          requiresFreeText: false,
+          textMode: "short",
+        },
+      ],
+    });
+  }
   return createUserInputRequest(appSupportPath, {
     sessionId: sessionIdForMcp,
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
