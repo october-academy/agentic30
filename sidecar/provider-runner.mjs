@@ -2,10 +2,12 @@ import fsSync from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { query, listSessions } from "@anthropic-ai/claude-agent-sdk";
 import { GoogleGenAI } from "@google/genai";
 import { buildAuthEnv } from "./auth-context.mjs";
+import { emitAiGeneration } from "./ai-generation-telemetry.mjs";
 import { buildQmdGuidance, buildQmdMcpConfig } from "./qmd-support.mjs";
 import { projectDocPath } from "./project-doc-paths.mjs";
 import {
@@ -396,107 +398,184 @@ export async function runProviderStream({
     return { runtime: sessionRuntime };
   }
 
-  if (executionMode === "isolated_read_only" && provider !== "gemini" && provider !== "cursor") {
-    await runTextOnlyProvider({
-      provider,
-      prompt,
-      model,
-      abortController,
-      structuredOutputSchema,
-      onTextReplace,
-    });
-    return { runtime: sessionRuntime };
-  }
+  // Instrument every real model dispatch so it emits a PostHog $ai_generation
+  // event (model / tokens / cost / latency / errors). The wrapped onRunEvent
+  // harvests provider telemetry as it streams; finalize emits once at the end.
+  // Codex thread warmups (stopAfterCodexThreadStarted) abort before generating,
+  // so they are excluded.
+  const aiGen = beginAiGeneration({ provider, executionMode, model, sessionIdForMcp });
+  const skipAiGeneration = Boolean(stopAfterCodexThreadStarted);
+  const onRunEventInstrumented = (event) => {
+    harvestAiGenerationRunEvent(aiGen, event);
+    return onRunEvent?.(event);
+  };
 
-  if (provider === "gemini") {
-    if (!supportsGeminiExecutionMode(executionMode)) {
-      throw new Error(
-        `Gemini provider does not support executionMode "${executionMode}". Use Claude or Codex for this workflow.`,
-      );
+  try {
+    let result;
+    if (executionMode === "isolated_read_only" && provider !== "gemini" && provider !== "cursor") {
+      const textOnly = await runTextOnlyProvider({
+        provider,
+        prompt,
+        model,
+        abortController,
+        structuredOutputSchema,
+        onTextReplace,
+      });
+      if (textOnly?.model) aiGen.model = textOnly.model;
+      if (textOnly?.usage) aiGen.usage = textOnly.usage;
+      result = { runtime: sessionRuntime };
+    } else if (provider === "gemini") {
+      if (!supportsGeminiExecutionMode(executionMode)) {
+        throw new Error(
+          `Gemini provider does not support executionMode "${executionMode}". Use Claude or Codex for this workflow.`,
+        );
+      }
+      result = await runGeminiProvider({
+        sessionRuntime,
+        prompt,
+        model,
+        workspaceRoot,
+        abortController,
+        executionMode,
+        systemPromptOverride,
+        approvedToolExecution,
+        structuredOutputSchema,
+        onTextDelta,
+        onTextReplace,
+        onToolEvent,
+        onRuntimeUpdate,
+        onRunEvent: onRunEventInstrumented,
+      });
+    } else if (provider === "cursor") {
+      if (!supportsCursorExecutionMode(executionMode)) {
+        throw new Error(
+          `Cursor provider does not support executionMode "${executionMode}". Use Claude or Codex for this workflow.`,
+        );
+      }
+      result = await runCursorProvider({
+        sessionRuntime,
+        prompt,
+        model,
+        workspaceRoot,
+        abortController,
+        executionMode,
+        systemPromptOverride,
+        onTextDelta,
+        onTextReplace,
+        onToolEvent,
+        onRuntimeUpdate,
+        onRunEvent: onRunEventInstrumented,
+      });
+    } else {
+      if (allowsProviderPermissionBypass({ executionMode, approvedToolExecution })) {
+        await ensureNotionToken();
+      }
+      if (provider === "claude") {
+        result = await runClaudeProvider({
+          sessionRuntime,
+          prompt,
+          model,
+          workspaceRoot,
+          abortController,
+          sessionIdForMcp,
+          executionMode,
+          systemPromptOverride,
+          specialist,
+          approvedToolExecution,
+          structuredOutputSchema,
+          onTextDelta,
+          onTextReplace,
+          onToolEvent,
+          onRuntimeUpdate,
+          onRunEvent: onRunEventInstrumented,
+        });
+      } else {
+        result = await runCodexProvider({
+          sessionRuntime,
+          prompt,
+          model,
+          workspaceRoot,
+          abortController,
+          sessionIdForMcp,
+          executionMode,
+          systemPromptOverride,
+          specialist,
+          approvedToolExecution,
+          structuredOutputSchema,
+          onTextDelta,
+          onTextReplace,
+          onToolEvent,
+          onRuntimeUpdate,
+          onRunEvent: onRunEventInstrumented,
+          stopAfterCodexThreadStarted,
+        });
+      }
     }
-    return runGeminiProvider({
-      sessionRuntime,
-      prompt,
-      model,
-      workspaceRoot,
-      abortController,
-      executionMode,
-      systemPromptOverride,
-      approvedToolExecution,
-      structuredOutputSchema,
-      onTextDelta,
-      onTextReplace,
-      onToolEvent,
-      onRuntimeUpdate,
-      onRunEvent,
-    });
-  }
-
-  if (provider === "cursor") {
-    if (!supportsCursorExecutionMode(executionMode)) {
-      throw new Error(
-        `Cursor provider does not support executionMode "${executionMode}". Use Claude or Codex for this workflow.`,
-      );
+    if (!skipAiGeneration) {
+      finalizeAiGeneration(aiGen);
     }
-    return runCursorProvider({
-      sessionRuntime,
-      prompt,
-      model,
-      workspaceRoot,
-      abortController,
-      executionMode,
-      systemPromptOverride,
-      onTextDelta,
-      onTextReplace,
-      onToolEvent,
-      onRuntimeUpdate,
-      onRunEvent,
-    });
+    return result;
+  } catch (error) {
+    if (!skipAiGeneration) {
+      finalizeAiGeneration(aiGen, { isError: true, error });
+    }
+    throw error;
   }
+}
 
-  if (allowsProviderPermissionBypass({ executionMode, approvedToolExecution })) {
-    await ensureNotionToken();
-  }
-
-  if (provider === "claude") {
-    return runClaudeProvider({
-      sessionRuntime,
-      prompt,
-      model,
-      workspaceRoot,
-      abortController,
-      sessionIdForMcp,
-      executionMode,
-      systemPromptOverride,
-      specialist,
-      approvedToolExecution,
-      structuredOutputSchema,
-      onTextDelta,
-      onTextReplace,
-      onToolEvent,
-      onRuntimeUpdate,
-      onRunEvent,
-    });
-  }
-
-  return runCodexProvider({
-    sessionRuntime,
-    prompt,
-    model,
-    workspaceRoot,
-    abortController,
-    sessionIdForMcp,
+/** Per-run accumulator for $ai_generation telemetry (see ai-generation-telemetry.mjs). */
+function beginAiGeneration({ provider, executionMode, model, sessionIdForMcp }) {
+  return {
+    provider,
     executionMode,
-    systemPromptOverride,
-    specialist,
-    approvedToolExecution,
-    structuredOutputSchema,
-    onTextDelta,
-    onTextReplace,
-    onToolEvent,
-    onRuntimeUpdate,
-    onRunEvent,
-    stopAfterCodexThreadStarted,
+    model: model || "",
+    traceId: sessionIdForMcp || randomUUID(),
+    startedAtMs: Date.now(),
+    usage: null,
+    costUsd: undefined,
+    durationMs: undefined,
+  };
+}
+
+/** Harvest model / usage / cost / latency from the provider run-event stream. */
+function harvestAiGenerationRunEvent(state, event) {
+  if (!state || !event || typeof event !== "object") return;
+  // *_created events (claude/codex/gemini/cursor) carry the resolved model
+  // (after env/Settings overrides) — prefer it over the requested model.
+  if (typeof event.model === "string" && event.model) {
+    state.model = event.model;
+  }
+  switch (event.phase) {
+    case "provider.claude.result":
+      if (Number.isFinite(event.costUsd)) state.costUsd = event.costUsd;
+      if (Number.isFinite(event.durationMs)) state.durationMs = event.durationMs;
+      if (event.usage) state.usage = event.usage;
+      break;
+    case "provider.codex.turn_completed":
+    case "provider.gemini.completed":
+      // Cumulative usage — the last emission wins.
+      if (event.usage) state.usage = event.usage;
+      break;
+    default:
+      break;
+  }
+}
+
+function finalizeAiGeneration(state, { isError = false, error = null } = {}) {
+  if (!state) return;
+  const latencyMs = Number.isFinite(state.durationMs)
+    ? state.durationMs
+    : Math.max(0, Date.now() - state.startedAtMs);
+  emitAiGeneration({
+    provider: state.provider,
+    executionMode: state.executionMode,
+    model: state.model,
+    usage: state.usage,
+    costUsd: state.costUsd,
+    latencyMs,
+    traceId: state.traceId,
+    isError,
+    error,
   });
 }
 
@@ -979,6 +1058,7 @@ async function runClaudeProvider({
         apiDurationMs: event.duration_api_ms,
         turns: event.num_turns,
         costUsd: event.total_cost_usd,
+        usage: event.usage,
       });
       if (event.subtype === "success") {
         if (hasStructuredOutputSchema(structuredOutputSchema)) {
@@ -2966,9 +3046,13 @@ async function runGeminiProvider({
 
   let accumulated = "";
   let firstTextEmitted = false;
+  let usageMetadata = null;
   for await (const chunk of stream) {
     if (abortController?.signal?.aborted) {
       throw new Error("Gemini stream aborted");
+    }
+    if (chunk?.usageMetadata) {
+      usageMetadata = chunk.usageMetadata;
     }
     const text = extractGeminiChunkText(chunk);
     if (text) {
@@ -2989,6 +3073,7 @@ async function runGeminiProvider({
   onRunEvent?.({
     phase: "provider.gemini.completed",
     textLength: accumulated.length,
+    usage: usageMetadata,
   });
   onRuntimeUpdate?.(runtime);
   return { runtime };
@@ -3203,7 +3288,7 @@ async function runTextOnlyProvider({
       : "";
 
     onTextReplace?.(text);
-    return;
+    return { model: resolveClaudeModel(model), usage: payload?.usage ?? null };
   }
 
   const env = buildProviderEnv("codex");
@@ -3241,6 +3326,7 @@ async function runTextOnlyProvider({
     "";
 
   onTextReplace?.(text);
+  return { model: model || env.OPENAI_MODEL || DEFAULT_CODEX_MODEL, usage: payload?.usage ?? null };
 }
 
 export function resolveCodexCli({
