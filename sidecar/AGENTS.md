@@ -14,6 +14,7 @@ Node.js ESM sidecar launched by the macOS app. Owns the localhost WebSocket daem
 | `onboarding-helper.mjs`, `preflight-cli.mjs` | Helper CLI registration and diagnostics CLI entry points |
 | `acp-adapter.mjs`, `acp-utils.mjs` | Agent Client Protocol surface |
 | `provider-runner.mjs`, `auth-context.mjs` | Claude, Codex, Gemini, Cursor execution and scrubbed auth env |
+| `telemetry.mjs`, `error-telemetry.mjs`, `ai-generation-telemetry.mjs` | PostHog capture pipeline, error/log forwarding, and `$ai_generation` LLM-analytics emission for provider runs |
 | `chat-route.mjs`, `inline-decision.mjs`, `structured-input-tools.mjs` | Routing and structured decision contracts |
 | `icp-fit-assessment.mjs` | Deterministic item-by-item match of the founder against `docs/ICP.md`'s 5 required conditions; powers the Day-1 fast-path ICP checklist + costume naming (pure, unit-tested) |
 | `foundation-chat.mjs`, `foundation-summary-integration.mjs` | Unified foundation chat and Day-7 summary glue |
