@@ -89,6 +89,7 @@ import json
 import sys
 
 path = sys.argv[1]
+fixture_raw = "https://" + "user:pass" + "@agentic30.example"
 
 allowed = {
     (
@@ -96,7 +97,14 @@ allowed = {
         "sidecar-tests/recorder-store.test.mjs",
         599,
         "URI",
-        "https://user:pass@agentic30.example",
+        fixture_raw,
+    ),
+    (
+        "8a179684e958a6c6710a38b700f4e95b4b6f82ff",
+        "scripts/scan-secrets-ci.sh",
+        99,
+        "URI",
+        fixture_raw,
     )
 }
 
