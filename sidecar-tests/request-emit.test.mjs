@@ -4312,7 +4312,11 @@ test("curriculum_answer_saved persists OpenDesign Day answers through the websoc
         freeform: "Support lead pilot",
         isAntiSignal: false,
       },
-      occurredAt: "2026-06-22T00:00:00.000Z",
+      // Seed "just now" — the spawned sidecar prunes curriculum answers older
+      // than the 30-day retention window relative to its own wall clock, so a
+      // hardcoded occurredAt silently rots (this passed until 30 days after the
+      // literal date, then answerCount dropped to 0). Keep it retention-safe.
+      occurredAt: new Date().toISOString(),
     }));
 
     const saved = await waitForEvent(ws.events, (event) =>
