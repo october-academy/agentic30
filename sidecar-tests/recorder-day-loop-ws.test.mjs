@@ -60,6 +60,71 @@ test("authenticated sidecar command runs recorder Day Memory Review to Evidence 
   }
 });
 
+test("Evidence Inbox review refreshes Day Memory Loop counts and next action after proof write", async () => {
+  const harness = await spawnSidecarWithSeededRecorder();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.send(JSON.stringify({
+      type: "recorder_day_memory_loop_run",
+      ...harness.loopRequest,
+      persistReviewSnapshot: false,
+    }));
+
+    const loopEvent = await waitForEvent(ws.events, (candidate) =>
+      candidate.type === "recorder_day_memory_loop_result"
+        && candidate.dayLoop?.schema === "agentic30.recorder.day_loop.v1"
+    );
+    const candidateId = loopEvent.dayLoop.evidenceBuildResult.created[0].id;
+    assert.equal(loopEvent.dayLoop.review.evidenceInbox.unresolvedCount, 1);
+    assert.equal(loopEvent.dayLoop.nextAction.action.actionType, "review_evidence_inbox");
+
+    ws.send(JSON.stringify({
+      type: "recorder_evidence_candidate_review",
+      candidateId,
+      decision: "approve_bundle",
+      reason: "Verified customer reply screenshot.",
+      externalArtifact: {
+        id: "external-reply-1",
+        kind: "customer_reply",
+        url: "https://example.com/customer-reply",
+        customer: "founder A",
+        status: "accepted",
+        strength: "medium",
+      },
+      now: new Date(new Date(harness.loopRequest.now).getTime() + 60_000).toISOString(),
+    }));
+
+    const reviewEvent = await waitForEvent(ws.events, (candidate) =>
+      candidate.type === "recorder_evidence_candidate_review_result"
+        && candidate.candidateId === candidateId
+    );
+    assert.equal(reviewEvent.write.status, "written_to_ledger");
+    assert.equal(reviewEvent.proofAcceptedByEvidenceCandidate, true);
+    assert.equal(reviewEvent.dayLoop.review.evidenceInbox.unresolvedCount, 0);
+    assert.equal(reviewEvent.dayLoop.review.evidenceInbox.writtenToLedgerCount, 1);
+    assert.equal(reviewEvent.dayLoop.review.evidenceInbox.countsByStatus.pending_review, 0);
+    assert.equal(reviewEvent.dayLoop.review.evidenceInbox.countsByStatus.written_to_ledger, 1);
+    assert.equal(
+      reviewEvent.dayLoop.review.emptyStates.some((state) => state.id === "no_accepted_proof"),
+      false,
+    );
+    assert.equal(
+      reviewEvent.dayLoop.review.warnings.some((warning) => warning.id === "proof_not_advanced"),
+      false,
+    );
+    assert.equal(reviewEvent.dayLoop.nextAction.action.id, "choose_next_external_action");
+    assert.equal(reviewEvent.dayLoop.nextAction.action.actionType, "external_customer_action");
+
+    const ledger = await loadProofLedger({ workspaceRoot: harness.workspacePath });
+    assert.equal(ledger.events.length, 1);
+    assert.equal(ledger.events[0].metadata.recorderEvidenceCandidateId, candidateId);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("authenticated sidecar command reports invalid Day Memory range without crashing the connection", async () => {
   const harness = await spawnSidecarWithSeededRecorder();
   let ws;

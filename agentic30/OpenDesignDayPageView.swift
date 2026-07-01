@@ -4638,6 +4638,7 @@ struct OpenDesignDayPageView: View {
     let recorderDayMemoryLoopRunning: Bool
     let recorderDayMemoryLoopLastError: String?
     let recorderEvidenceCandidateReviewInFlight: Set<String>
+    let recorderLastEvidenceCandidateReviewResult: RecorderEvidenceCandidateReviewResult?
     let recorderRetentionApplyRunning: Bool
     let recorderRetentionLastResult: RecorderRetentionApplyResult?
     let recorderRetentionLastError: String?
@@ -4799,6 +4800,7 @@ struct OpenDesignDayPageView: View {
         recorderDayMemoryLoopRunning: Bool = false,
         recorderDayMemoryLoopLastError: String? = nil,
         recorderEvidenceCandidateReviewInFlight: Set<String> = [],
+        recorderLastEvidenceCandidateReviewResult: RecorderEvidenceCandidateReviewResult? = nil,
         recorderRetentionApplyRunning: Bool = false,
         recorderRetentionLastResult: RecorderRetentionApplyResult? = nil,
         recorderRetentionLastError: String? = nil,
@@ -4945,6 +4947,7 @@ struct OpenDesignDayPageView: View {
         self.recorderDayMemoryLoopRunning = recorderDayMemoryLoopRunning
         self.recorderDayMemoryLoopLastError = recorderDayMemoryLoopLastError
         self.recorderEvidenceCandidateReviewInFlight = recorderEvidenceCandidateReviewInFlight
+        self.recorderLastEvidenceCandidateReviewResult = recorderLastEvidenceCandidateReviewResult
         self.recorderRetentionApplyRunning = recorderRetentionApplyRunning
         self.recorderRetentionLastResult = recorderRetentionLastResult
         self.recorderRetentionLastError = recorderRetentionLastError
@@ -5119,6 +5122,7 @@ struct OpenDesignDayPageView: View {
                     recorderDayMemoryLoopRunning: recorderDayMemoryLoopRunning,
                     recorderDayMemoryLoopLastError: recorderDayMemoryLoopLastError,
                     recorderEvidenceCandidateReviewInFlight: recorderEvidenceCandidateReviewInFlight,
+                    recorderLastEvidenceCandidateReviewResult: recorderLastEvidenceCandidateReviewResult,
                     recorderRetentionApplyRunning: recorderRetentionApplyRunning,
                     recorderRetentionLastResult: recorderRetentionLastResult,
                     recorderRetentionLastError: recorderRetentionLastError,
@@ -5901,6 +5905,7 @@ struct OpenDesignDayShell: View {
     let recorderDayMemoryLoopRunning: Bool
     let recorderDayMemoryLoopLastError: String?
     let recorderEvidenceCandidateReviewInFlight: Set<String>
+    let recorderLastEvidenceCandidateReviewResult: RecorderEvidenceCandidateReviewResult?
     let recorderRetentionApplyRunning: Bool
     let recorderRetentionLastResult: RecorderRetentionApplyResult?
     let recorderRetentionLastError: String?
@@ -6081,6 +6086,7 @@ struct OpenDesignDayShell: View {
         recorderDayMemoryLoopRunning: Bool,
         recorderDayMemoryLoopLastError: String?,
         recorderEvidenceCandidateReviewInFlight: Set<String>,
+        recorderLastEvidenceCandidateReviewResult: RecorderEvidenceCandidateReviewResult?,
         recorderRetentionApplyRunning: Bool,
         recorderRetentionLastResult: RecorderRetentionApplyResult?,
         recorderRetentionLastError: String?,
@@ -6237,6 +6243,7 @@ struct OpenDesignDayShell: View {
         self.recorderDayMemoryLoopRunning = recorderDayMemoryLoopRunning
         self.recorderDayMemoryLoopLastError = recorderDayMemoryLoopLastError
         self.recorderEvidenceCandidateReviewInFlight = recorderEvidenceCandidateReviewInFlight
+        self.recorderLastEvidenceCandidateReviewResult = recorderLastEvidenceCandidateReviewResult
         self.recorderRetentionApplyRunning = recorderRetentionApplyRunning
         self.recorderRetentionLastResult = recorderRetentionLastResult
         self.recorderRetentionLastError = recorderRetentionLastError
@@ -6552,6 +6559,7 @@ struct OpenDesignDayShell: View {
                         dayMemoryLoopRunning: recorderDayMemoryLoopRunning,
                         dayMemoryLoopLastError: recorderDayMemoryLoopLastError,
                         evidenceCandidateReviewInFlight: recorderEvidenceCandidateReviewInFlight,
+                        lastEvidenceCandidateReview: recorderLastEvidenceCandidateReviewResult,
                         retentionApplyRunning: recorderRetentionApplyRunning,
                         retentionLastResult: recorderRetentionLastResult,
                         retentionLastError: recorderRetentionLastError,
@@ -8934,6 +8942,7 @@ private struct OpenDesignFounderReplayPageView: View {
     let dayMemoryLoopRunning: Bool
     let dayMemoryLoopLastError: String?
     let evidenceCandidateReviewInFlight: Set<String>
+    let lastEvidenceCandidateReview: RecorderEvidenceCandidateReviewResult?
     let retentionApplyRunning: Bool
     let retentionLastResult: RecorderRetentionApplyResult?
     let retentionLastError: String?
@@ -8988,6 +8997,7 @@ private struct OpenDesignFounderReplayPageView: View {
     @State private var recorderSearchText = "activation"
     @State private var sqlQueryText = "SELECT id, captured_at, app_name, window_title, browser_domain, redacted_text FROM recorder_sql_frames_redacted LIMIT 20"
     @State private var evidenceArtifactLocations: [String: String] = [:]
+    @State private var evidenceRejectReasons: [String: String] = [:]
 
     private let rows: [OpenDesignFounderReplaySummaryRow] = [
         .init(id: "permission", time: "권한", action: "Screen Recording · Accessibility", workState: "미확인", decision: "Swift permission UI 필요"),
@@ -9044,6 +9054,7 @@ private struct OpenDesignFounderReplayPageView: View {
         dayMemoryLoopRunning: Bool = false,
         dayMemoryLoopLastError: String? = nil,
         evidenceCandidateReviewInFlight: Set<String> = [],
+        lastEvidenceCandidateReview: RecorderEvidenceCandidateReviewResult? = nil,
         retentionApplyRunning: Bool = false,
         retentionLastResult: RecorderRetentionApplyResult? = nil,
         retentionLastError: String? = nil,
@@ -9134,6 +9145,7 @@ private struct OpenDesignFounderReplayPageView: View {
         self.dayMemoryLoopRunning = dayMemoryLoopRunning
         self.dayMemoryLoopLastError = dayMemoryLoopLastError
         self.evidenceCandidateReviewInFlight = evidenceCandidateReviewInFlight
+        self.lastEvidenceCandidateReview = lastEvidenceCandidateReview
         self.retentionApplyRunning = retentionApplyRunning
         self.retentionLastResult = retentionLastResult
         self.retentionLastError = retentionLastError
@@ -10233,10 +10245,7 @@ private struct OpenDesignFounderReplayPageView: View {
                             .lineLimit(1)
                     }
                     if let action {
-                        Text("next \(action.actionType) · \(action.title)")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-                            .lineLimit(1)
+                        dayMemoryNextActionRows(action)
                             .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.nextAction")
                     }
                     if let snapshot = dayMemoryLoop?.snapshot {
@@ -10244,6 +10253,9 @@ private struct OpenDesignFounderReplayPageView: View {
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                             .lineLimit(1)
+                    }
+                    if let lastEvidenceCandidateReview {
+                        evidenceCandidateReviewReceiptRow(lastEvidenceCandidateReview)
                     }
                     if let dayMemoryLoopLastError, !dayMemoryLoopLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text(dayMemoryLoopLastError)
@@ -10375,6 +10387,7 @@ private struct OpenDesignFounderReplayPageView: View {
         let inbox = dayMemoryLoop?.review?.evidenceInbox
         let evidenceBuild = dayMemoryLoop?.evidenceBuildResult
         let action = dayMemoryLoop?.nextAction?.action
+        let lastReview = lastEvidenceCandidateReview
         return [
             "Day Memory Review state \(reviewState)",
             "Evidence Inbox total \(inbox?.total ?? 0)",
@@ -10383,8 +10396,78 @@ private struct OpenDesignFounderReplayPageView: View {
             "candidates created \(evidenceBuild?.createdCount ?? 0)",
             "candidate rows \(evidenceBuild?.created.count ?? 0)",
             "next action \(action?.actionType ?? "none")",
+            "next instruction \(action?.instruction ?? "none")",
+            "next reason \(action?.reason ?? "none")",
+            "last review \(lastReview?.candidateId ?? "none")",
             dayMemoryLoop?.proofAcceptedByDayLoop == true ? "proof accepted" : "proof rejected",
         ].joined(separator: " | ")
+    }
+
+    private func dayMemoryNextActionRows(_ action: RecorderNextActionResult.Action) -> some View {
+        let priorityPrefix = action.priority.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? ""
+            : "\(action.priority) "
+        let sourceSummary = action.sourceIds.isEmpty
+            ? ""
+            : "sources \(action.sourceIds.prefix(2).joined(separator: ", "))"
+        return VStack(alignment: .leading, spacing: 3) {
+            Text("next \(priorityPrefix)\(action.actionType) · \(action.title)")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                .lineLimit(1)
+            if !action.instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("do \(action.instruction)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(2)
+            }
+            if !action.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("because \(action.reason)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(2)
+            }
+            if let candidate = action.targetCandidate, !candidate.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("target \(compactIdentifier(candidate.id)) · \(candidate.candidateStatus)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+            }
+            if !sourceSummary.isEmpty {
+                Text(sourceSummary)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(dayMemoryNextActionAccessibilityLabel(action))
+    }
+
+    private func dayMemoryNextActionAccessibilityLabel(_ action: RecorderNextActionResult.Action) -> String {
+        [
+            "next action \(action.actionType)",
+            "priority \(action.priority.isEmpty ? "none" : action.priority)",
+            "title \(action.title)",
+            "instruction \(action.instruction.isEmpty ? "none" : action.instruction)",
+            "reason \(action.reason.isEmpty ? "none" : action.reason)",
+            "preferred by \(action.preferredBy.isEmpty ? "none" : action.preferredBy)",
+            "target candidate \(action.targetCandidate?.id ?? "none")",
+            "source count \(action.sourceIds.count)",
+            "proof effect \(action.proofEffect)",
+        ].joined(separator: " | ")
+    }
+
+    private func evidenceCandidateReviewReceiptRow(_ result: RecorderEvidenceCandidateReviewResult) -> some View {
+        let ledgerText = result.proofLedgerEventId
+            .map { "ledger \(compactIdentifier($0))" }
+            ?? "ledger none"
+        return Text("last review \(compactIdentifier(result.candidateId)) · \(result.displayStatus) · \(ledgerText) · \(result.proofLedgerWriteAllowed ? "proof write on" : "proof write off")")
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(result.proofLedgerWriteAllowed ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.amber)
+            .lineLimit(1)
+            .accessibilityLabel(evidenceCandidateReviewReceiptAccessibilityLabel(result))
+            .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.lastReview")
     }
 
     private func evidenceCandidateSummaryRow(_ candidate: RecorderEvidenceCandidateSummary, index: Int) -> some View {
@@ -10394,10 +10477,18 @@ private struct OpenDesignFounderReplayPageView: View {
             get: { evidenceArtifactLocations[candidateID] ?? "" },
             set: { evidenceArtifactLocations[candidateID] = $0 }
         )
+        let rejectReason = Binding<String>(
+            get: { evidenceRejectReasons[candidateID] ?? "" },
+            set: { evidenceRejectReasons[candidateID] = $0 }
+        )
         let cleanArtifactLocation = artifactLocation.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanRejectReason = rejectReason.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let isReviewable = isEvidenceCandidateReviewable(candidate)
         let isReviewing = evidenceCandidateReviewInFlight.contains(candidateID)
         let canApprove = isReviewable && !isReviewing && !candidateID.isEmpty && !cleanArtifactLocation.isEmpty
+        let canReject = isReviewable && !isReviewing && !candidateID.isEmpty && !cleanRejectReason.isEmpty
+        let ledgerEventId = candidate.proofLedgerEventId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hasLedgerEvent = !ledgerEventId.isEmpty
         return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Text(candidate.claim.isEmpty ? candidate.id : candidate.claim)
@@ -10407,7 +10498,7 @@ private struct OpenDesignFounderReplayPageView: View {
                 Spacer(minLength: 8)
                 founderReplayStatusPill(candidate.candidateStatus.isEmpty ? "candidate" : candidate.candidateStatus, tone: candidate.candidateStatus == "pending_review" ? .amber : .sky)
                 founderReplayStatusPill(candidate.proofKind.isEmpty ? "proof kind" : candidate.proofKind, tone: .sky)
-                founderReplayStatusPill("non-proof", tone: .amber)
+                founderReplayStatusPill(evidenceCandidateProofStatus(candidate), tone: hasLedgerEvent ? .accent : .amber)
             }
             HStack(spacing: 8) {
                 if let targetGate = candidate.targetGate, !targetGate.isEmpty {
@@ -10422,6 +10513,13 @@ private struct OpenDesignFounderReplayPageView: View {
             .font(.system(size: 10.5, weight: .medium, design: .monospaced))
             .foregroundStyle(OpenDesignOfficeHoursColor.muted)
             .lineLimit(1)
+            if hasLedgerEvent {
+                Text("ledger \(compactIdentifier(ledgerEventId))")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).ledger")
+            }
             if let debt, !debt.isEmpty {
                 Text(debt)
                     .font(.system(size: 10.5, weight: .medium))
@@ -10429,45 +10527,63 @@ private struct OpenDesignFounderReplayPageView: View {
                     .lineLimit(2)
             }
             if isReviewable {
-                HStack(spacing: 8) {
-                    TextField("External URL or local path", text: artifactLocation)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                        .padding(.horizontal, 8)
-                        .frame(minWidth: 180, maxWidth: 280, minHeight: 30)
-                        .background(OpenDesignOfficeHoursColor.surface.opacity(0.86))
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
-                        )
-                        .disabled(isReviewing)
-                        .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).artifactLocation")
-                    Button {
-                        approveEvidenceCandidate(candidate, artifactLocation: cleanArtifactLocation)
-                    } label: {
-                        Label(isReviewing ? "검토 중" : "Approve", systemImage: "checkmark.seal")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(height: 28)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        TextField("External URL or local path", text: artifactLocation)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                            .padding(.horizontal, 8)
+                            .frame(minWidth: 180, maxWidth: 280, minHeight: 30)
+                            .background(OpenDesignOfficeHoursColor.surface.opacity(0.86))
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                            )
+                            .disabled(isReviewing)
+                            .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).artifactLocation")
+                        Button {
+                            approveEvidenceCandidate(candidate, artifactLocation: cleanArtifactLocation)
+                        } label: {
+                            Label(isReviewing ? "검토 중" : "Approve", systemImage: "checkmark.seal")
+                                .font(.system(size: 11, weight: .semibold))
+                                .frame(height: 28)
+                        }
+                        .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: !canApprove))
+                        .disabled(!canApprove)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).approve")
                     }
-                    .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: !canApprove))
-                    .disabled(!canApprove)
-                    .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).approve")
-                    Button {
-                        rejectEvidenceCandidate(candidate)
-                    } label: {
-                        Label("Reject", systemImage: "xmark.seal")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(height: 28)
+                    HStack(spacing: 8) {
+                        TextField("Reject root cause", text: rejectReason)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                            .padding(.horizontal, 8)
+                            .frame(minWidth: 180, maxWidth: 280, minHeight: 30)
+                            .background(OpenDesignOfficeHoursColor.surface.opacity(0.86))
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                            )
+                            .disabled(isReviewing)
+                            .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).rejectReason")
+                        Button {
+                            rejectEvidenceCandidate(candidate, reason: cleanRejectReason)
+                        } label: {
+                            Label("Reject", systemImage: "xmark.seal")
+                                .font(.system(size: 11, weight: .semibold))
+                                .frame(height: 28)
+                        }
+                        .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: !canReject))
+                        .disabled(!canReject)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).reject")
                     }
-                    .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: isReviewing || candidateID.isEmpty))
-                    .disabled(isReviewing || candidateID.isEmpty)
-                    .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).reject")
                 }
                 .padding(.top, 2)
                 .accessibilityElement(children: .contain)
-                .accessibilityLabel("Evidence Inbox candidate review controls")
+                .accessibilityLabel("Evidence Inbox candidate review controls. Approval requires an external artifact. Rejection requires a root cause.")
             }
         }
         .padding(.vertical, 8)
@@ -10485,6 +10601,20 @@ private struct OpenDesignFounderReplayPageView: View {
 
     private func isEvidenceCandidateReviewable(_ candidate: RecorderEvidenceCandidateSummary) -> Bool {
         ["pending_review", "degraded", "verifier_rejected"].contains(candidate.candidateStatus)
+    }
+
+    private func evidenceCandidateProofStatus(_ candidate: RecorderEvidenceCandidateSummary) -> String {
+        let ledgerEventId = candidate.proofLedgerEventId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if candidate.candidateStatus == "written_to_ledger" || !ledgerEventId.isEmpty {
+            return "ledger written"
+        }
+        if candidate.candidateStatus == "approved_bundle" {
+            return "approved bundle"
+        }
+        if candidate.candidateStatus == "rejected" {
+            return "rejected"
+        }
+        return "non-proof"
     }
 
     private func approveEvidenceCandidate(_ candidate: RecorderEvidenceCandidateSummary, artifactLocation: String) {
@@ -10510,13 +10640,14 @@ private struct OpenDesignFounderReplayPageView: View {
         )
     }
 
-    private func rejectEvidenceCandidate(_ candidate: RecorderEvidenceCandidateSummary) {
+    private func rejectEvidenceCandidate(_ candidate: RecorderEvidenceCandidateSummary, reason: String) {
         let candidateID = candidate.id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !candidateID.isEmpty else { return }
+        let cleanReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidateID.isEmpty, !cleanReason.isEmpty else { return }
         reviewEvidenceCandidate(
             candidateID,
             "rejected",
-            "local user rejected the Evidence Inbox candidate from Founder Replay UI",
+            cleanReason,
             nil
         )
     }
@@ -10544,7 +10675,8 @@ private struct OpenDesignFounderReplayPageView: View {
     }
 
     private func evidenceCandidateAccessibilityLabel(_ candidate: RecorderEvidenceCandidateSummary) -> String {
-        [
+        let ledgerEventId = candidate.proofLedgerEventId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return [
             candidate.id.isEmpty ? "unknown candidate" : candidate.id,
             candidate.candidateStatus.isEmpty ? "unknown status" : candidate.candidateStatus,
             candidate.proofKind.isEmpty ? "unknown proof kind" : candidate.proofKind,
@@ -10552,9 +10684,29 @@ private struct OpenDesignFounderReplayPageView: View {
             candidate.claim.isEmpty ? "empty claim" : candidate.claim,
             "sources \(candidate.sourceIds.count)",
             "debt \(candidate.evidenceDebt.count)",
+            ledgerEventId.isEmpty ? "no proof ledger event" : "proof ledger event \(ledgerEventId)",
             "evidence inbox candidate",
-            "non-proof",
+            evidenceCandidateProofStatus(candidate),
         ].joined(separator: " | ")
+    }
+
+    private func evidenceCandidateReviewReceiptAccessibilityLabel(_ result: RecorderEvidenceCandidateReviewResult) -> String {
+        return [
+            result.candidateId.isEmpty ? "unknown candidate" : result.candidateId,
+            result.displayStatus,
+            result.proofLedgerEventId.map { "proof ledger event \($0)" } ?? "no proof ledger event",
+            result.proofAcceptedByReview ? "review accepted proof" : "review did not accept proof",
+            result.proofAcceptedByEvidenceCandidate ? "evidence candidate accepted proof" : "evidence candidate did not accept proof",
+            result.proofLedgerWriteAllowed ? "proof ledger write allowed" : "proof ledger write blocked",
+        ].joined(separator: " | ")
+    }
+
+    private func compactIdentifier(_ value: String) -> String {
+        let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard clean.count > 18 else { return clean.isEmpty ? "unknown" : clean }
+        let prefix = clean.prefix(8)
+        let suffix = clean.suffix(6)
+        return "\(prefix)...\(suffix)"
     }
 
     private var controlConsentPanel: some View {
@@ -11689,7 +11841,7 @@ private struct OpenDesignFounderReplayPageView: View {
         let summaryLabel = [
             "\(sortedPipes.count) pipes",
             "\(sortedRuns.count) runs",
-            lastSchedulerResult.map { "scheduler queued \($0.queuedCount) executed \($0.executedCount) failed \($0.failedCount)" } ?? "scheduler idle",
+            lastSchedulerResult.map(schedulerAccessibilityLabel) ?? "scheduler idle",
             "pipe definitions non-proof",
             "pipe runs non-proof",
         ].joined(separator: " · ")
@@ -11701,9 +11853,17 @@ private struct OpenDesignFounderReplayPageView: View {
                 }
                 if let lastSchedulerResult {
                     pipesNotice(
-                        text: "queued \(lastSchedulerResult.queuedCount) · executed \(lastSchedulerResult.executedCount) · failed \(lastSchedulerResult.failedCount)",
-                        tone: lastSchedulerResult.failedCount > 0 ? .amber : .accent
+                        text: schedulerNoticeText(lastSchedulerResult),
+                        tone: schedulerNoticeTone(lastSchedulerResult)
                     )
+                    .accessibilityIdentifier("opendesign.founderReplay.pipes.scheduler.result")
+                    if let skip = lastSchedulerResult.skipped.first {
+                        pipesNotice(
+                            text: schedulerSkipNoticeText(skip),
+                            tone: schedulerSkipNoticeTone(skip)
+                        )
+                        .accessibilityIdentifier("opendesign.founderReplay.pipes.scheduler.skip")
+                    }
                 }
                 VStack(spacing: 10) {
                     if sortedPipes.isEmpty {
@@ -11988,6 +12148,73 @@ private struct OpenDesignFounderReplayPageView: View {
         }
     }
 
+    private func schedulerNoticeText(_ result: RecorderPipeSchedulerResult) -> String {
+        [
+            "queued \(result.queuedCount)",
+            "skipped \(result.skippedCount)",
+            "executed \(result.executedCount)",
+            "failed \(result.failedCount)",
+            result.proofLedgerWriteAllowed ? "proof write on" : "proof write off",
+        ].joined(separator: " · ")
+    }
+
+    private func schedulerNoticeTone(_ result: RecorderPipeSchedulerResult) -> OpenDesignRailBadgeTone {
+        if result.failedCount > 0 || result.skipped.contains(where: schedulerSkipIsBlocker) {
+            return .amber
+        }
+        return .accent
+    }
+
+    private func schedulerSkipNoticeText(_ skip: RecorderPipeSchedulerSkip) -> String {
+        var parts = ["skipped \(skip.reason.isEmpty ? "unknown" : skip.reason)"]
+        if let pipeId = skip.pipeId?.trimmingCharacters(in: .whitespacesAndNewlines), !pipeId.isEmpty {
+            parts.append(pipeId)
+        }
+        if let readiness = skip.readiness {
+            parts.append("\(readiness.mode) \(readiness.state)")
+            let blockers = readiness.blockers
+                .map { $0.id }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if !blockers.isEmpty {
+                parts.append("blockers \(blockers.prefix(3).joined(separator: " "))")
+            }
+        } else if let activeRunId = skip.activeRunId?.trimmingCharacters(in: .whitespacesAndNewlines), !activeRunId.isEmpty {
+            let status = skip.activeRunStatus?.trimmingCharacters(in: .whitespacesAndNewlines)
+            parts.append("active \(activeRunId)\(status?.isEmpty == false ? " \(status!)" : "")")
+        }
+        parts.append(skip.proofAcceptedByScheduler ? "proof accepted" : "non-proof")
+        return parts.joined(separator: " · ")
+    }
+
+    private func schedulerSkipNoticeTone(_ skip: RecorderPipeSchedulerSkip) -> OpenDesignRailBadgeTone {
+        schedulerSkipIsBlocker(skip) ? .amber : .sky
+    }
+
+    private func schedulerSkipIsBlocker(_ skip: RecorderPipeSchedulerSkip) -> Bool {
+        if skip.reason == "recorder_capture_not_ready" {
+            return true
+        }
+        return skip.readiness?.blockers.isEmpty == false
+    }
+
+    private func schedulerAccessibilityLabel(_ result: RecorderPipeSchedulerResult) -> String {
+        var parts = [
+            "scheduler queued \(result.queuedCount)",
+            "scheduler skipped \(result.skippedCount)",
+            "scheduler executed \(result.executedCount)",
+            "scheduler failed \(result.failedCount)",
+            result.proofAcceptedByScheduler ? "scheduler proof accepted" : "scheduler proof rejected",
+            result.proofLedgerWriteAllowed ? "scheduler proof write allowed" : "scheduler proof write blocked",
+        ]
+        if !result.generatedAt.isEmpty {
+            parts.append("generated \(compactIsoTimestamp(result.generatedAt))")
+        }
+        if let skip = result.skipped.first {
+            parts.append(schedulerSkipNoticeText(skip))
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func compactIsoTimestamp(_ value: String) -> String {
         guard value.count >= 16 else { return value.isEmpty ? "unknown" : value }
         let start = value.index(value.startIndex, offsetBy: min(11, value.count))
@@ -11996,7 +12223,13 @@ private struct OpenDesignFounderReplayPageView: View {
     }
 
     private func pipesNotice(text: String, tone: OpenDesignRailBadgeTone) -> some View {
-        let color = tone == .amber ? OpenDesignOfficeHoursColor.amber : OpenDesignOfficeHoursColor.accent
+        let color: Color = {
+            switch tone {
+            case .accent: return OpenDesignOfficeHoursColor.accent
+            case .amber: return OpenDesignOfficeHoursColor.amber
+            case .sky: return OpenDesignOfficeHoursColor.muted
+            }
+        }()
         return HStack(spacing: 8) {
             Image(systemName: tone == .amber ? "exclamationmark.triangle" : "checkmark.circle")
                 .font(.system(size: 13, weight: .semibold))

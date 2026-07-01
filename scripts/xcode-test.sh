@@ -139,6 +139,17 @@ ui_test_runner_app_marker() {
   printf '%s\n' "$repo_root/build/ui-e2e/agentic30-ui-test-runner-app.txt"
 }
 
+read_marked_ui_test_runner_app() {
+  local marker
+  local runner_app
+  marker="$(ui_test_runner_app_marker)"
+  [[ -f "$marker" ]] || return 1
+  runner_app="$(/bin/cat "$marker" 2>/dev/null || true)"
+  runner_app="${runner_app//$'\n'/}"
+  [[ -n "$runner_app" ]] || return 1
+  printf '%s\n' "$runner_app"
+}
+
 runner_app_is_valid() {
   local runner_app="$1"
   local runner_bundle_id
@@ -175,16 +186,50 @@ runner_app_is_under_search_root() {
 }
 
 marked_ui_test_runner_app() {
-  local marker
   local runner_app
-  marker="$(ui_test_runner_app_marker)"
-  [[ -f "$marker" ]] || return 1
-  runner_app="$(/bin/cat "$marker" 2>/dev/null || true)"
-  runner_app="${runner_app//$'\n'/}"
-  [[ -n "$runner_app" ]] || return 1
+  runner_app="$(read_marked_ui_test_runner_app)" || return 1
   runner_app_is_valid "$runner_app" || return 1
   runner_app_is_under_search_root "$runner_app" || return 1
   printf '%s\n' "$runner_app"
+}
+
+print_marked_ui_test_runner_rejection() {
+  local marker
+  local runner_app
+  local search_root
+  marker="$(ui_test_runner_app_marker)"
+  search_root="$(derived_data_search_root)"
+
+  if [[ ! -f "$marker" ]]; then
+    echo "No marked UI test runner exists yet at $marker" >&2
+    return 0
+  fi
+
+  runner_app="$(read_marked_ui_test_runner_app || true)"
+  if [[ -z "$runner_app" ]]; then
+    echo "Marked UI test runner marker is empty: $marker" >&2
+    return 0
+  fi
+
+  if [[ ! -d "$runner_app" ]]; then
+    echo "Marked UI test runner no longer exists: $runner_app (marker: $marker)" >&2
+    return 0
+  fi
+
+  if ! runner_app_is_valid "$runner_app"; then
+    echo "Marked UI test runner is not a valid Agentic30 runner: $runner_app (marker: $marker)" >&2
+    return 0
+  fi
+
+  if ! runner_app_is_under_search_root "$runner_app"; then
+    echo "Marked UI test runner is outside the selected DerivedData search root and will not be reused." >&2
+    echo "Marked UI test runner: $runner_app" >&2
+    echo "Selected DerivedData search root: $search_root" >&2
+    echo "Marker: $marker" >&2
+    return 0
+  fi
+
+  echo "Marked UI test runner was rejected for an unknown reason: $runner_app (marker: $marker)" >&2
 }
 
 remember_ui_test_runner_app() {
@@ -217,6 +262,7 @@ latest_ui_test_runner_app() {
       printf '%s\n' "$marked_runner_app"
       return 0
     fi
+    print_marked_ui_test_runner_rejection
   fi
 
   local search_root
@@ -300,19 +346,27 @@ print_ui_test_runner_identity() {
   local bundle_id
   local cdhash
   local signature
+  local network_server_entitlement="false"
   bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist" 2>/dev/null || true)"
   cdhash="$(/usr/bin/codesign -dvvv "$runner_app" 2>&1 | /usr/bin/sed -nE 's/^CDHash=(.*)$/\1/p' | /usr/bin/head -1)"
   signature="$(/usr/bin/codesign -dvvv "$runner_app" 2>&1 | /usr/bin/sed -nE 's/^Signature=(.*)$/\1/p' | /usr/bin/head -1)"
+  if /usr/bin/codesign -d --entitlements :- "$runner_app" 2>/dev/null \
+    | /usr/bin/grep -q 'com.apple.security.network.server'; then
+    network_server_entitlement="true"
+  fi
 
   echo "UI test runner app: $runner_app"
   echo "UI test runner bundle id: ${bundle_id:-<unknown>}"
   echo "UI test runner cdhash: ${cdhash:-<unknown>}"
   echo "UI test runner signature: ${signature:-<unknown>}"
+  echo "UI test runner network.server entitlement: $network_server_entitlement"
+  echo "UI test runner DerivedData search root: $(derived_data_search_root)"
+  echo "UI test runner marker: $(ui_test_runner_app_marker)"
   echo "UI test runner Accessibility target: $runner_app"
 }
 
 prepare_ui_test_runner() {
-  if should_reuse_existing_ui_runner && latest_ui_test_runner_app >/dev/null 2>&1; then
+  if should_reuse_existing_ui_runner && latest_ui_test_runner_app >/dev/null; then
     echo "Reusing existing UI test runner (AGENTIC30_UI_E2E_REUSE_RUNNER) to preserve the Accessibility-granted cdhash" >&2
   else
     run_ui_xcodebuild build-for-testing "${base_xcode_args[@]}" -scheme agentic30UITests "$@"
@@ -331,7 +385,7 @@ run_ui_test_action() {
   shift
 
   if should_resign_ui_runner_for_network_server; then
-    if should_reuse_existing_ui_runner && latest_ui_test_runner_app >/dev/null 2>&1; then
+    if should_reuse_existing_ui_runner && latest_ui_test_runner_app >/dev/null; then
       echo "Reusing existing UI test runner (AGENTIC30_UI_E2E_REUSE_RUNNER) to keep the network.server cdhash stable" >&2
     else
       run_ui_xcodebuild build-for-testing "${base_xcode_args[@]}" -scheme "$scheme"

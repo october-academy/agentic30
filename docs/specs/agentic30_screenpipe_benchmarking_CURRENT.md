@@ -30,6 +30,148 @@ SPEC Section 17 unless this file is insufficient.
 
 ## Latest Implementation Pending Live Acceptance
 
+- Gate D Pipe scheduler state is now persisted and surfaced through the live
+  Pipe state bridge:
+  - `sidecar/index.mjs` keeps the latest Pipe scheduler result in
+    `state.recorderPipeLastSchedulerResult`, including manual
+    `recorder_pipe_scheduler_tick` results and background scheduler ticks.
+  - Capture-readiness blocks now produce a schema-versioned scheduler result
+    with `skipped_count=1`, `reason=recorder_capture_not_ready`, the typed
+    readiness blockers, `proofAcceptedByScheduler=false`, and
+    `proofLedgerWriteAllowed=false` instead of disappearing as an uninspectable
+    no-op.
+  - `recorder_pipes_list` now includes the scheduler snapshot in
+    `recorder_pipes_state`, and Swift updates
+    `recorderPipeLastSchedulerResult` from that event so the Control surface can
+    keep showing the most recent scheduler boundary after a refresh.
+  - Background and manual scheduler ticks now broadcast the same
+    `recorder_pipes_state` payload after updating the scheduler snapshot, so
+    connected Control surfaces receive the latest scheduler boundary without
+    waiting for a manual refresh.
+  - Manual scheduler ticks that fail capture readiness still send the explicit
+    `ERR_RECORDER_PIPE_SCHEDULER_CAPTURE_NOT_READY` error, but now first persist
+    and broadcast the same skipped scheduler snapshot with the named readiness
+    blockers.
+  - Manual `recorder_pipe_scheduler_tick_result` now returns a combined
+    `scheduler` snapshot that includes both queued/skipped enqueue decisions and
+    executed/failed drain decisions. Swift uses that explicit snapshot first, so
+    the visible scheduler summary remains stable before and after a Pipe-state
+    refresh.
+  - Swift now decodes scheduler `generated_at`, `skipped[]`,
+    skipped-readiness blockers, and the scheduler proof boundary. The Founder
+    Replay Pipes surface shows skipped count, the first skipped root cause
+    (`recorder_capture_not_ready` plus blocker ids when present), and
+    `proof write off` in visible/accessibility scheduler rows instead of
+    collapsing the state to counts only.
+  - Focused verification passed: syntax checks for `sidecar/index.mjs` and
+    `sidecar-tests/recorder-raw-api-runtime.test.mjs`; targeted `git diff
+    --check`; `node --test sidecar-tests/recorder-raw-api-runtime.test.mjs`
+    (`1/1`, including scheduler-state broadcast); `xcrun swiftc -parse
+    agentic30/AgenticViewModel.swift
+    agentic30Tests/AgenticViewModelAuthTests.swift`; and `bash
+    scripts/xcode-test.sh unit
+    '-only-testing:agentic30Tests/AgenticViewModelAuthTests'` (`121/121`).
+    Additional focused Swift verification passed after the UI root-cause
+    visibility change: `xcrun swiftc -parse agentic30/AgenticViewModel.swift
+    agentic30/OpenDesignDayPageView.swift
+    agentic30Tests/SidecarEventDecodingTests.swift
+    agentic30Tests/AgenticViewModelAuthTests.swift`, targeted `git diff
+    --check`, and `bash scripts/xcode-test.sh unit
+    '-only-testing:agentic30Tests/SidecarEventDecodingTests'` (`132/132`).
+  - This is Gate D scheduler/state visibility and proof-boundary evidence. It
+    is still not live signed-app recorder acceptance, foreground UI E2E
+    acceptance, granted TCC proof, or proof-ledger acceptance.
+- Gate A Evidence Inbox rows now make approved proof-ledger writes visible in
+  the Founder Replay Control surface:
+  - `RecorderEvidenceCandidateSummary` already decodes `proofLedgerEventId` /
+    `proof_ledger_event_id` from the sidecar review result and Day Memory loop
+    snapshot. The Evidence Inbox row now uses that value to switch the proof
+    status pill from generic `non-proof` to `ledger written`.
+  - Written candidates render a compact `ledger <event-id>` line with a stable
+    accessibility identifier, and the candidate accessibility label includes
+    the full proof-ledger event id. Pending/degraded/rejected candidates still
+    stay explicit as non-proof or rejected until the sidecar writes the accepted
+    proof-ledger event through the strict adapter.
+  - Focused verification passed after this UI-only change: `xcrun swiftc -parse
+    agentic30/OpenDesignDayPageView.swift agentic30/AgenticViewModel.swift` and
+    targeted `git diff --check`.
+  - This improves the visible Evidence Inbox -> proof-ledger confirmation
+    surface. It is still not foreground UI E2E acceptance or live signed-app
+    recorder acceptance.
+- Gate A Evidence Inbox review results now leave a visible last-review receipt
+  in the Founder Replay Control surface:
+  - `recorder_evidence_candidate_review_result` now carries a top-level
+    `candidateId` / `candidate_id` in addition to the candidate row and
+    proof-ledger fields, so Swift can identify the reviewed candidate even when
+    the candidate row is absent or outside the visible Day Memory candidate
+    prefix.
+  - Swift decodes `candidateId`, `proofLedgerEventId`,
+    `proofAcceptedByReview`, `proofAcceptedByEvidenceCandidate`, and
+    `proofLedgerWriteAllowed` from the sidecar event, stores the latest review
+    receipt in `recorderLastEvidenceCandidateReviewResult`, and clears
+    in-flight review state by candidate id.
+  - The Founder Replay Day Memory panel now renders a compact
+    `last review <candidate> ... ledger <event-id> ... proof write on/off` row
+    with a stable accessibility identifier. This keeps the proof-ledger receipt
+    visible even when the updated candidate is not one of the first three
+    generated candidates shown in the row list.
+  - Focused verification passed: `node --check sidecar/index.mjs`,
+    `xcrun swiftc -parse agentic30/AgenticViewModel.swift
+    agentic30/OpenDesignDayPageView.swift agentic30/ContentView.swift
+    agentic30Tests/AgenticViewModelAuthTests.swift`, and `bash
+    scripts/xcode-test.sh unit
+    '-only-testing:agentic30Tests/AgenticViewModelAuthTests'` (`122/122`).
+  - This improves visible review-result/proof-boundary continuity. It is still
+    not foreground UI E2E acceptance, live signed-app recorder acceptance, or
+    new proof-ledger acceptance evidence.
+- Gate A Evidence Inbox review results now refresh the cached Day Memory Loop
+  summary and next action after a proof-ledger write:
+  - After `recorder_evidence_candidate_review` approves a candidate and the
+    strict proof-ledger adapter writes it, `sidecar/index.mjs` now updates the
+    in-memory Day Memory Loop candidate row, Evidence Inbox status counts,
+    `unresolvedCount`, `writtenToLedgerCount`, empty states, and warnings before
+    returning the `recorder_evidence_candidate_review_result`.
+  - The same updated snapshot now recomputes `nextAction`, so a written
+    candidate no longer leaves the UI with a stale `review_evidence_inbox`
+    instruction after the only pending candidate has moved to
+    `written_to_ledger`.
+  - Focused verification passed: `node --check sidecar/index.mjs`,
+    `node --check sidecar-tests/recorder-day-loop-ws.test.mjs`, and `node
+    --test sidecar-tests/recorder-day-loop-ws.test.mjs` (`3/3`).
+  - This improves sidecar/UI state continuity after a verifier-gated proof write.
+    It is still not foreground UI E2E acceptance, live signed-app recorder
+    acceptance, or granted-TCC capture proof.
+- Gate A Day Memory next-action context is now preserved in the Swift surface:
+  - `RecorderNextActionResult.Action` now decodes the sidecar's `priority`,
+    `reason`, `preferredBy` / `preferred_by`, `sourceIds` / `source_ids`, and
+    `targetCandidate` / `target_candidate` fields instead of keeping only
+    action type, title, instruction, and proof effect.
+  - Founder Replay Control now renders the Day Memory next action as an
+    actionable compact block: priority/action/title, instruction, reason, target
+    candidate, and source ids when present. The accessibility label carries the
+    same context plus the non-proof `proofEffect` boundary.
+  - Focused verification passed: `xcrun swiftc -parse
+    agentic30/AgenticViewModel.swift agentic30/OpenDesignDayPageView.swift
+    agentic30Tests/SidecarEventDecodingTests.swift`, targeted `git diff
+    --check`, and `bash scripts/xcode-test.sh unit
+    '-only-testing:agentic30Tests/SidecarEventDecodingTests'` (`132/132`).
+  - This improves the visible Day Memory Review -> one next action handoff. It
+    is still not foreground UI E2E acceptance or live signed-app recorder
+    acceptance under granted TCC.
+- Gate A Evidence Inbox rejection now requires a visible root cause in the
+  Founder Replay Control surface:
+  - Reviewable candidate rows now separate approval and rejection controls.
+    Approval still requires an explicit external artifact location, while
+    rejection now has its own `Reject root cause` field and the Reject button is
+    disabled until the founder enters a non-empty reason.
+  - `rejectEvidenceCandidate` now sends the founder-entered reason to
+    `recorder_evidence_candidate_review` instead of a fixed generic UI string,
+    preserving explicit rejection evidence for the sidecar verifier path.
+  - Focused verification passed: `xcrun swiftc -parse
+    agentic30/OpenDesignDayPageView.swift` and targeted `git diff --check`.
+  - This improves visible Evidence Inbox review integrity. It is still not
+    foreground UI E2E acceptance or live signed-app recorder acceptance under
+    granted TCC.
 - Gate A live-recorder frame acceptance verifier now rejects synthetic frame
   fixtures instead of accepting any `frame-` row with a collector-looking
   trigger:
@@ -228,6 +370,53 @@ SPEC Section 17 unless this file is insufficient.
     and a CURRENT trailing-whitespace scan. This is still not foreground UI E2E,
     live signed-app recorder acceptance, granted TCC proof, or proof-ledger
     acceptance.
+- Gate A live signed runner reuse diagnostics now fail visibly when a stale
+  runner marker points outside the selected DerivedData root:
+  - `scripts/xcode-test.sh` now explains why a marked reusable runner is ignored:
+    missing marker, empty marker, missing app, invalid runner identity, or a
+    marker outside the selected DerivedData search root. The live signed wrapper
+    no longer hides that stderr during `ui-prepare-runner`, so an old
+    `~/Library/Developer/Xcode/DerivedData` marker is surfaced before the script
+    rebuilds/resigns the runner in
+    `build/ui-e2e/live-signed-runner-derived-data`.
+  - `ui-prepare-runner` identity output now includes the
+    `network.server` entitlement status, selected DerivedData search root, and
+    repo marker path alongside the runner path, bundle id, cdhash, signature,
+    and Accessibility target. This keeps the operator grant target and loopback
+    entitlement visible in the same non-foreground handoff.
+  - Focused non-foreground verification passed: `bash -n
+    scripts/xcode-test.sh scripts/run-live-signed-recorder-ui-e2e.sh`,
+    `shellcheck scripts/xcode-test.sh
+    scripts/run-live-signed-recorder-ui-e2e.sh`, targeted `git diff --check`,
+    and `AGENTIC30_LIVE_SIGNED_SKIP_BUILD=1
+    AGENTIC30_LIVE_SIGNED_PREPARE_RUNNER_ONLY=1
+    AGENTIC30_DISABLE_UI_E2E_CAFFEINATE=1 bash
+    scripts/run-live-signed-recorder-ui-e2e.sh`. The prepare-only run verified
+    the existing signed app, printed the stale marker/root mismatch, rebuilt and
+    re-signed the selected-root runner, and ended with
+    `network.server entitlement: true`.
+  - This reduces ambiguity around the current runner Accessibility blocker. It
+    is still not foreground UI E2E, live signed-app recorder acceptance, granted
+    recorder TCC proof, or proof-ledger acceptance.
+- Gate A live signed runner preflight now separates Automation Mode from runner
+  Accessibility:
+  - `testFounderReplayLiveSignedAppRunnerAccessibilityPreflight()` now runs
+    `/usr/bin/automationmodetool status` and includes the exit status/output in
+    the `Founder Replay Live Signed Runner Accessibility Trust` attachment.
+  - If Automation Mode is disabled, the preflight now stops with
+    `automation_mode_disabled` before checking `AXIsProcessTrusted()` or waiting
+    for the signed app's accessibility tree. This prevents the empty-tree symptom
+    from being misreported as only `runner_accessibility_blocked`.
+  - Focused non-foreground verification passed: `xcrun swiftc -parse
+    agentic30UITests/agentic30UITests.swift`, targeted `git diff --check`,
+    `/usr/bin/automationmodetool status`, and `xcodebuild build-for-testing
+    -project agentic30.xcodeproj -scheme agentic30UITests -destination
+    'platform=macOS' -quiet`.
+  - Current non-foreground verification reports `Automation Mode is ENABLED`, so
+    the next foreground live signed run should proceed past this preflight and
+    expose the next real blocker, if any. This is still not foreground UI E2E,
+    live signed-app recorder acceptance, granted recorder TCC proof, or
+    proof-ledger acceptance.
 
 ## Latest Accepted Evidence
 

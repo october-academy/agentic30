@@ -2073,6 +2073,53 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.recorderDayMemoryLoop?.proofAcceptedByDayLoop == false)
     }
 
+    @Test @MainActor func recorderEvidenceCandidateReviewResultStoresReceiptAndClearsInflight() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        viewModel.reviewRecorderEvidenceCandidate(
+            candidateId: "recorder-candidate-9",
+            decision: "approve_bundle",
+            reason: "manual receipt test",
+            externalArtifact: ["url": "https://example.com/proof"]
+        )
+        #expect(viewModel.recorderEvidenceCandidateReviewInFlight.contains("recorder-candidate-9"))
+
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent("""
+        {
+          "type": "recorder_evidence_candidate_review_result",
+          "candidateId": "recorder-candidate-9",
+          "candidate": {
+            "id": "recorder-candidate-9",
+            "candidate_status": "written_to_ledger",
+            "source_state": "memory_safe",
+            "claim": "Customer reply candidate: Named founder described activation friction",
+            "proof_kind": "customer_reply",
+            "source_ids_json": "[]",
+            "proof_ledger_mapping_json": "{\\\"targetGate\\\":\\\"customer_evidence\\\"}",
+            "evidence_debt_json": "[]",
+            "proof_ledger_event_id": "ledger-event-9",
+            "created_by": "evidence-inbox-builder",
+            "created_at": "2026-06-27T18:00:00.000Z"
+          },
+          "proofLedgerEventId": "ledger-event-9",
+          "proofAcceptedByReview": false,
+          "proofAcceptedByEvidenceCandidate": true,
+          "proofLedgerWriteAllowed": true
+        }
+        """))
+
+        #expect(viewModel.recorderEvidenceCandidateReviewInFlight.contains("recorder-candidate-9") == false)
+        let result = try #require(viewModel.recorderLastEvidenceCandidateReviewResult)
+        #expect(result.candidateId == "recorder-candidate-9")
+        #expect(result.candidateStatus == "written_to_ledger")
+        #expect(result.proofLedgerEventId == "ledger-event-9")
+        #expect(result.proofAcceptedByReview == false)
+        #expect(result.proofAcceptedByEvidenceCandidate == true)
+        #expect(result.proofLedgerWriteAllowed == true)
+        #expect(viewModel.recorderDayMemoryLoopLastError == nil)
+    }
+
     @Test @MainActor func recorderDayMemoryLoopSidecarErrorClearsRunningState() throws {
         let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
         let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
@@ -2166,6 +2213,13 @@ final class AgenticViewModelAuthTests {
             "started_at": "2026-07-01T09:00:00.000Z",
             "proof_accepted_by_pipe_run": false
           }],
+          "scheduler": {
+            "queued_count": 0,
+            "skipped_count": 1,
+            "executed_count": 0,
+            "failed_count": 0,
+            "proof_accepted_by_scheduler": false
+          },
           "proof_accepted_by_pipe_definition": false,
           "proof_accepted_by_pipe_run": false
         }
@@ -2181,6 +2235,8 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.recorderPipeRuns[0].id == "run-queued-1")
         #expect(viewModel.recorderPipeRuns[0].status == "queued")
         #expect(viewModel.recorderPipeRuns[0].proofAcceptedByPipeRun == false)
+        #expect(viewModel.recorderPipeLastSchedulerResult?.skippedCount == 1)
+        #expect(viewModel.recorderPipeLastSchedulerResult?.proofAcceptedByScheduler == false)
 
         try viewModel.applySidecarEventForTesting(sidecar.decodeEvent("""
         {
@@ -2248,8 +2304,15 @@ final class AgenticViewModelAuthTests {
         try viewModel.applySidecarEventForTesting(sidecar.decodeEvent("""
         {
           "type": "recorder_pipe_scheduler_tick_result",
-          "drain_result": {
+          "scheduler": {
             "queued_count": 3,
+            "skipped_count": 0,
+            "executed_count": 3,
+            "failed_count": 0,
+            "proof_accepted_by_scheduler": false
+          },
+          "drain_result": {
+            "queued_count": 0,
             "skipped_count": 0,
             "executed_count": 3,
             "failed_count": 0,

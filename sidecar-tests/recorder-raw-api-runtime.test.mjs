@@ -68,6 +68,21 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     );
     assert.match(blockedScheduler.message, /ERR_RECORDER_PIPE_SCHEDULER_CAPTURE_NOT_READY/);
     assert.match(blockedScheduler.message, /consent_not_granted|recording_inactive/);
+    const blockedSchedulerState = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= blockedSchedulerMarker
+        && event.type === "recorder_pipes_state"
+        && event.scheduler?.skippedCount === 1
+    );
+    assert.equal(blockedSchedulerState.scheduler.proofAcceptedByScheduler, false);
+    assert.equal(blockedSchedulerState.scheduler.queuedCount, 0);
+    assert.equal(blockedSchedulerState.scheduler.executedCount, 0);
+    assert.equal(blockedSchedulerState.scheduler.failedCount, 0);
+    assert.equal(blockedSchedulerState.scheduler.skipped[0].reason, "recorder_capture_not_ready");
+    assert.equal(
+      blockedSchedulerState.scheduler.skipped[0].readiness.blockers.some((blocker) => blocker.id === "consent_not_granted"),
+      true,
+    );
+    assert.equal(JSON.stringify(blockedSchedulerState).includes("token_hash"), false);
 
     const blockedPipeRunMarker = ws.events.length;
     ws.send(JSON.stringify({
@@ -689,7 +704,6 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     const schedulerMarker = ws.events.length;
     ws.send(JSON.stringify({
       type: "recorder_pipe_scheduler_tick",
-      autoRun: false,
       limit: 10,
       runLimit: 10,
     }));
@@ -697,9 +711,48 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
       ws.events.indexOf(event) >= schedulerMarker && event.type === "recorder_pipe_scheduler_tick_result"
     );
     assert.equal(scheduler.proofAcceptedByScheduler, false);
+    assert.equal(scheduler.scheduler.proofAcceptedByScheduler, false);
     assert.equal(scheduler.enqueueResult.proofAcceptedByScheduler, false);
+    assert.equal(scheduler.drainResult.proofAcceptedByScheduler, false);
+    assert.equal(scheduler.scheduler.queuedCount, scheduler.enqueueResult.queuedCount);
+    assert.equal(scheduler.scheduler.skippedCount, scheduler.enqueueResult.skippedCount + scheduler.drainResult.skippedCount);
+    assert.equal(scheduler.scheduler.executedCount, scheduler.drainResult.executedCount);
+    assert.equal(scheduler.scheduler.failedCount, scheduler.enqueueResult.failedCount + scheduler.drainResult.failedCount);
     assert.equal(Array.isArray(scheduler.runs), true);
     assert.equal(JSON.stringify(scheduler).includes("token_hash"), false);
+
+    const matchesSchedulerSnapshot = (event) =>
+      event?.scheduler?.queuedCount === scheduler.scheduler.queuedCount
+      && event?.scheduler?.skippedCount === scheduler.scheduler.skippedCount
+      && event?.scheduler?.executedCount === scheduler.scheduler.executedCount
+      && event?.scheduler?.failedCount === scheduler.scheduler.failedCount;
+    const schedulerBroadcastState = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= schedulerMarker
+        && event.type === "recorder_pipes_state"
+        && matchesSchedulerSnapshot(event)
+    );
+    assert.equal(schedulerBroadcastState.scheduler.proofAcceptedByScheduler, false);
+    assert.equal(schedulerBroadcastState.scheduler.queuedCount, scheduler.scheduler.queuedCount);
+    assert.equal(schedulerBroadcastState.scheduler.skippedCount, scheduler.scheduler.skippedCount);
+    assert.equal(schedulerBroadcastState.scheduler.executedCount, scheduler.scheduler.executedCount);
+    assert.equal(schedulerBroadcastState.scheduler.failedCount, scheduler.scheduler.failedCount);
+    assert.equal(JSON.stringify(schedulerBroadcastState).includes("token_hash"), false);
+
+    const pipesStateMarker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "recorder_pipes_list",
+      limit: 10,
+      runLimit: 10,
+    }));
+    const refreshedPipesState = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= pipesStateMarker && event.type === "recorder_pipes_state"
+    );
+    assert.equal(refreshedPipesState.scheduler.proofAcceptedByScheduler, false);
+    assert.equal(refreshedPipesState.scheduler.queuedCount, scheduler.scheduler.queuedCount);
+    assert.equal(refreshedPipesState.scheduler.skippedCount, scheduler.scheduler.skippedCount);
+    assert.equal(refreshedPipesState.scheduler.executedCount, scheduler.scheduler.executedCount);
+    assert.equal(refreshedPipesState.scheduler.failedCount, scheduler.scheduler.failedCount);
+    assert.equal(JSON.stringify(refreshedPipesState).includes("token_hash"), false);
 
     const rangeDeleteMarker = ws.events.length;
     ws.send(JSON.stringify({

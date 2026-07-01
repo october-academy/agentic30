@@ -540,6 +540,8 @@ import {
   listRecorderPipeDefinitions,
   listRecorderPipeRuns,
   persistBuiltInRecorderPipes,
+  RECORDER_PIPE_SCHEDULER_SCHEMA,
+  RECORDER_PIPES_SCHEMA_VERSION,
   runBuiltInRecorderPipe,
   runQueuedRecorderPipeRuns,
 } from "./recorder-pipes.mjs";
@@ -559,6 +561,7 @@ import {
   recorderDayMemoryLoopLocalDayRange,
   runRecorderDayMemoryLoop,
 } from "./recorder-day-loop.mjs";
+import { buildRecorderNextAction } from "./recorder-next-action.mjs";
 import {
   recorderDayMemoryLoopRanForDayKey,
   shouldAutoRunRecorderDayMemoryLoop,
@@ -731,6 +734,7 @@ const state = {
   recorderStore: null,
   recorderRawApiServer: null,
   recorderPipeSchedulerTimer: null,
+  recorderPipeLastSchedulerResult: null,
   recorderRetentionSweepTimer: null,
   recorderRetentionSweepPromise: null,
   recorderRetentionLastResult: null,
@@ -3874,6 +3878,138 @@ async function runRecorderRetentionSweep({ reason = "manual", policy = null, now
   }
 }
 
+function recorderPipeSchedulerArray(result, key) {
+  return Array.isArray(result?.[key]) ? result[key] : [];
+}
+
+function combineRecorderPipeSchedulerResults({ enqueueResult, drainResult, now = new Date() } = {}) {
+  const queued = [
+    ...recorderPipeSchedulerArray(enqueueResult, "queued"),
+    ...recorderPipeSchedulerArray(drainResult, "queued"),
+  ];
+  const skipped = [
+    ...recorderPipeSchedulerArray(enqueueResult, "skipped"),
+    ...recorderPipeSchedulerArray(drainResult, "skipped"),
+  ];
+  const executed = [
+    ...recorderPipeSchedulerArray(enqueueResult, "executed"),
+    ...recorderPipeSchedulerArray(drainResult, "executed"),
+  ];
+  const failed = [
+    ...recorderPipeSchedulerArray(enqueueResult, "failed"),
+    ...recorderPipeSchedulerArray(drainResult, "failed"),
+  ];
+  return {
+    schema: RECORDER_PIPE_SCHEDULER_SCHEMA,
+    schemaVersion: RECORDER_PIPES_SCHEMA_VERSION,
+    schema_version: RECORDER_PIPES_SCHEMA_VERSION,
+    generatedAt: now.toISOString(),
+    generated_at: now.toISOString(),
+    queuedCount: queued.length,
+    queued_count: queued.length,
+    skippedCount: skipped.length,
+    skipped_count: skipped.length,
+    executedCount: executed.length,
+    executed_count: executed.length,
+    failedCount: failed.length,
+    failed_count: failed.length,
+    queued,
+    skipped,
+    executed,
+    failed,
+    proofAcceptedByScheduler: false,
+    proof_accepted_by_scheduler: false,
+    proofBoundary: {
+      proofAcceptedByScheduler: false,
+      proof_accepted_by_scheduler: false,
+      proofLedgerWriteAllowed: false,
+      proof_ledger_write_allowed: false,
+      message: "Pipe scheduler state is local automation metadata and never accepted proof.",
+    },
+    proof_boundary: {
+      proof_accepted_by_scheduler: false,
+      proof_ledger_write_allowed: false,
+      message: "Pipe scheduler state is local automation metadata and never accepted proof.",
+    },
+  };
+}
+
+function buildRecorderPipeCaptureNotReadySchedulerResult({ readiness, now = new Date() } = {}) {
+  return {
+    schema: RECORDER_PIPE_SCHEDULER_SCHEMA,
+    schemaVersion: RECORDER_PIPES_SCHEMA_VERSION,
+    schema_version: RECORDER_PIPES_SCHEMA_VERSION,
+    generatedAt: now.toISOString(),
+    generated_at: now.toISOString(),
+    queuedCount: 0,
+    queued_count: 0,
+    skippedCount: 1,
+    skipped_count: 1,
+    executedCount: 0,
+    executed_count: 0,
+    failedCount: 0,
+    failed_count: 0,
+    skipped: [{
+      reason: "recorder_capture_not_ready",
+      readiness,
+      proofAcceptedByScheduler: false,
+      proof_accepted_by_scheduler: false,
+    }],
+    proofAcceptedByScheduler: false,
+    proof_accepted_by_scheduler: false,
+    proofBoundary: {
+      proofAcceptedByScheduler: false,
+      proof_accepted_by_scheduler: false,
+      proofLedgerWriteAllowed: false,
+      proof_ledger_write_allowed: false,
+      message: "Pipe scheduler state is local automation metadata and never accepted proof.",
+    },
+    proof_boundary: {
+      proof_accepted_by_scheduler: false,
+      proof_ledger_write_allowed: false,
+      message: "Pipe scheduler state is local automation metadata and never accepted proof.",
+    },
+  };
+}
+
+function buildRecorderPipesStatePayload({ store, pipeId = null, limit = 100, runLimit = 50 } = {}) {
+  const pipes = listRecorderPipeDefinitions({
+    store,
+    limit,
+  });
+  const runs = listRecorderPipeRuns({
+    store,
+    pipeId,
+    limit: runLimit ?? limit,
+  });
+  return {
+    type: "recorder_pipes_state",
+    pipes,
+    runs,
+    resultCount: pipes.length,
+    result_count: pipes.length,
+    runCount: runs.length,
+    run_count: runs.length,
+    scheduler: state.recorderPipeLastSchedulerResult,
+    proofAcceptedByPipeDefinition: false,
+    proof_accepted_by_pipe_definition: false,
+    proofAcceptedByPipeRun: false,
+    proof_accepted_by_pipe_run: false,
+  };
+}
+
+function broadcastRecorderPipesState(payload = {}) {
+  const store = state.recorderStore;
+  if (!store) return false;
+  broadcast(buildRecorderPipesStatePayload({
+    store,
+    pipeId: payload.pipeId ?? payload.pipe_id,
+    limit: payload.limit,
+    runLimit: payload.runLimit ?? payload.run_limit ?? payload.limit,
+  }));
+  return true;
+}
+
 async function runRecorderPipeSchedulerTick() {
   const store = state.recorderStore;
   if (!store) {
@@ -3883,11 +4019,10 @@ async function runRecorderPipeSchedulerTick() {
   const controlState = await loadRecorderControlState({ appSupportRoot: appSupportPath, now });
   const readiness = evaluateRecorderCaptureReadiness(controlState, { now });
   if (!readiness.canRecord) {
-    return {
-      skipped: true,
-      reason: "recorder_capture_not_ready",
-      readiness,
-    };
+    const result = buildRecorderPipeCaptureNotReadySchedulerResult({ readiness, now });
+    state.recorderPipeLastSchedulerResult = result;
+    broadcastRecorderPipesState();
+    return { scheduler: result };
   }
   const enqueueResult = enqueueDueRecorderPipeRuns({
     store,
@@ -3905,7 +4040,10 @@ async function runRecorderPipeSchedulerTick() {
       failed_count: enqueueResult.failedCount + drainResult.failedCount,
     });
   }
-  return { enqueueResult, drainResult };
+  const scheduler = combineRecorderPipeSchedulerResults({ enqueueResult, drainResult, now });
+  state.recorderPipeLastSchedulerResult = scheduler;
+  broadcastRecorderPipesState();
+  return { scheduler, enqueueResult, drainResult };
 }
 
 function handleRecorderRawApiTokenIssue(socket, payload = {}) {
@@ -4260,19 +4398,22 @@ async function handleRecorderEvidenceCandidateReview(socket, payload = {}) {
     })
     : null;
   const candidate = writeResult?.candidate ?? review.candidate;
+  const candidateId = String(candidate?.id ?? review.candidate?.id ?? payload.candidateId ?? payload.candidate_id ?? "").trim();
   const proofLedgerEventId = writeResult?.proofLedgerEventId
     ?? writeResult?.proof_ledger_event_id
     ?? candidate?.proof_ledger_event_id
     ?? "";
   const proofAccepted = writeResult?.status === "written_to_ledger"
     || writeResult?.status === "written_to_ledger_candidate_deleted";
-  const dayLoop = updateRecorderDayMemoryLoopCandidate(candidate);
+  const dayLoop = updateRecorderDayMemoryLoopCandidate(candidate, { now });
   send(socket, {
     type: "recorder_evidence_candidate_review_result",
     review,
     write: writeResult,
     write_result: writeResult,
     candidate,
+    candidateId,
+    candidate_id: candidateId,
     proofLedgerEventId,
     proof_ledger_event_id: proofLedgerEventId,
     dayLoop,
@@ -4286,23 +4427,161 @@ async function handleRecorderEvidenceCandidateReview(socket, payload = {}) {
   });
 }
 
-function updateRecorderDayMemoryLoopCandidate(candidate = null) {
+const RECORDER_EVIDENCE_INBOX_UNRESOLVED_STATUSES = new Set([
+  "pending_review",
+  "degraded",
+  "approved_bundle",
+  "verifier_rejected",
+]);
+
+function updateRecorderDayMemoryLoopCandidate(candidate = null, { now = new Date() } = {}) {
   if (!candidate?.id || !state.recorderDayMemoryLoop) return state.recorderDayMemoryLoop;
   const current = state.recorderDayMemoryLoop;
-  const evidenceBuild = current.evidenceBuildResult ?? current.evidence_build_result;
+  const evidenceBuild = current.evidenceBuildResult ?? current.evidence_build_result ?? {};
   const created = Array.isArray(evidenceBuild?.created) ? evidenceBuild.created : [];
-  if (!created.length) return current;
-  const nextCreated = created.map((item) => item?.id === candidate.id ? candidate : item);
+  const review = current.review && typeof current.review === "object" && !Array.isArray(current.review)
+    ? current.review
+    : {};
+  const evidenceInbox = review.evidenceInbox ?? review.evidence_inbox ?? {};
+  const inboxCandidates = Array.isArray(evidenceInbox?.candidates) ? evidenceInbox.candidates : [];
+  const createdReplacement = replaceRecorderEvidenceCandidateRows(created, candidate);
+  const inboxReplacement = replaceRecorderEvidenceCandidateRows(inboxCandidates, candidate);
+  if (!createdReplacement.replaced && !inboxReplacement.replaced) return current;
+  const previousStatus = createdReplacement.previousStatus || inboxReplacement.previousStatus;
   const nextEvidenceBuild = {
     ...evidenceBuild,
-    created: nextCreated,
+    created: createdReplacement.rows,
   };
+  const nextEvidenceInbox = updateRecorderEvidenceInboxSummary(evidenceInbox, candidate, {
+    candidates: inboxReplacement.replaced ? inboxReplacement.rows : inboxCandidates,
+    previousStatus,
+  });
+  const writtenToLedgerCount = recorderNumberValue(
+    nextEvidenceInbox.writtenToLedgerCount ?? nextEvidenceInbox.written_to_ledger_count,
+  );
+  const emptyStates = updateRecorderNoAcceptedProofState(
+    review.emptyStates ?? review.empty_states ?? [],
+    writtenToLedgerCount,
+  );
+  const warnings = updateRecorderProofNotAdvancedWarning(review.warnings ?? [], writtenToLedgerCount);
+  const nextReview = {
+    ...review,
+    evidenceInbox: nextEvidenceInbox,
+    evidence_inbox: nextEvidenceInbox,
+    emptyStates,
+    empty_states: emptyStates,
+    warnings,
+  };
+  const nextAction = buildRecorderNextAction({
+    review: nextReview,
+    evidenceBuildResult: nextEvidenceBuild,
+    now,
+  });
   state.recorderDayMemoryLoop = {
     ...current,
+    review: nextReview,
     evidenceBuildResult: nextEvidenceBuild,
     evidence_build_result: nextEvidenceBuild,
+    nextAction,
+    next_action: nextAction,
   };
   return state.recorderDayMemoryLoop;
+}
+
+function replaceRecorderEvidenceCandidateRows(rows = [], candidate = {}) {
+  let replaced = false;
+  let previousStatus = "";
+  const candidateId = String(candidate.id || "").trim();
+  if (!candidateId) return { rows, replaced, previousStatus };
+  const nextRows = rows.map((item) => {
+    if (String(item?.id || "").trim() !== candidateId) return item;
+    replaced = true;
+    previousStatus = recorderEvidenceCandidateStatus(item);
+    return candidate;
+  });
+  return { rows: nextRows, replaced, previousStatus };
+}
+
+function updateRecorderEvidenceInboxSummary(inbox = {}, candidate = {}, { candidates = [], previousStatus = "" } = {}) {
+  const current = inbox && typeof inbox === "object" && !Array.isArray(inbox) ? inbox : {};
+  const nextStatus = recorderEvidenceCandidateStatus(candidate);
+  const oldStatus = cleanToken(previousStatus) || nextStatus;
+  const statusChanged = Boolean(oldStatus && nextStatus && oldStatus !== nextStatus);
+  const countsByStatus = {
+    ...(current.countsByStatus ?? current.counts_by_status ?? {}),
+  };
+  if (statusChanged) {
+    countsByStatus[oldStatus] = Math.max(0, recorderNumberValue(countsByStatus[oldStatus]) - 1);
+    countsByStatus[nextStatus] = recorderNumberValue(countsByStatus[nextStatus]) + 1;
+  }
+  const oldUnresolved = RECORDER_EVIDENCE_INBOX_UNRESOLVED_STATUSES.has(oldStatus);
+  const nextUnresolved = RECORDER_EVIDENCE_INBOX_UNRESOLVED_STATUSES.has(nextStatus);
+  const unresolvedDelta = statusChanged
+    ? (nextUnresolved ? 1 : 0) - (oldUnresolved ? 1 : 0)
+    : 0;
+  const writtenDelta = statusChanged
+    ? (nextStatus === "written_to_ledger" ? 1 : 0) - (oldStatus === "written_to_ledger" ? 1 : 0)
+    : 0;
+  const unresolvedCount = Math.max(
+    0,
+    recorderNumberValue(current.unresolvedCount ?? current.unresolved_count) + unresolvedDelta,
+  );
+  const writtenToLedgerCount = Math.max(
+    0,
+    recorderNumberValue(
+      current.writtenToLedgerCount
+        ?? current.written_to_ledger_count
+        ?? countsByStatus.written_to_ledger,
+    ) + writtenDelta,
+  );
+  countsByStatus.written_to_ledger = writtenToLedgerCount;
+  return {
+    ...current,
+    countsByStatus,
+    counts_by_status: countsByStatus,
+    unresolvedCount,
+    unresolved_count: unresolvedCount,
+    writtenToLedgerCount,
+    written_to_ledger_count: writtenToLedgerCount,
+    candidates,
+  };
+}
+
+function updateRecorderNoAcceptedProofState(states = [], writtenToLedgerCount = 0) {
+  const safeStates = Array.isArray(states) ? states : [];
+  const filtered = safeStates.filter((state) => cleanToken(state?.id) !== "no_accepted_proof");
+  if (writtenToLedgerCount > 0) return filtered;
+  return [
+    ...filtered,
+    {
+      id: "no_accepted_proof",
+      label: "No recorder evidence has been written to the proof ledger",
+      action: "open_evidence_inbox_or_choose_external_action",
+    },
+  ];
+}
+
+function updateRecorderProofNotAdvancedWarning(warnings = [], writtenToLedgerCount = 0) {
+  const safeWarnings = Array.isArray(warnings) ? warnings : [];
+  const filtered = safeWarnings.filter((warning) => cleanToken(warning?.id) !== "proof_not_advanced");
+  if (writtenToLedgerCount > 0) return filtered;
+  return [
+    ...filtered,
+    {
+      id: "proof_not_advanced",
+      severity: "info",
+      message: "This review does not advance proof. A verifier-gated proof-ledger write is still required.",
+    },
+  ];
+}
+
+function recorderEvidenceCandidateStatus(candidate = {}) {
+  return cleanToken(candidate?.candidate_status ?? candidate?.candidateStatus);
+}
+
+function recorderNumberValue(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
 }
 
 function recorderFrameDeleteDto(result = {}) {
@@ -4414,29 +4693,12 @@ function recorderMediaAssetIngestDto(mediaAsset = {}) {
 }
 
 function handleRecorderPipesList(socket, payload = {}) {
-  const store = requireRecorderStore();
-  const pipes = listRecorderPipeDefinitions({
-    store,
-    limit: payload.limit,
-  });
-  const runs = listRecorderPipeRuns({
-    store,
+  send(socket, buildRecorderPipesStatePayload({
+    store: requireRecorderStore(),
     pipeId: payload.pipeId ?? payload.pipe_id,
-    limit: payload.runLimit ?? payload.run_limit ?? payload.limit,
-  });
-  send(socket, {
-    type: "recorder_pipes_state",
-    pipes,
-    runs,
-    resultCount: pipes.length,
-    result_count: pipes.length,
-    runCount: runs.length,
-    run_count: runs.length,
-    proofAcceptedByPipeDefinition: false,
-    proof_accepted_by_pipe_definition: false,
-    proofAcceptedByPipeRun: false,
-    proof_accepted_by_pipe_run: false,
-  });
+    limit: payload.limit,
+    runLimit: payload.runLimit ?? payload.run_limit ?? payload.limit,
+  }));
 }
 
 async function assertRecorderPipeBridgeCaptureReady({ code, message, now }) {
@@ -4517,11 +4779,25 @@ function handleRecorderPipeCancel(socket, payload = {}) {
 async function handleRecorderPipeSchedulerTick(socket, payload = {}) {
   const store = requireRecorderStore();
   const now = new Date();
-  await assertRecorderPipeBridgeCaptureReady({
-    code: "ERR_RECORDER_PIPE_SCHEDULER_CAPTURE_NOT_READY",
-    message: "recorder capture must be ready before running scheduled Pipes",
-    now,
-  });
+  try {
+    await assertRecorderPipeBridgeCaptureReady({
+      code: "ERR_RECORDER_PIPE_SCHEDULER_CAPTURE_NOT_READY",
+      message: "recorder capture must be ready before running scheduled Pipes",
+      now,
+    });
+  } catch (error) {
+    if (error?.code === "ERR_RECORDER_PIPE_SCHEDULER_CAPTURE_NOT_READY") {
+      state.recorderPipeLastSchedulerResult = buildRecorderPipeCaptureNotReadySchedulerResult({
+        readiness: error.readiness ?? null,
+        now,
+      });
+      broadcastRecorderPipesState({
+        limit: payload.limit,
+        runLimit: payload.runLimit ?? payload.run_limit ?? 50,
+      });
+    }
+    throw error;
+  }
   const enqueueResult = enqueueDueRecorderPipeRuns({
     store,
     workspaceId: payload.workspaceId ?? payload.workspace_id,
@@ -4537,13 +4813,15 @@ async function handleRecorderPipeSchedulerTick(socket, payload = {}) {
       timeoutMs: payload.timeoutMs ?? payload.timeout_ms,
       now,
     });
+  const scheduler = combineRecorderPipeSchedulerResults({ enqueueResult, drainResult, now });
+  state.recorderPipeLastSchedulerResult = scheduler;
   const runs = listRecorderPipeRuns({
     store,
     limit: payload.runLimit ?? payload.run_limit ?? 50,
   });
   send(socket, {
     type: "recorder_pipe_scheduler_tick_result",
-    scheduler: enqueueResult,
+    scheduler,
     enqueueResult,
     enqueue_result: enqueueResult,
     drainResult,
@@ -4551,6 +4829,10 @@ async function handleRecorderPipeSchedulerTick(socket, payload = {}) {
     runs,
     proofAcceptedByScheduler: false,
     proof_accepted_by_scheduler: false,
+  });
+  broadcastRecorderPipesState({
+    limit: payload.limit,
+    runLimit: payload.runLimit ?? payload.run_limit ?? 50,
   });
 }
 

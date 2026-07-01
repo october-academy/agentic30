@@ -1815,14 +1815,25 @@ final class agentic30UITests: XCTestCase {
             }
         }
 
+        let automationModeStatus = liveSignedAutomationModeStatus()
         attachText(
             liveSignedRunnerAccessibilityDiagnostics(
                 app: app,
                 signedAppBundleURL: signedAppBundleURL,
-                appSupportPath: appSupportPath
+                appSupportPath: appSupportPath,
+                automationModeStatus: automationModeStatus
             ),
             named: "Founder Replay Live Signed Runner Accessibility Trust"
         )
+        guard !automationModeStatus.contains("Automation Mode is disabled") else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed Automation Mode Disabled")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed Automation Mode Disabled Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed Automation Mode Disabled Diagnostics")
+            XCTFail(
+                "automation_mode_disabled: /usr/bin/automationmodetool status reports Automation Mode is disabled. Enable Automation Mode for the local UI-test runner before rerunning live signed recorder UI E2E. status=\(automationModeStatus)"
+            )
+            return
+        }
         guard AXIsProcessTrusted() else {
             attachWindowScreenshot(from: app, named: "Founder Replay Live Signed Runner Accessibility Trust Missing")
             attachText(app.debugDescription, named: "Founder Replay Live Signed Runner Accessibility Trust Missing Tree")
@@ -7606,11 +7617,42 @@ final class agentic30UITests: XCTestCase {
         }
     }
 
+    private func liveSignedAutomationModeStatus() -> String {
+        let toolPath = "/usr/bin/automationmodetool"
+        guard FileManager.default.isExecutableFile(atPath: toolPath) else {
+            return "automationmodetool unavailable at \(toolPath)"
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: toolPath, isDirectory: false)
+        process.arguments = ["status"]
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let errorOutput = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let combinedOutput = [output, errorOutput]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            let status = combinedOutput.isEmpty ? "<empty>" : combinedOutput
+            return "exitStatus=\(process.terminationStatus)\n\(status)"
+        } catch {
+            return "automationmodetool status failed: \(error.localizedDescription)"
+        }
+    }
+
     @MainActor
     private func liveSignedRunnerAccessibilityDiagnostics(
         app: XCUIApplication,
         signedAppBundleURL: URL,
-        appSupportPath: String
+        appSupportPath: String,
+        automationModeStatus: String
     ) -> String {
         let runner = NSRunningApplication.current
         let agenticApps = NSWorkspace.shared.runningApplications
@@ -7626,6 +7668,7 @@ final class agentic30UITests: XCTestCase {
             }
         let frontmost = NSWorkspace.shared.frontmostApplication
         return [
+            "automationModeStatus=\(automationModeStatus)",
             "runnerAXTrusted=\(AXIsProcessTrusted())",
             "runnerBundleIdentifier=\(Bundle.main.bundleIdentifier ?? "<unknown>")",
             "runnerProcessIdentifier=\(runner.processIdentifier)",

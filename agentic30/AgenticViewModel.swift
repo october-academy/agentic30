@@ -3276,35 +3276,136 @@ struct RecorderPipeRun: Decodable, Equatable, Hashable, Identifiable {
     }
 }
 
-struct RecorderPipeSchedulerResult: Decodable, Equatable, Hashable {
-    let queuedCount: Int
-    let skippedCount: Int
-    let executedCount: Int
-    let failedCount: Int
+struct RecorderPipeSchedulerProofBoundary: Decodable, Equatable, Hashable {
+    let proofAcceptedByScheduler: Bool
+    let proofLedgerWriteAllowed: Bool
+    let message: String
+
+    private enum CodingKeys: String, CodingKey {
+        case proofAcceptedByScheduler, proof_accepted_by_scheduler
+        case proofLedgerWriteAllowed, proof_ledger_write_allowed
+        case message
+    }
+
+    init(
+        proofAcceptedByScheduler: Bool = false,
+        proofLedgerWriteAllowed: Bool = false,
+        message: String = ""
+    ) {
+        self.proofAcceptedByScheduler = proofAcceptedByScheduler
+        self.proofLedgerWriteAllowed = proofLedgerWriteAllowed
+        self.message = message
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        proofAcceptedByScheduler = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByScheduler)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_scheduler)
+            ?? false
+        proofLedgerWriteAllowed = try c.decodeIfPresent(Bool.self, forKey: .proofLedgerWriteAllowed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_ledger_write_allowed)
+            ?? false
+        message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
+    }
+}
+
+struct RecorderPipeSchedulerSkip: Decodable, Equatable, Hashable {
+    let pipeId: String?
+    let reason: String
+    let activeRunId: String?
+    let activeRunStatus: String?
+    let readiness: RecorderCaptureReadiness?
     let proofAcceptedByScheduler: Bool
 
     private enum CodingKeys: String, CodingKey {
-        case queuedCount, queued_count, skippedCount, skipped_count
-        case executedCount, executed_count, failedCount, failed_count
+        case pipeId, pipe_id
+        case reason
+        case activeRunId, active_run_id
+        case activeRunStatus, active_run_status
+        case readiness
         case proofAcceptedByScheduler, proof_accepted_by_scheduler
     }
 
     init(
-        queuedCount: Int = 0,
-        skippedCount: Int = 0,
-        executedCount: Int = 0,
-        failedCount: Int = 0,
+        pipeId: String? = nil,
+        reason: String = "",
+        activeRunId: String? = nil,
+        activeRunStatus: String? = nil,
+        readiness: RecorderCaptureReadiness? = nil,
         proofAcceptedByScheduler: Bool = false
     ) {
-        self.queuedCount = queuedCount
-        self.skippedCount = skippedCount
-        self.executedCount = executedCount
-        self.failedCount = failedCount
+        self.pipeId = pipeId
+        self.reason = reason
+        self.activeRunId = activeRunId
+        self.activeRunStatus = activeRunStatus
+        self.readiness = readiness
         self.proofAcceptedByScheduler = proofAcceptedByScheduler
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        pipeId = try c.decodeIfPresent(String.self, forKey: .pipeId)
+            ?? c.decodeIfPresent(String.self, forKey: .pipe_id)
+        reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? ""
+        activeRunId = try c.decodeIfPresent(String.self, forKey: .activeRunId)
+            ?? c.decodeIfPresent(String.self, forKey: .active_run_id)
+        activeRunStatus = try c.decodeIfPresent(String.self, forKey: .activeRunStatus)
+            ?? c.decodeIfPresent(String.self, forKey: .active_run_status)
+        readiness = try c.decodeIfPresent(RecorderCaptureReadiness.self, forKey: .readiness)
+        proofAcceptedByScheduler = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByScheduler)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_scheduler)
+            ?? false
+    }
+}
+
+struct RecorderPipeSchedulerResult: Decodable, Equatable, Hashable {
+    let generatedAt: String
+    let queuedCount: Int
+    let skippedCount: Int
+    let executedCount: Int
+    let failedCount: Int
+    let skipped: [RecorderPipeSchedulerSkip]
+    let proofAcceptedByScheduler: Bool
+    let proofBoundary: RecorderPipeSchedulerProofBoundary?
+
+    var proofLedgerWriteAllowed: Bool {
+        proofBoundary?.proofLedgerWriteAllowed ?? false
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case generatedAt, generated_at
+        case queuedCount, queued_count, skippedCount, skipped_count
+        case executedCount, executed_count, failedCount, failed_count
+        case skipped
+        case proofAcceptedByScheduler, proof_accepted_by_scheduler
+        case proofBoundary, proof_boundary
+    }
+
+    init(
+        generatedAt: String = "",
+        queuedCount: Int = 0,
+        skippedCount: Int = 0,
+        executedCount: Int = 0,
+        failedCount: Int = 0,
+        skipped: [RecorderPipeSchedulerSkip] = [],
+        proofAcceptedByScheduler: Bool = false,
+        proofBoundary: RecorderPipeSchedulerProofBoundary? = nil
+    ) {
+        self.generatedAt = generatedAt
+        self.queuedCount = queuedCount
+        self.skippedCount = skippedCount
+        self.executedCount = executedCount
+        self.failedCount = failedCount
+        self.skipped = skipped
+        self.proofAcceptedByScheduler = proofAcceptedByScheduler
+        self.proofBoundary = proofBoundary
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .generated_at)
+            ?? ""
         queuedCount = try c.decodeIfPresent(Int.self, forKey: .queuedCount)
             ?? c.decodeIfPresent(Int.self, forKey: .queued_count)
             ?? 0
@@ -3317,9 +3418,12 @@ struct RecorderPipeSchedulerResult: Decodable, Equatable, Hashable {
         failedCount = try c.decodeIfPresent(Int.self, forKey: .failedCount)
             ?? c.decodeIfPresent(Int.self, forKey: .failed_count)
             ?? 0
+        skipped = try c.decodeIfPresent([RecorderPipeSchedulerSkip].self, forKey: .skipped) ?? []
         proofAcceptedByScheduler = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByScheduler)
             ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_scheduler)
             ?? false
+        proofBoundary = try c.decodeIfPresent(RecorderPipeSchedulerProofBoundary.self, forKey: .proofBoundary)
+            ?? c.decodeIfPresent(RecorderPipeSchedulerProofBoundary.self, forKey: .proof_boundary)
     }
 }
 
@@ -3597,6 +3701,42 @@ struct RecorderEvidenceCandidateSummary: Decodable, Equatable, Hashable, Identif
     }
 }
 
+struct RecorderEvidenceCandidateReviewResult: Equatable, Hashable {
+    let candidateId: String
+    let candidateStatus: String
+    let proofLedgerEventId: String?
+    let proofAcceptedByReview: Bool
+    let proofAcceptedByEvidenceCandidate: Bool
+    let proofLedgerWriteAllowed: Bool
+
+    var displayStatus: String {
+        if !candidateStatus.isEmpty { return candidateStatus }
+        if proofAcceptedByEvidenceCandidate { return "written_to_ledger" }
+        return "reviewed"
+    }
+
+    init?(event: SidecarEvent) {
+        guard event.type == "recorder_evidence_candidate_review_result" else { return nil }
+        let candidate = event.recorderEvidenceCandidate
+        let cleanCandidateId = (candidate?.id ?? event.recorderEvidenceCandidateId ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanLedgerEventId = (event.proofLedgerEventId ?? candidate?.proofLedgerEventId ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanCandidateStatus = (candidate?.candidateStatus ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanCandidateId.isEmpty || !cleanLedgerEventId.isEmpty || candidate != nil else {
+            return nil
+        }
+        candidateId = cleanCandidateId
+        candidateStatus = cleanCandidateStatus
+        proofLedgerEventId = cleanLedgerEventId.isEmpty ? nil : cleanLedgerEventId
+        proofAcceptedByReview = event.proofAcceptedByReview ?? false
+        proofAcceptedByEvidenceCandidate = event.proofAcceptedByEvidenceCandidate
+            ?? (cleanCandidateStatus == "written_to_ledger" || !cleanLedgerEventId.isEmpty)
+        proofLedgerWriteAllowed = event.proofLedgerWriteAllowed ?? proofAcceptedByEvidenceCandidate
+    }
+}
+
 struct RecorderEvidenceBuildResult: Decodable, Equatable, Hashable {
     let createdCount: Int
     let skippedCount: Int
@@ -3638,15 +3778,25 @@ struct RecorderNextActionResult: Decodable, Equatable, Hashable {
     struct Action: Decodable, Equatable, Hashable {
         let id: String
         let actionType: String
+        let priority: String
         let title: String
         let instruction: String
+        let reason: String
+        let preferredBy: String
+        let sourceIds: [String]
+        let targetCandidate: RecorderEvidenceCandidateSummary?
         let proofEffect: String
 
         private enum CodingKeys: String, CodingKey {
             case id
             case actionType, action_type
+            case priority
             case title
             case instruction
+            case reason
+            case preferredBy, preferred_by
+            case sourceIds, source_ids
+            case targetCandidate, target_candidate
             case proofEffect, proof_effect
         }
 
@@ -3656,8 +3806,18 @@ struct RecorderNextActionResult: Decodable, Equatable, Hashable {
             actionType = try c.decodeIfPresent(String.self, forKey: .actionType)
                 ?? c.decodeIfPresent(String.self, forKey: .action_type)
                 ?? ""
+            priority = try c.decodeIfPresent(String.self, forKey: .priority) ?? ""
             title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
             instruction = try c.decodeIfPresent(String.self, forKey: .instruction) ?? ""
+            reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? ""
+            preferredBy = try c.decodeIfPresent(String.self, forKey: .preferredBy)
+                ?? c.decodeIfPresent(String.self, forKey: .preferred_by)
+                ?? ""
+            sourceIds = try c.decodeIfPresent([String].self, forKey: .sourceIds)
+                ?? c.decodeIfPresent([String].self, forKey: .source_ids)
+                ?? []
+            targetCandidate = try c.decodeIfPresent(RecorderEvidenceCandidateSummary.self, forKey: .targetCandidate)
+                ?? c.decodeIfPresent(RecorderEvidenceCandidateSummary.self, forKey: .target_candidate)
             proofEffect = try c.decodeIfPresent(String.self, forKey: .proofEffect)
                 ?? c.decodeIfPresent(String.self, forKey: .proof_effect)
                 ?? "none"
@@ -5539,6 +5699,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var recorderDayMemoryLoopRunning = false
     @Published private(set) var recorderDayMemoryLoopLastError: String?
     @Published private(set) var recorderEvidenceCandidateReviewInFlight: Set<String> = []
+    @Published private(set) var recorderLastEvidenceCandidateReviewResult: RecorderEvidenceCandidateReviewResult?
     @Published private(set) var recorderRetentionApplyRunning = false
     @Published private(set) var recorderRetentionLastResult: RecorderRetentionApplyResult?
     @Published private(set) var recorderRetentionLastError: String?
@@ -15169,6 +15330,9 @@ final class AgenticViewModel: ObservableObject {
             if let runs = event.runs {
                 replaceRecorderPipeRuns(runs)
             }
+            if let scheduler = event.scheduler {
+                recorderPipeLastSchedulerResult = scheduler
+            }
             recorderPipesRefreshing = false
             recorderPipeLastError = nil
         case "recorder_raw_api_status":
@@ -15265,7 +15429,7 @@ final class AgenticViewModel: ObservableObject {
             recorderPipeLastError = nil
         case "recorder_pipe_scheduler_tick_result":
             recorderPipeSchedulerRunning = false
-            recorderPipeLastSchedulerResult = event.drainResult ?? event.enqueueResult ?? event.scheduler
+            recorderPipeLastSchedulerResult = event.scheduler ?? event.enqueueResult ?? event.drainResult
             if let runs = event.runs {
                 replaceRecorderPipeRuns(runs)
             }
@@ -15285,8 +15449,14 @@ final class AgenticViewModel: ObservableObject {
             if let dayLoop = event.recorderDayLoop {
                 recorderDayMemoryLoop = dayLoop
             }
+            let reviewResult = RecorderEvidenceCandidateReviewResult(event: event)
+            if let reviewResult {
+                recorderLastEvidenceCandidateReviewResult = reviewResult
+            }
             if let candidate = event.recorderEvidenceCandidate {
                 recorderEvidenceCandidateReviewInFlight.remove(candidate.id)
+            } else if let candidateId = reviewResult?.candidateId, !candidateId.isEmpty {
+                recorderEvidenceCandidateReviewInFlight.remove(candidateId)
             } else {
                 recorderEvidenceCandidateReviewInFlight.removeAll()
             }
@@ -21928,7 +22098,12 @@ struct SidecarEvent: Decodable {
     let enqueueResult: RecorderPipeSchedulerResult?
     let drainResult: RecorderPipeSchedulerResult?
     let recorderDayLoop: RecorderDayMemoryLoopResult?
+    let recorderEvidenceCandidateId: String?
     let recorderEvidenceCandidate: RecorderEvidenceCandidateSummary?
+    let proofLedgerEventId: String?
+    let proofAcceptedByReview: Bool?
+    let proofAcceptedByEvidenceCandidate: Bool?
+    let proofLedgerWriteAllowed: Bool?
     let recorderRetentionResult: RecorderRetentionApplyResult?
     let dayClosePolicy: OfficeHoursDayClosePolicy?
     let programNotificationSchedule: ProgramNotificationSchedule?
@@ -22797,7 +22972,12 @@ struct SidecarEvent: Decodable {
         self.enqueueResult = nil
         self.drainResult = nil
         self.recorderDayLoop = nil
+        self.recorderEvidenceCandidateId = nil
         self.recorderEvidenceCandidate = nil
+        self.proofLedgerEventId = nil
+        self.proofAcceptedByReview = nil
+        self.proofAcceptedByEvidenceCandidate = nil
+        self.proofLedgerWriteAllowed = nil
         self.recorderRetentionResult = nil
         self.dayClosePolicy = dayClosePolicy
         self.programNotificationSchedule = programNotificationSchedule
@@ -23247,8 +23427,18 @@ extension SidecarEvent {
         case drainResultSnake = "drain_result"
         case dayLoop
         case dayLoopSnake = "day_loop"
+        case recorderEvidenceCandidateId = "candidateId"
+        case recorderEvidenceCandidateIdSnake = "candidate_id"
         case recorderEvidenceCandidate = "candidate"
         case recorderEvidenceCandidateSnake = "evidence_candidate"
+        case proofLedgerEventId
+        case proofLedgerEventIdSnake = "proof_ledger_event_id"
+        case proofAcceptedByReview
+        case proofAcceptedByReviewSnake = "proof_accepted_by_review"
+        case proofAcceptedByEvidenceCandidate
+        case proofAcceptedByEvidenceCandidateSnake = "proof_accepted_by_evidence_candidate"
+        case proofLedgerWriteAllowed
+        case proofLedgerWriteAllowedSnake = "proof_ledger_write_allowed"
         case dayClosePolicy
         case programNotificationSchedule
         case needsCommitment
@@ -23417,8 +23607,18 @@ extension SidecarEvent {
             ?? Self.decodeIfPresent(RecorderPipeSchedulerResult.self, from: container, forKey: .drainResultSnake)
         recorderDayLoop = Self.decodeIfPresent(RecorderDayMemoryLoopResult.self, from: container, forKey: .dayLoop)
             ?? Self.decodeIfPresent(RecorderDayMemoryLoopResult.self, from: container, forKey: .dayLoopSnake)
+        recorderEvidenceCandidateId = Self.decodeIfPresent(String.self, from: container, forKey: .recorderEvidenceCandidateId)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .recorderEvidenceCandidateIdSnake)
         recorderEvidenceCandidate = Self.decodeIfPresent(RecorderEvidenceCandidateSummary.self, from: container, forKey: .recorderEvidenceCandidate)
             ?? Self.decodeIfPresent(RecorderEvidenceCandidateSummary.self, from: container, forKey: .recorderEvidenceCandidateSnake)
+        proofLedgerEventId = Self.decodeIfPresent(String.self, from: container, forKey: .proofLedgerEventId)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .proofLedgerEventIdSnake)
+        proofAcceptedByReview = Self.decodeIfPresent(Bool.self, from: container, forKey: .proofAcceptedByReview)
+            ?? Self.decodeIfPresent(Bool.self, from: container, forKey: .proofAcceptedByReviewSnake)
+        proofAcceptedByEvidenceCandidate = Self.decodeIfPresent(Bool.self, from: container, forKey: .proofAcceptedByEvidenceCandidate)
+            ?? Self.decodeIfPresent(Bool.self, from: container, forKey: .proofAcceptedByEvidenceCandidateSnake)
+        proofLedgerWriteAllowed = Self.decodeIfPresent(Bool.self, from: container, forKey: .proofLedgerWriteAllowed)
+            ?? Self.decodeIfPresent(Bool.self, from: container, forKey: .proofLedgerWriteAllowedSnake)
         recorderRetentionResult = type == "recorder_retention_result"
             ? try? RecorderRetentionApplyResult(from: decoder)
             : nil

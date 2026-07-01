@@ -3012,6 +3012,7 @@ struct ContentView: View {
                     recorderDayMemoryLoopRunning: viewModel.recorderDayMemoryLoopRunning,
                     recorderDayMemoryLoopLastError: viewModel.recorderDayMemoryLoopLastError,
                     recorderEvidenceCandidateReviewInFlight: viewModel.recorderEvidenceCandidateReviewInFlight,
+                    recorderLastEvidenceCandidateReviewResult: viewModel.recorderLastEvidenceCandidateReviewResult,
                     recorderRetentionApplyRunning: viewModel.recorderRetentionApplyRunning,
                     recorderRetentionLastResult: viewModel.recorderRetentionLastResult,
                     recorderRetentionLastError: viewModel.recorderRetentionLastError,

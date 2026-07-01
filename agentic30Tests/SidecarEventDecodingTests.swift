@@ -4893,8 +4893,19 @@ struct SidecarEventDecodingTests {
               "action": {
                 "id": "review_pending_evidence_candidate",
                 "action_type": "review_evidence_inbox",
+                "priority": "high",
                 "title": "Review one Evidence Inbox candidate",
                 "instruction": "Open the Evidence Inbox.",
+                "reason": "Unverified candidates exist.",
+                "preferred_by": "attach accepted evidence",
+                "source_ids": ["event-1", "frame-1"],
+                "target_candidate": {
+                  "id": "recorder-candidate-1",
+                  "candidate_status": "pending_review",
+                  "claim": "Customer reply candidate: Named founder described activation friction",
+                  "proof_kind": "customer_reply",
+                  "evidence_debt": ["Attach the external customer reply."]
+                },
                 "proof_effect": "none"
               },
               "proof_boundary": { "proof_accepted_by_next_action": false }
@@ -4923,6 +4934,11 @@ struct SidecarEventDecodingTests {
         #expect(candidate.sourceIds.map(\.sourceType) == ["product_event", "frame"])
         #expect(candidate.evidenceDebt.count == 2)
         #expect(event.recorderDayLoop?.nextAction?.action?.actionType == "review_evidence_inbox")
+        #expect(event.recorderDayLoop?.nextAction?.action?.priority == "high")
+        #expect(event.recorderDayLoop?.nextAction?.action?.reason == "Unverified candidates exist.")
+        #expect(event.recorderDayLoop?.nextAction?.action?.preferredBy == "attach accepted evidence")
+        #expect(event.recorderDayLoop?.nextAction?.action?.sourceIds == ["event-1", "frame-1"])
+        #expect(event.recorderDayLoop?.nextAction?.action?.targetCandidate?.id == "recorder-candidate-1")
         #expect(event.recorderDayLoop?.snapshot?.persisted == true)
         #expect(event.recorderDayLoop?.proofAcceptedByDayLoop == false)
         #expect(event.recorderDayLoop?.nextAction?.proofAcceptedByNextAction == false)
@@ -5096,7 +5112,43 @@ struct SidecarEventDecodingTests {
               },
               "proof_accepted_by_pipe_run": false
             }
-          ]
+          ],
+          "scheduler": {
+            "generated_at": "2026-06-28T09:00:02.000Z",
+            "queued_count": 0,
+            "skipped_count": 1,
+            "executed_count": 0,
+            "failed_count": 0,
+            "skipped": [
+              {
+                "reason": "recorder_capture_not_ready",
+                "readiness": {
+                  "can_record": false,
+                  "state": "blocked",
+                  "mode": "manual",
+                  "blockers": [
+                    {
+                      "id": "screen_recording_permission_missing",
+                      "severity": "blocking",
+                      "message": "Screen Recording permission missing",
+                      "permission": "screen_recording",
+                      "state": "missing"
+                    }
+                  ],
+                  "warnings": [],
+                  "visible_indicator_required": true,
+                  "visible_indicator_acknowledged": false
+                },
+                "proof_accepted_by_scheduler": false
+              }
+            ],
+            "proof_boundary": {
+              "proof_accepted_by_scheduler": false,
+              "proof_ledger_write_allowed": false,
+              "message": "Pipe scheduler state is local automation metadata and never accepted proof."
+            },
+            "proof_accepted_by_scheduler": false
+          }
         }
         """
         let state = try decoder.decode(SidecarEvent.self, from: Data(statePayload.utf8))
@@ -5110,6 +5162,11 @@ struct SidecarEventDecodingTests {
         #expect(state.runs?.first?.outputManifest?.proofAcceptedByPipeRun == false)
         #expect(state.runs?.first?.outputManifest?.proofBoundary?.proofLedgerWriteAllowed == false)
         #expect(state.runs?.first?.proofAcceptedByPipeRun == false)
+        #expect(state.scheduler?.generatedAt == "2026-06-28T09:00:02.000Z")
+        #expect(state.scheduler?.skippedCount == 1)
+        #expect(state.scheduler?.skipped.first?.reason == "recorder_capture_not_ready")
+        #expect(state.scheduler?.skipped.first?.readiness?.blockers.first?.id == "screen_recording_permission_missing")
+        #expect(state.scheduler?.proofBoundary?.proofLedgerWriteAllowed == false)
 
         let runPayload = """
         {
