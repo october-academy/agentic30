@@ -30,7 +30,7 @@ Options:
 `;
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const LIVE_FRAME_RAW_READ_ENDPOINT_PATTERN = /^\/recorder\/frames\/[^/]+\/(?:text|image)$/;
+const LIVE_FRAME_RAW_READ_ENDPOINT_PATTERN = /^\/recorder\/frames\/([^/]+)\/(?:text|image)$/;
 
 function parseArgs(argv) {
   const options = {
@@ -130,7 +130,8 @@ function collectAcceptedRawReadAudit(store, sourceId) {
     .find((row) => {
       if (row.deleted_at || row.decision !== "accepted") return false;
       if (row.access_level !== "raw_frame") return false;
-      if (!LIVE_FRAME_RAW_READ_ENDPOINT_PATTERN.test(String(row.endpoint || ""))) return false;
+      const endpointMatch = LIVE_FRAME_RAW_READ_ENDPOINT_PATTERN.exec(String(row.endpoint || ""));
+      if (!endpointMatch || endpointMatch[1] !== sourceId) return false;
       const sourceIds = parseSourceIds(row.source_ids_json);
       return sourceIds.some((source) => source.id === sourceId && source.sourceType === "frame");
     }) || null;

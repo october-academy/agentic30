@@ -3162,7 +3162,7 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
   `sidecar-tests/verify-live-recorder-acceptance.test.mjs`; targeted
   `git diff --check`; and `node --test
   sidecar-tests/recorder-live-verify.test.mjs
-  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (13/13).
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (14/14).
 - This is verifier hardening for the next unblocked live signed run. It is not
   live signed-app recorder acceptance, foreground UI E2E acceptance, granted TCC
   proof, or proof-ledger acceptance.
@@ -3514,7 +3514,7 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
 - Verification passed: `node --check` for the verifier module, operator script,
   and focused tests; targeted `git diff --check`; and `node --test
   sidecar-tests/recorder-live-verify.test.mjs
-  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`13/13`).
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`14/14`).
 - This tightens the acceptance harness only. It is not live signed-app recorder
   acceptance, foreground UI E2E acceptance, or granted microphone/System Audio
   TCC proof.
@@ -3526,14 +3526,17 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
 - A matching audit row must be undeleted, `decision=accepted`,
   `access_level=raw_frame`, use a real raw frame endpoint
   (`/recorder/frames/<id>/text` or `/recorder/frames/<id>/image`), and include
-  the live frame id in `source_ids_json` with `source_type=frame`.
+  the live frame id in `source_ids_json` with `source_type=frame`. The endpoint
+  frame id must match the same live frame id.
 - The positive subprocess verifier fixture now records
   `/recorder/frames/<id>/text` with a structured frame source id. A new negative
   fixture proves an accepted summary/frame-level audit (`access_level=frame`,
-  `/recorder/frames/<id>`) does not satisfy full live acceptance.
+  `/recorder/frames/<id>`) does not satisfy full live acceptance. Another
+  negative fixture proves an accepted `raw_frame` audit for a different endpoint
+  frame id also fails closed.
 - Verification passed: `node --check` for the operator script and subprocess
   test, targeted `git diff --check`, and `node --test
-  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`7/7`).
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`8/8`).
 - This tightens the capture/search/audit acceptance harness only. It is not live
   signed-app recorder acceptance, foreground UI E2E acceptance, or granted TCC
   proof.

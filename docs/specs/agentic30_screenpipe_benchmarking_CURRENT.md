@@ -51,7 +51,7 @@ SPEC Section 17 unless this file is insufficient.
     `sidecar-tests/verify-live-recorder-acceptance.test.mjs`; targeted
     `git diff --check`; and `node --test
     sidecar-tests/recorder-live-verify.test.mjs
-    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`13/13`).
+    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`14/14`).
   - This tightens the next live signed frame/search/delete acceptance gate. It
     is still not live signed-app recorder acceptance, foreground UI E2E
     acceptance, granted TCC proof, or proof-ledger acceptance.
@@ -61,18 +61,21 @@ SPEC Section 17 unless this file is insufficient.
     when `decision=accepted`, `access_level=raw_frame`, the endpoint is a real
     raw frame endpoint (`/recorder/frames/<id>/text` or
     `/recorder/frames/<id>/image`), and `source_ids_json` contains the live frame
-    id with `source_type=frame`.
+    id with `source_type=frame`. The endpoint frame id must equal the same live
+    frame id, so an audit for another frame cannot satisfy the gate by mentioning
+    the requested frame in `source_ids_json`.
   - The positive subprocess fixture now uses `/recorder/frames/<id>/text` plus a
     structured frame source id, matching the raw API route contract instead of
     the old synthetic `/recorder/frames/read` label.
   - A negative subprocess fixture now proves an accepted summary/frame-level audit
     (`access_level=frame`, `/recorder/frames/<id>`) cannot satisfy the live
-    raw-read audit gate.
+    raw-read audit gate. Another negative subprocess fixture proves an accepted
+    `raw_frame` audit with a different endpoint frame id also fails closed.
   - Focused verification passed: `node --check
     scripts/verify-live-recorder-acceptance.mjs
     sidecar-tests/verify-live-recorder-acceptance.test.mjs`, targeted
     `git diff --check`, and `node --test
-    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`7/7`).
+    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`8/8`).
   - This tightens the next live signed capture/search/audit acceptance gate. It
     is still not live signed-app recorder acceptance, foreground UI E2E
     acceptance, granted TCC proof, or proof-ledger acceptance.
@@ -100,7 +103,7 @@ SPEC Section 17 unless this file is insufficient.
     `sidecar-tests/verify-live-recorder-acceptance.test.mjs`; targeted
     `git diff --check`; and `node --test
     sidecar-tests/recorder-live-verify.test.mjs
-    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`13/13`).
+    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`14/14`).
   - This tightens the next live signed audio acceptance gate. It is still not
     live signed-app recorder acceptance, foreground UI E2E acceptance, granted
     microphone/System Audio TCC proof, or proof-ledger acceptance.
