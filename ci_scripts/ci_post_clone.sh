@@ -22,46 +22,69 @@ echo "ci_post_clone: CI_WORKSPACE=${CI_WORKSPACE:-unset}"
 echo "ci_post_clone: PATH=$PATH"
 echo "ci_post_clone: arch=$(uname -m)"
 
+SCRIPT_DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT="${CI_WORKSPACE:-$(unset CDPATH; cd -- "$SCRIPT_DIR/.." && pwd)}"
 if [ -z "${CI_WORKSPACE:-}" ]; then
-  echo "ci_post_clone: CI_WORKSPACE not set; not running under Xcode Cloud."
-  exit 0
+  echo "ci_post_clone: CI_WORKSPACE not set; using repository root $REPO_ROOT"
 fi
 
-cd "$CI_WORKSPACE"
+cd "$REPO_ROOT"
 
 # Pick a brew binary explicitly — Xcode Cloud may not have it on PATH.
 BREW=""
-if command -v brew >/dev/null 2>&1; then
-  BREW=$(command -v brew)
-elif [ -x /opt/homebrew/bin/brew ]; then
-  BREW=/opt/homebrew/bin/brew
-elif [ -x /usr/local/bin/brew ]; then
-  BREW=/usr/local/bin/brew
-fi
+for candidate in \
+  /opt/homebrew/bin/brew \
+  /Users/local/Homebrew/bin/brew \
+  "$(command -v brew 2>/dev/null || true)" \
+  /usr/local/bin/brew; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    BREW="$candidate"
+    break
+  fi
+done
 
 if [ -n "$BREW" ]; then
   echo "ci_post_clone: brew at $BREW"
   "$BREW" --version || true
   BREW_BIN=$(dirname "$BREW")
   export PATH="$BREW_BIN:$PATH"
+  export HOMEBREW_NO_AUTO_UPDATE="${HOMEBREW_NO_AUTO_UPDATE:-1}"
+  export HOMEBREW_NO_INSTALL_CLEANUP="${HOMEBREW_NO_INSTALL_CLEANUP:-1}"
+  export HOMEBREW_NO_ENV_HINTS="${HOMEBREW_NO_ENV_HINTS:-1}"
   echo "ci_post_clone: PATH after brew discovery=$PATH"
 else
   echo "ci_post_clone: no brew found in any expected location"
 fi
 
-find_node_bin() {
-  if command -v node >/dev/null 2>&1; then
-    command -v node
-    return 0
+node_process_arch() {
+  "$1" -p 'process.arch' 2>/dev/null || true
+}
+
+node_is_usable() {
+  candidate="$1"
+  if [ ! -x "$candidate" ]; then
+    return 1
   fi
 
+  candidate_arch=$(node_process_arch "$candidate")
+  if [ "$(uname -m)" = "arm64" ] && [ "$candidate_arch" != "arm64" ]; then
+    echo "ci_post_clone: skipping non-native node on arm64 host: $candidate (process.arch=${candidate_arch:-unknown})"
+    return 1
+  fi
+
+  return 0
+}
+
+find_node_bin() {
   for c in \
     /opt/homebrew/bin/node \
+    /Users/local/Homebrew/bin/node \
     /usr/local/bin/node \
     "$HOME/.local/share/mise/shims/node" \
     "$HOME/.asdf/shims/node" \
-    "$HOME/.volta/bin/node"; do
-    if [ -x "$c" ]; then
+    "$HOME/.volta/bin/node" \
+    "$(command -v node 2>/dev/null || true)"; do
+    if [ -n "$c" ] && node_is_usable "$c"; then
       printf '%s\n' "$c"
       return 0
     fi
