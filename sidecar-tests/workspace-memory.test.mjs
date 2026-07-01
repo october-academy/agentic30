@@ -149,6 +149,12 @@ test("legacy onboarding memory schema is ignored on load", async () => {
 
 test("day memory persists per-day details plus cumulative rollup for Day 30 retrieval", async () => {
   const root = await tempWorkspace();
+  // Anchor refresh/load to a fixed "Day 30" (Day 1 = 2026-06-01) so the test is
+  // hermetic: loadCurriculumAnswerLog prunes records older than the 30-day
+  // retention window relative to `now`, and defaulting to new Date() would drop
+  // Day 1's seeded answer once wall-clock passes 2026-07-01. See CONTRIBUTING.md
+  // — the sidecar suite must not depend on the time of day.
+  const now = new Date("2026-06-30T00:00:00.000Z");
   try {
     for (let day = 1; day <= 29; day += 1) {
       await appendCurriculumAnswer({
@@ -161,7 +167,7 @@ test("day memory persists per-day details plus cumulative rollup for Day 30 retr
         },
         now: new Date(`2026-06-${String(Math.min(day, 28)).padStart(2, "0")}T00:00:00.000Z`),
       });
-      await refreshDayMemory({ workspaceRoot: root, day });
+      await refreshDayMemory({ workspaceRoot: root, day, now });
     }
     await appendCommitment({
       workspaceRoot: root,
@@ -180,12 +186,12 @@ test("day memory persists per-day details plus cumulative rollup for Day 30 retr
       },
       now: new Date("2026-06-29T00:01:00.000Z"),
     });
-    await refreshDayMemory({ workspaceRoot: root, day: 29 });
+    await refreshDayMemory({ workspaceRoot: root, day: 29, now });
 
-    const day1 = await loadDayMemory({ workspaceRoot: root, day: 1 });
-    const day29 = await loadDayMemory({ workspaceRoot: root, day: 29 });
-    const rollup = await loadDayRollup({ workspaceRoot: root });
-    const history = await buildOfficeHoursHistorySummary({ workspaceRoot: root, day: 30 });
+    const day1 = await loadDayMemory({ workspaceRoot: root, day: 1, now });
+    const day29 = await loadDayMemory({ workspaceRoot: root, day: 29, now });
+    const rollup = await loadDayRollup({ workspaceRoot: root, now });
+    const history = await buildOfficeHoursHistorySummary({ workspaceRoot: root, day: 30, now });
     const prompt = formatOfficeHoursHistoryForPrompt(history);
 
     assert.ok(resolveDayMemoryPath(root, 1).endsWith(path.join(".agentic30", "memory", "days", "day-1.json")));
