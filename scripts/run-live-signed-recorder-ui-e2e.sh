@@ -11,6 +11,8 @@ ENTITLEMENTS_PATH="$ROOT/agentic30/agentic30.entitlements"
 LIVE_SIGNED_PRESERVE_ARTIFACTS="${AGENTIC30_LIVE_SIGNED_PRESERVE_ARTIFACTS:-1}"
 LIVE_SIGNED_PREPARE_RUNNER_ONLY="${AGENTIC30_LIVE_SIGNED_PREPARE_RUNNER_ONLY:-0}"
 LIVE_SIGNED_UI_RUNNER_DERIVED_DATA_PATH="${AGENTIC30_LIVE_SIGNED_UI_RUNNER_DERIVED_DATA_PATH:-$ROOT/build/ui-e2e/live-signed-runner-derived-data}"
+LIVE_SIGNED_ENABLE_AUTOMATION_MODE="${AGENTIC30_LIVE_SIGNED_ENABLE_AUTOMATION_MODE:-0}"
+AUTOMATION_MODE_TOOL="${AGENTIC30_AUTOMATION_MODE_TOOL:-/usr/bin/automationmodetool}"
 
 plist_value() {
   local plist="$1"
@@ -67,6 +69,96 @@ ERROR: live signed recorder UI E2E requires an unlocked macOS GUI session.
 
 The macOS session is locked/loginwindow-shielded. Unlock the Mac and rerun the
 workflow so ScreenCaptureKit and XCUITest can exercise the signed app surface.
+EOF
+    exit 3
+  fi
+}
+
+automation_mode_status() {
+  local tool_path="$AUTOMATION_MODE_TOOL"
+  if [ ! -x "$tool_path" ]; then
+    printf 'automationmodetool unavailable at %s\n' "$tool_path"
+    return 127
+  fi
+  "$tool_path" status 2>&1
+}
+
+should_enable_automation_mode() {
+  case "$LIVE_SIGNED_ENABLE_AUTOMATION_MODE" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+enable_automation_mode() {
+  local tool_path="$AUTOMATION_MODE_TOOL"
+  if [ ! -x "$tool_path" ]; then
+    printf 'automationmodetool unavailable at %s\n' "$tool_path"
+    return 127
+  fi
+  "$tool_path" enable-automationmode-without-authentication 2>&1
+}
+
+require_automation_mode_for_live_ui() {
+  if [ "${AGENTIC30_LIVE_SIGNED_BUILD_ONLY:-0}" = "1" ] \
+    || [ "$LIVE_SIGNED_PREPARE_RUNNER_ONLY" = "1" ]; then
+    return 0
+  fi
+
+  local status_output
+  local status_code=0
+  status_output="$(automation_mode_status)" || status_code=$?
+  printf 'Automation Mode status:\n%s\n' "$status_output"
+  if [ "$status_code" -ne 0 ]; then
+    cat >&2 <<EOF
+ERROR: automation_mode_status_unavailable
+
+The live signed recorder UI E2E could not inspect macOS Automation Mode
+before launching foreground XCUITest. status=$status_code
+EOF
+    exit 3
+  fi
+  if /usr/bin/grep -q 'Automation Mode is disabled' <<<"$status_output"; then
+    if should_enable_automation_mode; then
+      echo "Automation Mode is disabled; AGENTIC30_LIVE_SIGNED_ENABLE_AUTOMATION_MODE is enabled, attempting to enable it before foreground XCUITest."
+      local enable_output
+      local enable_status=0
+      enable_output="$(enable_automation_mode)" || enable_status=$?
+      printf 'Automation Mode enable output:\n%s\n' "$enable_output"
+      if [ "$enable_status" -ne 0 ]; then
+        cat >&2 <<EOF
+ERROR: automation_mode_enable_failed
+
+The live signed recorder UI E2E attempted to enable macOS Automation Mode before
+launching foreground XCUITest, but automationmodetool exited with
+status=$enable_status.
+EOF
+        exit 3
+      fi
+      status_output="$(automation_mode_status)" || status_code=$?
+      printf 'Automation Mode status after enable:\n%s\n' "$status_output"
+      if [ "$status_code" -ne 0 ] || /usr/bin/grep -q 'Automation Mode is disabled' <<<"$status_output"; then
+        cat >&2 <<EOF
+ERROR: automation_mode_enable_unverified
+
+The live signed recorder UI E2E attempted to enable macOS Automation Mode, but
+the follow-up status check did not prove it is enabled. status=$status_code
+EOF
+        exit 3
+      fi
+      return 0
+    fi
+    cat >&2 <<'EOF'
+ERROR: automation_mode_disabled
+
+The live signed recorder UI E2E requires macOS Automation Mode before launching
+the foreground XCUITest legs. Enable Automation Mode, or rerun with
+AGENTIC30_LIVE_SIGNED_ENABLE_AUTOMATION_MODE=1 to let this wrapper attempt the
+machine-local Automation Mode enable step before launching foreground UI.
 EOF
     exit 3
   fi
@@ -206,6 +298,8 @@ EOF
 if [ "$LIVE_SIGNED_PREPARE_RUNNER_ONLY" = "1" ]; then
   exit 0
 fi
+
+require_automation_mode_for_live_ui
 
 path_marker="$(live_signed_app_path_marker)"
 printf '%s\n' "$APP_PATH" >"$path_marker"

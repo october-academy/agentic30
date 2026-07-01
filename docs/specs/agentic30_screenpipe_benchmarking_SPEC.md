@@ -3729,16 +3729,37 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
   the `Founder Replay Live Signed Runner Accessibility Trust` attachment beside
   `AXIsProcessTrusted()`, runner identity, frontmost app, signed app path, and
   XCUITest visibility counts.
-- If Automation Mode is disabled, the preflight now fails early with
-  `automation_mode_disabled` before checking runner Accessibility trust or
-  waiting for the signed app accessibility tree. This keeps an empty XCUITest
-  tree from being misreported as only a runner TCC grant problem.
+- `scripts/run-live-signed-recorder-ui-e2e.sh` now runs the same Automation Mode
+  check after signed-app verification and runner preparation, but before writing
+  the app-path marker or launching any foreground UI E2E leg. Build-only and
+  prepare-runner-only workflows still skip this gate so signing and runner grants
+  can be prepared without enabling foreground UI automation.
+- If Automation Mode is disabled, the wrapper exits with
+  `automation_mode_disabled` and status `3`; the XCTest preflight also fails
+  early with the same root cause if reached. This keeps an empty XCUITest tree
+  from being misreported as only a runner TCC grant problem.
+- Operators can opt in to the machine-local enable step with
+  `AGENTIC30_LIVE_SIGNED_ENABLE_AUTOMATION_MODE=1`. The wrapper then runs
+  `automationmodetool enable-automationmode-without-authentication`, prints the
+  command output, re-checks status, and still exits before foreground UI with
+  `automation_mode_enable_failed` or `automation_mode_enable_unverified` unless
+  the follow-up status proves Automation Mode is enabled.
 - Verification passed: `/usr/bin/automationmodetool status`, `xcrun swiftc
-  -parse agentic30UITests/agentic30UITests.swift`, targeted `git diff --check`,
-  and `xcodebuild build-for-testing -project agentic30.xcodeproj -scheme
-  agentic30UITests -destination 'platform=macOS' -quiet`.
-- Current non-foreground verification reports `Automation Mode is ENABLED`, so
-  the next foreground live signed run should proceed past this preflight and
-  expose the next real blocker, if any. This is not foreground UI E2E
-  acceptance, live signed-app recorder acceptance, granted recorder TCC proof,
-  or proof-ledger acceptance.
+  -parse agentic30UITests/agentic30UITests.swift`, `bash -n
+  scripts/run-live-signed-recorder-ui-e2e.sh scripts/xcode-test.sh`,
+  `shellcheck scripts/run-live-signed-recorder-ui-e2e.sh
+  scripts/xcode-test.sh`, targeted `git diff --check`, and `xcodebuild
+  build-for-testing -project agentic30.xcodeproj -scheme agentic30UITests
+  -destination 'platform=macOS' -quiet`. The wrapper-level verification
+  `AGENTIC30_LIVE_SIGNED_SKIP_BUILD=1
+  AGENTIC30_DISABLE_UI_E2E_CAFFEINATE=1 bash
+  scripts/run-live-signed-recorder-ui-e2e.sh` verified the signed app and runner
+  handoff, then stopped before foreground UI with
+  `live_signed_wrapper_exit_status=3` and `automation_mode_disabled`.
+  Fake-tool opt-in verification also stopped before foreground UI with
+  `automation_mode_enable_failed` and `automation_mode_enable_unverified`.
+- Current non-foreground verification reports `Automation Mode is disabled`.
+  The next full live signed run cannot reach capture/search/delete until
+  Automation Mode is enabled. This is not foreground UI E2E acceptance, live
+  signed-app recorder acceptance, granted recorder TCC proof, or proof-ledger
+  acceptance.
