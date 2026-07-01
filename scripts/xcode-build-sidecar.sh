@@ -138,6 +138,9 @@ if [ "${1:-}" = "--print-node" ]; then
   exit 0
 fi
 
+NODE_DIR="$(dirname "$NODE_BIN")"
+export PATH="$NODE_DIR:$PATH"
+
 BUN_BIN="${BUN_BINARY:-$(command -v bun || true)}"
 if [ -z "$BUN_BIN" ]; then
   for candidate in "$SRCROOT/node_modules/.bin/bun" "$HOME/.bun/bin/bun"; do

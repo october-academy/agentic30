@@ -1,18 +1,5 @@
 #!/bin/sh
-# Xcode Cloud post-clone hook.
-#
-# Make `node` available so the agentic30 build phase from commit 9bb26b3
-# can find it. The build phase script searches PATH plus hard-coded
-# fallbacks (`/opt/homebrew/bin/node`, `/usr/local/bin/node`, mise/asdf/
-# volta shims). Installing via brew lands node at /opt/homebrew/bin/node
-# on Apple Silicon runners — exactly where the fallback expects it.
-#
-# Two earlier attempts (b2452b2, 06c99a5) left the build phase with the
-# same `node not found in PATH` error, so this version is verbose by
-# design: every step prints a diagnostic line to the Xcode Cloud build
-# log so we can see which step is silently no-op'ing.
 set -eu
-# `set -x` so every command shows up in the build log.
 set -x
 
 echo "ci_post_clone: shell=$0"
@@ -31,7 +18,10 @@ fi
 cd "$REPO_ROOT"
 
 NODE_BIN=$(SRCROOT="$REPO_ROOT" "$REPO_ROOT/scripts/xcode-build-sidecar.sh" --print-node)
-NPM_BIN=$(dirname "$NODE_BIN")/npm
+NODE_DIR=$(dirname "$NODE_BIN")
+export PATH="$NODE_DIR:$PATH"
+
+NPM_BIN="$NODE_DIR/npm"
 if [ ! -x "$NPM_BIN" ]; then
   echo "ci_post_clone: ERROR npm missing next to node at $NPM_BIN"
   exit 1
