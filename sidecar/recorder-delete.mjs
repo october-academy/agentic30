@@ -615,6 +615,7 @@ export function deleteRecorderPipeRunsInRange(store, {
   endedAt,
   workspaceId = null,
   projectId = null,
+  workspaceRoot = null,
   now = new Date(),
   limit = 5000,
 } = {}) {
@@ -629,10 +630,10 @@ export function deleteRecorderPipeRunsInRange(store, {
     projectId,
     limit,
   }).filter((run) => TERMINAL_PIPE_RUN_STATUSES.has(run.status) && textOrNull(run.output_manifest_json));
-  return deleteRecorderPipeRunTargets(store, targets, { now });
+  return deleteRecorderPipeRunTargets(store, targets, { now, workspaceRoot });
 }
 
-export function deleteRecorderPipeRunOutput(store, runId, { now = new Date() } = {}) {
+export function deleteRecorderPipeRunOutput(store, runId, { now = new Date(), workspaceRoot = null } = {}) {
   if (!store) {
     fail("ERR_RECORDER_DELETE_STORE_REQUIRED", "deleteRecorderPipeRunOutput requires store");
   }
@@ -647,16 +648,121 @@ export function deleteRecorderPipeRunOutput(store, runId, { now = new Date() } =
   if (!textOrNull(run.output_manifest_json)) {
     fail("ERR_RECORDER_DELETE_PIPE_RUN_OUTPUT_MISSING", `recorder Pipe run output already purged or missing: ${cleanRunId}`);
   }
-  return deleteRecorderPipeRunTargets(store, [run], { now });
+  return deleteRecorderPipeRunTargets(store, [run], { now, workspaceRoot });
 }
 
-function deleteRecorderPipeRunTargets(store, targets, { now = new Date() } = {}) {
+function collectPipeRunArtifactTargets(targets, workspaceRoot) {
+  const artifactTargets = [];
+  for (const run of targets) {
+    let manifest = null;
+    try {
+      manifest = JSON.parse(textOrNull(run.output_manifest_json) || "null");
+    } catch {
+      manifest = null;
+    }
+    const artifacts = Array.isArray(manifest?.artifacts) ? manifest.artifacts : [];
+    for (const artifact of artifacts) {
+      if (artifact?.persisted !== true) continue;
+      const relativePath = textOrNull(artifact.sandboxPath ?? artifact.sandbox_path);
+      if (!relativePath) continue;
+      const pipeId = textOrNull(run.pipe_id);
+      if (!workspaceRoot) {
+        fail(
+          "ERR_RECORDER_DELETE_PIPE_ARTIFACT_WORKSPACE_ROOT_REQUIRED",
+          `recorder Pipe run ${run.id} has a persisted artifact but no workspaceRoot was supplied for deletion`,
+          { runId: run.id, run_id: run.id, relativePath, relative_path: relativePath },
+        );
+      }
+      const sandboxRoot = path.resolve(workspaceRoot, ".agentic30", "pipes", pipeId || "");
+      const resolved = path.resolve(workspaceRoot, relativePath);
+      if (
+        relativePath.includes("..")
+        || relativePath.includes("\\")
+        || path.isAbsolute(relativePath)
+        || !pipeId
+        || !resolved.startsWith(`${sandboxRoot}${path.sep}`)
+      ) {
+        fail(
+          "ERR_RECORDER_DELETE_PIPE_ARTIFACT_OUTSIDE_SANDBOX",
+          `recorder Pipe run ${run.id} artifact path escapes the pipe write sandbox`,
+          { runId: run.id, run_id: run.id, relativePath, relative_path: relativePath },
+        );
+      }
+      artifactTargets.push({ runId: run.id, relativePath, filePath: resolved });
+    }
+  }
+  return artifactTargets;
+}
+
+function preflightPipeRunArtifactTargetsSync(artifactTargets = []) {
+  for (const target of artifactTargets) {
+    try {
+      const stat = fsSync.lstatSync(target.filePath);
+      if (stat.isSymbolicLink()) {
+        fail("ERR_RECORDER_DELETE_PIPE_ARTIFACT_SYMLINK_REJECTED", `recorder Pipe artifact is a symlink: ${target.relativePath}`, {
+          runId: target.runId,
+          run_id: target.runId,
+          relativePath: target.relativePath,
+          relative_path: target.relativePath,
+        });
+      }
+      if (!stat.isFile()) {
+        fail("ERR_RECORDER_DELETE_PIPE_ARTIFACT_NOT_FILE", `recorder Pipe artifact is not a file: ${target.relativePath}`, {
+          runId: target.runId,
+          run_id: target.runId,
+          relativePath: target.relativePath,
+          relative_path: target.relativePath,
+        });
+      }
+    } catch (error) {
+      if (error instanceof RecorderDeleteError) throw error;
+      if (error?.code === "ENOENT") {
+        // File already gone — still purge the manifest/tombstone the run so
+        // one orphan artifact cannot deadlock the sweep.
+        target.alreadyMissing = true;
+        continue;
+      }
+      fail("ERR_RECORDER_DELETE_PIPE_ARTIFACT_STAT_FAILED", `failed to inspect recorder Pipe artifact: ${target.relativePath}`, {
+        runId: target.runId,
+        run_id: target.runId,
+        relativePath: target.relativePath,
+        relative_path: target.relativePath,
+        cause: error?.message || String(error),
+      });
+    }
+  }
+}
+
+function unlinkPipeRunArtifactTargetsSync(artifactTargets = []) {
+  let unlinked = 0;
+  for (const target of artifactTargets) {
+    if (target.alreadyMissing) continue;
+    try {
+      fsSync.unlinkSync(target.filePath);
+      unlinked += 1;
+    } catch (error) {
+      fail("ERR_RECORDER_DELETE_PIPE_ARTIFACT_UNLINK_FAILED", `failed to remove recorder Pipe artifact: ${target.relativePath}`, {
+        runId: target.runId,
+        run_id: target.runId,
+        relativePath: target.relativePath,
+        relative_path: target.relativePath,
+        cause: error?.message || String(error),
+      });
+    }
+  }
+  return unlinked;
+}
+
+function deleteRecorderPipeRunTargets(store, targets, { now = new Date(), workspaceRoot = null } = {}) {
   const sourceRefs = targets.flatMap((run) => sourceRefsForPipeRun(run));
   const invalidation = prepareRecorderInvalidation(store, sourceRefs);
   const exportArchiveTargets = invalidation.exportArchiveTargets;
+  const artifactTargets = collectPipeRunArtifactTargets(targets, workspaceRoot);
   preflightExportArchiveTargetsSync(exportArchiveTargets);
+  preflightPipeRunArtifactTargetsSync(artifactTargets);
   const deletedAt = toIso(now);
   unlinkExportArchiveTargetsSync(exportArchiveTargets);
+  const artifactFileUnlinkedCount = unlinkPipeRunArtifactTargetsSync(artifactTargets);
   store.withTransaction(() => {
     for (const run of targets) {
       store.updateRecord("pipe_runs", run.id, {
@@ -674,6 +780,10 @@ function deleteRecorderPipeRunTargets(store, targets, { now = new Date() } = {})
     output_purged_count: targets.length,
     pipeRunIds: targets.map((run) => run.id),
     pipe_run_ids: targets.map((run) => run.id),
+    artifactFileCount: artifactTargets.length,
+    artifact_file_count: artifactTargets.length,
+    artifactFileUnlinkedCount,
+    artifact_file_unlinked_count: artifactFileUnlinkedCount,
     invalidatedExportArchiveCount: exportArchiveTargets.length,
     invalidated_export_archive_count: exportArchiveTargets.length,
     deletedAt,

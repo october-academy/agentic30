@@ -656,7 +656,9 @@ next_user_step:
 
 next_live_signed_run_command: AGENTIC30_LIVE_SIGNED_SKIP_BUILD=1 AGENTIC30_LIVE_SIGNED_APP_PATH=$quoted_app_path scripts/run-live-signed-recorder-ui-e2e.sh
 
-next_acceptance_verifier_command: bash scripts/verify-live-recorder-acceptance.sh --launchservices-handoff $quoted_handoff_path --allow-missing-audio --apply-retention --json-output $quoted_json_output_path
+next_acceptance_verifier_command: bash scripts/verify-live-recorder-acceptance.sh --launchservices-handoff $quoted_handoff_path --apply-retention --json-output $quoted_json_output_path
+
+next_triage_verifier_command_frame_only: bash scripts/verify-live-recorder-acceptance.sh --launchservices-handoff $quoted_handoff_path --allow-missing-audio --apply-retention --json-output $quoted_json_output_path
 
 launchd_environment:
   AGENTIC30_APP_SUPPORT_PATH=$app_support_path

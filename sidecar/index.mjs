@@ -3857,6 +3857,7 @@ async function runRecorderRetentionSweep({ reason = "manual", policy = null, now
   const run = (async () => {
     const result = await applyRecorderRetentionPolicy(store, {
       ...(policy && typeof policy === "object" ? { policy } : {}),
+      workspaceRoot,
       now,
     });
     const schedulerResult = {
@@ -4856,7 +4857,7 @@ function handleRecorderPipeOutputDelete(socket, payload = {}) {
   const result = deleteRecorderPipeRunOutput(
     store,
     payload.runId ?? payload.run_id ?? payload.id,
-    { now: new Date() },
+    { now: new Date(), workspaceRoot },
   );
   const deletion = {
     ...result,

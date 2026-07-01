@@ -416,14 +416,18 @@ function assertSearchEvidence(store, query, frameId) {
   if (!matching) {
     throw new Error(`Redacted search query "${query}" did not return live frame ${frameId}.`);
   }
+  const proofAcceptedBySearch = Boolean(
+    search.proofBoundary?.proofAcceptedBySearch
+      ?? search.proof_boundary?.proof_accepted_by_search
+      ?? false,
+  );
+  if (proofAcceptedBySearch) {
+    throw new Error("Recorder search result claims proofAcceptedBySearch=true; search hits are never proof.");
+  }
   return {
     schema: search.schema,
     resultCount: search.resultCount,
-    proofAcceptedBySearch: Boolean(
-      search.proofBoundary?.proofAcceptedBySearch
-        ?? search.proof_boundary?.proof_accepted_by_search
-        ?? false,
-    ),
+    proofAcceptedBySearch,
     matchingResult: {
       id: matching.id,
       sourceId: matching.sourceId,
@@ -872,8 +876,18 @@ async function main() {
       await writeEvidenceJson(options.jsonOutput, failureEvidence);
       rethrowWithLiveFailureContext(error, failureEvidence);
     }
+    // Triage flags must not be able to mint the acceptance schema: a run that
+    // skipped audio or raw-read-audit evidence is a triage run, and its JSON
+    // must say so structurally, not just in a nested status field.
+    const triageReasons = [];
+    if (audio?.status === "missing_allowed") triageReasons.push("audio_missing_allowed");
+    if (rawReadAudit?.status === "missing_allowed") triageReasons.push("raw_read_audit_missing_allowed");
     const evidence = {
-      schema: "agentic30.live_recorder_acceptance.v1",
+      schema: triageReasons.length
+        ? "agentic30.live_recorder_triage.v1"
+        : "agentic30.live_recorder_acceptance.v1",
+      acceptance: triageReasons.length === 0,
+      triageReasons,
       generatedAt: new Date().toISOString(),
       appSupportRoot,
       launchServicesHandoff,

@@ -206,6 +206,8 @@ test("verify-live-recorder-acceptance accepts live frame/search/audio/audit and 
     const writtenEvidence = JSON.parse(await fs.readFile(outputPath, "utf8"));
 
     assert.equal(evidence.schema, "agentic30.live_recorder_acceptance.v1");
+    assert.equal(evidence.acceptance, true);
+    assert.deepEqual(evidence.triageReasons, []);
     assert.equal(evidence.requestedFrameId, liveFrame.id);
     assert.equal(evidence.liveFrame.id, liveFrame.id);
     assert.equal(evidence.liveCaptureSummary.liveFrameCount, 1);
@@ -271,6 +273,11 @@ test("verify-live-recorder-acceptance preserves one-line LaunchServices verifier
     assert.equal(evidence.launchServicesHandoff.nextAcceptanceVerifierCommand, command);
     assert.equal(evidence.liveFrame.id, liveFrame.id);
     assert.equal(evidence.proofAccepted, false);
+    // --allow-missing-audio skipped the audio leg, so this run must be
+    // structurally marked as triage, never as acceptance.
+    assert.equal(evidence.schema, "agentic30.live_recorder_triage.v1");
+    assert.equal(evidence.acceptance, false);
+    assert.deepEqual(evidence.triageReasons, ["audio_missing_allowed"]);
   } finally {
     store.close();
     await fs.rm(root, { recursive: true, force: true });

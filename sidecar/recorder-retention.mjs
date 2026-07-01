@@ -695,6 +695,7 @@ export async function applyRecorderRetentionPolicy(store, options = {}) {
     ? deleteRecorderPipeRunsInRange(store, {
       workspaceId: plan.workspaceId,
       projectId: plan.projectId,
+      workspaceRoot: options.workspaceRoot ?? null,
       startedAt: plan.pipeOutputDeleteRange.startedAt,
       endedAt: plan.pipeOutputDeleteRange.endedAt,
       now: options.now ?? new Date(),

@@ -114,10 +114,16 @@ the reliable one.
    visible-range delete tombstone, a second fresh frame, and ≥1 audio chunk
    (`audio running`).
 3. Run the exact `next_acceptance_verifier_command` from the handoff:
-   `bash scripts/verify-live-recorder-acceptance.sh --launchservices-handoff <run_root>/launchservices-handoff.txt --apply-retention --allow-missing-audio --json-output <run_root>/live-recorder-acceptance-evidence.json`.
-4. Record `e2e_accepted` status here and in a commit; evidence schemas are
-   `agentic30.live_recorder_acceptance.v1` / `_audio_acceptance.v1` /
-   `_acceptance_failure.v1`, all with `proofAccepted=false`.
+   `bash scripts/verify-live-recorder-acceptance.sh --launchservices-handoff <run_root>/launchservices-handoff.txt --apply-retention --json-output <run_root>/live-recorder-acceptance-evidence.json`.
+   Triage flags (`--allow-missing-audio` / `--allow-missing-audit`) force the
+   separate `agentic30.live_recorder_triage.v1` schema with `acceptance:false`
+   — a triage JSON can never back an `e2e_accepted` claim; the handoff's
+   `next_triage_verifier_command_frame_only` line exists only for frame-leg
+   triage.
+4. Record `e2e_accepted` status here and in a commit; acceptance requires
+   schema `agentic30.live_recorder_acceptance.v1` with `acceptance:true`
+   (audio-only leg: `agentic30.live_recorder_audio_acceptance.v1`; failures:
+   `_acceptance_failure.v1`), all with `proofAccepted=false`.
 
 ### Path A (XCUITest wrapper): full automated ladder
 
@@ -148,13 +154,18 @@ blocking foreground UI E2E (CLAUDE.md rule).
 
 ## P1 — Next up
 
-1. **insane-review large packs: retry or explicitly accept narrow coverage.**
-   The narrow recorder pack PASSED
-   (`.insane-review/response_prj_20260629_232802_72018_4ed024.md`); the full
-   (~4.5M tokens) and focused (~1.03M tokens) packs are blocked by a ChatGPT
-   web send-button failure. SPEC review gates list this as a non-readiness
-   condition — either retry in the browser or record an explicit decision to
-   accept the narrow pack.
+1. **insane-review coverage — DECISION RECORDED (2026-07-02): incremental
+   delta packs, not monolithic packs.** The web UI cannot send the ~4.5M/1.03M
+   token packs (send-button failure is a pack-size limit); packs ≤~700KB
+   (~130-195k tokens) send reliably. Coverage strategy: review each new slice
+   with a delta pack against the SPEC. Executed twice and PASSED/actioned:
+   narrow recorder hardening pack
+   (`.insane-review/response_prj_20260629_232802_72018_4ed024.md`, PASS) and
+   the pipes/live-acceptance delta pack
+   (`.insane-review/response_prj_20260702_082908_98772_e3e33a.md`, BLOCKED →
+   all 5 findings adversarially verified and fixed the same day: pipe sandbox
+   artifact write, artifact file deletion, manifest sourceIds, triage schema
+   fork, failed-run incomplete manifests).
 
 ## P2 — After the P0/P1 items
 
@@ -174,6 +185,14 @@ blocking foreground UI E2E (CLAUDE.md rule).
   leg** (wired + non-UI verified, no observed foreground acceptance), plus
   live/manual UI validation for the SQL inspector panel and Pipes tab.
   Blocking UI E2E needs user approval + `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`.
+- **Day-loop memory-summaries snapshot files lack deletion/retention
+  coverage.** `recorder-day-loop.mjs` persists
+  `.agentic30/recorder/memory-summaries/day-memory-review-<date>.json` via
+  `writeRecorderDayMemoryReviewSnapshot`, but no recorder-delete/retention
+  path unlinks those files (memory_items rows are covered; the workspace
+  snapshot file is not). Surfaced by the 2026-07-02 GPT-5.5 delta review
+  alongside B1; the pipe-side write now goes to the run-scoped pipe sandbox
+  and is deletion-covered, this recorder-owned file is the remaining gap.
 - **SQLite authorizer/progress-handler enforcement — deferred.**
   better-sqlite3 12.8.0 exposes no hooks; the accepted defense-in-depth is
   string validator + read-only source DB + copied-view sandbox worker +

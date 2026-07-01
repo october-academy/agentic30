@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 
+import { atomicWriteJson } from "./atomic-store.mjs";
 import {
   buildRecorderDayMemoryReview,
-  writeRecorderDayMemoryReviewSnapshot,
+  normalizeRecorderDayMemoryReviewSnapshot,
 } from "./recorder-day-memory-review.mjs";
 import { buildRecorderEvidenceInboxCandidates } from "./recorder-evidence-inbox-builder.mjs";
 import { buildRecorderNextAction } from "./recorder-next-action.mjs";
@@ -512,9 +514,13 @@ export async function runQueuedRecorderPipeRuns({
         run,
         pipe,
         status: timedOut ? "timed_out" : "failed",
-        outputManifest: timedOut
-          ? incompleteOutputManifest({ pipe, runId: row.id, now: timestamp, outputKind: "pipe_timed_out", reason: code })
-          : null,
+        outputManifest: incompleteOutputManifest({
+          pipe,
+          runId: row.id,
+          now: timestamp,
+          outputKind: timedOut ? "pipe_timed_out" : "pipe_failed",
+          reason: code,
+        }),
         auditType: timedOut ? "pipe_timed_out" : "pipe_failed",
         now: timestamp,
         errorMessage: cleanString(error?.message || String(error), 500),
@@ -615,9 +621,13 @@ export async function runBuiltInRecorderPipe({
       run,
       pipe,
       status: timedOut ? "timed_out" : "failed",
-      outputManifest: timedOut
-        ? incompleteOutputManifest({ pipe, runId: run.id, now, outputKind: "pipe_timed_out", reason: code })
-        : null,
+      outputManifest: incompleteOutputManifest({
+        pipe,
+        runId: run.id,
+        now,
+        outputKind: timedOut ? "pipe_timed_out" : "pipe_failed",
+        reason: code,
+      }),
       auditType: timedOut ? "pipe_timed_out" : "pipe_failed",
       now,
       errorMessage: cleanString(error?.message || String(error), 500),
@@ -883,10 +893,23 @@ async function executeBuiltInPipe({
     });
     let artifact = null;
     if (workspaceRoot) {
-      const snapshot = await writeRecorderDayMemoryReviewSnapshot({ workspaceRoot, review, now });
+      const snapshot = normalizeRecorderDayMemoryReviewSnapshot(review, { now });
+      const written = await writeRecorderPipeRunArtifactJson({
+        workspaceRoot,
+        pipe,
+        runId,
+        fileName: "day-memory-review.json",
+        payload: snapshot,
+      });
       artifact = {
         kind: "day_memory_review_snapshot",
         persisted: true,
+        // Named sandboxPath (not relativePath) on purpose: relative_path is a
+        // blocked raw-output field name, while this value is the
+        // policy-validated, workspace-relative pipe sandbox locator that the
+        // deletion path needs to unlink the file.
+        sandboxPath: written.relativePath,
+        sandbox_path: written.relativePath,
         privacyState: "memory_safe",
         privacy_state: "memory_safe",
       };
@@ -904,6 +927,7 @@ async function executeBuiltInPipe({
         evidenceCandidateCount: numberValue(review.evidenceInbox?.total ?? review.evidence_inbox?.total),
         evidence_candidate_count: numberValue(review.evidenceInbox?.total ?? review.evidence_inbox?.total),
       },
+      sourceIds: dayMemoryReviewSourceIds(review),
       artifacts: artifact ? [artifact] : [],
       actionResults: actionResultsForDslPlan(plan, {
         "memory.write_daily_summary": {
@@ -975,6 +999,54 @@ async function executeBuiltInPipe({
 
 function assertPipeActionsAllowed(pipe) {
   return interpretRecorderPipeDsl(pipe);
+}
+
+function assertSafePipePathSegment(value, label) {
+  const segment = cleanString(value, 240);
+  if (!segment || segment.includes("/") || segment.includes("\\") || segment.includes("..")) {
+    fail("ERR_RECORDER_PIPE_ARTIFACT_PATH_INVALID", `recorder pipe artifact ${label} is not a safe path segment`, {
+      [label]: segment || null,
+    });
+  }
+  return segment;
+}
+
+// Persisted pipe artifacts must stay inside the pipe's declared write sandbox
+// (.agentic30/pipes/<pipe-id>/); the run-scoped directory keeps every run's
+// files individually locatable for deletion/retention.
+async function writeRecorderPipeRunArtifactJson({ workspaceRoot, pipe, runId, fileName, payload }) {
+  const root = cleanString(workspaceRoot, 2000);
+  if (!root) {
+    fail("ERR_RECORDER_PIPE_ARTIFACT_WORKSPACE_ROOT_REQUIRED", "recorder pipe artifact writes require workspaceRoot");
+  }
+  const safeRunId = assertSafePipePathSegment(runId, "runId");
+  const safeFileName = assertSafePipePathSegment(fileName, "fileName");
+  const sandboxRoot = path.resolve(root, ".agentic30", "pipes", pipe.id);
+  const relativePath = [".agentic30", "pipes", pipe.id, "runs", safeRunId, safeFileName].join("/");
+  const filePath = path.resolve(root, ".agentic30", "pipes", pipe.id, "runs", safeRunId, safeFileName);
+  if (filePath !== sandboxRoot && !filePath.startsWith(`${sandboxRoot}${path.sep}`)) {
+    fail("ERR_RECORDER_PIPE_ARTIFACT_OUTSIDE_SANDBOX", "recorder pipe artifact resolved outside the pipe write sandbox", {
+      pipeId: pipe.id,
+      pipe_id: pipe.id,
+      relativePath,
+      relative_path: relativePath,
+    });
+  }
+  await atomicWriteJson(filePath, payload);
+  return { relativePath, relative_path: relativePath, filePath, file_path: filePath };
+}
+
+function dayMemoryReviewSourceIds(review = {}) {
+  const ids = [];
+  const push = (value) => {
+    const id = cleanString(value, 240);
+    if (id) ids.push(id);
+  };
+  for (const sample of review.capture?.samples ?? []) push(sample?.id);
+  for (const item of review.memoryItems?.items ?? review.memory_items?.items ?? []) push(item?.id);
+  for (const item of review.productEvents?.items ?? review.product_events?.items ?? []) push(item?.id);
+  for (const candidate of review.evidenceInbox?.candidates ?? review.evidence_inbox?.candidates ?? []) push(candidate?.id);
+  return [...new Set(ids)];
 }
 
 function outputManifest({

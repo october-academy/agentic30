@@ -14,6 +14,7 @@ import {
   deleteRecorderFrameCapture,
   deleteRecorderFrameCapturesInRange,
   deleteRecorderMemoryItemsInRange,
+  deleteRecorderPipeRunOutput,
   deleteRecorderPipeRunsInRange,
   deleteRecorderProductEventsInRange,
   resolveRecorderAudioMediaPath,
@@ -1105,6 +1106,117 @@ test("deleteRecorderPipeRunsInRange purges scoped terminal output manifests and 
     assert.equal(store.getRecord("pipe_runs", "run-old-queued").deleted_at, null);
   } finally {
     store.close();
+  }
+});
+
+test("deleteRecorderPipeRunOutput unlinks persisted sandbox artifacts and fails closed on unsafe paths", async () => {
+  const { store } = await makeStore();
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-pipe-artifact-delete-"));
+  try {
+    insertPipeDefinition(store);
+    const sandboxPath = ".agentic30/pipes/daily-founder-memory/runs/run-artifact/day-memory-review.json";
+    const artifactFile = path.join(workspaceRoot, ...sandboxPath.split("/"));
+    await fs.mkdir(path.dirname(artifactFile), { recursive: true });
+    await fs.writeFile(artifactFile, JSON.stringify({ schema: "agentic30.recorder.day_memory_review.v1" }));
+    const outputManifest = {
+      outputKind: "day_memory_review",
+      artifacts: [{ kind: "day_memory_review_snapshot", persisted: true, sandboxPath, sandbox_path: sandboxPath }],
+      proofAcceptedByPipeRun: false,
+    };
+    insertPipeRun(store, {
+      id: "run-artifact",
+      startedAt: "2026-06-27T08:00:00.000Z",
+      endedAt: "2026-06-27T09:00:00.000Z",
+      outputManifest,
+    });
+
+    // Persisted artifact without workspaceRoot must fail closed with a named
+    // root cause, before any row mutation.
+    assert.throws(
+      () => deleteRecorderPipeRunOutput(store, "run-artifact", { now: new Date("2026-06-28T12:00:00.000Z") }),
+      (error) => error instanceof RecorderDeleteError
+        && error.code === "ERR_RECORDER_DELETE_PIPE_ARTIFACT_WORKSPACE_ROOT_REQUIRED",
+    );
+    assert.notEqual(store.getRecord("pipe_runs", "run-artifact").output_manifest_json, null);
+
+    const result = deleteRecorderPipeRunOutput(store, "run-artifact", {
+      now: new Date("2026-06-28T12:00:00.000Z"),
+      workspaceRoot,
+    });
+    assert.equal(result.artifactFileCount, 1);
+    assert.equal(result.artifactFileUnlinkedCount, 1);
+    await assert.rejects(fs.access(artifactFile), { code: "ENOENT" });
+    const run = store.getRecord("pipe_runs", "run-artifact");
+    assert.equal(run.output_manifest_json, null);
+    assert.equal(run.deleted_at, "2026-06-28T12:00:00.000Z");
+
+    // Sandbox-escaping artifact paths must fail closed before mutation.
+    insertPipeRun(store, {
+      id: "run-artifact-escape",
+      startedAt: "2026-06-27T08:00:00.000Z",
+      endedAt: "2026-06-27T09:00:00.000Z",
+      outputManifest: {
+        outputKind: "day_memory_review",
+        artifacts: [{ persisted: true, sandboxPath: ".agentic30/pipes/daily-founder-memory/../../../etc/passwd" }],
+      },
+    });
+    assert.throws(
+      () => deleteRecorderPipeRunOutput(store, "run-artifact-escape", {
+        now: new Date("2026-06-28T12:00:00.000Z"),
+        workspaceRoot,
+      }),
+      (error) => error.code === "ERR_RECORDER_DELETE_PIPE_ARTIFACT_OUTSIDE_SANDBOX",
+    );
+    assert.notEqual(store.getRecord("pipe_runs", "run-artifact-escape").output_manifest_json, null);
+
+    // Symlinked artifacts must be rejected, not followed.
+    const symlinkSandboxPath = ".agentic30/pipes/daily-founder-memory/runs/run-artifact-symlink/day-memory-review.json";
+    const symlinkFile = path.join(workspaceRoot, ...symlinkSandboxPath.split("/"));
+    const symlinkVictim = path.join(workspaceRoot, "victim.json");
+    await fs.mkdir(path.dirname(symlinkFile), { recursive: true });
+    await fs.writeFile(symlinkVictim, "{}");
+    await fs.symlink(symlinkVictim, symlinkFile);
+    insertPipeRun(store, {
+      id: "run-artifact-symlink",
+      startedAt: "2026-06-27T08:00:00.000Z",
+      endedAt: "2026-06-27T09:00:00.000Z",
+      outputManifest: {
+        outputKind: "day_memory_review",
+        artifacts: [{ persisted: true, sandboxPath: symlinkSandboxPath }],
+      },
+    });
+    assert.throws(
+      () => deleteRecorderPipeRunOutput(store, "run-artifact-symlink", {
+        now: new Date("2026-06-28T12:00:00.000Z"),
+        workspaceRoot,
+      }),
+      (error) => error.code === "ERR_RECORDER_DELETE_PIPE_ARTIFACT_SYMLINK_REJECTED",
+    );
+    await fs.access(symlinkVictim);
+
+    // Missing artifact files stay idempotent: purge proceeds.
+    insertPipeRun(store, {
+      id: "run-artifact-missing",
+      startedAt: "2026-06-27T08:00:00.000Z",
+      endedAt: "2026-06-27T09:00:00.000Z",
+      outputManifest: {
+        outputKind: "day_memory_review",
+        artifacts: [{
+          persisted: true,
+          sandboxPath: ".agentic30/pipes/daily-founder-memory/runs/run-artifact-missing/day-memory-review.json",
+        }],
+      },
+    });
+    const missingResult = deleteRecorderPipeRunOutput(store, "run-artifact-missing", {
+      now: new Date("2026-06-28T12:00:00.000Z"),
+      workspaceRoot,
+    });
+    assert.equal(missingResult.artifactFileCount, 1);
+    assert.equal(missingResult.artifactFileUnlinkedCount, 0);
+    assert.equal(store.getRecord("pipe_runs", "run-artifact-missing").output_manifest_json, null);
+  } finally {
+    store.close();
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
   }
 });
 

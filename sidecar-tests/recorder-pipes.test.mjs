@@ -173,8 +173,19 @@ test("recorder built-in pipe runner records lifecycle rows and redacted output m
     assert.equal(daily.outputManifest.proofAcceptedByPipeRun, false);
     assert.equal(daily.outputManifest.proofBoundary.proofLedgerWriteAllowed, false);
     assert.equal(daily.outputManifest.artifacts[0].persisted, true);
-    const summariesDir = path.join(workspaceRoot, ".agentic30", "recorder", "memory-summaries");
-    assert.equal((await fs.readdir(summariesDir)).length, 1);
+    assert.equal(
+      daily.outputManifest.artifacts[0].sandboxPath,
+      ".agentic30/pipes/daily-founder-memory/runs/run-daily/day-memory-review.json",
+    );
+    const artifactPath = path.join(
+      workspaceRoot,
+      ".agentic30", "pipes", "daily-founder-memory", "runs", "run-daily", "day-memory-review.json",
+    );
+    assert.equal(JSON.parse(await fs.readFile(artifactPath, "utf8")).schema, "agentic30.recorder.day_memory_review.v1");
+    assert.ok(
+      daily.outputManifest.sourceIds.length > 0,
+      "daily-founder-memory manifest must record the consumed source ids for deletion invalidation",
+    );
 
     const evidence = await runBuiltInRecorderPipe({
       store,
@@ -588,7 +599,11 @@ test("recorder pipe runner records failed lifecycle rows with named root causes"
     const failed = store.getRecord("pipe_runs", "run-failed");
     assert.equal(failed.status, "failed");
     assert.match(failed.error_message, /ERR_RECORDER_EVIDENCE_BUILDER_UNSAFE_PRODUCT_EVENT_TEXT/);
-    assert.equal(failed.output_manifest_json, null);
+    const failedManifest = JSON.parse(failed.output_manifest_json);
+    assert.equal(failedManifest.outputKind, "pipe_failed");
+    assert.equal(failedManifest.items.complete, false);
+    assert.equal(failedManifest.items.reason, "ERR_RECORDER_EVIDENCE_BUILDER_UNSAFE_PRODUCT_EVENT_TEXT");
+    assert.equal(failedManifest.proofAcceptedByPipeRun, false);
   } finally {
     store.close();
     await fs.rm(root, { recursive: true, force: true });
@@ -627,7 +642,10 @@ test("recorder pipe runner rejects raw-looking output manifest values", async ()
     const failed = store.getRecord("pipe_runs", "run-unsafe-output");
     assert.equal(failed.status, "failed");
     assert.match(failed.error_message, /ERR_RECORDER_PIPE_OUTPUT_RAW_VALUE/);
-    assert.equal(failed.output_manifest_json, null);
+    const failedManifest = JSON.parse(failed.output_manifest_json);
+    assert.equal(failedManifest.outputKind, "pipe_failed");
+    assert.equal(failedManifest.items.complete, false);
+    assert.equal(failedManifest.items.reason, "ERR_RECORDER_PIPE_OUTPUT_RAW_VALUE");
   } finally {
     store.close();
     await fs.rm(root, { recursive: true, force: true });
