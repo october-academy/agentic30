@@ -23,13 +23,14 @@ Options:
   --deleted-frame-id <id>     Require this frame id to be deleted/tombstoned
   --apply-retention           Apply a tiny retention window to prove purge behavior
   --json-output <path>        Write the evidence JSON to a file
-  --allow-missing-audio       Do not fail when no live audio-% chunk exists
+  --allow-missing-audio       Do not fail when no live audio-<uuid> chunk exists
   --allow-missing-audit       Do not fail when no accepted raw-read audit exists
   --skip-wal-checkpoint       Do not checkpoint WAL before reading the DB
   --help                      Show this message
 `;
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const LIVE_FRAME_RAW_READ_ENDPOINT_PATTERN = /^\/recorder\/frames\/[^/]+\/(?:text|image)$/;
 
 function parseArgs(argv) {
   const options = {
@@ -128,8 +129,30 @@ function collectAcceptedRawReadAudit(store, sourceId) {
     .listRecords("recorder_audit", { limit: 50000, orderBy: "created_at", direction: "DESC" })
     .find((row) => {
       if (row.deleted_at || row.decision !== "accepted") return false;
-      return String(row.source_ids_json || "").includes(sourceId);
+      if (row.access_level !== "raw_frame") return false;
+      if (!LIVE_FRAME_RAW_READ_ENDPOINT_PATTERN.test(String(row.endpoint || ""))) return false;
+      const sourceIds = parseSourceIds(row.source_ids_json);
+      return sourceIds.some((source) => source.id === sourceId && source.sourceType === "frame");
     }) || null;
+}
+
+function parseSourceIds(value) {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(value || "[]"));
+  } catch {
+    return [];
+  }
+  const input = Array.isArray(parsed) ? parsed : [];
+  return input.map((item) => {
+    if (typeof item === "string") {
+      return { id: item, sourceType: "unknown" };
+    }
+    return {
+      id: String(item?.id ?? item?.sourceId ?? item?.source_id ?? "").trim(),
+      sourceType: String(item?.sourceType ?? item?.source_type ?? item?.sourceKind ?? item?.source_kind ?? "").trim() || "unknown",
+    };
+  }).filter((item) => item.id);
 }
 
 function assertRawReadAuditEvidence(store, sourceId, allowMissingAudit) {
@@ -144,6 +167,7 @@ function assertRawReadAuditEvidence(store, sourceId, allowMissingAudit) {
     accessLevel: audit.access_level,
     decision: audit.decision,
     requestId: audit.request_id,
+    sourceIds: parseSourceIds(audit.source_ids_json),
   };
 }
 

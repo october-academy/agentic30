@@ -3491,3 +3491,22 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
 - This tightens the acceptance harness only. It is not live signed-app recorder
   acceptance, foreground UI E2E acceptance, or granted microphone/System Audio
   TCC proof.
+
+### 2026-07-01 KST — Gate A/B live raw-read audit verifier tightening
+
+- `scripts/verify-live-recorder-acceptance.mjs` now treats accepted raw-read
+  audit evidence as a typed acceptance condition, not a substring search.
+- A matching audit row must be undeleted, `decision=accepted`,
+  `access_level=raw_frame`, use a real raw frame endpoint
+  (`/recorder/frames/<id>/text` or `/recorder/frames/<id>/image`), and include
+  the live frame id in `source_ids_json` with `source_type=frame`.
+- The positive subprocess verifier fixture now records
+  `/recorder/frames/<id>/text` with a structured frame source id. A new negative
+  fixture proves an accepted summary/frame-level audit (`access_level=frame`,
+  `/recorder/frames/<id>`) does not satisfy full live acceptance.
+- Verification passed: `node --check` for the operator script and subprocess
+  test, targeted `git diff --check`, and `node --test
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`6/6`).
+- This tightens the capture/search/audit acceptance harness only. It is not live
+  signed-app recorder acceptance, foreground UI E2E acceptance, or granted TCC
+  proof.

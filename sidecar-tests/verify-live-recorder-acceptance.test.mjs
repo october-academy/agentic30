@@ -111,7 +111,7 @@ async function insertLiveAudioFixture(store, appSupportRoot, {
   return { id, assetId };
 }
 
-function insertAcceptedAuditFixture(store, frameId) {
+function insertAcceptedAuditFixture(store, frameId, overrides = {}) {
   store.insertRecord("recorder_audit", {
     id: "audit-live-frame-read",
     request_id: "request-live-frame-read",
@@ -119,12 +119,13 @@ function insertAcceptedAuditFixture(store, frameId) {
     actor_id: "agentic30-live-recorder-verifier-test",
     workspace_id: "workspace-1",
     project_id: "project-1",
-    endpoint: "/recorder/frames/read",
+    endpoint: `/recorder/frames/${frameId}/text`,
     access_level: "raw_frame",
-    source_ids_json: JSON.stringify([frameId]),
+    source_ids_json: JSON.stringify([{ id: frameId, source_type: "frame" }]),
     decision: "accepted",
     reason: "fixture accepted raw-read audit",
     created_at: "2026-07-01T08:00:07.000Z",
+    ...overrides,
   });
 }
 
@@ -164,12 +165,44 @@ test("verify-live-recorder-acceptance accepts live frame/search/audio/audit and 
     assert.equal(evidence.search.proofAcceptedBySearch, false);
     assert.equal(evidence.audio.id, liveAudio.id);
     assert.equal(evidence.rawReadAudit.decision, "accepted");
+    assert.equal(evidence.rawReadAudit.endpoint, `/recorder/frames/${liveFrame.id}/text`);
+    assert.equal(evidence.rawReadAudit.accessLevel, "raw_frame");
+    assert.deepEqual(evidence.rawReadAudit.sourceIds, [{ id: liveFrame.id, sourceType: "frame" }]);
     assert.equal(evidence.retention.status, "applied");
     assert.equal(evidence.retention.deletedFrameCount, 1);
     assert.equal(evidence.retention.deletedAudioChunkCount, 1);
     assert.equal(evidence.retention.deletedMediaCount, 2);
     assert.equal(evidence.proofAccepted, false);
     assert.equal(writtenEvidence.liveFrame.id, liveFrame.id);
+  } finally {
+    store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("verify-live-recorder-acceptance rejects accepted non-raw-frame audit rows", async () => {
+  const { root, appSupportRoot, store } = await makeFixture();
+  try {
+    const liveFrame = await insertLiveFrameFixture(store, appSupportRoot);
+    await insertLiveAudioFixture(store, appSupportRoot);
+    insertAcceptedAuditFixture(store, liveFrame.id, {
+      id: "audit-summary-frame-read",
+      endpoint: `/recorder/frames/${liveFrame.id}`,
+      access_level: "frame",
+    });
+    store.close();
+
+    await assert.rejects(
+      runVerifier([
+        "--app-support", appSupportRoot,
+        "--search-query", "Agentic30",
+        "--frame-id", liveFrame.id,
+      ]),
+      (error) => {
+        assert.match(String(error.stderr || error.message), /No accepted raw-read audit row references live frame/);
+        return true;
+      },
+    );
   } finally {
     store.close();
     await fs.rm(root, { recursive: true, force: true });

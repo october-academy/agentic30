@@ -30,6 +30,27 @@ SPEC Section 17 unless this file is insufficient.
 
 ## Latest Implementation Pending Live Acceptance
 
+- Gate A/B live-recorder raw-read audit verifier now requires a real raw-frame
+  read audit, not any accepted audit row that mentions the frame id:
+  - `scripts/verify-live-recorder-acceptance.mjs` now accepts audit evidence only
+    when `decision=accepted`, `access_level=raw_frame`, the endpoint is a real
+    raw frame endpoint (`/recorder/frames/<id>/text` or
+    `/recorder/frames/<id>/image`), and `source_ids_json` contains the live frame
+    id with `source_type=frame`.
+  - The positive subprocess fixture now uses `/recorder/frames/<id>/text` plus a
+    structured frame source id, matching the raw API route contract instead of
+    the old synthetic `/recorder/frames/read` label.
+  - A negative subprocess fixture now proves an accepted summary/frame-level audit
+    (`access_level=frame`, `/recorder/frames/<id>`) cannot satisfy the live
+    raw-read audit gate.
+  - Focused verification passed: `node --check
+    scripts/verify-live-recorder-acceptance.mjs
+    sidecar-tests/verify-live-recorder-acceptance.test.mjs`, targeted
+    `git diff --check`, and `node --test
+    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`6/6`).
+  - This tightens the next live signed capture/search/audit acceptance gate. It
+    is still not live signed-app recorder acceptance, foreground UI E2E
+    acceptance, granted TCC proof, or proof-ledger acceptance.
 - Gate C live-recorder audio acceptance verifier now rejects seeded audio
   fixtures instead of accepting any `audio-` row:
   - `sidecar/recorder-live-verify.mjs` now exposes
