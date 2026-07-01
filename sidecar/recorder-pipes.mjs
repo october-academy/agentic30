@@ -12,6 +12,8 @@ export const RECORDER_PIPES_SCHEMA = "agentic30.recorder.pipes.v1";
 export const RECORDER_PIPE_RUN_SCHEMA = "agentic30.recorder.pipe_run.v1";
 export const RECORDER_PIPE_OUTPUT_MANIFEST_SCHEMA = "agentic30.recorder.pipe_output_manifest.v1";
 export const RECORDER_PIPE_SCHEDULER_SCHEMA = "agentic30.recorder.pipe_scheduler.v1";
+export const RECORDER_PIPE_DSL_SCHEMA = "agentic30.recorder.pipe_dsl.v1";
+export const RECORDER_PIPE_DSL_PLAN_SCHEMA = "agentic30.recorder.pipe_dsl_plan.v1";
 
 const BUILT_IN_PIPE_IDS = Object.freeze([
   "daily-founder-memory",
@@ -49,11 +51,25 @@ const RAW_ENDPOINT_PATTERNS = [
   /^GET \/recorder\/audio\/[^/]+\/media$/i,
   /^GET \/recorder\/audit$/i,
   /^POST \/recorder\/export(?:\/archive)?$/i,
+  /^POST \/recorder\/sql\/query$/i,
 ];
-const ACTION_ENDPOINTS = Object.freeze({
-  "recorder.search": "GET /recorder/search",
-  "recorder.memory.read": "GET /recorder/memory",
+const BUILT_IN_PIPE_DSL_ACTIONS = Object.freeze({
+  "daily-founder-memory": Object.freeze(["recorder.search", "recorder.memory.read", "memory.write_daily_summary", "notify.local"]),
+  "evidence-inbox-builder": Object.freeze(["recorder.memory.read", "evidence_candidate.create_unverified", "notify.local"]),
+  "stale-debt-resurfacer": Object.freeze(["recorder.memory.read", "office_hours.emit_next_action_input", "notify.local"]),
 });
+const PIPE_ACTION_OPERATIONS = Object.freeze({
+  "recorder.search": Object.freeze({ kind: "recorder_read", endpoint: "GET /recorder/search" }),
+  "recorder.memory.read": Object.freeze({ kind: "recorder_read", endpoint: "GET /recorder/memory" }),
+  "memory.write_daily_summary": Object.freeze({ kind: "memory_write", writePermission: "memoryItems" }),
+  "memory.write_project_summary": Object.freeze({ kind: "memory_write", writePermission: "memoryItems" }),
+  "evidence_candidate.create_unverified": Object.freeze({ kind: "evidence_write", writePermission: "evidenceCandidates" }),
+  "office_hours.emit_next_action_input": Object.freeze({ kind: "office_hours_emit" }),
+  "notify.local": Object.freeze({ kind: "local_notification" }),
+  "file.write_report": Object.freeze({ kind: "file_write", writePermission: "filesUnder" }),
+});
+const SUPPORTED_DSL_KEYS = new Set(["schema", "schemaVersion", "schema_version", "actions", "steps"]);
+const SUPPORTED_DSL_STEP_KEYS = new Set(["action", "step", "stepIndex", "step_index"]);
 const RAW_OUTPUT_FIELD_NAMES = new Set([
   "accessibility_text",
   "accessibilityText",
@@ -105,7 +121,7 @@ export const BUILT_IN_RECORDER_PIPES = Object.freeze([
       },
       endpoints: ["GET /recorder/search", "GET /recorder/memory"],
     },
-    actions: ["recorder.search", "recorder.memory.read", "memory.write_daily_summary", "notify.local"],
+    actions: BUILT_IN_PIPE_DSL_ACTIONS["daily-founder-memory"],
   }),
   pipeDefinition({
     id: "evidence-inbox-builder",
@@ -124,7 +140,7 @@ export const BUILT_IN_RECORDER_PIPES = Object.freeze([
       },
       endpoints: ["GET /recorder/memory"],
     },
-    actions: ["recorder.memory.read", "evidence_candidate.create_unverified", "notify.local"],
+    actions: BUILT_IN_PIPE_DSL_ACTIONS["evidence-inbox-builder"],
   }),
   pipeDefinition({
     id: "stale-debt-resurfacer",
@@ -143,7 +159,7 @@ export const BUILT_IN_RECORDER_PIPES = Object.freeze([
       },
       endpoints: ["GET /recorder/memory"],
     },
-    actions: ["recorder.memory.read", "office_hours.emit_next_action_input", "notify.local"],
+    actions: BUILT_IN_PIPE_DSL_ACTIONS["stale-debt-resurfacer"],
   }),
 ]);
 
@@ -216,6 +232,7 @@ export function validateRecorderPipeDefinition(value = {}) {
   }
   const permissions = normalizePermissionManifest(pipe.permissions, { id });
   const actions = normalizeActions(pipe.actions, { id, permissions });
+  const dsl = normalizePipeDsl(pipe.dsl ?? pipe.pipeDsl ?? pipe.pipe_dsl, { id, actions });
   const path = normalizePipePath(pipe.path, { id });
   return {
     schema: RECORDER_PIPES_SCHEMA,
@@ -251,8 +268,70 @@ export function validateRecorderPipeDefinition(value = {}) {
     }),
     path,
     actions,
+    dsl,
+    pipeDsl: dsl,
+    pipe_dsl: dsl,
     proofAcceptedByPipeDefinition: false,
     proof_accepted_by_pipe_definition: false,
+  };
+}
+
+export function interpretRecorderPipeDsl(pipeDefinition) {
+  const pipe = validateRecorderPipeDefinition(pipeDefinition);
+  const steps = pipe.dsl.steps.map((step) => {
+    const operation = PIPE_ACTION_OPERATIONS[step.action];
+    if (!operation) {
+      fail("ERR_RECORDER_PIPE_DSL_ACTION_UNKNOWN", "recorder pipe DSL action has no local interpreter operation", {
+        id: pipe.id,
+        action: step.action,
+      });
+    }
+    if (operation.endpoint) assertRecorderPipeEndpointAllowed(pipe, operation.endpoint);
+    assertPipeOperationWriteAllowed(pipe, step.action, operation);
+    return {
+      step: step.step,
+      stepIndex: step.step,
+      step_index: step.step,
+      action: step.action,
+      operation: operation.kind,
+      endpoint: operation.endpoint || "",
+      writePermission: operation.writePermission || "",
+      write_permission: operation.writePermission || "",
+      proofEffect: "none",
+      proof_effect: "none",
+    };
+  });
+  const endpoints = [...new Set(steps.map((step) => step.endpoint).filter(Boolean))];
+  const writes = steps
+    .filter((step) => step.writePermission)
+    .map((step) => ({ action: step.action, permission: step.writePermission }));
+  return {
+    schema: RECORDER_PIPE_DSL_PLAN_SCHEMA,
+    schemaVersion: RECORDER_PIPES_SCHEMA_VERSION,
+    schema_version: RECORDER_PIPES_SCHEMA_VERSION,
+    pipeId: pipe.id,
+    pipe_id: pipe.id,
+    kind: "built_in",
+    actions: steps.map((step) => step.action),
+    steps,
+    endpoints,
+    writes,
+    rawAccess: false,
+    raw_access: false,
+    proofAcceptedByPipeDsl: false,
+    proof_accepted_by_pipe_dsl: false,
+    proofBoundary: {
+      proofAcceptedByPipeDsl: false,
+      proof_accepted_by_pipe_dsl: false,
+      proofLedgerWriteAllowed: false,
+      proof_ledger_write_allowed: false,
+      message: "Pipe DSL plans are local automation metadata and never accepted proof.",
+    },
+    proof_boundary: {
+      proof_accepted_by_pipe_dsl: false,
+      proof_ledger_write_allowed: false,
+      message: "Pipe DSL plans are local automation metadata and never accepted proof.",
+    },
   };
 }
 
@@ -370,7 +449,7 @@ export async function runQueuedRecorderPipeRuns({
   assertStore(store);
   const timestamp = toDate(now);
   const queuedRows = store.listRecords("pipe_runs", { limit: 5000 })
-    .filter((row) => row.status === "queued")
+    .filter((row) => !row.deleted_at && row.status === "queued")
     .sort((lhs, rhs) => String(lhs.started_at || "").localeCompare(String(rhs.started_at || "")))
     .slice(0, normalizeListLimit(maxRuns));
   const executed = [];
@@ -396,7 +475,7 @@ export async function runQueuedRecorderPipeRuns({
     });
     const run = { id: row.id, auditLog };
     try {
-      assertPipeActionsAllowed(pipe);
+      const executionPlan = assertPipeActionsAllowed(pipe);
       const outputManifest = await executeBuiltInPipeWithTimeout({
         pipe,
         runId: row.id,
@@ -412,6 +491,7 @@ export async function runQueuedRecorderPipeRuns({
           now: timestamp,
           runId: row.id,
           limit: inputManifest.limit,
+          executionPlan,
         }),
       });
       assertOutputManifestSafe(outputManifest);
@@ -486,7 +566,7 @@ export async function runBuiltInRecorderPipe({
     limit,
   });
   try {
-    assertPipeActionsAllowed(pipe);
+    const executionPlan = assertPipeActionsAllowed(pipe);
     const outputManifest = await executeBuiltInPipeWithTimeout({
       pipe,
       runId: run.id,
@@ -502,6 +582,7 @@ export async function runBuiltInRecorderPipe({
         now,
         runId: run.id,
         limit,
+        executionPlan,
       }),
     });
     assertOutputManifestSafe(outputManifest);
@@ -659,6 +740,9 @@ function createPipeRunRecord({
       ended_at: toIso(endedAt),
     },
     actions: pipe.actions,
+    dsl: pipe.dsl,
+    pipeDsl: pipe.dsl,
+    pipe_dsl: pipe.dsl,
     permissionManifest: pipe.permissions,
     permission_manifest: pipe.permissions,
     rawAccess: false,
@@ -689,6 +773,7 @@ function createPipeRunRecord({
     output_manifest_json: null,
     audit_log_json: JSON.stringify(auditLog),
     error_message: "",
+    deleted_at: null,
   });
   return { id, inputManifest, auditLog };
 }
@@ -766,10 +851,12 @@ async function executeBuiltInPipe({
   now,
   runId,
   limit,
+  executionPlan,
 }) {
   if (pipe.enabled !== true) {
     fail("ERR_RECORDER_PIPE_DISABLED", "recorder pipe is disabled", { pipeId: pipe.id, pipe_id: pipe.id });
   }
+  const plan = executionPlan ?? interpretRecorderPipeDsl(pipe);
   if (pipe.id === "daily-founder-memory") {
     const review = buildRecorderDayMemoryReview({
       store,
@@ -804,10 +891,13 @@ async function executeBuiltInPipe({
         evidence_candidate_count: numberValue(review.evidenceInbox?.total ?? review.evidence_inbox?.total),
       },
       artifacts: artifact ? [artifact] : [],
-      actionResults: [
-        actionResult("recorder.memory.read", "succeeded"),
-        actionResult("memory.write_daily_summary", artifact ? "succeeded" : "skipped", artifact ? "" : "workspace_root_not_supplied"),
-      ],
+      actionResults: actionResultsForDslPlan(plan, {
+        "memory.write_daily_summary": {
+          status: artifact ? "succeeded" : "skipped",
+          reason: artifact ? "" : "workspace_root_not_supplied",
+        },
+        "notify.local": { status: "skipped", reason: "notification_surface_not_requested" },
+      }),
     });
   }
   if (pipe.id === "evidence-inbox-builder") {
@@ -832,10 +922,9 @@ async function executeBuiltInPipe({
         skipped_count: result.skipped_count,
       },
       sourceIds: result.created.map((candidate) => candidate.id),
-      actionResults: [
-        actionResult("recorder.memory.read", "succeeded"),
-        actionResult("evidence_candidate.create_unverified", "succeeded"),
-      ],
+      actionResults: actionResultsForDslPlan(plan, {
+        "notify.local": { status: "skipped", reason: "notification_surface_not_requested" },
+      }),
     });
   }
   if (pipe.id === "stale-debt-resurfacer") {
@@ -862,34 +951,16 @@ async function executeBuiltInPipe({
         priority: nextAction.action?.priority || "",
       },
       sourceIds: nextAction.action?.sourceIds ?? nextAction.action?.source_ids ?? [],
-      actionResults: [
-        actionResult("recorder.memory.read", "succeeded"),
-        actionResult("office_hours.emit_next_action_input", "succeeded"),
-      ],
+      actionResults: actionResultsForDslPlan(plan, {
+        "notify.local": { status: "skipped", reason: "notification_surface_not_requested" },
+      }),
     });
   }
   fail("ERR_RECORDER_PIPE_UNKNOWN_BUILTIN", `unknown built-in recorder pipe: ${pipe.id}`, { id: pipe.id });
 }
 
 function assertPipeActionsAllowed(pipe) {
-  for (const action of pipe.actions) {
-    const endpoint = ACTION_ENDPOINTS[action];
-    if (endpoint) assertRecorderPipeEndpointAllowed(pipe, endpoint);
-    if (action === "memory.write_daily_summary" && pipe.permissions.write.memoryItems !== true) {
-      fail("ERR_RECORDER_PIPE_ACTION_PERMISSION_DENIED", "daily summary writes require memory_items write permission", {
-        pipeId: pipe.id,
-        pipe_id: pipe.id,
-        action,
-      });
-    }
-    if (action === "evidence_candidate.create_unverified" && pipe.permissions.write.evidenceCandidates !== true) {
-      fail("ERR_RECORDER_PIPE_ACTION_PERMISSION_DENIED", "candidate creation requires evidence_candidates write permission", {
-        pipeId: pipe.id,
-        pipe_id: pipe.id,
-        action,
-      });
-    }
-  }
+  return interpretRecorderPipeDsl(pipe);
 }
 
 function outputManifest({
@@ -962,6 +1033,13 @@ function actionResult(action, status, reason = "") {
     proofEffect: "none",
     proof_effect: "none",
   };
+}
+
+function actionResultsForDslPlan(plan, overrides = {}) {
+  return plan.steps.map((step) => {
+    const override = overrides[step.action] || {};
+    return actionResult(step.action, override.status || "succeeded", override.reason || "");
+  });
 }
 
 function auditEvent(type, details, now) {
@@ -1057,6 +1135,8 @@ function pipeRunDto(row) {
     audit_log: parseJsonArray(row.audit_log_json),
     errorMessage: cleanString(row.error_message, 500),
     error_message: cleanString(row.error_message, 500),
+    deletedAt: row.deleted_at || null,
+    deleted_at: row.deleted_at || null,
     proofAcceptedByPipeRun: false,
     proof_accepted_by_pipe_run: false,
   };
@@ -1197,7 +1277,7 @@ function findActivePipeRun(store, pipeId, {
 } = {}) {
   const allowed = new Set(statuses);
   return store.listRecords("pipe_runs", { limit: 5000 })
-    .find((row) => row.pipe_id === pipeId && row.id !== excludeRunId && allowed.has(row.status)) || null;
+    .find((row) => !row.deleted_at && row.pipe_id === pipeId && row.id !== excludeRunId && allowed.has(row.status)) || null;
 }
 
 function startOfLocalDay(value) {
@@ -1215,6 +1295,7 @@ function pad2(value) {
 }
 
 function pipeDefinition({ id, name, schedule, permissions, actions }) {
+  const dsl = buildPipeDslFromActions(actions);
   return Object.freeze({
     id,
     kind: "built_in",
@@ -1230,6 +1311,19 @@ function pipeDefinition({ id, name, schedule, permissions, actions }) {
     retention_days: 30,
     path: `.agentic30/pipes/${id}/pipe.md`,
     actions,
+    dsl,
+    pipeDsl: dsl,
+    pipe_dsl: dsl,
+  });
+}
+
+function buildPipeDslFromActions(actions) {
+  return Object.freeze({
+    schema: RECORDER_PIPE_DSL_SCHEMA,
+    schemaVersion: RECORDER_PIPES_SCHEMA_VERSION,
+    schema_version: RECORDER_PIPES_SCHEMA_VERSION,
+    actions,
+    steps: actions,
   });
 }
 
@@ -1301,8 +1395,121 @@ function normalizeActions(values = [], { id, permissions }) {
   return actions;
 }
 
+function normalizePipeDsl(value, { id, actions }) {
+  const rawDsl = value === null || value === undefined ? buildPipeDslFromActions(actions) : value;
+  if (!rawDsl || typeof rawDsl !== "object" || Array.isArray(rawDsl)) {
+    fail("ERR_RECORDER_PIPE_DSL_INVALID", "recorder pipe DSL must be an object with actions or steps", { id });
+  }
+  for (const key of Object.keys(rawDsl)) {
+    if (!SUPPORTED_DSL_KEYS.has(key)) {
+      fail("ERR_RECORDER_PIPE_DSL_FIELD_UNSUPPORTED", "recorder pipe DSL field is outside the constrained local DSL", {
+        id,
+        field: key,
+      });
+    }
+  }
+  const rawSteps = Array.isArray(rawDsl.steps)
+    ? rawDsl.steps
+    : Array.isArray(rawDsl.actions)
+      ? rawDsl.actions
+      : null;
+  if (!rawSteps || rawSteps.length === 0) {
+    fail("ERR_RECORDER_PIPE_DSL_STEPS_REQUIRED", "recorder pipe DSL requires at least one action step", { id });
+  }
+  const steps = rawSteps.map((rawStep, index) => normalizePipeDslStep(rawStep, { id, index, actions }));
+  const stepActions = steps.map((step) => step.action);
+  if (!arraysEqual(stepActions, actions)) {
+    fail("ERR_RECORDER_PIPE_DSL_ACTION_MISMATCH", "recorder pipe DSL steps must match declared actions in order", {
+      id,
+      actions,
+      dslActions: stepActions,
+      dsl_actions: stepActions,
+    });
+  }
+  const expectedActions = BUILT_IN_PIPE_DSL_ACTIONS[id] || [];
+  if (!arraysEqual(actions, expectedActions)) {
+    fail("ERR_RECORDER_PIPE_DSL_ACTION_MISMATCH", "built-in recorder pipe DSL actions must match the canonical local interpreter plan", {
+      id,
+      expectedActions,
+      expected_actions: expectedActions,
+      actions,
+    });
+  }
+  return {
+    schema: RECORDER_PIPE_DSL_SCHEMA,
+    schemaVersion: RECORDER_PIPES_SCHEMA_VERSION,
+    schema_version: RECORDER_PIPES_SCHEMA_VERSION,
+    actions: stepActions,
+    steps,
+  };
+}
+
+function normalizePipeDslStep(rawStep, { id, index, actions }) {
+  let action = "";
+  if (typeof rawStep === "string") {
+    action = cleanString(rawStep, 120);
+  } else if (rawStep && typeof rawStep === "object" && !Array.isArray(rawStep)) {
+    for (const key of Object.keys(rawStep)) {
+      if (!SUPPORTED_DSL_STEP_KEYS.has(key)) {
+        fail("ERR_RECORDER_PIPE_DSL_FIELD_UNSUPPORTED", "recorder pipe DSL step field is outside the constrained local DSL", {
+          id,
+          step: index + 1,
+          field: key,
+        });
+      }
+    }
+    action = cleanString(rawStep.action, 120);
+  } else {
+    fail("ERR_RECORDER_PIPE_DSL_STEP_INVALID", "recorder pipe DSL step must be an action string or action object", {
+      id,
+      step: index + 1,
+    });
+  }
+  if (!action) {
+    fail("ERR_RECORDER_PIPE_DSL_ACTION_REQUIRED", "recorder pipe DSL step action is required", {
+      id,
+      step: index + 1,
+    });
+  }
+  if (!actions.includes(action)) {
+    fail("ERR_RECORDER_PIPE_DSL_ACTION_NOT_DECLARED", "recorder pipe DSL step action is not declared in pipe actions", {
+      id,
+      step: index + 1,
+      action,
+    });
+  }
+  return {
+    step: index + 1,
+    action,
+  };
+}
+
 function isBlockedPipeAction(action) {
   return BLOCKED_ACTIONS.some((blocked) => action === blocked || action.startsWith(`${blocked}.`));
+}
+
+function assertPipeOperationWriteAllowed(pipe, action, operation) {
+  if (operation.writePermission === "memoryItems" && pipe.permissions.write.memoryItems !== true) {
+    fail("ERR_RECORDER_PIPE_ACTION_PERMISSION_DENIED", "memory writes require memory_items write permission", {
+      pipeId: pipe.id,
+      pipe_id: pipe.id,
+      action,
+    });
+  }
+  if (operation.writePermission === "evidenceCandidates" && pipe.permissions.write.evidenceCandidates !== true) {
+    fail("ERR_RECORDER_PIPE_ACTION_PERMISSION_DENIED", "candidate creation requires evidence_candidates write permission", {
+      pipeId: pipe.id,
+      pipe_id: pipe.id,
+      action,
+    });
+  }
+  if (operation.writePermission === "filesUnder" && !pipe.permissions.write.filesUnder) {
+    fail("ERR_RECORDER_PIPE_ACTION_PERMISSION_DENIED", "file writes require an execution-scoped files_under permission", {
+      pipeId: pipe.id,
+      pipe_id: pipe.id,
+      action,
+    });
+  }
 }
 
 function assertSafePipeWriteScope(filesUnder, { id }) {
@@ -1390,6 +1597,11 @@ function normalizeStringArray(values = [], maxItems = 20, maxLength = 120) {
     if (output.length >= maxItems) break;
   }
   return output;
+}
+
+function arraysEqual(lhs, rhs) {
+  if (!Array.isArray(lhs) || !Array.isArray(rhs) || lhs.length !== rhs.length) return false;
+  return lhs.every((value, index) => value === rhs[index]);
 }
 
 function assertStore(store) {

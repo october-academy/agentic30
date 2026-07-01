@@ -322,6 +322,7 @@
 				"$(SRCROOT)/sidecar/provider-runner.mjs",
 				"$(SRCROOT)/sidecar/qmd-bootstrap-worker.mjs",
 				"$(SRCROOT)/sidecar/qmd-support.mjs",
+				"$(SRCROOT)/sidecar/recorder-sql-worker.mjs",
 				"$(SRCROOT)/sidecar/session-store.mjs",
 				"$(SRCROOT)/sidecar/skills",
 				"$(SRCROOT)/sidecar/telemetry.mjs",

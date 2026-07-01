@@ -115,6 +115,13 @@ test("semantic provider output can be high confidence only with valid bundle evi
       },
       evidencePathsUsed: [projectDocPath("icp"), "docs/ICP.md"],
       situationSignals: {
+        channels: [
+          {
+            name: "founder-led sales calls",
+            evidencePath: "docs/ICP.md",
+            shortQuote: "legacy ecommerce operator",
+          },
+        ],
         customerActions: [
           {
             label: "missed Slack escalation review",
@@ -122,12 +129,17 @@ test("semantic provider output can be high confidence only with valid bundle evi
             shortQuote: "missed Slack escalations",
           },
         ],
+        missingAssumptions: [
+          { name: "pricing proof missing" },
+        ],
       },
     }, bundle);
 
     assert.equal(normalized.confidence, "high");
     assert.deepEqual(normalized.evidencePathsUsed, [projectDocPath("icp"), "docs/ICP.md"]);
     assert.equal(normalized.onboardingHypothesis.evidence[0], projectDocPath("icp"));
+    assert.equal(normalized.situationSignals.channels[0].label, "founder-led sales calls");
     assert.equal(normalized.situationSignals.customerActions.length, 1);
+    assert.deepEqual(normalized.situationSignals.missingAssumptions, ["pricing proof missing"]);
   });
 });

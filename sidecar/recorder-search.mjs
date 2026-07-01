@@ -1,3 +1,5 @@
+import { assertRecorderRedactionPolicyForRecord } from "./recorder-redaction-policy.mjs";
+
 export const RECORDER_SEARCH_SCHEMA_VERSION = 1;
 
 const RECORDER_SEARCH_SCHEMA = "agentic30.recorder.search.v1";
@@ -64,6 +66,7 @@ export function buildRecorderSearchResults({
     if (!record || !isSearchSafeRecord(record)) continue;
     if (!matchesScope(record, scope)) continue;
     if (!matchesTimeRange(recordTimestamp(sourceType, record), timeRange)) continue;
+    assertSearchPublicRecord(table, record, sourceType);
     results.push(toSearchResult(rawResult, record));
     if (results.length >= max) break;
   }
@@ -143,6 +146,10 @@ function metadataFor(sourceType, rawResult, record) {
       window_title: cleanString(rawResult.window_title ?? record.window_title, 240),
       browserDomain: cleanString(rawResult.browser_domain ?? record.browser_domain, 240),
       browser_domain: cleanString(rawResult.browser_domain ?? record.browser_domain, 240),
+      browserUrlSearchLabel: cleanString(rawResult.browser_url_search_label ?? record.browser_url_search_label, 240),
+      browser_url_search_label: cleanString(rawResult.browser_url_search_label ?? record.browser_url_search_label, 240),
+      documentPathSearchLabel: cleanString(rawResult.document_path_search_label ?? record.document_path_search_label, 240),
+      document_path_search_label: cleanString(rawResult.document_path_search_label ?? record.document_path_search_label, 240),
       captureTrigger: cleanString(record.capture_trigger, 120),
       capture_trigger: cleanString(record.capture_trigger, 120),
       textSource: cleanString(record.text_source, 80),
@@ -254,6 +261,28 @@ function recordTimestamp(sourceType, record) {
 
 function isSearchSafeRecord(record) {
   return Number(record.safe_for_search) === 1 && !record.deleted_at;
+}
+
+function assertSearchPublicRecord(tableName, record = {}, sourceType = "") {
+  try {
+    assertRecorderRedactionPolicyForRecord(tableName, record, { fail });
+  } catch (error) {
+    const policyErrorCode = cleanString(error?.code, 160) || "ERR_RECORDER_REDACTION_POLICY_FAILED";
+    fail(
+      "ERR_RECORDER_SEARCH_UNSAFE_PUBLIC_RECORD",
+      `Recorder search refused to expose ${sourceType || tableName} result because ${policyErrorCode}`,
+      {
+        tableName,
+        table_name: tableName,
+        sourceType: cleanString(sourceType, 80),
+        source_type: cleanString(sourceType, 80),
+        sourceId: cleanString(record?.id, 240) || null,
+        source_id: cleanString(record?.id, 240) || null,
+        policyErrorCode,
+        policy_error_code: policyErrorCode,
+      },
+    );
+  }
 }
 
 function stripEmpty(object) {

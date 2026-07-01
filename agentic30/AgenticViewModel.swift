@@ -7,16 +7,22 @@ import AppKit
 import ApplicationServices
 import CryptoKit
 import AVFoundation
+import CoreImage
+import IOKit.hid
+import Security
 #if canImport(Speech)
 import Speech
+#endif
+#if canImport(Vision)
+import Vision
 #endif
 #if canImport(ScreenCaptureKit)
 import ScreenCaptureKit
 #endif
 
 private protocol RecorderSystemAudioCaptureSession: AnyObject {
-    func stopAndFinalize() async throws
-    func cancel()
+    nonisolated func stopAndFinalize() async throws
+    nonisolated func cancel()
 }
 
 private enum RecorderSystemAudioCaptureError: LocalizedError {
@@ -61,17 +67,239 @@ private enum RecorderSystemAudioCaptureError: LocalizedError {
 }
 
 #if canImport(ScreenCaptureKit)
+private final class RecorderAssetWriterFinishBox: @unchecked Sendable {
+    let writer: AVAssetWriter
+
+    init(_ writer: AVAssetWriter) {
+        self.writer = writer
+    }
+}
+
+private enum RecorderStreamFrameCaptureError: LocalizedError {
+    case streamNotConfigured
+    case streamStartFailed(String)
+    case firstFrameTimeout
+    case pixelBufferUnavailable
+    case cgImageConversionFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .streamNotConfigured:
+            return "ERR_RECORDER_FRAME_STREAM_NOT_CONFIGURED: ScreenCaptureKit frame stream was not configured before capture."
+        case .streamStartFailed(let message):
+            return "ERR_RECORDER_FRAME_STREAM_START_FAILED: \(message)"
+        case .firstFrameTimeout:
+            return "ERR_RECORDER_FRAME_STREAM_FIRST_FRAME_TIMEOUT: ScreenCaptureKit did not produce a frame before the timeout."
+        case .pixelBufferUnavailable:
+            return "ERR_RECORDER_FRAME_STREAM_PIXEL_BUFFER_UNAVAILABLE: ScreenCaptureKit produced a sample without an image buffer."
+        case .cgImageConversionFailed:
+            return "ERR_RECORDER_FRAME_STREAM_CGIMAGE_CONVERSION_FAILED: ScreenCaptureKit frame could not be converted to CGImage."
+        }
+    }
+}
+
+private final class RecorderEventTapTrigger: @unchecked Sendable {
+    private let lock = NSLock()
+    private nonisolated(unsafe) let eventTap: CFMachPort
+    private nonisolated(unsafe) let runLoopSource: CFRunLoopSource
+    private let callbackBox: RecorderEventTapCallbackBox
+    private nonisolated(unsafe) var stopped = false
+
+    init(
+        eventTap: CFMachPort,
+        runLoopSource: CFRunLoopSource,
+        callbackBox: RecorderEventTapCallbackBox
+    ) {
+        self.eventTap = eventTap
+        self.runLoopSource = runLoopSource
+        self.callbackBox = callbackBox
+    }
+
+    nonisolated func stop() {
+        lock.lock()
+        guard !stopped else {
+            lock.unlock()
+            return
+        }
+        stopped = true
+        lock.unlock()
+        CGEvent.tapEnable(tap: eventTap, enable: false)
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        CFMachPortInvalidate(eventTap)
+    }
+}
+
+private final class RecorderEventTapCallbackBox: @unchecked Sendable {
+    let onEvent: @Sendable (String) -> Void
+
+    init(onEvent: @escaping @Sendable (String) -> Void) {
+        self.onEvent = onEvent
+    }
+}
+
+private func recorderEventTapKindForCaptureTrigger(_ type: CGEventType) -> String {
+    switch type {
+    case .keyDown:
+        return "keyboard_activity"
+    case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+        return "pointer_click"
+    case .scrollWheel:
+        return "scroll_activity"
+    default:
+        return "input_activity"
+    }
+}
+
+@available(macOS 14.0, *)
+private final class ScreenCaptureKitFrameCaptureSession: NSObject, SCStreamOutput, @unchecked Sendable {
+    private let sampleQueue = DispatchQueue(label: "app.agentic30.recorder.frame-stream", qos: .utility)
+    private let imageContext = CIContext()
+    private let lock = NSLock()
+    private nonisolated(unsafe) var stream: SCStream?
+    private nonisolated(unsafe) var latestImage: CGImage?
+    private nonisolated(unsafe) var pendingContinuation: CheckedContinuation<CGImage, Error>?
+    private nonisolated(unsafe) var didStop = false
+
+    static func capture(display: SCDisplay) async throws -> CGImage {
+        let session = try await start(display: display)
+        defer { session.stop() }
+        return try await session.latestFrame(timeout: 5)
+    }
+
+    static func start(display: SCDisplay) async throws -> ScreenCaptureKitFrameCaptureSession {
+        let session = ScreenCaptureKitFrameCaptureSession()
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let configuration = SCStreamConfiguration()
+        configuration.width = max(Int(display.width), 2)
+        configuration.height = max(Int(display.height), 2)
+        configuration.showsCursor = true
+        configuration.queueDepth = 3
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
+        try stream.addStreamOutput(session, type: .screen, sampleHandlerQueue: session.sampleQueue)
+        session.setStream(stream)
+        do {
+            try await startStream(stream)
+        } catch {
+            try? stream.removeStreamOutput(session, type: .screen)
+            session.stop()
+            throw RecorderStreamFrameCaptureError.streamStartFailed(error.localizedDescription)
+        }
+        return session
+    }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .screen, CMSampleBufferDataIsReady(sampleBuffer) else { return }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            finishPending(.failure(RecorderStreamFrameCaptureError.pixelBufferUnavailable))
+            return
+        }
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+        guard let cgImage = imageContext.createCGImage(
+            image,
+            from: CGRect(x: 0, y: 0, width: width, height: height)
+        ) else {
+            finishPending(.failure(RecorderStreamFrameCaptureError.cgImageConversionFailed))
+            return
+        }
+        finishPending(.success(cgImage))
+    }
+
+    private nonisolated func setStream(_ stream: SCStream) {
+        lock.lock()
+        self.stream = stream
+        lock.unlock()
+    }
+
+    nonisolated func latestFrame(timeout seconds: TimeInterval) async throws -> CGImage {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CGImage, Error>) in
+            lock.lock()
+            if didStop || stream == nil {
+                lock.unlock()
+                continuation.resume(throwing: RecorderStreamFrameCaptureError.streamNotConfigured)
+                return
+            }
+            if let latestImage {
+                lock.unlock()
+                continuation.resume(returning: latestImage)
+                return
+            }
+            pendingContinuation = continuation
+            lock.unlock()
+            scheduleTimeout(seconds: seconds)
+        }
+    }
+
+    nonisolated func stop() {
+        let continuationToResume: CheckedContinuation<CGImage, Error>?
+        let streamToStop: SCStream?
+        lock.lock()
+        didStop = true
+        continuationToResume = pendingContinuation
+        pendingContinuation = nil
+        latestImage = nil
+        streamToStop = stream
+        stream = nil
+        lock.unlock()
+
+        streamToStop?.stopCapture { _ in }
+        continuationToResume?.resume(throwing: RecorderStreamFrameCaptureError.streamNotConfigured)
+    }
+
+    private nonisolated func scheduleTimeout(seconds: TimeInterval) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) { [weak self] in
+            self?.finishPending(.failure(RecorderStreamFrameCaptureError.firstFrameTimeout))
+        }
+    }
+
+    private nonisolated func finishPending(_ result: Result<CGImage, Error>) {
+        let continuationToResume: CheckedContinuation<CGImage, Error>?
+        lock.lock()
+        guard !didStop else {
+            lock.unlock()
+            return
+        }
+        if case .success(let image) = result {
+            latestImage = image
+        }
+        continuationToResume = pendingContinuation
+        pendingContinuation = nil
+        lock.unlock()
+
+        switch result {
+        case .success(let image):
+            continuationToResume?.resume(returning: image)
+        case .failure(let error):
+            continuationToResume?.resume(throwing: error)
+        }
+    }
+
+    private nonisolated static func startStream(_ stream: SCStream) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            stream.startCapture { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+}
+
 @available(macOS 13.0, *)
 private final class ScreenCaptureKitSystemAudioCaptureSession: NSObject, RecorderSystemAudioCaptureSession, SCStreamOutput, @unchecked Sendable {
     private let outputURL: URL
     private let sampleQueue = DispatchQueue(label: "app.agentic30.recorder.system-audio", qos: .utility)
     private let lock = NSLock()
-    private var stream: SCStream?
-    private var writer: AVAssetWriter?
-    private var input: AVAssetWriterInput?
-    private var sampleCount = 0
-    private var terminalError: Error?
-    private var stopping = false
+    private nonisolated(unsafe) var stream: SCStream?
+    private nonisolated(unsafe) var writer: AVAssetWriter?
+    private nonisolated(unsafe) var input: AVAssetWriterInput?
+    private nonisolated(unsafe) var sampleCount = 0
+    private nonisolated(unsafe) var terminalError: Error?
+    private nonisolated(unsafe) var stopping = false
 
     init(outputURL: URL) {
         self.outputURL = outputURL
@@ -148,35 +376,36 @@ private final class ScreenCaptureKitSystemAudioCaptureSession: NSObject, Recorde
         lock.unlock()
     }
 
-    func stopAndFinalize() async throws {
-        let streamToStop: SCStream?
-        lock.lock()
-        stopping = true
-        streamToStop = stream
-        stream = nil
-        lock.unlock()
+    nonisolated func stopAndFinalize() async throws {
+        let streamToStop = withLockedState {
+            stopping = true
+            let streamToStop = stream
+            stream = nil
+            return streamToStop
+        }
 
         if let streamToStop {
             try await Self.stopStream(streamToStop)
         }
 
-        let writerToFinish: AVAssetWriter?
-        let inputToFinish: AVAssetWriterInput?
-        let count: Int
-        let error: Error?
-        lock.lock()
-        writerToFinish = writer
-        inputToFinish = input
-        count = sampleCount
-        error = terminalError
-        writer = nil
-        input = nil
-        lock.unlock()
+        let finishState = withLockedState {
+            let state = (
+                writerToFinish: writer,
+                inputToFinish: input,
+                count: sampleCount,
+                error: terminalError
+            )
+            writer = nil
+            input = nil
+            return state
+        }
 
-        if let error {
+        if let error = finishState.error {
             throw error
         }
-        guard let writerToFinish, let inputToFinish, count > 0 else {
+        guard let writerToFinish = finishState.writerToFinish,
+              let inputToFinish = finishState.inputToFinish,
+              finishState.count > 0 else {
             throw RecorderSystemAudioCaptureError.noAudioSamples
         }
         inputToFinish.markAsFinished()
@@ -188,7 +417,7 @@ private final class ScreenCaptureKitSystemAudioCaptureSession: NSObject, Recorde
         }
     }
 
-    func cancel() {
+    nonisolated func cancel() {
         let streamToStop: SCStream?
         let writerToCancel: AVAssetWriter?
         lock.lock()
@@ -209,6 +438,12 @@ private final class ScreenCaptureKitSystemAudioCaptureSession: NSObject, Recorde
         lock.lock()
         self.stream = stream
         lock.unlock()
+    }
+
+    private nonisolated func withLockedState<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
     }
 
     private func prepareWriterLocked(startingAt startTime: CMTime) throws {
@@ -247,14 +482,15 @@ private final class ScreenCaptureKitSystemAudioCaptureSession: NSObject, Recorde
     }
 
     private static func finishWriter(_ writer: AVAssetWriter) async throws {
+        let writerBox = RecorderAssetWriterFinishBox(writer)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             writer.finishWriting {
-                switch writer.status {
+                switch writerBox.writer.status {
                 case .completed:
                     continuation.resume()
                 case .failed, .cancelled:
                     continuation.resume(throwing: RecorderSystemAudioCaptureError.assetWriterFinishFailed(
-                        writer.error?.localizedDescription ?? "AVAssetWriter did not complete."
+                        writerBox.writer.error?.localizedDescription ?? "AVAssetWriter did not complete."
                     ))
                 default:
                     continuation.resume()
@@ -1443,10 +1679,8 @@ struct WorkspaceScanBlockedRecovery: Equatable {
         if isInsufficientEvidence {
             primaryAction = .reviewEvidence
             alternateProviders = []
-            title = "프로젝트 근거가 부족해요"
-            let message = notice.message.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-                ?? "고객, 문제, 검증 행동 근거를 보강한 뒤 다시 검증하세요."
-            body = "현재 폴더는 연결됐지만 Day 1 필수 근거가 부족합니다. \(message)"
+            title = "처음 기준을 정합니다"
+            body = "새 프로젝트는 고객, 문제, 검증 행동이 아직 한 문서에 고정돼 있지 않을 수 있습니다. 폴더에서 읽은 맥락으로 시작하고, 첫 질문에서 직접 좁힙니다."
             return
         }
 
@@ -1796,10 +2030,13 @@ struct IntakeV2BootLogState: Equatable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .nonEmpty
                 ?? "AI verification required"
+            let status = Self.isEvidenceSetupMessage(message)
+                ? "• Day 1 질문에서 고객·문제·검증 행동을 직접 좁힙니다"
+                : "✗ \(message)"
             nextLines.append(Line(
                 id: "scan.blocked",
                 command: "scan.blocked",
-                status: "✗ \(message)",
+                status: status,
                 isActive: false
             ))
         } else if scanDidComplete {
@@ -1901,6 +2138,15 @@ struct IntakeV2BootLogState: Equatable {
         }
 
         return Array(output.suffix(4))
+    }
+
+    private nonisolated static func isEvidenceSetupMessage(_ value: String) -> Bool {
+        let status = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return status.contains("insufficient")
+            || status.contains("근거 부족")
+            || status.contains("근거가 부족")
+            || status.contains("근거 품질")
+            || status.contains("직접 좁")
     }
 
     private nonisolated static func displayProgressLine(for rawMessage: String) -> DisplayProgressLine? {
@@ -2119,9 +2365,13 @@ struct Day1ScanWaitPresentation: Equatable {
     let phase: IntakeV2BootLogState.ScanPhase
     let elapsedSeconds: Int?
     let blockedStatus: String?
+    let hasWorkspaceScanResult: Bool
 
     func headerTitle(questionCount: Int = 3) -> String {
         if canOpenDay1 {
+            if isEvidenceBlocked {
+                return "첫 기준을 정하면서 시작합니다"
+            }
             return "Day 1 질문 \(questionCount)개가 준비됐어요"
         }
         if state == .connecting {
@@ -2129,7 +2379,7 @@ struct Day1ScanWaitPresentation: Equatable {
         }
         if isBlocked {
             if isEvidenceBlocked {
-                return "근거 보강이 필요합니다"
+                return "처음 기준을 정합니다"
             }
             return "AI 검증이 필요합니다"
         }
@@ -2138,6 +2388,9 @@ struct Day1ScanWaitPresentation: Equatable {
 
     func primaryCTATitle(questionCount: Int = 3) -> String {
         if canOpenDay1 {
+            if isEvidenceBlocked {
+                return "Day 1 시작하기 →"
+            }
             return "질문 \(questionCount)개 시작하기 →"
         }
         if state == .connecting {
@@ -2145,7 +2398,7 @@ struct Day1ScanWaitPresentation: Equatable {
         }
         if isBlocked {
             if isEvidenceBlocked {
-                return "근거 보강 필요"
+                return "첫 기준 정리 중"
             }
             return "AI 연결 확인 필요"
         }
@@ -2164,7 +2417,7 @@ struct Day1ScanWaitPresentation: Equatable {
         }
         if isBlocked {
             if isEvidenceBlocked {
-                return "근거 보강이 필요합니다"
+                return "처음 기준을 정합니다"
             }
             return "AI 검증이 필요합니다"
         }
@@ -2175,7 +2428,9 @@ struct Day1ScanWaitPresentation: Equatable {
     }
 
     var canOpenDay1: Bool {
-        state == .scanMergedReady || state == .scanFailed
+        state == .scanMergedReady
+            || state == .scanFailed
+            || (state == .scanBlocked && isEvidenceBlocked && hasWorkspaceScanResult)
     }
 
     var isBlocked: Bool {
@@ -2194,6 +2449,7 @@ struct Day1ScanWaitPresentation: Equatable {
             || status.contains("근거 부족")
             || status.contains("근거가 부족")
             || status.contains("근거 품질")
+            || status.contains("직접 좁")
     }
 
     var estimatedRemainingSeconds: Int? {
@@ -2210,6 +2466,7 @@ struct Day1ScanWaitPresentation: Equatable {
         phase = bootLogState.scanPhase
         elapsedSeconds = bootLogState.scanElapsed?.elapsedSeconds(at: now)
         blockedStatus = bootLogState.lines.last(where: { $0.command == "scan.blocked" })?.status
+        self.hasWorkspaceScanResult = hasWorkspaceScanResult
 
         if !hasFolder {
             state = .scanMergedReady
@@ -2875,6 +3132,75 @@ struct RecorderPipeDefinition: Decodable, Equatable, Hashable, Identifiable {
     }
 }
 
+struct RecorderPipeProofBoundary: Decodable, Equatable, Hashable {
+    let proofAcceptedByPipeRun: Bool
+    let proofLedgerWriteAllowed: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case proofAcceptedByPipeRun, proof_accepted_by_pipe_run
+        case proofLedgerWriteAllowed, proof_ledger_write_allowed
+    }
+
+    init(
+        proofAcceptedByPipeRun: Bool = false,
+        proofLedgerWriteAllowed: Bool = false
+    ) {
+        self.proofAcceptedByPipeRun = proofAcceptedByPipeRun
+        self.proofLedgerWriteAllowed = proofLedgerWriteAllowed
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        proofAcceptedByPipeRun = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByPipeRun)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_pipe_run)
+            ?? false
+        proofLedgerWriteAllowed = try c.decodeIfPresent(Bool.self, forKey: .proofLedgerWriteAllowed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_ledger_write_allowed)
+            ?? false
+    }
+}
+
+struct RecorderPipeOutputManifest: Decodable, Equatable, Hashable {
+    let outputKind: String
+    let privacyState: String
+    let proofAcceptedByPipeRun: Bool
+    let proofBoundary: RecorderPipeProofBoundary?
+
+    private enum CodingKeys: String, CodingKey {
+        case outputKind, output_kind
+        case privacyState, privacy_state
+        case proofAcceptedByPipeRun, proof_accepted_by_pipe_run
+        case proofBoundary, proof_boundary
+    }
+
+    init(
+        outputKind: String = "",
+        privacyState: String = "",
+        proofAcceptedByPipeRun: Bool = false,
+        proofBoundary: RecorderPipeProofBoundary? = nil
+    ) {
+        self.outputKind = outputKind
+        self.privacyState = privacyState
+        self.proofAcceptedByPipeRun = proofAcceptedByPipeRun
+        self.proofBoundary = proofBoundary
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        outputKind = try c.decodeIfPresent(String.self, forKey: .outputKind)
+            ?? c.decodeIfPresent(String.self, forKey: .output_kind)
+            ?? ""
+        privacyState = try c.decodeIfPresent(String.self, forKey: .privacyState)
+            ?? c.decodeIfPresent(String.self, forKey: .privacy_state)
+            ?? ""
+        proofAcceptedByPipeRun = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByPipeRun)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_pipe_run)
+            ?? false
+        proofBoundary = try c.decodeIfPresent(RecorderPipeProofBoundary.self, forKey: .proofBoundary)
+            ?? c.decodeIfPresent(RecorderPipeProofBoundary.self, forKey: .proof_boundary)
+    }
+}
+
 struct RecorderPipeRun: Decodable, Equatable, Hashable, Identifiable {
     let id: String
     let pipeId: String
@@ -2885,12 +3211,14 @@ struct RecorderPipeRun: Decodable, Equatable, Hashable, Identifiable {
     let startedAt: String
     let endedAt: String?
     let errorMessage: String?
+    let outputManifest: RecorderPipeOutputManifest?
     let proofAcceptedByPipeRun: Bool
 
     private enum CodingKeys: String, CodingKey {
         case id, pipeId, pipe_id, workspaceId, workspace_id, projectId, project_id
         case triggerReason, trigger_reason, status, startedAt, started_at, endedAt, ended_at
-        case errorMessage, error_message, proofAcceptedByPipeRun, proof_accepted_by_pipe_run
+        case errorMessage, error_message, outputManifest, output_manifest
+        case proofAcceptedByPipeRun, proof_accepted_by_pipe_run
     }
 
     init(
@@ -2903,6 +3231,7 @@ struct RecorderPipeRun: Decodable, Equatable, Hashable, Identifiable {
         startedAt: String,
         endedAt: String? = nil,
         errorMessage: String? = nil,
+        outputManifest: RecorderPipeOutputManifest? = nil,
         proofAcceptedByPipeRun: Bool = false
     ) {
         self.id = id
@@ -2914,6 +3243,7 @@ struct RecorderPipeRun: Decodable, Equatable, Hashable, Identifiable {
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.errorMessage = errorMessage
+        self.outputManifest = outputManifest
         self.proofAcceptedByPipeRun = proofAcceptedByPipeRun
     }
 
@@ -2938,6 +3268,8 @@ struct RecorderPipeRun: Decodable, Equatable, Hashable, Identifiable {
             ?? c.decodeIfPresent(String.self, forKey: .ended_at)
         errorMessage = try c.decodeIfPresent(String.self, forKey: .errorMessage)
             ?? c.decodeIfPresent(String.self, forKey: .error_message)
+        outputManifest = try c.decodeIfPresent(RecorderPipeOutputManifest.self, forKey: .outputManifest)
+            ?? c.decodeIfPresent(RecorderPipeOutputManifest.self, forKey: .output_manifest)
         proofAcceptedByPipeRun = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByPipeRun)
             ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_pipe_run)
             ?? false
@@ -2991,23 +3323,494 @@ struct RecorderPipeSchedulerResult: Decodable, Equatable, Hashable {
     }
 }
 
+struct RecorderRetentionApplyResult: Decodable, Equatable, Hashable {
+    let status: String
+    let reason: String?
+    let deletedFrameCount: Int
+    let deletedAudioChunkCount: Int
+    let deletedMediaCount: Int
+    let proofAcceptedByRetention: Bool
+    let proofLedgerWriteAllowed: Bool
+
+    private struct Scheduler: Decodable, Equatable, Hashable {
+        let status: String?
+        let reason: String?
+        let deletedFrameCount: Int?
+        let deletedAudioChunkCount: Int?
+        let deletedMediaCount: Int?
+        let proofAcceptedByRetention: Bool?
+        let proofLedgerWriteAllowed: Bool?
+
+        private enum CodingKeys: String, CodingKey {
+            case status, reason
+            case deletedFrameCount, deleted_frame_count
+            case deletedAudioChunkCount, deleted_audio_chunk_count
+            case deletedMediaCount, deleted_media_count
+            case proofAcceptedByRetention, proof_accepted_by_retention
+            case proofLedgerWriteAllowed, proof_ledger_write_allowed
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            status = try c.decodeIfPresent(String.self, forKey: .status)
+            reason = try c.decodeIfPresent(String.self, forKey: .reason)
+            deletedFrameCount = try c.decodeIfPresent(Int.self, forKey: .deletedFrameCount)
+                ?? c.decodeIfPresent(Int.self, forKey: .deleted_frame_count)
+            deletedAudioChunkCount = try c.decodeIfPresent(Int.self, forKey: .deletedAudioChunkCount)
+                ?? c.decodeIfPresent(Int.self, forKey: .deleted_audio_chunk_count)
+            deletedMediaCount = try c.decodeIfPresent(Int.self, forKey: .deletedMediaCount)
+                ?? c.decodeIfPresent(Int.self, forKey: .deleted_media_count)
+            proofAcceptedByRetention = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByRetention)
+                ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_retention)
+            proofLedgerWriteAllowed = try c.decodeIfPresent(Bool.self, forKey: .proofLedgerWriteAllowed)
+                ?? c.decodeIfPresent(Bool.self, forKey: .proof_ledger_write_allowed)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case scheduler
+        case status, reason
+        case deletedFrameCount, deleted_frame_count
+        case deletedAudioChunkCount, deleted_audio_chunk_count
+        case deletedMediaCount, deleted_media_count
+        case proofAcceptedByRetention, proof_accepted_by_retention
+        case proofLedgerWriteAllowed, proof_ledger_write_allowed
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let scheduler = try c.decodeIfPresent(Scheduler.self, forKey: .scheduler)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+            ?? scheduler?.status
+            ?? "unknown"
+        reason = try c.decodeIfPresent(String.self, forKey: .reason)
+            ?? scheduler?.reason
+        deletedFrameCount = try c.decodeIfPresent(Int.self, forKey: .deletedFrameCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .deleted_frame_count)
+            ?? scheduler?.deletedFrameCount
+            ?? 0
+        deletedAudioChunkCount = try c.decodeIfPresent(Int.self, forKey: .deletedAudioChunkCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .deleted_audio_chunk_count)
+            ?? scheduler?.deletedAudioChunkCount
+            ?? 0
+        deletedMediaCount = try c.decodeIfPresent(Int.self, forKey: .deletedMediaCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .deleted_media_count)
+            ?? scheduler?.deletedMediaCount
+            ?? 0
+        proofAcceptedByRetention = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByRetention)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_retention)
+            ?? scheduler?.proofAcceptedByRetention
+            ?? false
+        proofLedgerWriteAllowed = try c.decodeIfPresent(Bool.self, forKey: .proofLedgerWriteAllowed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_ledger_write_allowed)
+            ?? scheduler?.proofLedgerWriteAllowed
+            ?? false
+    }
+}
+
+struct RecorderDayLoopSnapshot: Decodable, Equatable, Hashable {
+    let persisted: Bool
+    let relativePath: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case persisted
+        case relativePath, relative_path
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        persisted = try c.decodeIfPresent(Bool.self, forKey: .persisted) ?? false
+        relativePath = try c.decodeIfPresent(String.self, forKey: .relativePath)
+            ?? c.decodeIfPresent(String.self, forKey: .relative_path)
+    }
+}
+
+struct RecorderEvidenceInboxSummary: Decodable, Equatable, Hashable {
+    let total: Int
+    let unresolvedCount: Int
+    let writtenToLedgerCount: Int
+    let countsByStatus: [String: Int]
+
+    private enum CodingKeys: String, CodingKey {
+        case total
+        case unresolvedCount, unresolved_count
+        case writtenToLedgerCount, written_to_ledger_count
+        case countsByStatus, counts_by_status
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        total = try c.decodeIfPresent(Int.self, forKey: .total) ?? 0
+        unresolvedCount = try c.decodeIfPresent(Int.self, forKey: .unresolvedCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .unresolved_count)
+            ?? 0
+        writtenToLedgerCount = try c.decodeIfPresent(Int.self, forKey: .writtenToLedgerCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .written_to_ledger_count)
+            ?? 0
+        countsByStatus = try c.decodeIfPresent([String: Int].self, forKey: .countsByStatus)
+            ?? c.decodeIfPresent([String: Int].self, forKey: .counts_by_status)
+            ?? [:]
+    }
+}
+
+struct RecorderDayMemoryReviewResult: Decodable, Equatable, Hashable {
+    struct Status: Decodable, Equatable, Hashable {
+        let state: String
+        let reason: String?
+    }
+
+    let status: Status?
+    let evidenceInbox: RecorderEvidenceInboxSummary?
+    let proofAcceptedByReview: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case evidenceInbox, evidence_inbox
+        case proofBoundary, proof_boundary
+    }
+    private enum ProofBoundaryKeys: String, CodingKey {
+        case proofAcceptedByReview, proof_accepted_by_review
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = try c.decodeIfPresent(Status.self, forKey: .status)
+        evidenceInbox = try c.decodeIfPresent(RecorderEvidenceInboxSummary.self, forKey: .evidenceInbox)
+            ?? c.decodeIfPresent(RecorderEvidenceInboxSummary.self, forKey: .evidence_inbox)
+        let proof = (try? c.nestedContainer(keyedBy: ProofBoundaryKeys.self, forKey: .proofBoundary))
+            ?? (try? c.nestedContainer(keyedBy: ProofBoundaryKeys.self, forKey: .proof_boundary))
+        if let proof {
+            proofAcceptedByReview = try proof.decodeIfPresent(Bool.self, forKey: .proofAcceptedByReview)
+                ?? proof.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_review)
+                ?? false
+        } else {
+            proofAcceptedByReview = false
+        }
+    }
+}
+
+struct RecorderEvidenceSourceRef: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let sourceType: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case sourceType, source_type
+    }
+
+    init(from decoder: Decoder) throws {
+        if let value = try? decoder.singleValueContainer().decode(String.self) {
+            id = value
+            sourceType = ""
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        sourceType = try c.decodeIfPresent(String.self, forKey: .sourceType)
+            ?? c.decodeIfPresent(String.self, forKey: .source_type)
+            ?? ""
+    }
+}
+
+private struct RecorderEvidenceProofLedgerMappingSummary: Decodable {
+    let targetGate: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case targetGate, target_gate
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        targetGate = try c.decodeIfPresent(String.self, forKey: .targetGate)
+            ?? c.decodeIfPresent(String.self, forKey: .target_gate)
+    }
+}
+
+struct RecorderEvidenceCandidateSummary: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let candidateStatus: String
+    let sourceState: String
+    let claim: String
+    let proofKind: String
+    let sourceIds: [RecorderEvidenceSourceRef]
+    let evidenceDebt: [String]
+    let targetGate: String?
+    let proofLedgerEventId: String?
+    let createdBy: String
+    let createdAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case candidateStatus, candidate_status
+        case sourceState, source_state
+        case claim
+        case proofKind, proof_kind
+        case sourceIds, source_ids, source_ids_json
+        case evidenceDebt, evidence_debt, evidence_debt_json
+        case proofLedgerMapping, proof_ledger_mapping, proof_ledger_mapping_json
+        case proofLedgerEventId, proof_ledger_event_id
+        case createdBy, created_by
+        case createdAt, created_at
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        candidateStatus = try c.decodeIfPresent(String.self, forKey: .candidateStatus)
+            ?? c.decodeIfPresent(String.self, forKey: .candidate_status)
+            ?? ""
+        sourceState = try c.decodeIfPresent(String.self, forKey: .sourceState)
+            ?? c.decodeIfPresent(String.self, forKey: .source_state)
+            ?? ""
+        claim = try c.decodeIfPresent(String.self, forKey: .claim) ?? ""
+        proofKind = try c.decodeIfPresent(String.self, forKey: .proofKind)
+            ?? c.decodeIfPresent(String.self, forKey: .proof_kind)
+            ?? ""
+        sourceIds = try c.decodeIfPresent([RecorderEvidenceSourceRef].self, forKey: .sourceIds)
+            ?? c.decodeIfPresent([RecorderEvidenceSourceRef].self, forKey: .source_ids)
+            ?? Self.decodeJSONString([RecorderEvidenceSourceRef].self, try c.decodeIfPresent(String.self, forKey: .source_ids_json))
+            ?? []
+        evidenceDebt = try c.decodeIfPresent([String].self, forKey: .evidenceDebt)
+            ?? c.decodeIfPresent([String].self, forKey: .evidence_debt)
+            ?? Self.decodeJSONString([String].self, try c.decodeIfPresent(String.self, forKey: .evidence_debt_json))
+            ?? []
+        let mapping = try c.decodeIfPresent(RecorderEvidenceProofLedgerMappingSummary.self, forKey: .proofLedgerMapping)
+            ?? c.decodeIfPresent(RecorderEvidenceProofLedgerMappingSummary.self, forKey: .proof_ledger_mapping)
+            ?? Self.decodeJSONString(RecorderEvidenceProofLedgerMappingSummary.self, try c.decodeIfPresent(String.self, forKey: .proof_ledger_mapping_json))
+        targetGate = mapping?.targetGate
+        proofLedgerEventId = try c.decodeIfPresent(String.self, forKey: .proofLedgerEventId)
+            ?? c.decodeIfPresent(String.self, forKey: .proof_ledger_event_id)
+        createdBy = try c.decodeIfPresent(String.self, forKey: .createdBy)
+            ?? c.decodeIfPresent(String.self, forKey: .created_by)
+            ?? ""
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+            ?? c.decodeIfPresent(String.self, forKey: .created_at)
+            ?? ""
+    }
+
+    private static func decodeJSONString<T: Decodable>(_ type: T.Type, _ value: String?) -> T? {
+        guard let value,
+              let data = value.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+}
+
+struct RecorderEvidenceBuildResult: Decodable, Equatable, Hashable {
+    let createdCount: Int
+    let skippedCount: Int
+    let created: [RecorderEvidenceCandidateSummary]
+    let proofAcceptedByBuilder: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case createdCount, created_count
+        case skippedCount, skipped_count
+        case created
+        case proofBoundary, proof_boundary
+    }
+    private enum ProofBoundaryKeys: String, CodingKey {
+        case proofAcceptedByBuilder, proof_accepted_by_builder
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        createdCount = try c.decodeIfPresent(Int.self, forKey: .createdCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .created_count)
+            ?? 0
+        skippedCount = try c.decodeIfPresent(Int.self, forKey: .skippedCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .skipped_count)
+            ?? 0
+        created = try c.decodeIfPresent([RecorderEvidenceCandidateSummary].self, forKey: .created) ?? []
+        let proof = (try? c.nestedContainer(keyedBy: ProofBoundaryKeys.self, forKey: .proofBoundary))
+            ?? (try? c.nestedContainer(keyedBy: ProofBoundaryKeys.self, forKey: .proof_boundary))
+        if let proof {
+            proofAcceptedByBuilder = try proof.decodeIfPresent(Bool.self, forKey: .proofAcceptedByBuilder)
+                ?? proof.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_builder)
+                ?? false
+        } else {
+            proofAcceptedByBuilder = false
+        }
+    }
+}
+
+struct RecorderNextActionResult: Decodable, Equatable, Hashable {
+    struct Action: Decodable, Equatable, Hashable {
+        let id: String
+        let actionType: String
+        let title: String
+        let instruction: String
+        let proofEffect: String
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case actionType, action_type
+            case title
+            case instruction
+            case proofEffect, proof_effect
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+            actionType = try c.decodeIfPresent(String.self, forKey: .actionType)
+                ?? c.decodeIfPresent(String.self, forKey: .action_type)
+                ?? ""
+            title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+            instruction = try c.decodeIfPresent(String.self, forKey: .instruction) ?? ""
+            proofEffect = try c.decodeIfPresent(String.self, forKey: .proofEffect)
+                ?? c.decodeIfPresent(String.self, forKey: .proof_effect)
+                ?? "none"
+        }
+    }
+
+    let action: Action?
+    let proofAcceptedByNextAction: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case action
+        case proofBoundary, proof_boundary
+    }
+    private enum ProofBoundaryKeys: String, CodingKey {
+        case proofAcceptedByNextAction, proof_accepted_by_next_action
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        action = try c.decodeIfPresent(Action.self, forKey: .action)
+        let proof = (try? c.nestedContainer(keyedBy: ProofBoundaryKeys.self, forKey: .proofBoundary))
+            ?? (try? c.nestedContainer(keyedBy: ProofBoundaryKeys.self, forKey: .proof_boundary))
+        if let proof {
+            proofAcceptedByNextAction = try proof.decodeIfPresent(Bool.self, forKey: .proofAcceptedByNextAction)
+                ?? proof.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_next_action)
+                ?? false
+        } else {
+            proofAcceptedByNextAction = false
+        }
+    }
+}
+
+struct RecorderDayMemoryLoopResult: Decodable, Equatable, Hashable {
+    let schema: String
+    let generatedAt: String
+    let review: RecorderDayMemoryReviewResult?
+    let evidenceBuildResult: RecorderEvidenceBuildResult?
+    let nextAction: RecorderNextActionResult?
+    let snapshot: RecorderDayLoopSnapshot?
+    let proofAcceptedByDayLoop: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case schema
+        case generatedAt, generated_at
+        case review
+        case evidenceBuildResult, evidence_build_result
+        case nextAction, next_action
+        case snapshot
+        case proofBoundary, proof_boundary
+    }
+    private enum ProofBoundaryKeys: String, CodingKey {
+        case proofAcceptedByDayLoop, proof_accepted_by_day_loop
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try c.decodeIfPresent(String.self, forKey: .schema) ?? ""
+        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .generated_at)
+            ?? ""
+        review = try c.decodeIfPresent(RecorderDayMemoryReviewResult.self, forKey: .review)
+        evidenceBuildResult = try c.decodeIfPresent(RecorderEvidenceBuildResult.self, forKey: .evidenceBuildResult)
+            ?? c.decodeIfPresent(RecorderEvidenceBuildResult.self, forKey: .evidence_build_result)
+        nextAction = try c.decodeIfPresent(RecorderNextActionResult.self, forKey: .nextAction)
+            ?? c.decodeIfPresent(RecorderNextActionResult.self, forKey: .next_action)
+        snapshot = try c.decodeIfPresent(RecorderDayLoopSnapshot.self, forKey: .snapshot)
+        let proof = (try? c.nestedContainer(keyedBy: ProofBoundaryKeys.self, forKey: .proofBoundary))
+            ?? (try? c.nestedContainer(keyedBy: ProofBoundaryKeys.self, forKey: .proof_boundary))
+        if let proof {
+            proofAcceptedByDayLoop = try proof.decodeIfPresent(Bool.self, forKey: .proofAcceptedByDayLoop)
+                ?? proof.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_day_loop)
+                ?? false
+        } else {
+            proofAcceptedByDayLoop = false
+        }
+    }
+}
+
+struct RecorderMcpGrant: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let granted: Bool
+    let toolName: String
+    let accessLevels: [String]
+    let grantedBy: String
+    let grantedAt: String
+    let expiresAt: String
+    let reason: String
+    let revokedAt: String?
+    let state: String
+    let active: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case granted
+        case toolName, tool_name
+        case accessLevels, access_levels
+        case grantedBy, granted_by
+        case grantedAt, granted_at
+        case expiresAt, expires_at
+        case reason
+        case revokedAt, revoked_at
+        case state
+        case active
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        granted = try c.decodeIfPresent(Bool.self, forKey: .granted) ?? false
+        toolName = try c.decodeIfPresent(String.self, forKey: .toolName)
+            ?? c.decodeIfPresent(String.self, forKey: .tool_name)
+            ?? ""
+        accessLevels = try c.decodeIfPresent([String].self, forKey: .accessLevels)
+            ?? c.decodeIfPresent([String].self, forKey: .access_levels)
+            ?? []
+        grantedBy = try c.decodeIfPresent(String.self, forKey: .grantedBy)
+            ?? c.decodeIfPresent(String.self, forKey: .granted_by)
+            ?? ""
+        grantedAt = try c.decodeIfPresent(String.self, forKey: .grantedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .granted_at)
+            ?? ""
+        expiresAt = try c.decodeIfPresent(String.self, forKey: .expiresAt)
+            ?? c.decodeIfPresent(String.self, forKey: .expires_at)
+            ?? ""
+        reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? ""
+        revokedAt = try c.decodeIfPresent(String.self, forKey: .revokedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .revoked_at)
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? (granted ? "active" : "inactive")
+        active = try c.decodeIfPresent(Bool.self, forKey: .active) ?? (state == "active")
+    }
+}
+
 struct RecorderControlConsent: Decodable, Equatable, Hashable {
     let status: String
+    let grantId: String?
     let visibleIndicatorRequired: Bool
     let visibleIndicatorAcknowledged: Bool
 
     private enum CodingKeys: String, CodingKey {
         case status
+        case grantId, grant_id
         case visibleIndicatorRequired, visible_indicator_required
         case visibleIndicatorAcknowledged, visible_indicator_acknowledged
     }
 
     init(
         status: String = "not_requested",
+        grantId: String? = nil,
         visibleIndicatorRequired: Bool = true,
         visibleIndicatorAcknowledged: Bool = false
     ) {
         self.status = status
+        self.grantId = grantId
         self.visibleIndicatorRequired = visibleIndicatorRequired
         self.visibleIndicatorAcknowledged = visibleIndicatorAcknowledged
     }
@@ -3015,6 +3818,8 @@ struct RecorderControlConsent: Decodable, Equatable, Hashable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         status = try c.decodeIfPresent(String.self, forKey: .status) ?? "not_requested"
+        grantId = try c.decodeIfPresent(String.self, forKey: .grantId)
+            ?? c.decodeIfPresent(String.self, forKey: .grant_id)
         visibleIndicatorRequired = try c.decodeIfPresent(Bool.self, forKey: .visibleIndicatorRequired)
             ?? c.decodeIfPresent(Bool.self, forKey: .visible_indicator_required)
             ?? true
@@ -3095,12 +3900,118 @@ struct RecorderControlState: Decodable, Equatable, Hashable {
     }
 }
 
+struct RecorderPermissionActorDiagnostic: Equatable, Hashable {
+    let source: String
+    let displayName: String
+    let bundleIdentifier: String
+    let bundlePath: String
+    let executablePath: String
+    let buildChannel: String
+    let teamIdentifier: String
+    let signingRequirementSummary: String
+    let codeDirectoryHashSummary: String
+    let translocationState: String
+
+    var isAppTranslocated: Bool {
+        translocationState == "translocated"
+    }
+
+    static let unknown = RecorderPermissionActorDiagnostic(
+        source: "unknown",
+        displayName: "unknown",
+        bundleIdentifier: "unknown",
+        bundlePath: "unknown",
+        executablePath: "unknown",
+        buildChannel: "unknown",
+        teamIdentifier: "unknown",
+        signingRequirementSummary: "unknown",
+        codeDirectoryHashSummary: "unavailable",
+        translocationState: "unknown"
+    )
+}
+
+struct RecorderPermissionReleaseIdentityDiagnostic: Equatable, Hashable {
+    let expectedBundleIdentifier: String
+    let bundleIdentifier: String
+    let buildChannel: String
+    let teamIdentifier: String
+    let signingRequirementSummary: String
+    let sparklePublicKeyPresent: Bool
+    let sparkleFeedURL: String
+    let releasePolicyVerified: Bool
+    let externalPermissionOnboardingAllowed: Bool
+    let blockers: [String]
+
+    static let unknown = RecorderPermissionReleaseIdentityDiagnostic(
+        expectedBundleIdentifier: "unknown",
+        bundleIdentifier: "unknown",
+        buildChannel: "unknown",
+        teamIdentifier: "unknown",
+        signingRequirementSummary: "unknown",
+        sparklePublicKeyPresent: false,
+        sparkleFeedURL: "unknown",
+        releasePolicyVerified: false,
+        externalPermissionOnboardingAllowed: false,
+        blockers: ["unknown_release_identity"]
+    )
+}
+
 struct RecorderCaptureIssue: Decodable, Equatable, Hashable, Identifiable {
     let id: String
     let severity: String?
     let message: String
     let permission: String?
     let state: String?
+}
+
+struct RecorderReadinessMode: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let ready: Bool
+    let state: String
+    let blockers: [RecorderCaptureIssue]
+    let warnings: [RecorderCaptureIssue]
+}
+
+struct RecorderReadinessModes: Decodable, Equatable, Hashable {
+    let coreFrameCapture: RecorderReadinessMode?
+    let eventDrivenCapture: RecorderReadinessMode?
+    let ocrTextCompletion: RecorderReadinessMode?
+    let sensitiveCapture: RecorderReadinessMode?
+
+    var orderedModes: [RecorderReadinessMode] {
+        [coreFrameCapture, eventDrivenCapture, ocrTextCompletion, sensitiveCapture].compactMap { $0 }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case coreFrameCapture, core_frame_capture
+        case eventDrivenCapture, event_driven_capture
+        case ocrTextCompletion, ocr_text_completion
+        case sensitiveCapture, sensitive_capture
+    }
+
+    init(
+        coreFrameCapture: RecorderReadinessMode? = nil,
+        eventDrivenCapture: RecorderReadinessMode? = nil,
+        ocrTextCompletion: RecorderReadinessMode? = nil,
+        sensitiveCapture: RecorderReadinessMode? = nil
+    ) {
+        self.coreFrameCapture = coreFrameCapture
+        self.eventDrivenCapture = eventDrivenCapture
+        self.ocrTextCompletion = ocrTextCompletion
+        self.sensitiveCapture = sensitiveCapture
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        coreFrameCapture = try c.decodeIfPresent(RecorderReadinessMode.self, forKey: .coreFrameCapture)
+            ?? c.decodeIfPresent(RecorderReadinessMode.self, forKey: .core_frame_capture)
+        eventDrivenCapture = try c.decodeIfPresent(RecorderReadinessMode.self, forKey: .eventDrivenCapture)
+            ?? c.decodeIfPresent(RecorderReadinessMode.self, forKey: .event_driven_capture)
+        ocrTextCompletion = try c.decodeIfPresent(RecorderReadinessMode.self, forKey: .ocrTextCompletion)
+            ?? c.decodeIfPresent(RecorderReadinessMode.self, forKey: .ocr_text_completion)
+        sensitiveCapture = try c.decodeIfPresent(RecorderReadinessMode.self, forKey: .sensitiveCapture)
+            ?? c.decodeIfPresent(RecorderReadinessMode.self, forKey: .sensitive_capture)
+    }
 }
 
 struct RecorderCaptureReadiness: Decodable, Equatable, Hashable {
@@ -3111,12 +4022,14 @@ struct RecorderCaptureReadiness: Decodable, Equatable, Hashable {
     let warnings: [RecorderCaptureIssue]
     let visibleIndicatorRequired: Bool
     let visibleIndicatorAcknowledged: Bool
+    let modeReadiness: RecorderReadinessModes?
 
     private enum CodingKeys: String, CodingKey {
         case canRecord, can_record
         case state, mode, blockers, warnings
         case visibleIndicatorRequired, visible_indicator_required
         case visibleIndicatorAcknowledged, visible_indicator_acknowledged
+        case modeReadiness, mode_readiness
     }
 
     init(
@@ -3126,7 +4039,8 @@ struct RecorderCaptureReadiness: Decodable, Equatable, Hashable {
         blockers: [RecorderCaptureIssue] = [],
         warnings: [RecorderCaptureIssue] = [],
         visibleIndicatorRequired: Bool = true,
-        visibleIndicatorAcknowledged: Bool = false
+        visibleIndicatorAcknowledged: Bool = false,
+        modeReadiness: RecorderReadinessModes? = nil
     ) {
         self.canRecord = canRecord
         self.state = state
@@ -3135,6 +4049,7 @@ struct RecorderCaptureReadiness: Decodable, Equatable, Hashable {
         self.warnings = warnings
         self.visibleIndicatorRequired = visibleIndicatorRequired
         self.visibleIndicatorAcknowledged = visibleIndicatorAcknowledged
+        self.modeReadiness = modeReadiness
     }
 
     init(from decoder: Decoder) throws {
@@ -3152,6 +4067,8 @@ struct RecorderCaptureReadiness: Decodable, Equatable, Hashable {
         visibleIndicatorAcknowledged = try c.decodeIfPresent(Bool.self, forKey: .visibleIndicatorAcknowledged)
             ?? c.decodeIfPresent(Bool.self, forKey: .visible_indicator_acknowledged)
             ?? false
+        modeReadiness = try c.decodeIfPresent(RecorderReadinessModes.self, forKey: .modeReadiness)
+            ?? c.decodeIfPresent(RecorderReadinessModes.self, forKey: .mode_readiness)
     }
 }
 
@@ -3162,9 +4079,14 @@ struct RecorderFrameCaptureReceipt: Decodable, Equatable, Hashable, Identifiable
     let captureTrigger: String
     let appName: String?
     let windowTitle: String?
+    let browserDomain: String?
+    let browserUrlSearchLabel: String?
+    let documentPathSearchLabel: String?
     let snapshotAssetId: String
     let snapshotSha256: String
     let contentHash: String
+    let textSource: String
+    let textProvenanceRootCause: String?
     let redactionStatus: String
     let privacyState: String
     let safeForSearch: Bool
@@ -3179,9 +4101,14 @@ struct RecorderFrameCaptureReceipt: Decodable, Equatable, Hashable, Identifiable
         case captureTrigger, capture_trigger
         case appName, app_name
         case windowTitle, window_title
+        case browserDomain, browser_domain
+        case browserUrlSearchLabel, browser_url_search_label
+        case documentPathSearchLabel, document_path_search_label
         case snapshotAssetId, snapshot_asset_id
         case snapshotSha256, snapshot_sha256
         case contentHash, content_hash
+        case textSource, text_source
+        case textProvenanceRootCause, text_provenance_root_cause
         case redactionStatus, redaction_status
         case privacyState, privacy_state
         case safeForSearch, safe_for_search
@@ -3206,6 +4133,12 @@ struct RecorderFrameCaptureReceipt: Decodable, Equatable, Hashable, Identifiable
             ?? c.decodeIfPresent(String.self, forKey: .app_name)
         windowTitle = try c.decodeIfPresent(String.self, forKey: .windowTitle)
             ?? c.decodeIfPresent(String.self, forKey: .window_title)
+        browserDomain = try c.decodeIfPresent(String.self, forKey: .browserDomain)
+            ?? c.decodeIfPresent(String.self, forKey: .browser_domain)
+        browserUrlSearchLabel = try c.decodeIfPresent(String.self, forKey: .browserUrlSearchLabel)
+            ?? c.decodeIfPresent(String.self, forKey: .browser_url_search_label)
+        documentPathSearchLabel = try c.decodeIfPresent(String.self, forKey: .documentPathSearchLabel)
+            ?? c.decodeIfPresent(String.self, forKey: .document_path_search_label)
         snapshotAssetId = try c.decodeIfPresent(String.self, forKey: .snapshotAssetId)
             ?? c.decodeIfPresent(String.self, forKey: .snapshot_asset_id)
             ?? ""
@@ -3215,6 +4148,11 @@ struct RecorderFrameCaptureReceipt: Decodable, Equatable, Hashable, Identifiable
         contentHash = try c.decodeIfPresent(String.self, forKey: .contentHash)
             ?? c.decodeIfPresent(String.self, forKey: .content_hash)
             ?? ""
+        textSource = try c.decodeIfPresent(String.self, forKey: .textSource)
+            ?? c.decodeIfPresent(String.self, forKey: .text_source)
+            ?? "unknown"
+        textProvenanceRootCause = try c.decodeIfPresent(String.self, forKey: .textProvenanceRootCause)
+            ?? c.decodeIfPresent(String.self, forKey: .text_provenance_root_cause)
         redactionStatus = try c.decodeIfPresent(String.self, forKey: .redactionStatus)
             ?? c.decodeIfPresent(String.self, forKey: .redaction_status)
             ?? "unknown"
@@ -3528,6 +4466,329 @@ struct RecorderAuditSource: Decodable, Equatable, Hashable {
             ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_audit_source)
             ?? false
     }
+}
+
+struct RecorderSearchEmptyState: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let severity: String
+    let message: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case severity
+        case message
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        severity = try c.decodeIfPresent(String.self, forKey: .severity) ?? ""
+        message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
+    }
+}
+
+struct RecorderSearchProofBoundary: Decodable, Equatable, Hashable {
+    let proofAcceptedBySearch: Bool
+    let message: String
+
+    private enum CodingKeys: String, CodingKey {
+        case proofAcceptedBySearch, proof_accepted_by_search
+        case message
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        proofAcceptedBySearch = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedBySearch)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_search)
+            ?? false
+        message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
+    }
+}
+
+struct RecorderSearchResult: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let sourceType: String
+    let sourceId: String
+    let timestamp: String
+    let title: String?
+    let snippet: String
+    let metadata: [String: String]
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case sourceType, source_type
+        case sourceId, source_id
+        case timestamp
+        case title
+        case snippet
+        case metadata
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        sourceType = try c.decodeIfPresent(String.self, forKey: .sourceType)
+            ?? c.decodeIfPresent(String.self, forKey: .source_type)
+            ?? ""
+        sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId)
+            ?? c.decodeIfPresent(String.self, forKey: .source_id)
+            ?? ""
+        timestamp = try c.decodeIfPresent(String.self, forKey: .timestamp) ?? ""
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        snippet = try c.decodeIfPresent(String.self, forKey: .snippet) ?? ""
+        metadata = try c.decodeIfPresent([String: String].self, forKey: .metadata) ?? [:]
+    }
+}
+
+struct RecorderSearchResultSet: Decodable, Equatable, Hashable {
+    let schema: String
+    let schemaVersion: Int
+    let generatedAt: String
+    let query: String
+    let resultCount: Int
+    let results: [RecorderSearchResult]
+    let emptyStates: [RecorderSearchEmptyState]
+    let proofBoundary: RecorderSearchProofBoundary?
+    let proofAcceptedBySearch: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case schema
+        case schemaVersion, schema_version
+        case generatedAt, generated_at
+        case query
+        case resultCount, result_count
+        case results
+        case emptyStates, empty_states
+        case proofBoundary, proof_boundary
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try c.decodeIfPresent(String.self, forKey: .schema) ?? ""
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion)
+            ?? c.decodeIfPresent(Int.self, forKey: .schema_version)
+            ?? 0
+        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .generated_at)
+            ?? ""
+        query = try c.decodeIfPresent(String.self, forKey: .query) ?? ""
+        resultCount = try c.decodeIfPresent(Int.self, forKey: .resultCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .result_count)
+            ?? 0
+        results = try c.decodeIfPresent([RecorderSearchResult].self, forKey: .results) ?? []
+        emptyStates = try c.decodeIfPresent([RecorderSearchEmptyState].self, forKey: .emptyStates)
+            ?? c.decodeIfPresent([RecorderSearchEmptyState].self, forKey: .empty_states)
+            ?? []
+        proofBoundary = try c.decodeIfPresent(RecorderSearchProofBoundary.self, forKey: .proofBoundary)
+            ?? c.decodeIfPresent(RecorderSearchProofBoundary.self, forKey: .proof_boundary)
+        proofAcceptedBySearch = proofBoundary?.proofAcceptedBySearch ?? false
+    }
+}
+
+struct RecorderSqlCell: Decodable, Equatable, Hashable {
+    let displayValue: String
+    let isNull: Bool
+
+    init(displayValue: String, isNull: Bool = false) {
+        self.displayValue = displayValue
+        self.isNull = isNull
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            displayValue = "null"
+            isNull = true
+        } else if let value = try? container.decode(Bool.self) {
+            displayValue = value ? "true" : "false"
+            isNull = false
+        } else if let value = try? container.decode(Int.self) {
+            displayValue = String(value)
+            isNull = false
+        } else if let value = try? container.decode(Double.self) {
+            displayValue = String(value)
+            isNull = false
+        } else {
+            displayValue = (try? container.decode(String.self)) ?? ""
+            isNull = false
+        }
+    }
+}
+
+struct RecorderSqlQueryResult: Decodable, Equatable, Hashable {
+    let schema: String
+    let generatedAt: String
+    let queryFingerprint: String
+    let allowedViews: [String]
+    let rowCount: Int
+    let truncated: Bool
+    let limit: Int?
+    let timeoutMs: Int
+    let includeRawColumns: Bool
+    let pathExposed: Bool
+    let rows: [[String: RecorderSqlCell]]
+    let safeForSearch: Bool
+    let safeForMemory: Bool
+    let safeForExport: Bool
+    let providerPromptAllowed: Bool
+    let pipeOutputAllowed: Bool
+    let dayProgressWriteAllowed: Bool
+    let proofAcceptedByRawSql: Bool
+    let proofAcceptedByRawApi: Bool
+    let proofLedgerWriteAllowed: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case schema
+        case generatedAt, generated_at
+        case queryFingerprint, query_fingerprint
+        case allowedViews, allowed_views
+        case rowCount, row_count
+        case truncated
+        case limit
+        case timeoutMs, timeout_ms
+        case includeRawColumns, include_raw_columns
+        case pathExposed, path_exposed
+        case rows
+        case safeForSearch, safe_for_search
+        case safeForMemory, safe_for_memory
+        case safeForExport, safe_for_export
+        case providerPromptAllowed, provider_prompt_allowed
+        case pipeOutputAllowed, pipe_output_allowed
+        case dayProgressWriteAllowed, day_progress_write_allowed
+        case proofAcceptedByRawSql, proof_accepted_by_raw_sql
+        case proofAcceptedByRawApi, proof_accepted_by_raw_api
+        case proofLedgerWriteAllowed, proof_ledger_write_allowed
+    }
+
+    init(
+        schema: String = "",
+        generatedAt: String = "",
+        queryFingerprint: String = "",
+        allowedViews: [String] = [],
+        rowCount: Int = 0,
+        truncated: Bool = false,
+        limit: Int? = nil,
+        timeoutMs: Int = 0,
+        includeRawColumns: Bool = false,
+        pathExposed: Bool = false,
+        rows: [[String: RecorderSqlCell]] = [],
+        safeForSearch: Bool = false,
+        safeForMemory: Bool = false,
+        safeForExport: Bool = false,
+        providerPromptAllowed: Bool = false,
+        pipeOutputAllowed: Bool = false,
+        dayProgressWriteAllowed: Bool = false,
+        proofAcceptedByRawSql: Bool = false,
+        proofAcceptedByRawApi: Bool = false,
+        proofLedgerWriteAllowed: Bool = false
+    ) {
+        self.schema = schema
+        self.generatedAt = generatedAt
+        self.queryFingerprint = queryFingerprint
+        self.allowedViews = allowedViews
+        self.rowCount = rowCount
+        self.truncated = truncated
+        self.limit = limit
+        self.timeoutMs = timeoutMs
+        self.includeRawColumns = includeRawColumns
+        self.pathExposed = pathExposed
+        self.rows = rows
+        self.safeForSearch = safeForSearch
+        self.safeForMemory = safeForMemory
+        self.safeForExport = safeForExport
+        self.providerPromptAllowed = providerPromptAllowed
+        self.pipeOutputAllowed = pipeOutputAllowed
+        self.dayProgressWriteAllowed = dayProgressWriteAllowed
+        self.proofAcceptedByRawSql = proofAcceptedByRawSql
+        self.proofAcceptedByRawApi = proofAcceptedByRawApi
+        self.proofLedgerWriteAllowed = proofLedgerWriteAllowed
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try c.decodeIfPresent(String.self, forKey: .schema) ?? ""
+        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .generated_at)
+            ?? ""
+        queryFingerprint = try c.decodeIfPresent(String.self, forKey: .queryFingerprint)
+            ?? c.decodeIfPresent(String.self, forKey: .query_fingerprint)
+            ?? ""
+        allowedViews = try c.decodeIfPresent([String].self, forKey: .allowedViews)
+            ?? c.decodeIfPresent([String].self, forKey: .allowed_views)
+            ?? []
+        rowCount = try c.decodeIfPresent(Int.self, forKey: .rowCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .row_count)
+            ?? 0
+        truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
+        limit = try c.decodeIfPresent(Int.self, forKey: .limit)
+        timeoutMs = try c.decodeIfPresent(Int.self, forKey: .timeoutMs)
+            ?? c.decodeIfPresent(Int.self, forKey: .timeout_ms)
+            ?? 0
+        includeRawColumns = try c.decodeIfPresent(Bool.self, forKey: .includeRawColumns)
+            ?? c.decodeIfPresent(Bool.self, forKey: .include_raw_columns)
+            ?? false
+        pathExposed = try c.decodeIfPresent(Bool.self, forKey: .pathExposed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .path_exposed)
+            ?? false
+        rows = try c.decodeIfPresent([[String: RecorderSqlCell]].self, forKey: .rows) ?? []
+        safeForSearch = try c.decodeIfPresent(Bool.self, forKey: .safeForSearch)
+            ?? c.decodeIfPresent(Bool.self, forKey: .safe_for_search)
+            ?? false
+        safeForMemory = try c.decodeIfPresent(Bool.self, forKey: .safeForMemory)
+            ?? c.decodeIfPresent(Bool.self, forKey: .safe_for_memory)
+            ?? false
+        safeForExport = try c.decodeIfPresent(Bool.self, forKey: .safeForExport)
+            ?? c.decodeIfPresent(Bool.self, forKey: .safe_for_export)
+            ?? false
+        providerPromptAllowed = try c.decodeIfPresent(Bool.self, forKey: .providerPromptAllowed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .provider_prompt_allowed)
+            ?? false
+        pipeOutputAllowed = try c.decodeIfPresent(Bool.self, forKey: .pipeOutputAllowed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .pipe_output_allowed)
+            ?? false
+        dayProgressWriteAllowed = try c.decodeIfPresent(Bool.self, forKey: .dayProgressWriteAllowed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .day_progress_write_allowed)
+            ?? false
+        proofAcceptedByRawSql = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByRawSql)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_raw_sql)
+            ?? false
+        proofAcceptedByRawApi = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByRawApi)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_raw_api)
+            ?? false
+        proofLedgerWriteAllowed = try c.decodeIfPresent(Bool.self, forKey: .proofLedgerWriteAllowed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_ledger_write_allowed)
+            ?? false
+    }
+}
+
+private struct RecorderSqlQueryResponse: Decodable {
+    let sql: RecorderSqlQueryResult
+}
+
+private struct RecorderSearchResponse: Decodable {
+    let search: RecorderSearchResultSet?
+
+    init(from decoder: Decoder) throws {
+        if let wrapped = try? decoder.container(keyedBy: CodingKeys.self),
+           let search = try wrapped.decodeIfPresent(RecorderSearchResultSet.self, forKey: .search) {
+            self.search = search
+            return
+        }
+        self.search = try RecorderSearchResultSet(from: decoder)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case search
+    }
+}
+
+private struct RecorderRawApiErrorResponse: Decodable {
+    struct ErrorBody: Decodable {
+        let code: String?
+        let message: String?
+    }
+
+    let error: ErrorBody?
 }
 
 struct RecorderFrameImagePreview: Equatable, Hashable, Identifiable {
@@ -4225,6 +5486,11 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var strategyReportDynamicActivated = false
     @Published private(set) var bipResearch: BipResearchSnapshot = .empty
     @Published private(set) var workHistory: WorkHistorySnapshot = .empty
+    @Published private(set) var recorderPermissionActor: RecorderPermissionActorDiagnostic = AgenticViewModel.currentRecorderPermissionActorDiagnostic()
+    @Published private(set) var recorderPermissionReleaseIdentity: RecorderPermissionReleaseIdentityDiagnostic =
+        AgenticViewModel.currentRecorderPermissionReleaseIdentityDiagnostic(
+            actor: AgenticViewModel.currentRecorderPermissionActorDiagnostic()
+        )
     @Published private(set) var recorderControlState: RecorderControlState?
     @Published private(set) var recorderCaptureReadiness: RecorderCaptureReadiness?
     @Published private(set) var recorderControlRefreshing = false
@@ -4252,6 +5518,16 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var recorderAuditSource: RecorderAuditSource?
     @Published private(set) var recorderAuditRefreshing = false
     @Published private(set) var recorderAuditLastError: String?
+    @Published private(set) var recorderSearchResult: RecorderSearchResultSet?
+    @Published private(set) var recorderSearchRunning = false
+    @Published private(set) var recorderSearchLastError: String?
+    @Published private(set) var recorderSqlQueryResult: RecorderSqlQueryResult?
+    @Published private(set) var recorderSqlQueryRunning = false
+    @Published private(set) var recorderSqlQueryLastError: String?
+    @Published private(set) var recorderMcpGrants: [RecorderMcpGrant] = []
+    @Published private(set) var recorderMcpGrantsRefreshing = false
+    @Published private(set) var recorderMcpGrantActionInFlight: String?
+    @Published private(set) var recorderMcpGrantLastError: String?
     @Published private(set) var recorderPipes: [RecorderPipeDefinition] = []
     @Published private(set) var recorderPipeRuns: [RecorderPipeRun] = []
     @Published private(set) var recorderPipesRefreshing = false
@@ -4259,6 +5535,13 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var recorderPipeSchedulerRunning = false
     @Published private(set) var recorderPipeLastSchedulerResult: RecorderPipeSchedulerResult?
     @Published private(set) var recorderPipeLastError: String?
+    @Published private(set) var recorderDayMemoryLoop: RecorderDayMemoryLoopResult?
+    @Published private(set) var recorderDayMemoryLoopRunning = false
+    @Published private(set) var recorderDayMemoryLoopLastError: String?
+    @Published private(set) var recorderEvidenceCandidateReviewInFlight: Set<String> = []
+    @Published private(set) var recorderRetentionApplyRunning = false
+    @Published private(set) var recorderRetentionLastResult: RecorderRetentionApplyResult?
+    @Published private(set) var recorderRetentionLastError: String?
     @Published private(set) var githubCliAuthStatus: GitHubCLIAuthStatus = .unknown
     // Settings > 연동 live checks (sidecar verifies tokens against the real
     // services: gh auth / PostHog /users/@me / Cloudflare /zones).
@@ -4297,6 +5580,11 @@ final class AgenticViewModel: ObservableObject {
     private var didRecordStartupSessionAppear = false
     private var recorderAutoCaptureTimer: Timer?
     private var recorderAutoCaptureActivationObserver: NSObjectProtocol?
+    #if canImport(ScreenCaptureKit)
+    private var recorderFrameStreamSession: ScreenCaptureKitFrameCaptureSession?
+    #endif
+    private var recorderEventTapTrigger: RecorderEventTapTrigger?
+    private var recorderEventTapLastTriggerAt: Date?
     private let recorderAutoCaptureIntervalSeconds: TimeInterval = 120
     private var recorderAutoCaptureLocallyStopped = false
     private var recorderClipboardCollectorTimer: Timer?
@@ -4316,8 +5604,13 @@ final class AgenticViewModel: ObservableObject {
     private let recorderAudioChunkDurationSeconds: TimeInterval = 30
     private var recorderRawApiStatus: RecorderRawApiStatus?
     private var pendingRecorderFrameImageRequestID: String?
+    private var pendingRecorderSearchQuery: String?
+    private var pendingRecorderSqlQuery: String?
     private var recorderFrameImagePreparedForDisplay = false
     private static let recorderFrameImageClientId = "agentic30-founder-replay"
+    private static let recorderSearchClientId = "agentic30-recorder-redacted-search"
+    private static let recorderSqlInspectorClientId = "agentic30-recorder-sql-inspector"
+    static let recorderMcpRawSqlToolName = "recorder_raw_sql_query"
 
     struct WorkspaceScanResult: Codable, Equatable {
         let icp: String?
@@ -4415,6 +5708,7 @@ final class AgenticViewModel: ObservableObject {
     private var attemptedStartupWorkspaceScanRecoveryRoots = Set<String>()
     #if DEBUG
     static var workspaceScanResultAppSupportURLOverrideForTesting: URL?
+    static var recorderPermissionActorOverrideForTesting: RecorderPermissionActorDiagnostic?
     #endif
     private var workspaceSetupTelemetryGate = WorkspaceSetupTelemetryGate()
     private var requestedInitialBipGate = false
@@ -4745,9 +6039,9 @@ final class AgenticViewModel: ObservableObject {
 
         let arguments = CommandLine.arguments
 
-        #if DEBUG
+        #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
         if Self.isUITesting(arguments: arguments) {
-            if arguments.contains("--ui-testing-reset-onboarding") {
+            if Self.uiTestingFlag("--ui-testing-reset-onboarding", arguments: arguments) {
                 KeychainHelper.deleteMacAuthSession()
                 Self.resetMacOnboardingState()
                 WorkspaceSettings.clear()
@@ -4757,11 +6051,23 @@ final class AgenticViewModel: ObservableObject {
             onboardingContext = Self.makeUITestingOnboardingContext(arguments: arguments)
             macOnboardingIntroCompleted = onboardingContext != nil || Self.loadMacOnboardingIntroCompleted()
             macOnboardingIntakeOnlyCompleted = Self.loadMacOnboardingIntakeOnlyCompleted()
+            if Self.uiTestingFlag("--ui-testing-open-workspace", arguments: arguments) {
+                // A UI-testing launch that opens the workspace directly has completed
+                // onboarding; route past the Intake V2 onboarding flow to the workspace
+                // surface. requiresMacOnboarding = !(hasExplicitWorkspace ||
+                // macOnboardingIntakeOnlyCompleted), and the seeded workspace dir can
+                // live under the test runner's container where hasExplicitWorkspace's
+                // isExistingDirectory check misses it, so assert intake completion
+                // explicitly rather than depending on the seeded directory existing.
+                macOnboardingIntakeOnlyCompleted = true
+            }
             applyUITestingIddSetupSeeds(arguments: arguments)
             if let seededDraft = Self.uiTestingArgumentValue("--ui-testing-seed-draft", arguments: arguments) {
                 draft = seededDraft
             }
+            #if DEBUG
             _ = installUITestingOfficeHoursSeedSessionIfNeeded()
+            #endif
             seedUITestingRailUnlockProgressIfNeeded(arguments: arguments)
         } else if Self.isXCTestHost(arguments: arguments) {
             macAuthSession = nil
@@ -4802,10 +6108,20 @@ final class AgenticViewModel: ObservableObject {
 
         restoreFoundationProgress(arguments: arguments)
         hydrateWorkspaceScanResultFromCacheIfAvailable()
+        #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
+        writeUITestingLaunchDiagnostics(arguments: arguments)
+        #endif
     }
 
     deinit {
         recorderAutoCaptureTimer?.invalidate()
+        #if canImport(ScreenCaptureKit)
+        recorderFrameStreamSession?.stop()
+        recorderFrameStreamSession = nil
+        #endif
+        recorderEventTapTrigger?.stop()
+        recorderEventTapTrigger = nil
+        recorderEventTapLastTriggerAt = nil
         recorderClipboardCollectorTimer?.invalidate()
         recorderMicrophoneChunkTimer?.invalidate()
         recorderMicrophoneRecorder?.stop()
@@ -5282,9 +6598,6 @@ final class AgenticViewModel: ObservableObject {
     }
 
     var requiresMacOnboarding: Bool {
-        if usesInlineUITestStubResponses {
-            return false
-        }
         return !(WorkspaceSettings.hasExplicitWorkspace || macOnboardingIntakeOnlyCompleted)
             || onboardingContext == nil
             || !macOnboardingIntroCompleted
@@ -5381,7 +6694,16 @@ final class AgenticViewModel: ObservableObject {
             return
         }
 
-        if CommandLine.arguments.contains("--ui-testing-disable-sidecar") {
+        #if DEBUG
+        let disablesSidecarForUITesting = Self.uiTestingFlag(
+            "--ui-testing-disable-sidecar",
+            arguments: CommandLine.arguments
+        )
+        #else
+        let disablesSidecarForUITesting = CommandLine.arguments.contains("--ui-testing-disable-sidecar")
+        #endif
+
+        if disablesSidecarForUITesting {
             if usesInlineUITestStubResponses {
                 workspaceRoot = WorkspaceSettings.resolvedURL().path
                 connectionLabel = "Connected (UI test stub)"
@@ -8157,6 +9479,109 @@ final class AgenticViewModel: ObservableObject {
         )
     }
 
+    func requestRecorderPermission(_ permissionID: String) {
+        let normalizedID = permissionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedID.isEmpty else {
+            recorderControlLastError = "ERR_RECORDER_PERMISSION_REQUEST_UNSUPPORTED: empty permission id"
+            return
+        }
+        let supportedPermissionIDs: Set<String> = [
+            "screenRecording",
+            "systemAudio",
+            "accessibility",
+            "inputMonitoring",
+            "microphone",
+        ]
+        guard supportedPermissionIDs.contains(normalizedID) else {
+            recorderControlActionInFlight = nil
+            recorderControlLastError = "ERR_RECORDER_PERMISSION_REQUEST_UNSUPPORTED: \(normalizedID)"
+            return
+        }
+
+        let actor = Self.currentRecorderPermissionActorDiagnostic()
+        recorderPermissionActor = actor
+        guard actor.source == "mainApp" else {
+            recorderControlActionInFlight = nil
+            recorderControlLastError = [
+                "ERR_RECORDER_PERMISSION_ACTOR_MISMATCH: Cannot request \(normalizedID) from actor source \(actor.source).",
+                "actorBundleId=\(actor.bundleIdentifier)",
+                "actorPath=\(actor.bundlePath)",
+                "actorExecutable=\(actor.executablePath)",
+            ].joined(separator: " ")
+            return
+        }
+        guard !actor.isAppTranslocated else {
+            recorderControlActionInFlight = nil
+            recorderControlLastError = [
+                "ERR_RECORDER_PERMISSION_ACTOR_APP_TRANSLOCATED: Cannot request \(normalizedID) while Agentic30 is app-translocated.",
+                "Move Agentic30 to /Applications, relaunch it, then retry.",
+                "actorBundleId=\(actor.bundleIdentifier)",
+                "actorPath=\(actor.bundlePath)",
+                "actorExecutable=\(actor.executablePath)",
+            ].joined(separator: " ")
+            return
+        }
+        let releaseIdentity = Self.currentRecorderPermissionReleaseIdentityDiagnostic(actor: actor)
+        recorderPermissionReleaseIdentity = releaseIdentity
+        if actor.buildChannel == "release" && !releaseIdentity.externalPermissionOnboardingAllowed {
+            recorderControlActionInFlight = nil
+            recorderControlLastError = [
+                "ERR_RECORDER_PERMISSION_RELEASE_IDENTITY_BLOCKED: Cannot request \(normalizedID) for external onboarding until release identity is verified.",
+                "bundleId=\(releaseIdentity.bundleIdentifier)",
+                "expectedBundleId=\(releaseIdentity.expectedBundleIdentifier)",
+                "teamId=\(releaseIdentity.teamIdentifier)",
+                "blockers=\(releaseIdentity.blockers.joined(separator: ","))",
+            ].joined(separator: " ")
+            return
+        }
+
+        recorderControlActionInFlight = "permission_request_\(normalizedID)"
+        recorderControlLastError = nil
+        switch normalizedID {
+        case "screenRecording", "systemAudio":
+            _ = CGRequestScreenCaptureAccess()
+            finishRecorderPermissionRequest(permissionID: normalizedID)
+        case "accessibility":
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+            finishRecorderPermissionRequest(permissionID: normalizedID)
+        case "inputMonitoring":
+            if #available(macOS 10.15, *) {
+                _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+                _ = CGRequestListenEventAccess()
+                finishRecorderPermissionRequest(permissionID: normalizedID)
+            } else {
+                recorderControlActionInFlight = nil
+                recorderControlLastError = "ERR_RECORDER_PERMISSION_REQUEST_UNAVAILABLE: Input Monitoring requires macOS 10.15 or newer."
+            }
+        case "microphone":
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.finishRecorderPermissionRequest(permissionID: normalizedID)
+                }
+            }
+        default:
+            break
+        }
+    }
+
+    private func finishRecorderPermissionRequest(permissionID: String) {
+        PostHogTelemetry.capture(
+            "mac_recorder_permission_request_invoked",
+            properties: ["permission": permissionID],
+            authSession: macAuthSession
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            guard self.isConnected else {
+                self.recorderControlActionInFlight = nil
+                self.recorderControlLastError = "실행 보조 앱이 연결되지 않아 macOS 권한 요청 후 상태를 반영할 수 없습니다."
+                return
+            }
+            self.refreshRecorderPermissionProbe()
+        }
+    }
+
     func prepareRecorderFrameCapturesForDisplay() {
         guard recorderFrameCaptures.isEmpty else { return }
         refreshRecorderFrameCaptures()
@@ -8344,7 +9769,8 @@ final class AgenticViewModel: ObservableObject {
             : "auto_swift_screencapturekit_start"
         recorderAutoCaptureLastTrigger = startTrigger
         installRecorderAutoCaptureTriggers()
-        captureRecorderFrame(trigger: startTrigger, automatic: true)
+        startRecorderEventTapTriggerIfReady()
+        startRecorderFrameStreamForAutoCapture(startTrigger: startTrigger)
         PostHogTelemetry.capture(
             "mac_recorder_auto_capture_started",
             properties: [
@@ -8353,6 +9779,51 @@ final class AgenticViewModel: ObservableObject {
             ],
             authSession: macAuthSession
         )
+    }
+
+    private func startRecorderFrameStreamForAutoCapture(startTrigger: String) {
+        #if canImport(ScreenCaptureKit)
+        guard #available(macOS 14.0, *) else {
+            captureRecorderFrame(trigger: startTrigger, automatic: true)
+            return
+        }
+        stopRecorderFrameStreamSession()
+        Task { [weak self] in
+            do {
+                let session = try await Self.startScreenCaptureKitFrameStreamSession()
+                await MainActor.run {
+                    guard let self else {
+                        session.stop()
+                        return
+                    }
+                    guard self.recorderAutoCaptureRunning else {
+                        session.stop()
+                        return
+                    }
+                    self.recorderFrameStreamSession = session
+                    self.captureRecorderFrame(trigger: startTrigger, automatic: true)
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.recorderAutoCaptureLastError = error.localizedDescription
+                    self.recorderFrameCaptureLastError = error.localizedDescription
+                    self.stopRecorderAutoCapture(
+                        reason: "frame_stream_start_failed",
+                        errorMessage: error.localizedDescription,
+                        locallyStopped: true
+                    )
+                    PostHogTelemetry.captureException(error, properties: [
+                        "component": "agentic_view_model",
+                        "operation": "recorder_frame_stream_start",
+                        "capture_trigger": startTrigger,
+                    ], authSession: self.macAuthSession)
+                }
+            }
+        }
+        #else
+        captureRecorderFrame(trigger: startTrigger, automatic: true)
+        #endif
     }
 
     func stopRecorderAutoCapture() {
@@ -8378,12 +9849,23 @@ final class AgenticViewModel: ObservableObject {
         }
         recorderFrameCaptureInFlight = true
         recorderFrameCaptureLastError = nil
+        #if canImport(ScreenCaptureKit)
+        let frameStreamSession = recorderFrameStreamSession
+        #endif
         Task { [weak self] in
             do {
+                #if canImport(ScreenCaptureKit)
+                let envelope = try await Self.buildScreenCaptureKitFrameEnvelope(
+                    trigger: trigger,
+                    encryptedMedia: automatic,
+                    frameStreamSession: frameStreamSession
+                )
+                #else
                 let envelope = try await Self.buildScreenCaptureKitFrameEnvelope(
                     trigger: trigger,
                     encryptedMedia: automatic
                 )
+                #endif
                 await MainActor.run {
                     self?.sendRecorderFrameCaptureEnvelope(envelope, automatic: automatic)
                 }
@@ -8414,7 +9896,9 @@ final class AgenticViewModel: ObservableObject {
             withTimeInterval: recorderAutoCaptureIntervalSeconds,
             repeats: true
         ) { [weak self] _ in
-            self?.recordRecorderAutoCaptureTrigger("auto_swift_screencapturekit_interval")
+            Task { @MainActor [weak self] in
+                self?.recordRecorderAutoCaptureTrigger("auto_swift_screencapturekit_interval")
+            }
         }
         recorderAutoCaptureTimer?.tolerance = min(15, recorderAutoCaptureIntervalSeconds / 4)
 
@@ -8424,9 +9908,83 @@ final class AgenticViewModel: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.recordRecorderAutoCaptureTrigger("auto_swift_screencapturekit_app_activation")
+                Task { @MainActor [weak self] in
+                    self?.recordRecorderAutoCaptureTrigger("auto_swift_screencapturekit_app_activation")
+                }
             }
         }
+    }
+
+    private func startRecorderEventTapTriggerIfReady() {
+        guard recorderEventTapTrigger == nil else { return }
+        guard Self.recorderEventTapTriggerReady(for: recorderCaptureReadiness) else {
+            recorderAutoCaptureLastTrigger = "event_tap_not_ready"
+            return
+        }
+        guard Self.currentRecorderInputMonitoringPermissionState() == "granted" else {
+            recorderAutoCaptureLastTrigger = "event_tap_permission_missing"
+            return
+        }
+        guard let eventTapConfig = Self.makeRecorderEventTap(onEvent: { [weak self] eventKind in
+            Task { @MainActor [weak self] in
+                self?.recordRecorderEventTapTrigger(eventKind: eventKind)
+            }
+        }) else {
+            recorderAutoCaptureLastError = "ERR_RECORDER_EVENT_TAP_CREATE_FAILED: Input Monitoring/Event Tap permission is granted, but the listen-only event tap could not be created."
+            recorderAutoCaptureLastTrigger = "event_tap_create_failed"
+            return
+        }
+        guard let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTapConfig.eventTap, 0) else {
+            recorderAutoCaptureLastError = "ERR_RECORDER_EVENT_TAP_RUN_LOOP_SOURCE_FAILED: Input Monitoring/Event Tap permission is granted, but the listen-only run loop source could not be created."
+            recorderAutoCaptureLastTrigger = "event_tap_run_loop_source_failed"
+            CFMachPortInvalidate(eventTapConfig.eventTap)
+            return
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        CGEvent.tapEnable(tap: eventTapConfig.eventTap, enable: true)
+        recorderEventTapTrigger = RecorderEventTapTrigger(
+            eventTap: eventTapConfig.eventTap,
+            runLoopSource: runLoopSource,
+            callbackBox: eventTapConfig.callbackBox
+        )
+        recorderEventTapLastTriggerAt = nil
+        PostHogTelemetry.capture(
+            "mac_recorder_event_tap_trigger_started",
+            properties: [
+                "raw_key_capture": false,
+            ],
+            authSession: macAuthSession
+        )
+    }
+
+    private func stopRecorderEventTapTrigger() {
+        recorderEventTapTrigger?.stop()
+        recorderEventTapTrigger = nil
+        recorderEventTapLastTriggerAt = nil
+    }
+
+    private func recordRecorderEventTapTrigger(eventKind: String) {
+        guard recorderAutoCaptureRunning else { return }
+        let now = Date()
+        if let recorderEventTapLastTriggerAt,
+           now.timeIntervalSince(recorderEventTapLastTriggerAt) < 10 {
+            recorderAutoCaptureLastTrigger = "auto_swift_event_tap_\(eventKind)_debounced"
+            return
+        }
+        recorderEventTapLastTriggerAt = now
+        recordRecorderAutoCaptureTrigger("auto_swift_event_tap_\(eventKind)")
+    }
+
+    private func reconcileRecorderEventTapTriggerWithReadiness() {
+        guard recorderAutoCaptureRunning else {
+            stopRecorderEventTapTrigger()
+            return
+        }
+        guard Self.recorderEventTapTriggerReady(for: recorderCaptureReadiness) else {
+            stopRecorderEventTapTrigger()
+            return
+        }
+        startRecorderEventTapTriggerIfReady()
     }
 
     private func recordRecorderAutoCaptureTrigger(_ trigger: String) {
@@ -8448,6 +10006,8 @@ final class AgenticViewModel: ObservableObject {
         if recorderCaptureReadiness?.canRecord == true {
             if !recorderAutoCaptureRunning && !recorderAutoCaptureLocallyStopped {
                 startRecorderAutoCapture(reason: "readiness_auto_arm")
+            } else {
+                reconcileRecorderEventTapTriggerWithReadiness()
             }
             return
         }
@@ -8501,7 +10061,9 @@ final class AgenticViewModel: ObservableObject {
             withTimeInterval: 2,
             repeats: true
         ) { [weak self] _ in
-            self?.pollRecorderClipboardChangeCount()
+            Task { @MainActor [weak self] in
+                self?.pollRecorderClipboardChangeCount()
+            }
         }
         recorderClipboardCollectorTimer?.tolerance = 0.5
     }
@@ -8635,7 +10197,9 @@ final class AgenticViewModel: ObservableObject {
                 withTimeInterval: recorderAudioChunkDurationSeconds,
                 repeats: false
             ) { [weak self] _ in
-                self?.finishRecorderMicrophoneChunk()
+                Task { @MainActor [weak self] in
+                    self?.finishRecorderMicrophoneChunk()
+                }
             }
             recorderMicrophoneChunkTimer?.tolerance = min(5, recorderAudioChunkDurationSeconds / 5)
         } catch {
@@ -8662,6 +10226,12 @@ final class AgenticViewModel: ObservableObject {
         recorderMicrophoneRecorder = nil
         recorderMicrophoneChunkStartedAt = nil
         recorderMicrophoneTempFileURL = nil
+        guard let consentGrantId = recorderAudioConsentGrantId() else {
+            cleanupRecorderMicrophoneChunkFile(url: tempURL)
+            recorderAudioCaptureLastError = "ERR_RECORDER_AUDIO_CONSENT_GRANT_ID_MISSING: recorder audio chunk requires a consent grant id."
+            updateRecorderAudioCaptureRunning()
+            return
+        }
         let endedAt = Date()
         recorderMicrophoneAudioChunkInFlight = true
         updateRecorderAudioCaptureRunning()
@@ -8678,6 +10248,7 @@ final class AgenticViewModel: ObservableObject {
                     startedAt: startedAt,
                     endedAt: endedAt,
                     temporaryFileURL: tempURL,
+                    consentGrantId: consentGrantId,
                     transcript: transcript
                 )
                 await MainActor.run {
@@ -8815,7 +10386,9 @@ final class AgenticViewModel: ObservableObject {
                         withTimeInterval: self.recorderAudioChunkDurationSeconds,
                         repeats: false
                     ) { [weak self] _ in
-                        self?.finishRecorderSystemAudioChunk()
+                        Task { @MainActor [weak self] in
+                            self?.finishRecorderSystemAudioChunk()
+                        }
                     }
                     self.recorderSystemAudioChunkTimer?.tolerance = min(5, self.recorderAudioChunkDurationSeconds / 5)
                 }
@@ -8852,6 +10425,13 @@ final class AgenticViewModel: ObservableObject {
         recorderSystemAudioSession = nil
         recorderSystemAudioChunkStartedAt = nil
         recorderSystemAudioTempFileURL = nil
+        guard let consentGrantId = recorderAudioConsentGrantId() else {
+            session.cancel()
+            cleanupRecorderSystemAudioChunkFile(url: tempURL)
+            recorderAudioCaptureLastError = "ERR_RECORDER_AUDIO_CONSENT_GRANT_ID_MISSING: recorder audio chunk requires a consent grant id."
+            updateRecorderAudioCaptureRunning()
+            return
+        }
         recorderSystemAudioChunkInFlight = true
         updateRecorderAudioCaptureRunning()
 
@@ -8869,6 +10449,7 @@ final class AgenticViewModel: ObservableObject {
                     startedAt: startedAt,
                     endedAt: endedAt,
                     temporaryFileURL: tempURL,
+                    consentGrantId: consentGrantId,
                     transcript: transcript
                 )
                 await MainActor.run {
@@ -9003,6 +10584,13 @@ final class AgenticViewModel: ObservableObject {
         return true
     }
 
+    private func recorderAudioConsentGrantId() -> String? {
+        guard recorderControlState?.consent.status == "granted" else { return nil }
+        let grantId = recorderControlState?.consent.grantId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return grantId?.isEmpty == false ? grantId : nil
+    }
+
     private func stopRecorderAutoCapture(
         reason: String,
         errorMessage: String? = nil,
@@ -9017,6 +10605,8 @@ final class AgenticViewModel: ObservableObject {
 
         recorderAutoCaptureTimer?.invalidate()
         recorderAutoCaptureTimer = nil
+        stopRecorderFrameStreamSession()
+        stopRecorderEventTapTrigger()
         if let recorderAutoCaptureActivationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(recorderAutoCaptureActivationObserver)
             self.recorderAutoCaptureActivationObserver = nil
@@ -9036,6 +10626,13 @@ final class AgenticViewModel: ObservableObject {
             ],
             authSession: macAuthSession
         )
+    }
+
+    private func stopRecorderFrameStreamSession() {
+        #if canImport(ScreenCaptureKit)
+        recorderFrameStreamSession?.stop()
+        recorderFrameStreamSession = nil
+        #endif
     }
 
     private func sendRecorderControlAction(_ action: [String: Any], actionID: String) {
@@ -9138,14 +10735,34 @@ final class AgenticViewModel: ObservableObject {
         if let status = event.recorderRawApi {
             recorderRawApiStatus = status
         }
-        guard let requestedFrameID = pendingRecorderFrameImageRequestID,
-              let token = event.recorderRawApiToken,
-              token.clientId == Self.recorderFrameImageClientId,
-              token.scopes.contains("raw_frame") else {
+        guard let token = event.recorderRawApiToken else {
             return
         }
+        if token.clientId == Self.recorderFrameImageClientId,
+           token.scopes.contains("raw_frame"),
+           let requestedFrameID = pendingRecorderFrameImageRequestID {
+            handleRecorderFrameImageToken(token, status: event.recorderRawApi ?? recorderRawApiStatus, requestedFrameID: requestedFrameID)
+            return
+        }
+        if token.clientId == Self.recorderSearchClientId,
+           token.scopes.contains("search"),
+           let pendingQuery = pendingRecorderSearchQuery {
+            handleRecorderSearchToken(token, status: event.recorderRawApi ?? recorderRawApiStatus, query: pendingQuery)
+            return
+        }
+        if token.clientId == Self.recorderSqlInspectorClientId,
+           token.scopes.contains("raw_sql"),
+           let pendingQuery = pendingRecorderSqlQuery {
+            handleRecorderSqlQueryToken(token, status: event.recorderRawApi ?? recorderRawApiStatus, query: pendingQuery)
+        }
+    }
+
+    private func handleRecorderFrameImageToken(
+        _ token: RecorderRawApiToken,
+        status: RecorderRawApiStatus?,
+        requestedFrameID: String
+    ) {
         pendingRecorderFrameImageRequestID = nil
-        let status = event.recorderRawApi ?? recorderRawApiStatus
         guard let rawApiURL = status?.url.trimmingCharacters(in: .whitespacesAndNewlines),
               !rawApiURL.isEmpty,
               status?.enabled == true else {
@@ -9160,6 +10777,50 @@ final class AgenticViewModel: ObservableObject {
             return
         }
         fetchRecorderFrameImage(frameId: requestedFrameID, rawApiURL: rawApiURL, token: rawToken)
+    }
+
+    private func handleRecorderSearchToken(
+        _ token: RecorderRawApiToken,
+        status: RecorderRawApiStatus?,
+        query: String
+    ) {
+        pendingRecorderSearchQuery = nil
+        guard let rawApiURL = status?.url.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawApiURL.isEmpty,
+              status?.enabled == true else {
+            recorderSearchRunning = false
+            recorderSearchLastError = "Recorder raw API가 준비되지 않아 redacted search를 실행할 수 없습니다."
+            return
+        }
+        let rawToken = token.token
+        guard !rawToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            recorderSearchRunning = false
+            recorderSearchLastError = "search 토큰 응답이 비어 있어 redacted search를 실행할 수 없습니다."
+            return
+        }
+        fetchRecorderSearch(query: query, rawApiURL: rawApiURL, token: rawToken)
+    }
+
+    private func handleRecorderSqlQueryToken(
+        _ token: RecorderRawApiToken,
+        status: RecorderRawApiStatus?,
+        query: String
+    ) {
+        pendingRecorderSqlQuery = nil
+        guard let rawApiURL = status?.url.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawApiURL.isEmpty,
+              status?.enabled == true else {
+            recorderSqlQueryRunning = false
+            recorderSqlQueryLastError = "Recorder raw API가 준비되지 않아 SQL inspector를 실행할 수 없습니다."
+            return
+        }
+        let rawToken = token.token
+        guard !rawToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            recorderSqlQueryRunning = false
+            recorderSqlQueryLastError = "raw_sql 토큰 응답이 비어 있어 SQL inspector를 실행할 수 없습니다."
+            return
+        }
+        fetchRecorderSqlQuery(query: query, rawApiURL: rawApiURL, token: rawToken)
     }
 
     private func fetchRecorderFrameImage(frameId: String, rawApiURL: String, token: String) {
@@ -9177,7 +10838,7 @@ final class AgenticViewModel: ObservableObject {
                 request.httpMethod = "GET"
                 request.setValue("agentic30://app", forHTTPHeaderField: "Origin")
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                request.setValue("frame-image-\(UUID().uuidString.lowercased())", forHTTPHeaderField: "x-request-id")
+                request.setValue("frame-image-\(UUID().uuidString.lowercased())", forHTTPHeaderField: "x-agentic30-recorder-request-id")
                 request.cachePolicy = .reloadIgnoringLocalCacheData
 
                 let (data, response) = try await URLSession.shared.data(for: request)
@@ -9225,6 +10886,283 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
+    func runRecorderSearch(_ query: String) {
+        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanQuery.isEmpty else {
+            recorderSearchLastError = "Recorder search query가 비어 있습니다."
+            return
+        }
+        guard cleanQuery.utf8.count <= 400 else {
+            recorderSearchLastError = "ERR_RECORDER_SEARCH_QUERY_TOO_LARGE: Recorder search query exceeds the 400 byte local search limit."
+            return
+        }
+        guard isConnected else {
+            recorderSearchLastError = "실행 보조 앱이 연결되지 않아 Recorder search 토큰을 요청할 수 없습니다."
+            return
+        }
+        recorderSearchRunning = true
+        recorderSearchLastError = nil
+        pendingRecorderSearchQuery = cleanQuery
+        guard sidecar.send(payload: [
+            "type": "recorder_raw_api_token_issue",
+            "scopes": ["search"],
+            "ttlMs": 60_000,
+            "clientId": Self.recorderSearchClientId,
+            "clientName": "Agentic30 Recorder Redacted Search",
+        ]) else {
+            recorderSearchRunning = false
+            pendingRecorderSearchQuery = nil
+            recorderSearchLastError = "search 토큰 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_search_token_requested",
+            authSession: macAuthSession
+        )
+    }
+
+    private func fetchRecorderSearch(query: String, rawApiURL: String, token: String) {
+        Task { [weak self] in
+            do {
+                guard let baseURL = URL(string: rawApiURL) else {
+                    throw RecorderSearchError.invalidRawApiURL
+                }
+                let endpointURL = baseURL
+                    .appendingPathComponent("recorder")
+                    .appendingPathComponent("search")
+                guard var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false) else {
+                    throw RecorderSearchError.invalidRawApiURL
+                }
+                components.queryItems = [
+                    URLQueryItem(name: "q", value: query),
+                    URLQueryItem(name: "sourceTypes", value: "frame,transcript,memory,product_event"),
+                    URLQueryItem(name: "limit", value: "12"),
+                ]
+                guard let url = components.url else {
+                    throw RecorderSearchError.invalidRawApiURL
+                }
+                var request = URLRequest(url: url)
+                request.httpMethod = "GET"
+                request.setValue("agentic30://app", forHTTPHeaderField: "Origin")
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                request.setValue("search-\(UUID().uuidString.lowercased())", forHTTPHeaderField: "x-agentic30-recorder-request-id")
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw RecorderSearchError.invalidResponse
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    throw Self.recorderRawApiHTTPError(statusCode: http.statusCode, data: data)
+                }
+                let decoded = try JSONDecoder().decode(RecorderSearchResponse.self, from: data)
+                guard let search = decoded.search else {
+                    throw RecorderSearchError.invalidResponse
+                }
+                guard !search.schema.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw RecorderSearchError.invalidResponse
+                }
+                await MainActor.run {
+                    self?.recorderSearchResult = search
+                    self?.recorderSearchRunning = false
+                    self?.recorderSearchLastError = nil
+                    self?.refreshRecorderAuditEvents(limit: 10)
+                }
+            } catch {
+                await MainActor.run {
+                    self?.recorderSearchRunning = false
+                    self?.recorderSearchLastError = error.localizedDescription
+                    PostHogTelemetry.captureException(error, properties: [
+                        "component": "agentic_view_model",
+                        "operation": "recorder_search_fetch",
+                    ], authSession: self?.macAuthSession)
+                }
+            }
+        }
+    }
+
+    func runRecorderSqlQuery(_ query: String) {
+        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanQuery.isEmpty else {
+            recorderSqlQueryLastError = "SQL query가 비어 있습니다."
+            return
+        }
+        guard cleanQuery.utf8.count <= 16_384 else {
+            recorderSqlQueryLastError = "ERR_RECORDER_RAW_API_SQL_QUERY_TOO_LARGE: SQL query exceeds the 16 KB local inspector limit."
+            return
+        }
+        guard isConnected else {
+            recorderSqlQueryLastError = "실행 보조 앱이 연결되지 않아 SQL inspector 토큰을 요청할 수 없습니다."
+            return
+        }
+        recorderSqlQueryRunning = true
+        recorderSqlQueryLastError = nil
+        pendingRecorderSqlQuery = cleanQuery
+        guard sidecar.send(payload: [
+            "type": "recorder_raw_api_token_issue",
+            "scopes": ["raw_sql"],
+            "ttlMs": 60_000,
+            "clientId": Self.recorderSqlInspectorClientId,
+            "clientName": "Agentic30 Recorder SQL Inspector",
+        ]) else {
+            recorderSqlQueryRunning = false
+            pendingRecorderSqlQuery = nil
+            recorderSqlQueryLastError = "raw_sql 토큰 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_sql_query_token_requested",
+            authSession: macAuthSession
+        )
+    }
+
+    private func fetchRecorderSqlQuery(query: String, rawApiURL: String, token: String) {
+        Task { [weak self] in
+            do {
+                guard let baseURL = URL(string: rawApiURL) else {
+                    throw RecorderSqlInspectorError.invalidRawApiURL
+                }
+                let url = baseURL
+                    .appendingPathComponent("recorder")
+                    .appendingPathComponent("sql")
+                    .appendingPathComponent("query")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("agentic30://app", forHTTPHeaderField: "Origin")
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                request.setValue("application/json", forHTTPHeaderField: "content-type")
+                request.setValue("sql-query-\(UUID().uuidString.lowercased())", forHTTPHeaderField: "x-agentic30-recorder-request-id")
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+                request.httpBody = try JSONSerialization.data(withJSONObject: [
+                    "query": query,
+                    "timeoutMs": 2_000,
+                    "includeRawColumns": false,
+                ])
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw RecorderSqlInspectorError.invalidResponse
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    throw Self.recorderRawApiHTTPError(statusCode: http.statusCode, data: data)
+                }
+                let decoded = try JSONDecoder().decode(RecorderSqlQueryResponse.self, from: data)
+                await MainActor.run {
+                    self?.recorderSqlQueryResult = decoded.sql
+                    self?.recorderSqlQueryRunning = false
+                    self?.recorderSqlQueryLastError = nil
+                    self?.refreshRecorderAuditEvents(limit: 10)
+                }
+            } catch {
+                await MainActor.run {
+                    self?.recorderSqlQueryRunning = false
+                    self?.recorderSqlQueryLastError = error.localizedDescription
+                    PostHogTelemetry.captureException(error, properties: [
+                        "component": "agentic_view_model",
+                        "operation": "recorder_sql_query_fetch",
+                    ], authSession: self?.macAuthSession)
+                }
+            }
+        }
+    }
+
+    private static func recorderRawApiHTTPError(statusCode: Int, data: Data) -> Error {
+        if let decoded = try? JSONDecoder().decode(RecorderRawApiErrorResponse.self, from: data),
+           let code = decoded.error?.code?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !code.isEmpty {
+            let message = decoded.error?.message?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return RecorderSqlInspectorError.rawApiRejected(code: code, message: message)
+        }
+        return RecorderSqlInspectorError.httpStatus(statusCode)
+    }
+
+    func prepareRecorderMcpGrantsForDisplay() {
+        guard recorderMcpGrants.isEmpty else { return }
+        refreshRecorderMcpGrants()
+    }
+
+    func refreshRecorderMcpGrants() {
+        guard isConnected else {
+            recorderMcpGrantLastError = "실행 보조 앱이 연결되지 않아 Recorder MCP grant 상태를 불러올 수 없습니다."
+            return
+        }
+        recorderMcpGrantsRefreshing = true
+        recorderMcpGrantLastError = nil
+        guard sidecar.send(payload: [
+            "type": "recorder_mcp_grants_list",
+        ]) else {
+            recorderMcpGrantsRefreshing = false
+            recorderMcpGrantLastError = "Recorder MCP grant 목록 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_mcp_grants_refresh_requested",
+            authSession: macAuthSession
+        )
+    }
+
+    func grantRecorderRawSqlMcpAccess() {
+        guard isConnected else {
+            recorderMcpGrantLastError = "실행 보조 앱이 연결되지 않아 Recorder MCP raw_sql grant를 만들 수 없습니다."
+            return
+        }
+        recorderMcpGrantActionInFlight = "grant_raw_sql"
+        recorderMcpGrantLastError = nil
+        guard sidecar.send(payload: [
+            "type": "recorder_mcp_grant_create",
+            "toolName": Self.recorderMcpRawSqlToolName,
+            "accessLevels": ["raw_sql"],
+            "ttlMs": 5 * 60 * 1000,
+            "reason": "local Founder Replay SQL inspector MCP access",
+        ]) else {
+            recorderMcpGrantActionInFlight = nil
+            recorderMcpGrantLastError = "Recorder MCP raw_sql grant 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_mcp_raw_sql_grant_requested",
+            authSession: macAuthSession
+        )
+    }
+
+    func revokeRecorderMcpGrant(id: String) {
+        let cleanID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanID.isEmpty else { return }
+        guard isConnected else {
+            recorderMcpGrantLastError = "실행 보조 앱이 연결되지 않아 Recorder MCP grant를 revoke할 수 없습니다."
+            return
+        }
+        recorderMcpGrantActionInFlight = cleanID
+        recorderMcpGrantLastError = nil
+        guard sidecar.send(payload: [
+            "type": "recorder_mcp_grant_revoke",
+            "grantId": cleanID,
+        ]) else {
+            recorderMcpGrantActionInFlight = nil
+            recorderMcpGrantLastError = "Recorder MCP grant revoke 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_mcp_grant_revoke_requested",
+            properties: ["tool_name": Self.recorderMcpRawSqlToolName],
+            authSession: macAuthSession
+        )
+    }
+
+    private func replaceRecorderMcpGrants(_ grants: [RecorderMcpGrant]) {
+        recorderMcpGrants = grants.sorted { lhs, rhs in
+            if lhs.active != rhs.active { return lhs.active && !rhs.active }
+            if lhs.expiresAt != rhs.expiresAt { return lhs.expiresAt > rhs.expiresAt }
+            return lhs.id > rhs.id
+        }
+    }
+
+    private func upsertRecorderMcpGrant(_ grant: RecorderMcpGrant) {
+        var next = recorderMcpGrants.filter { $0.id != grant.id }
+        next.append(grant)
+        replaceRecorderMcpGrants(next)
+    }
+
     private func replaceRecorderFrameCaptures(_ frames: [RecorderFrameCaptureReceipt]) {
         recorderFrameCaptures = Array(frames.sorted { lhs, rhs in
             if lhs.capturedAt != rhs.capturedAt { return lhs.capturedAt > rhs.capturedAt }
@@ -9257,13 +11195,15 @@ final class AgenticViewModel: ObservableObject {
 
     private static func buildScreenCaptureKitFrameEnvelope(
         trigger: String,
-        encryptedMedia: Bool = false
+        encryptedMedia: Bool = false,
+        frameStreamSession: ScreenCaptureKitFrameCaptureSession? = nil
     ) async throws -> [String: Any] {
         #if canImport(ScreenCaptureKit)
         if #available(macOS 14.0, *) {
             return try await buildScreenCaptureKitFrameEnvelopeAvailable(
                 trigger: trigger,
-                encryptedMedia: encryptedMedia
+                encryptedMedia: encryptedMedia,
+                frameStreamSession: frameStreamSession
             )
         }
         #endif
@@ -9281,24 +11221,30 @@ final class AgenticViewModel: ObservableObject {
 
     #if canImport(ScreenCaptureKit)
     @available(macOS 14.0, *)
+    private static func startScreenCaptureKitFrameStreamSession() async throws -> ScreenCaptureKitFrameCaptureSession {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first else {
+            throw RecorderFrameCaptureError.noDisplay
+        }
+        return try await ScreenCaptureKitFrameCaptureSession.start(display: display)
+    }
+
+    @available(macOS 14.0, *)
     private static func buildScreenCaptureKitFrameEnvelopeAvailable(
         trigger: String,
-        encryptedMedia: Bool
+        encryptedMedia: Bool,
+        frameStreamSession: ScreenCaptureKitFrameCaptureSession?
     ) async throws -> [String: Any] {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first else {
             throw RecorderFrameCaptureError.noDisplay
         }
-        let filter = SCContentFilter(display: display, excludingWindows: [])
-        let configuration = SCStreamConfiguration()
-        configuration.width = Int(display.width)
-        configuration.height = Int(display.height)
-        configuration.showsCursor = true
-
-        let image = try await SCScreenshotManager.captureImage(
-            contentFilter: filter,
-            configuration: configuration
-        )
+        let image: CGImage
+        if let frameStreamSession {
+            image = try await frameStreamSession.latestFrame(timeout: 5)
+        } else {
+            image = try await ScreenCaptureKitFrameCaptureSession.capture(display: display)
+        }
         let bitmap = NSBitmapImageRep(cgImage: image)
         guard let data = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.78]) else {
             throw RecorderFrameCaptureError.jpegEncodingFailed
@@ -9326,6 +11272,10 @@ final class AgenticViewModel: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let windowTitle = NSApp.keyWindow?.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let runtimeMetadata = currentRecorderRuntimeMetadata()
+        let textExtraction = currentRecorderFrameTextExtraction(from: image)
+        let hasSearchableFrameText = [textExtraction.accessibilityText, textExtraction.ocrText].contains { candidate in
+            candidate?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
         var snapshot: [String: Any] = [
             "id": assetId,
             "relativePath": relativePath,
@@ -9338,7 +11288,7 @@ final class AgenticViewModel: ObservableObject {
             snapshot["encryption"] = encryptedFrameMedia.envelope
         }
 
-        return [
+        var envelope: [String: Any] = [
             "id": frameId,
             "capturedAt": timestamp,
             "monitorId": "display-\(display.displayID)",
@@ -9348,17 +11298,34 @@ final class AgenticViewModel: ObservableObject {
             "browserUrl": runtimeMetadata.browserURL ?? NSNull(),
             "documentPath": runtimeMetadata.documentPath ?? NSNull(),
             "contentHash": digest,
-            "textSource": "screen_capture",
-            "redactionStatus": "not_redacted",
-            "safeForSearch": false,
+            "textSource": textExtraction.textSource,
+            "redactionStatus": hasSearchableFrameText ? "redacted" : "not_redacted",
+            "safeForSearch": hasSearchableFrameText,
             "safeForMemory": false,
             "safeForExport": false,
             "privacyState": "raw_local",
             "dataClass": "screen",
             "snapshot": snapshot,
         ]
+        if let textProvenanceRootCause = textExtraction.textProvenanceRootCause {
+            envelope["textProvenanceRootCause"] = textProvenanceRootCause
+        }
+        if let accessibilityText = textExtraction.accessibilityText {
+            envelope["accessibilityText"] = accessibilityText
+        }
+        if let ocrText = textExtraction.ocrText {
+            envelope["ocrText"] = ocrText
+        }
+        return envelope
     }
     #endif
+
+    private struct RecorderFrameTextExtraction {
+        let textSource: String
+        let textProvenanceRootCause: String?
+        let accessibilityText: String?
+        let ocrText: String?
+    }
 
     private struct RecorderEncryptedMedia {
         let ciphertext: Data
@@ -9395,12 +11362,14 @@ final class AgenticViewModel: ObservableObject {
         let transcriptionTerminalState: String?
         let segments: [RecorderLocalAudioTranscriptSegment]
 
-        nonisolated static func unavailable() -> RecorderLocalAudioTranscript {
+        nonisolated static func unavailable(
+            terminalState: String = "local_unavailable_no_cloud_fallback"
+        ) -> RecorderLocalAudioTranscript {
             RecorderLocalAudioTranscript(
                 status: "local_transcription_unavailable",
                 localTranscriberName: nil,
                 localTranscriberVersion: nil,
-                transcriptionTerminalState: "local_unavailable_no_cloud_fallback",
+                transcriptionTerminalState: terminalState,
                 segments: []
             )
         }
@@ -9454,9 +11423,9 @@ final class AgenticViewModel: ObservableObject {
             lock.unlock()
         }
 
-        func scheduleTimeout(seconds: TimeInterval) {
+        func scheduleTimeout(seconds: TimeInterval, transcript: RecorderLocalAudioTranscript = .unavailable()) {
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) { [weak self] in
-                self?.finish(.unavailable())
+                self?.finish(transcript)
             }
         }
 
@@ -9511,14 +11480,14 @@ final class AgenticViewModel: ObservableObject {
     ) async -> RecorderLocalAudioTranscript {
         #if canImport(Speech)
         guard #available(macOS 10.15, *) else {
-            return .unavailable()
+            return .unavailable(terminalState: "local_unavailable_speech_framework_missing_no_cloud_fallback")
         }
         guard SFSpeechRecognizer.authorizationStatus() == .authorized else {
-            return .unavailable()
+            return .unavailable(terminalState: "local_unavailable_speech_permission_missing_no_cloud_fallback")
         }
         guard let recognizer = SFSpeechRecognizer(locale: Locale.current),
               recognizer.isAvailable else {
-            return .unavailable()
+            return .unavailable(terminalState: "local_unavailable_speech_recognizer_unavailable_no_cloud_fallback")
         }
         let request = SFSpeechURLRecognitionRequest(url: fileURL)
         request.shouldReportPartialResults = false
@@ -9526,7 +11495,9 @@ final class AgenticViewModel: ObservableObject {
 
         return await withCheckedContinuation { continuation in
             let completion = RecorderSpeechRecognitionCompletion(continuation)
-            completion.scheduleTimeout(seconds: 20)
+            completion.scheduleTimeout(seconds: 20, transcript: .unavailable(
+                terminalState: "local_unavailable_speech_timeout_no_cloud_fallback"
+            ))
             let task = recognizer.recognitionTask(with: request) { result, error in
                 if let result, result.isFinal {
                     completion.finish(
@@ -9539,13 +11510,15 @@ final class AgenticViewModel: ObservableObject {
                     return
                 }
                 if error != nil {
-                    completion.finish(.unavailable())
+                    completion.finish(.unavailable(
+                        terminalState: "local_unavailable_speech_recognition_error_no_cloud_fallback"
+                    ))
                 }
             }
             completion.setTask(task)
         }
         #else
-        return .unavailable()
+        return .unavailable(terminalState: "local_unavailable_speech_framework_missing_no_cloud_fallback")
         #endif
     }
 
@@ -9595,6 +11568,7 @@ final class AgenticViewModel: ObservableObject {
         startedAt: Date,
         endedAt: Date,
         temporaryFileURL: URL,
+        consentGrantId: String,
         transcript: RecorderLocalAudioTranscript = .unavailable(),
         recorderRoot: URL = FoundationProgressStore.defaultAppSupportURL()
             .appendingPathComponent("recorder", isDirectory: true)
@@ -9624,7 +11598,7 @@ final class AgenticViewModel: ObservableObject {
             "endedAt": endedTimestamp,
             "source": source,
             "transcriptStatus": transcript.status,
-            "consentGrantId": NSNull(),
+            "consentGrantId": consentGrantId,
             "visibleNoticeId": NSNull(),
             "rawAudioIndicatorState": "visible_indicator_active",
             "localTranscriberName": recorderJsonString(transcript.localTranscriberName),
@@ -9674,14 +11648,258 @@ final class AgenticViewModel: ObservableObject {
         value ?? NSNull()
     }
 
+    private static func currentRecorderPermissionActorDiagnostic() -> RecorderPermissionActorDiagnostic {
+        #if DEBUG
+        if let override = recorderPermissionActorOverrideForTesting {
+            return override
+        }
+        #endif
+        let bundle = Bundle.main
+        let bundleURL = bundle.bundleURL
+        let executableURL = bundle.executableURL
+        let displayName = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? bundleURL.deletingPathExtension().lastPathComponent
+        let signing = recorderPermissionActorSigningSummary(bundleURL: bundleURL)
+        #if DEBUG
+        let buildChannel = "debug"
+        #else
+        let buildChannel = "release"
+        #endif
+        return RecorderPermissionActorDiagnostic(
+            source: "mainApp",
+            displayName: displayName,
+            bundleIdentifier: bundle.bundleIdentifier ?? "unknown",
+            bundlePath: bundleURL.standardizedFileURL.path,
+            executablePath: executableURL?.standardizedFileURL.path ?? "unknown",
+            buildChannel: buildChannel,
+            teamIdentifier: signing.teamIdentifier,
+            signingRequirementSummary: signing.summary,
+            codeDirectoryHashSummary: "unavailable",
+            translocationState: recorderPermissionActorTranslocationState(bundlePath: bundleURL.standardizedFileURL.path)
+        )
+    }
+
+    private static func recorderPermissionActorTranslocationState(bundlePath: String) -> String {
+        bundlePath.contains("/AppTranslocation/") ? "translocated" : "not_translocated"
+    }
+
+    private static func recorderPermissionActorSigningSummary(bundleURL: URL) -> (teamIdentifier: String, summary: String) {
+        var staticCode: SecStaticCode?
+        let status = SecStaticCodeCreateWithPath(bundleURL as CFURL, SecCSFlags(), &staticCode)
+        guard status == errSecSuccess, let staticCode else {
+            return ("unknown", "unavailable_status_\(status)")
+        }
+
+        var info: CFDictionary?
+        let infoStatus = SecCodeCopySigningInformation(
+            staticCode,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &info
+        )
+        guard infoStatus == errSecSuccess, let dict = info as? [String: Any] else {
+            return ("unknown", "unavailable_status_\(infoStatus)")
+        }
+
+        let teamKey = kSecCodeInfoTeamIdentifier as NSString as String
+        let identifierKey = kSecCodeInfoIdentifier as NSString as String
+        let teamIdentifier = dict[teamKey] as? String ?? "unknown"
+        let signingIdentifier = dict[identifierKey] as? String ?? "unknown"
+        if teamIdentifier == "unknown" {
+            return (teamIdentifier, "signed_identifier_\(signingIdentifier)_team_unknown")
+        }
+        return (teamIdentifier, "signed_identifier_\(signingIdentifier)_team_\(teamIdentifier)")
+    }
+
+    private static func currentRecorderPermissionReleaseIdentityDiagnostic(
+        actor: RecorderPermissionActorDiagnostic
+    ) -> RecorderPermissionReleaseIdentityDiagnostic {
+        recorderPermissionReleaseIdentityDiagnostic(
+            actor: actor,
+            sparklePublicKey: Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
+            sparkleFeedURL: Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
+            releasePolicyVerified: recorderPermissionReleasePolicyVerifiedForCurrentBundle(),
+            expectedBundleIdentifier: currentRecorderPermissionExpectedBundleIdentifier()
+        )
+    }
+
+    private static func recorderPermissionReleaseIdentityDiagnostic(
+        actor: RecorderPermissionActorDiagnostic,
+        sparklePublicKey: String?,
+        sparkleFeedURL: String?,
+        releasePolicyVerified: Bool = false,
+        expectedBundleIdentifier: String
+    ) -> RecorderPermissionReleaseIdentityDiagnostic {
+        let bundleIdentifier = actor.bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let buildChannel = actor.buildChannel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let teamIdentifier = actor.teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let signingRequirementSummary = actor.signingRequirementSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSparkleKey = sparklePublicKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let normalizedFeedURL = sparkleFeedURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var blockers: [String] = []
+
+        if bundleIdentifier != expectedBundleIdentifier {
+            blockers.append("bundle_identifier_mismatch")
+        }
+        if buildChannel != "release" {
+            blockers.append("non_release_build_channel")
+        }
+        if teamIdentifier.isEmpty || teamIdentifier == "unknown" {
+            blockers.append("team_identifier_unavailable")
+        }
+        if signingRequirementSummary.isEmpty
+            || signingRequirementSummary == "unknown"
+            || signingRequirementSummary.hasPrefix("unavailable_status_")
+            || signingRequirementSummary.contains("_team_unknown") {
+            blockers.append("designated_requirement_unavailable")
+        }
+        if normalizedSparkleKey.isEmpty || normalizedSparkleKey.contains("$(") {
+            blockers.append("sparkle_public_key_missing")
+        }
+        if normalizedFeedURL.isEmpty || normalizedFeedURL.contains("$(") {
+            blockers.append("sparkle_feed_url_missing")
+        }
+        if !releasePolicyVerified {
+            blockers.append("release_distribution_policy_unverified")
+        }
+
+        return RecorderPermissionReleaseIdentityDiagnostic(
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            bundleIdentifier: bundleIdentifier.isEmpty ? "unknown" : bundleIdentifier,
+            buildChannel: buildChannel.isEmpty ? "unknown" : buildChannel,
+            teamIdentifier: teamIdentifier.isEmpty ? "unknown" : teamIdentifier,
+            signingRequirementSummary: signingRequirementSummary.isEmpty ? "unknown" : signingRequirementSummary,
+            sparklePublicKeyPresent: !normalizedSparkleKey.isEmpty && !normalizedSparkleKey.contains("$("),
+            sparkleFeedURL: normalizedFeedURL.isEmpty ? "unknown" : normalizedFeedURL,
+            releasePolicyVerified: releasePolicyVerified,
+            externalPermissionOnboardingAllowed: blockers.isEmpty,
+            blockers: blockers
+        )
+    }
+
+    private static func currentRecorderPermissionExpectedBundleIdentifier() -> String {
+        let configured = Bundle.main.object(forInfoDictionaryKey: "Agentic30ExpectedPermissionActorBundleIdentifier")
+            as? String
+        let bundleIdentifier = Bundle.main.bundleIdentifier
+        let candidate = configured?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ""
+        if candidate.isEmpty || candidate.contains("$(") {
+            return "unknown"
+        }
+        return candidate
+    }
+
+    private static func recorderPermissionReleasePolicyVerifiedForCurrentBundle() -> Bool {
+        let rawValue = Bundle.main.object(forInfoDictionaryKey: "Agentic30ExternalPermissionOnboardingAllowed")
+        if let boolValue = rawValue as? Bool {
+            return boolValue
+        }
+        guard let stringValue = rawValue as? String else {
+            return false
+        }
+        switch stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes":
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func currentRecorderPermissionProbe() -> [(id: String, state: String)] {
         [
             ("screenRecording", CGPreflightScreenCaptureAccess() ? "granted" : "denied"),
             ("accessibility", AXIsProcessTrusted() ? "granted" : "denied"),
+            ("inputMonitoring", currentRecorderInputMonitoringPermissionState()),
+            ("visionOcr", currentRecorderVisionOcrPermissionState()),
             ("clipboard", "granted"),
             ("microphone", currentRecorderMicrophonePermissionState()),
             ("systemAudio", currentRecorderSystemAudioPermissionState()),
         ]
+    }
+
+    private static func currentRecorderInputMonitoringPermissionState() -> String {
+        if #available(macOS 10.15, *) {
+            guard CGPreflightListenEventAccess() else {
+                return "denied"
+            }
+            return recorderEventTapRuntimeProbeCanCreate() ? "granted" : "denied"
+        }
+        return "unavailable"
+    }
+
+    private static func recorderEventTapTriggerReady(for readiness: RecorderCaptureReadiness?) -> Bool {
+        readiness?.modeReadiness?.eventDrivenCapture?.ready == true
+    }
+
+    #if DEBUG
+    static func recorderEventTapTriggerReadyForTesting(_ readiness: RecorderCaptureReadiness?) -> Bool {
+        recorderEventTapTriggerReady(for: readiness)
+    }
+    #endif
+
+    private static func recorderEventTapRuntimeProbeCanCreate() -> Bool {
+        let keyDownMask = CGEventMask(1) << CGEventType.keyDown.rawValue
+        guard let eventTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: keyDownMask,
+            callback: { _, _, event, _ in
+                Unmanaged.passUnretained(event)
+            },
+            userInfo: nil
+        ) else {
+            return false
+        }
+        CFMachPortInvalidate(eventTap)
+        return true
+    }
+
+    private static func makeRecorderEventTap(
+        onEvent: @escaping @Sendable (String) -> Void
+    ) -> (eventTap: CFMachPort, callbackBox: RecorderEventTapCallbackBox)? {
+        let eventMask =
+            (CGEventMask(1) << CGEventType.keyDown.rawValue)
+            | (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)
+            | (CGEventMask(1) << CGEventType.rightMouseDown.rawValue)
+            | (CGEventMask(1) << CGEventType.otherMouseDown.rawValue)
+            | (CGEventMask(1) << CGEventType.scrollWheel.rawValue)
+        let box = RecorderEventTapCallbackBox(onEvent: onEvent)
+        let userInfo = Unmanaged.passUnretained(box).toOpaque()
+        guard let eventTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: eventMask,
+            callback: { _, type, event, userInfo in
+                if let userInfo {
+                    let box = Unmanaged<RecorderEventTapCallbackBox>
+                        .fromOpaque(userInfo)
+                        .takeUnretainedValue()
+                    box.onEvent(recorderEventTapKindForCaptureTrigger(type))
+                }
+                return Unmanaged.passUnretained(event)
+            },
+            userInfo: userInfo
+        ) else {
+            return nil
+        }
+        return (eventTap, box)
+    }
+
+    private static func currentRecorderVisionOcrPermissionState() -> String {
+        #if canImport(Vision)
+        if #available(macOS 12.0, *) {
+            do {
+                let languages = try VNRecognizeTextRequest().supportedRecognitionLanguages()
+                return languages.isEmpty ? "unavailable" : "granted"
+            } catch {
+                return "unavailable"
+            }
+        }
+        #endif
+        return "unavailable"
     }
 
     private static func currentRecorderMicrophonePermissionState() -> String {
@@ -9706,6 +11924,136 @@ final class AgenticViewModel: ObservableObject {
         }
         #endif
         return "unavailable"
+    }
+
+    private static func currentRecorderFrameTextExtraction(from image: CGImage) -> RecorderFrameTextExtraction {
+        let accessibilitySnapshot = currentRecorderAccessibilityTextSnapshot()
+        let ocrSnapshot = currentRecorderVisionOcrTextSnapshot(from: image)
+        return recorderFrameTextExtraction(
+            accessibilityText: accessibilitySnapshot.text,
+            accessibilityRootCause: accessibilitySnapshot.rootCause,
+            ocrText: ocrSnapshot.text,
+            ocrRootCause: ocrSnapshot.rootCause
+        )
+    }
+
+    private static func recorderFrameTextExtraction(
+        accessibilityText: String?,
+        accessibilityRootCause: String,
+        ocrText: String?,
+        ocrRootCause: String
+    ) -> RecorderFrameTextExtraction {
+        if let accessibilityText,
+           let ocrText {
+            return RecorderFrameTextExtraction(
+                textSource: "ax_plus_ocr",
+                textProvenanceRootCause: nil,
+                accessibilityText: accessibilityText,
+                ocrText: ocrText
+            )
+        }
+        if let accessibilityText {
+            return RecorderFrameTextExtraction(
+                textSource: "accessibility_only",
+                textProvenanceRootCause: nil,
+                accessibilityText: accessibilityText,
+                ocrText: nil
+            )
+        }
+        if let ocrText {
+            return RecorderFrameTextExtraction(
+                textSource: "ocr_only",
+                textProvenanceRootCause: nil,
+                accessibilityText: nil,
+                ocrText: ocrText
+            )
+        }
+        return RecorderFrameTextExtraction(
+            textSource: "ocr_unavailable_named_root_cause",
+            textProvenanceRootCause: recorderFrameTextRootCause(
+                accessibilityRootCause: accessibilityRootCause,
+                ocrRootCause: ocrRootCause
+            ),
+            accessibilityText: nil,
+            ocrText: nil
+        )
+    }
+
+    private static func currentRecorderAccessibilityTextSnapshot() -> (text: String?, rootCause: String) {
+        guard AXIsProcessTrusted() else {
+            return (nil, "accessibility_permission_missing")
+        }
+        guard let app = NSWorkspace.shared.frontmostApplication else {
+            return (nil, "frontmost_application_unavailable")
+        }
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        let focusedElement = axElementAttribute("AXFocusedUIElement", from: appElement)
+        let focusedWindow = axElementAttribute("AXFocusedWindow", from: appElement)
+        let snippets = [focusedElement, focusedWindow, appElement].flatMap(axTextCandidates(from:))
+        guard let text = recorderJoinedTextSnippets(snippets) else {
+            return (nil, "accessibility_text_unavailable")
+        }
+        return (text, "")
+    }
+
+    private static func currentRecorderVisionOcrTextSnapshot(from image: CGImage) -> (text: String?, rootCause: String) {
+        #if canImport(Vision)
+        if #available(macOS 12.0, *) {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            let handler = VNImageRequestHandler(cgImage: image, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                return (nil, "vision_ocr_request_failed")
+            }
+            let snippets = (request.results ?? []).compactMap { observation in
+                observation.topCandidates(1).first?.string
+            }
+            guard let text = recorderJoinedTextSnippets(snippets) else {
+                return (nil, "vision_ocr_no_text_detected")
+            }
+            return (text, "")
+        }
+        #endif
+        return (nil, "vision_ocr_unavailable_on_macos_runtime")
+    }
+
+    private static func recorderFrameTextRootCause(
+        accessibilityRootCause: String,
+        ocrRootCause: String
+    ) -> String {
+        let accessibility = accessibilityRootCause.nonEmpty ?? "accessibility_text_unavailable"
+        let ocr = ocrRootCause.nonEmpty ?? "vision_ocr_unavailable"
+        return "\(accessibility)_and_\(ocr)"
+    }
+
+    private static func axTextCandidates(from element: AXUIElement?) -> [String] {
+        guard let element else { return [] }
+        return [
+            "AXSelectedText",
+            "AXValue",
+            "AXTitle",
+            "AXDescription",
+            "AXHelp",
+        ].compactMap { axStringAttribute($0, from: element) }
+    }
+
+    private static func recorderJoinedTextSnippets(_ snippets: [String]) -> String? {
+        var seen = Set<String>()
+        var normalizedSnippets: [String] = []
+        for snippet in snippets {
+            let normalized = snippet
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty, !seen.contains(normalized) else { continue }
+            seen.insert(normalized)
+            normalizedSnippets.append(normalized)
+        }
+        let joined = normalizedSnippets.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !joined.isEmpty else { return nil }
+        return String(joined.prefix(20_000))
     }
 
     private static func recorderTemporaryAudioFileURL() throws -> URL {
@@ -9736,6 +12084,26 @@ final class AgenticViewModel: ObservableObject {
     }
 
     #if DEBUG
+    static func recorderPermissionActorDiagnosticForTesting() -> RecorderPermissionActorDiagnostic {
+        currentRecorderPermissionActorDiagnostic()
+    }
+
+    static func recorderPermissionReleaseIdentityDiagnosticForTesting(
+        actor: RecorderPermissionActorDiagnostic,
+        sparklePublicKey: String?,
+        sparkleFeedURL: String?,
+        releasePolicyVerified: Bool = false,
+        expectedBundleIdentifier: String = "october-academy.agentic30"
+    ) -> RecorderPermissionReleaseIdentityDiagnostic {
+        recorderPermissionReleaseIdentityDiagnostic(
+            actor: actor,
+            sparklePublicKey: sparklePublicKey,
+            sparkleFeedURL: sparkleFeedURL,
+            releasePolicyVerified: releasePolicyVerified,
+            expectedBundleIdentifier: expectedBundleIdentifier
+        )
+    }
+
     static func recorderBrowserURLAppleScriptSourceForTesting(bundleIdentifier: String) -> String? {
         recorderBrowserURLAppleScriptSource(bundleIdentifier: bundleIdentifier)
     }
@@ -9743,6 +12111,31 @@ final class AgenticViewModel: ObservableObject {
     static func recorderBrowserURLAppleScriptRootCauseForTesting(errorNumber: Int?) -> String {
         let info: NSDictionary? = errorNumber.map { [NSAppleScript.errorNumber: $0] as NSDictionary }
         return recorderBrowserURLAppleScriptRootCause(errorInfo: info)
+    }
+
+    static func recorderFrameTextExtractionForTesting(
+        accessibilityText: String?,
+        accessibilityRootCause: String = "accessibility_text_unavailable",
+        ocrText: String?,
+        ocrRootCause: String = "vision_ocr_unavailable"
+    ) -> (
+        textSource: String,
+        textProvenanceRootCause: String?,
+        accessibilityText: String?,
+        ocrText: String?
+    ) {
+        let extraction = recorderFrameTextExtraction(
+            accessibilityText: accessibilityText,
+            accessibilityRootCause: accessibilityRootCause,
+            ocrText: ocrText,
+            ocrRootCause: ocrRootCause
+        )
+        return (
+            textSource: extraction.textSource,
+            textProvenanceRootCause: extraction.textProvenanceRootCause,
+            accessibilityText: extraction.accessibilityText,
+            ocrText: extraction.ocrText
+        )
     }
 
     func buildEncryptedRecorderMicrophoneAudioChunkForTesting(
@@ -9758,6 +12151,7 @@ final class AgenticViewModel: ObservableObject {
             startedAt: startedAt,
             endedAt: endedAt,
             temporaryFileURL: tempURL,
+            consentGrantId: "recorder-consent-test-grant",
             recorderRoot: recorderRoot
         )
     }
@@ -9775,6 +12169,7 @@ final class AgenticViewModel: ObservableObject {
             startedAt: startedAt,
             endedAt: endedAt,
             temporaryFileURL: tempURL,
+            consentGrantId: "recorder-consent-test-grant",
             recorderRoot: recorderRoot
         )
     }
@@ -9793,12 +12188,35 @@ final class AgenticViewModel: ObservableObject {
             startedAt: startedAt,
             endedAt: endedAt,
             temporaryFileURL: tempURL,
+            consentGrantId: "recorder-consent-test-grant",
             transcript: RecorderLocalAudioTranscript.localComplete(
                 text: transcriptText,
                 startedAt: startedAt,
                 endedAt: endedAt,
                 transcriberName: "agentic30-local-transcriber-test",
                 transcriberVersion: "0.0.0-test"
+            ),
+            recorderRoot: recorderRoot
+        )
+    }
+
+    func buildEncryptedRecorderMicrophoneAudioChunkWithUnavailableTranscriptForTesting(
+        plaintext: Data,
+        transcriptionTerminalState: String,
+        startedAt: Date = Date(timeIntervalSince1970: 1_782_680_400),
+        endedAt: Date = Date(timeIntervalSince1970: 1_782_680_430),
+        recorderRoot: URL
+    ) throws -> [String: Any] {
+        let tempURL = try Self.recorderTemporaryAudioFileURL()
+        try plaintext.write(to: tempURL, options: [.atomic])
+        return try Self.buildEncryptedRecorderAudioChunkEnvelope(
+            source: "microphone",
+            startedAt: startedAt,
+            endedAt: endedAt,
+            temporaryFileURL: tempURL,
+            consentGrantId: "recorder-consent-test-grant",
+            transcript: RecorderLocalAudioTranscript.unavailable(
+                terminalState: transcriptionTerminalState
             ),
             recorderRoot: recorderRoot
         )
@@ -10082,6 +12500,43 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
+    private enum RecorderSearchError: LocalizedError {
+        case invalidRawApiURL
+        case invalidResponse
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidRawApiURL:
+                return "Recorder raw API URL is invalid."
+            case .invalidResponse:
+                return "Recorder redacted search returned a non-HTTP or malformed response."
+            }
+        }
+    }
+
+    private enum RecorderSqlInspectorError: LocalizedError {
+        case invalidRawApiURL
+        case invalidResponse
+        case httpStatus(Int)
+        case rawApiRejected(code: String, message: String?)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidRawApiURL:
+                return "Recorder raw API URL is invalid."
+            case .invalidResponse:
+                return "Recorder SQL inspector returned a non-HTTP response."
+            case .httpStatus(let status):
+                return "Recorder SQL inspector request failed with HTTP \(status)."
+            case .rawApiRejected(let code, let message):
+                if let message, !message.isEmpty {
+                    return "\(code): \(message)"
+                }
+                return code
+            }
+        }
+    }
+
     func prepareRecorderPipesForDisplay() {
         guard recorderPipes.isEmpty && recorderPipeRuns.isEmpty else { return }
         refreshRecorderPipes()
@@ -10137,6 +12592,114 @@ final class AgenticViewModel: ObservableObject {
         PostHogTelemetry.capture(
             "mac_recorder_pipe_run_requested",
             properties: ["pipe_id": cleanPipeId],
+            authSession: macAuthSession
+        )
+    }
+
+    func runRecorderDayMemoryLoop(
+        startedAt: Date? = nil,
+        endedAt: Date? = nil,
+        now: Date = Date(),
+        workspaceId: String? = nil,
+        projectId: String? = nil,
+        persistReviewSnapshot: Bool = true
+    ) {
+        guard isConnected else {
+            recorderDayMemoryLoopLastError = "실행 보조 앱이 연결되지 않아 Day Memory Review를 실행할 수 없습니다."
+            return
+        }
+        let formatter = ISO8601DateFormatter()
+        let end = endedAt ?? (Calendar.current.date(byAdding: .second, value: 1, to: now) ?? now)
+        let start = startedAt ?? (Calendar.current.date(byAdding: .hour, value: -24, to: now) ?? now)
+        recorderDayMemoryLoopRunning = true
+        recorderDayMemoryLoopLastError = nil
+        var payload: [String: Any] = [
+            "type": "recorder_day_memory_loop_run",
+            "startedAt": formatter.string(from: start),
+            "endedAt": formatter.string(from: end),
+            "now": formatter.string(from: now),
+            "persistReviewSnapshot": persistReviewSnapshot,
+            "limit": 2000,
+        ]
+        if let workspaceId = workspaceId?.trimmingCharacters(in: .whitespacesAndNewlines), !workspaceId.isEmpty {
+            payload["workspaceId"] = workspaceId
+        }
+        if let projectId = projectId?.trimmingCharacters(in: .whitespacesAndNewlines), !projectId.isEmpty {
+            payload["projectId"] = projectId
+        }
+        guard sidecar.send(payload: payload) else {
+            recorderDayMemoryLoopRunning = false
+            recorderDayMemoryLoopLastError = "Day Memory Review 실행 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_day_memory_loop_requested",
+            properties: ["persist_review_snapshot": persistReviewSnapshot],
+            authSession: macAuthSession
+        )
+    }
+
+    func reviewRecorderEvidenceCandidate(
+        candidateId: String,
+        decision: String,
+        reason: String? = nil,
+        externalArtifact: [String: Any]? = nil
+    ) {
+        let cleanCandidateID = candidateId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanCandidateID.isEmpty else { return }
+        guard isConnected else {
+            recorderDayMemoryLoopLastError = "실행 보조 앱이 연결되지 않아 Evidence Inbox 후보를 검토할 수 없습니다."
+            return
+        }
+        let cleanDecision = decision.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanDecision.isEmpty else { return }
+        recorderEvidenceCandidateReviewInFlight.insert(cleanCandidateID)
+        recorderDayMemoryLoopLastError = nil
+        var payload: [String: Any] = [
+            "type": "recorder_evidence_candidate_review",
+            "candidateId": cleanCandidateID,
+            "decision": cleanDecision,
+            "now": ISO8601DateFormatter().string(from: Date()),
+        ]
+        if let reason = reason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
+            payload["reason"] = reason
+        }
+        if let externalArtifact {
+            payload["externalArtifact"] = externalArtifact
+        }
+        guard sidecar.send(payload: payload) else {
+            recorderEvidenceCandidateReviewInFlight.remove(cleanCandidateID)
+            recorderDayMemoryLoopLastError = "Evidence Inbox 후보 검토 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_evidence_candidate_review_requested",
+            properties: [
+                "decision": cleanDecision,
+                "has_external_artifact": externalArtifact != nil,
+            ],
+            authSession: macAuthSession
+        )
+    }
+
+    func applyRecorderRetention() {
+        guard isConnected else {
+            recorderRetentionLastError = "실행 보조 앱이 연결되지 않아 Recorder retention을 실행할 수 없습니다."
+            return
+        }
+        recorderRetentionApplyRunning = true
+        recorderRetentionLastError = nil
+        let sent = sidecar.send(payload: [
+            "type": "recorder_retention_apply",
+            "now": ISO8601DateFormatter().string(from: Date()),
+        ])
+        guard sent else {
+            recorderRetentionApplyRunning = false
+            recorderRetentionLastError = "Recorder retention 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_retention_apply_requested",
             authSession: macAuthSession
         )
     }
@@ -12083,6 +14646,12 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
+    static func shouldKeepSidecarConnected(forGlobalErrorMessage message: String?) -> Bool {
+        let value = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.hasPrefix("ERR_RECORDER_PIPE_RUN_CAPTURE_NOT_READY")
+            || value.hasPrefix("ERR_RECORDER_PIPE_SCHEDULER_CAPTURE_NOT_READY")
+    }
+
     private func handle(_ event: SidecarEvent) {
         switch event.type {
         case "sidecar_status":
@@ -12140,6 +14709,9 @@ final class AgenticViewModel: ObservableObject {
             notionConnected = event.notionConnected ?? false
             connectionLabel = "Connected"
             isConnected = true
+            if recorderFrameCaptures.isEmpty && !recorderFrameCapturesRefreshing {
+                refreshRecorderFrameCaptures()
+            }
             PostHogTelemetry.capture("mac_sidecar_ready", properties: [
                 "workspace_basename": ((event.workspaceRoot ?? workspaceRoot) as NSString).lastPathComponent,
                 "session_count": sessions.count,
@@ -12611,6 +15183,18 @@ final class AgenticViewModel: ObservableObject {
             }
             recorderAuditRefreshing = false
             recorderAuditLastError = nil
+        case "recorder_mcp_grants":
+            replaceRecorderMcpGrants(event.recorderMcpGrants ?? [])
+            recorderMcpGrantsRefreshing = false
+            recorderMcpGrantActionInFlight = nil
+            recorderMcpGrantLastError = nil
+        case "recorder_mcp_grant_created", "recorder_mcp_grant_revoked":
+            if let grant = event.recorderMcpGrant {
+                upsertRecorderMcpGrant(grant)
+            }
+            recorderMcpGrantsRefreshing = false
+            recorderMcpGrantActionInFlight = nil
+            recorderMcpGrantLastError = nil
         case "recorder_control_state":
             if let controlState = event.controlState {
                 recorderControlState = controlState
@@ -12691,6 +15275,26 @@ final class AgenticViewModel: ObservableObject {
             } else {
                 recorderPipeLastError = nil
             }
+        case "recorder_day_memory_loop_result":
+            if let dayLoop = event.recorderDayLoop {
+                recorderDayMemoryLoop = dayLoop
+            }
+            recorderDayMemoryLoopRunning = false
+            recorderDayMemoryLoopLastError = nil
+        case "recorder_evidence_candidate_review_result":
+            if let dayLoop = event.recorderDayLoop {
+                recorderDayMemoryLoop = dayLoop
+            }
+            if let candidate = event.recorderEvidenceCandidate {
+                recorderEvidenceCandidateReviewInFlight.remove(candidate.id)
+            } else {
+                recorderEvidenceCandidateReviewInFlight.removeAll()
+            }
+            recorderDayMemoryLoopLastError = nil
+        case "recorder_retention_result":
+            recorderRetentionApplyRunning = false
+            recorderRetentionLastResult = event.recorderRetentionResult
+            recorderRetentionLastError = nil
         case "program_notification_schedule":
             if event.success == false {
                 PostHogTelemetry.captureLog(
@@ -13378,6 +15982,11 @@ final class AgenticViewModel: ObservableObject {
                 pendingRecorderFrameImageRequestID = nil
                 recorderFrameImageLastError = event.message ?? "캡처 이미지 요청이 실패했습니다."
             }
+            if recorderSearchRunning || pendingRecorderSearchQuery != nil {
+                recorderSearchRunning = false
+                pendingRecorderSearchQuery = nil
+                recorderSearchLastError = event.message ?? "Recorder search 요청이 실패했습니다."
+            }
             if recorderAudioChunkInFlight {
                 recorderAudioChunkInFlight = false
                 recorderMicrophoneAudioChunkInFlight = false
@@ -13398,6 +16007,23 @@ final class AgenticViewModel: ObservableObject {
                 recorderPipeActionInFlight.removeAll()
                 recorderPipeLastError = event.message ?? "Recorder Pipe 요청이 실패했습니다."
             }
+            if recorderMcpGrantsRefreshing || recorderMcpGrantActionInFlight != nil {
+                recorderMcpGrantsRefreshing = false
+                recorderMcpGrantActionInFlight = nil
+                recorderMcpGrantLastError = event.message ?? "Recorder MCP grant 요청이 실패했습니다."
+            }
+            if recorderDayMemoryLoopRunning {
+                recorderDayMemoryLoopRunning = false
+                recorderDayMemoryLoopLastError = event.message ?? "Day Memory Review 실행 요청이 실패했습니다."
+            }
+            if !recorderEvidenceCandidateReviewInFlight.isEmpty {
+                recorderEvidenceCandidateReviewInFlight.removeAll()
+                recorderDayMemoryLoopLastError = event.message ?? "Evidence Inbox 후보 검토 요청이 실패했습니다."
+            }
+            if recorderRetentionApplyRunning {
+                recorderRetentionApplyRunning = false
+                recorderRetentionLastError = event.message ?? "Recorder retention 요청이 실패했습니다."
+            }
             if longRunningCompletionAttempts[.bipMission] != nil {
                 completeLongRunningCompletionAttempt(
                     .bipMission,
@@ -13415,7 +16041,8 @@ final class AgenticViewModel: ObservableObject {
             isBipCoachGenerating = false
             isBipCoachCompleting = false
             bipMissionProgress = nil
-            if event.sessionId == nil {
+            if event.sessionId == nil,
+               !Self.shouldKeepSidecarConnected(forGlobalErrorMessage: event.message) {
                 connectionLabel = event.message ?? connectionLabel
                 isConnected = false
                 integrationStatusChecking = false
@@ -13877,6 +16504,13 @@ final class AgenticViewModel: ObservableObject {
                 createdAt: createdAt
             )
         }
+        if CommandLine.arguments.contains("--ui-testing-seed-office-hours-day1-handoff-unblock") {
+            return Self.makeUITestingOfficeHoursDay1HandoffUnblockPrompt(
+                sessionID: requestedSessionID,
+                requestId: "ui-test-office-hours-day1-handoff-unblock",
+                createdAt: createdAt
+            )
+        }
         return Self.makeUITestingOfficeHoursStructuredPrompt(
             sessionID: requestedSessionID,
             requestId: "ui-test-office-hours-request",
@@ -14077,6 +16711,62 @@ final class AgenticViewModel: ObservableObject {
                 signalLabel: "오늘 약속",
                 dimensionStepIndex: 6,
                 dimensionTotal: 6
+            )
+        )
+    }
+
+    private static func makeUITestingOfficeHoursDay1HandoffUnblockPrompt(
+        sessionID requestedSessionID: String,
+        requestId: String,
+        createdAt: Date
+    ) -> StructuredPromptRequest {
+        let prompt = StructuredPromptQuestion(
+            questionId: "day1_clarity_unblock_action",
+            header: "오늘의 해소 행동",
+            question: "아직 모른다면, 오늘 이 정보를 얻기 위해 어떤 사람·채널에서 무엇을 할 건가요?",
+            helperText: "없음/보류를 반복하지 않습니다. 다음 한 행동으로 불명확성을 줄입니다.",
+            options: [
+                StructuredPromptOption(
+                    label: "오늘 찾을 행동 적기",
+                    description: "사람, 채널, 무엇을 할지 한 줄로 적어 이 루프를 닫습니다.",
+                    preview: nil,
+                    nextIntent: "answer_unblock_action",
+                    recommended: true
+                ),
+                StructuredPromptOption(
+                    label: "시간·채널부터 적기",
+                    description: "정확한 후보가 없어도 언제 어디에서 찾을지부터 고정합니다.",
+                    preview: nil,
+                    nextIntent: "answer_unblock_channel"
+                ),
+            ],
+            multiSelect: false,
+            allowFreeText: true,
+            requiresFreeText: false,
+            freeTextPlaceholder: "예: 오늘 18시까지 Threads에서 후보 1명을 찾아 DM 요청 문장을 보냄",
+            primaryTextInput: StructuredPromptPrimaryTextInput(
+                label: "오늘 찾을 사람·채널·행동",
+                placeholder: "예: 오늘 18시까지 Threads에서 후보 1명을 찾아 DM 요청 문장을 보냄",
+                required: true,
+                submitLabel: "해소 행동 제출",
+                validationMessage: "사람·채널·무엇을 할지 한 문장으로 적어야 반복 질문을 닫을 수 있습니다."
+            ),
+            textMode: .short
+        )
+        return StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: requestedSessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours 구체화",
+            createdAt: createdAt,
+            questions: [prompt],
+            generation: StructuredPromptGeneration(
+                mode: "office_hours",
+                docType: "day1_handoff_clarity",
+                signalId: "day1_clarity_unblock_action",
+                signalLabel: "막힌 지점 해소",
+                dimensionStepIndex: 2,
+                dimensionTotal: 5
             )
         )
     }
@@ -14353,7 +17043,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private func seedUITestingRailUnlockProgressIfNeeded(arguments: [String] = CommandLine.arguments) {
-        #if DEBUG
+        #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
         let maxCompletedDay = Self.uiTestingRailUnlockMaxCompletedDay(arguments: arguments)
         guard let maxCompletedDay else { return }
 
@@ -14367,7 +17057,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private static func uiTestingRailUnlockMaxCompletedDay(arguments: [String] = CommandLine.arguments) -> Int? {
-        #if DEBUG
+        #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
         if arguments.contains("--ui-testing-seed-rail-unlocked-through-day3") {
             return 3
         }
@@ -14435,7 +17125,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private static func persistUITestingRailUnlockProgress(_ progress: DayProgress, arguments: [String]) {
-        #if DEBUG
+        #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
         guard let workspacePath = uiTestingArgumentValue("--ui-testing-seed-workspace", arguments: arguments) else {
             return
         }
@@ -16224,7 +18914,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private func applyUITestingIddSetupSeeds(arguments: [String]) {
-        #if DEBUG
+        #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
         guard arguments.contains("--ui-testing-seed-idd-complete") else { return }
         iddSetupComplete = true
         iddSetupStatus = "approved"
@@ -17923,13 +20613,92 @@ final class AgenticViewModel: ObservableObject {
             || arguments.contains(where: { $0.contains(".xctest") })
     }
 
-    #if DEBUG
+    #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
+    private func writeUITestingLaunchDiagnostics(arguments: [String]) {
+        guard let diagnosticsPath = Self.uiTestingArgumentValue(
+            "--ui-testing-diagnostics-path",
+            arguments: arguments
+        )?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !diagnosticsPath.isEmpty else {
+            return
+        }
+
+        let resolvedWorkspacePath = WorkspaceSettings.resolvedURL().path
+        let onboardingMemoryURL = URL(fileURLWithPath: resolvedWorkspacePath, isDirectory: true)
+            .appendingPathComponent(".agentic30", isDirectory: true)
+            .appendingPathComponent("memory", isDirectory: true)
+            .appendingPathComponent("onboarding.json", isDirectory: false)
+        let environment = ProcessInfo.processInfo.environment
+            .filter { key, _ in
+                key.hasPrefix("AGENTIC30_UI_TEST")
+                    || key == "AGENTIC30_APP_SUPPORT_PATH"
+                    || key == "XCTestConfigurationFilePath"
+            }
+            .sorted { lhs, rhs in lhs.key < rhs.key }
+            .reduce(into: [String: String]()) { result, item in
+                result[item.key] = item.value
+            }
+        let defaults = UserDefaults.standard
+        let defaultSnapshot: [String: Any] = [
+            "agentic30.workspaceRoot": defaults.string(forKey: "agentic30.workspaceRoot") ?? "",
+            "agentic30.workspaceRoots.v1": defaults.array(forKey: "agentic30.workspaceRoots.v1") ?? [],
+            Self.macOnboardingIntroCompletedDefaultsKey: defaults.object(forKey: Self.macOnboardingIntroCompletedDefaultsKey) ?? NSNull(),
+            Self.macOnboardingIntakeOnlyCompletedDefaultsKey: defaults.object(forKey: Self.macOnboardingIntakeOnlyCompletedDefaultsKey) ?? NSNull(),
+            IntakeV2Store.stateDefaultsKey: defaults.object(forKey: IntakeV2Store.stateDefaultsKey) == nil ? "absent" : "present",
+            IntakeV2SourceManager.sourcesDefaultsKey: defaults.object(forKey: IntakeV2SourceManager.sourcesDefaultsKey) == nil ? "absent" : "present",
+        ]
+        let payload: [String: Any] = [
+            "schemaVersion": 1,
+            "writtenAt": ISO8601DateFormatter().string(from: Date()),
+            "processIdentifier": ProcessInfo.processInfo.processIdentifier,
+            "bundleIdentifier": Bundle.main.bundleIdentifier ?? "",
+            "arguments": arguments,
+            "uiTesting": Self.isUITesting(arguments: arguments),
+            "environment": environment,
+            "defaults": defaultSnapshot,
+            "workspaceSettings": [
+                "hasExplicitWorkspace": WorkspaceSettings.hasExplicitWorkspace,
+                "resolvedPath": resolvedWorkspacePath,
+            ],
+            "viewModel": [
+                "workspaceRoot": workspaceRoot,
+                "onboardingContextPresent": onboardingContext != nil,
+                "macAuthSessionPresent": macAuthSession != nil,
+                "macOnboardingIntroCompleted": macOnboardingIntroCompleted,
+                "macOnboardingIntakeOnlyCompleted": macOnboardingIntakeOnlyCompleted,
+                "requiresMacOnboarding": requiresMacOnboarding,
+                "needsOnboardingContext": needsOnboardingContext,
+            ],
+            "files": [
+                "onboardingMemoryPath": onboardingMemoryURL.path,
+                "onboardingMemoryExists": FileManager.default.fileExists(atPath: onboardingMemoryURL.path),
+            ],
+        ]
+
+        do {
+            let diagnosticsURL = URL(fileURLWithPath: diagnosticsPath, isDirectory: false)
+            try FileManager.default.createDirectory(
+                at: diagnosticsURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: diagnosticsURL, options: [.atomic])
+        } catch {
+            let message = "Agentic30 UI testing launch diagnostics write failed: \(error)\n"
+            if let data = message.data(using: .utf8) {
+                FileHandle.standardError.write(data)
+            }
+        }
+    }
+
     private static func isUITesting(arguments: [String]) -> Bool {
         arguments.contains(where: { $0.hasPrefix("--ui-testing-") })
+            || ProcessInfo.processInfo.environment["AGENTIC30_UI_TESTING"] == "1"
     }
 
     private static func makeUITestingMacAuthSession(arguments: [String]) -> MacAuthSession? {
-        if arguments.contains("--ui-testing-seed-auth") {
+        if uiTestingFlag("--ui-testing-seed-auth", arguments: arguments) {
             let now = ISO8601DateFormatter().string(from: Date())
             return MacAuthSession(
                 accessToken: "ui-test-access-token",
@@ -17949,7 +20718,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private static func makeUITestingOnboardingContext(arguments: [String]) -> OnboardingContext? {
-        guard arguments.contains("--ui-testing-seed-onboarding-context") else { return nil }
+        guard uiTestingFlag("--ui-testing-seed-onboarding-context", arguments: arguments) else { return nil }
         return OnboardingContext.make(
             businessDescription: "Agentic30 직접 사용 워크스페이스",
             currentStage: "First users and onboarding validation",
@@ -17969,7 +20738,8 @@ final class AgenticViewModel: ObservableObject {
                 attributes: nil
             )
             WorkspaceSettings.store(url)
-            if arguments.contains("--ui-testing-disable-sidecar") || arguments.contains("--ui-testing-seed-workspace-scan-cache") {
+            if uiTestingFlag("--ui-testing-disable-sidecar", arguments: arguments)
+                || uiTestingFlag("--ui-testing-seed-workspace-scan-cache", arguments: arguments) {
                 WorkspaceScanResultStore(workspaceRoot: workspacePath).save(makeUITestingWorkspaceScanResult(arguments: arguments))
             }
         }
@@ -18266,9 +21036,32 @@ final class AgenticViewModel: ObservableObject {
         guard let index = arguments.firstIndex(of: name),
               arguments.indices.contains(index + 1)
         else {
-            return nil
+            return uiTestingEnvironmentValue(for: name)
         }
         return arguments[index + 1]
+    }
+
+    private static func uiTestingFlag(_ name: String, arguments: [String]) -> Bool {
+        if arguments.contains(name) { return true }
+        guard let value = uiTestingEnvironmentValue(for: name) else { return false }
+        return ["1", "true", "yes", "on"].contains(value.lowercased())
+    }
+
+    private static func uiTestingEnvironmentValue(for argument: String) -> String? {
+        let key = uiTestingEnvironmentKey(for: argument)
+        guard let value = ProcessInfo.processInfo.environment[key],
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    private static func uiTestingEnvironmentKey(for argument: String) -> String {
+        let trimmed = argument.hasPrefix("--") ? String(argument.dropFirst(2)) : argument
+        let normalized = trimmed
+            .replacingOccurrences(of: "-", with: "_")
+            .uppercased()
+        return "AGENTIC30_\(normalized)"
     }
 
     #endif
@@ -18568,7 +21361,7 @@ struct FoundationProgressStore {
         try? FileManager.default.removeItem(at: fileURL)
     }
 
-    static func defaultAppSupportURL() -> URL {
+    nonisolated static func defaultAppSupportURL() -> URL {
         if let override = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !override.isEmpty {
@@ -18807,7 +21600,15 @@ private extension AgenticViewModel {
     func restoreFoundationProgress(arguments: [String]) {
         ensureFoundationProgressStore()
         guard let store = foundationProgressStore else { return }
-        if arguments.contains("--ui-testing-reset-onboarding") {
+        #if DEBUG
+        let resetsOnboardingForUITesting = Self.uiTestingFlag(
+            "--ui-testing-reset-onboarding",
+            arguments: arguments
+        )
+        #else
+        let resetsOnboardingForUITesting = arguments.contains("--ui-testing-reset-onboarding")
+        #endif
+        if resetsOnboardingForUITesting {
             store.clear()
             UserDefaults.standard.removeObject(forKey: Self.kFoundationStartedAtKey)
         }
@@ -19118,12 +21919,17 @@ struct SidecarEvent: Decodable {
     let recorderRawApi: RecorderRawApiStatus?
     let recorderRawApiToken: RecorderRawApiToken?
     let recorderAuditSource: RecorderAuditSource?
+    let recorderMcpGrants: [RecorderMcpGrant]?
+    let recorderMcpGrant: RecorderMcpGrant?
     let pipes: [RecorderPipeDefinition]?
     let runs: [RecorderPipeRun]?
     let pipeRun: RecorderPipeRun?
     let scheduler: RecorderPipeSchedulerResult?
     let enqueueResult: RecorderPipeSchedulerResult?
     let drainResult: RecorderPipeSchedulerResult?
+    let recorderDayLoop: RecorderDayMemoryLoopResult?
+    let recorderEvidenceCandidate: RecorderEvidenceCandidateSummary?
+    let recorderRetentionResult: RecorderRetentionApplyResult?
     let dayClosePolicy: OfficeHoursDayClosePolicy?
     let programNotificationSchedule: ProgramNotificationSchedule?
     // Interview-gate block fields (day_progress_state): when the founder tries to close a
@@ -19982,12 +22788,17 @@ struct SidecarEvent: Decodable {
         self.recorderRawApi = nil
         self.recorderRawApiToken = nil
         self.recorderAuditSource = nil
+        self.recorderMcpGrants = nil
+        self.recorderMcpGrant = nil
         self.pipes = nil
         self.runs = nil
         self.pipeRun = nil
         self.scheduler = nil
         self.enqueueResult = nil
         self.drainResult = nil
+        self.recorderDayLoop = nil
+        self.recorderEvidenceCandidate = nil
+        self.recorderRetentionResult = nil
         self.dayClosePolicy = dayClosePolicy
         self.programNotificationSchedule = programNotificationSchedule
         self.needsCommitment = needsCommitment
@@ -20423,12 +23234,21 @@ extension SidecarEvent {
         case recorderRawApiToken = "token"
         case recorderAuditSource
         case recorderAuditSourceSnake = "recorder_audit_source"
+        case recorderMcpGrants = "grants"
+        case recorderMcpGrant = "grant"
         case pipes
         case runs
         case pipeRun
+        case pipeRunSnake = "pipe_run"
         case scheduler
         case enqueueResult
+        case enqueueResultSnake = "enqueue_result"
         case drainResult
+        case drainResultSnake = "drain_result"
+        case dayLoop
+        case dayLoopSnake = "day_loop"
+        case recorderEvidenceCandidate = "candidate"
+        case recorderEvidenceCandidateSnake = "evidence_candidate"
         case dayClosePolicy
         case programNotificationSchedule
         case needsCommitment
@@ -20584,12 +23404,24 @@ extension SidecarEvent {
         recorderRawApiToken = Self.decodeIfPresent(RecorderRawApiToken.self, from: container, forKey: .recorderRawApiToken)
         recorderAuditSource = Self.decodeIfPresent(RecorderAuditSource.self, from: container, forKey: .recorderAuditSource)
             ?? Self.decodeIfPresent(RecorderAuditSource.self, from: container, forKey: .recorderAuditSourceSnake)
+        recorderMcpGrants = Self.decodeIfPresent([RecorderMcpGrant].self, from: container, forKey: .recorderMcpGrants)
+        recorderMcpGrant = Self.decodeIfPresent(RecorderMcpGrant.self, from: container, forKey: .recorderMcpGrant)
         pipes = Self.decodeIfPresent([RecorderPipeDefinition].self, from: container, forKey: .pipes)
         runs = Self.decodeIfPresent([RecorderPipeRun].self, from: container, forKey: .runs)
         pipeRun = Self.decodeIfPresent(RecorderPipeRun.self, from: container, forKey: .pipeRun)
+            ?? Self.decodeIfPresent(RecorderPipeRun.self, from: container, forKey: .pipeRunSnake)
         scheduler = Self.decodeIfPresent(RecorderPipeSchedulerResult.self, from: container, forKey: .scheduler)
         enqueueResult = Self.decodeIfPresent(RecorderPipeSchedulerResult.self, from: container, forKey: .enqueueResult)
+            ?? Self.decodeIfPresent(RecorderPipeSchedulerResult.self, from: container, forKey: .enqueueResultSnake)
         drainResult = Self.decodeIfPresent(RecorderPipeSchedulerResult.self, from: container, forKey: .drainResult)
+            ?? Self.decodeIfPresent(RecorderPipeSchedulerResult.self, from: container, forKey: .drainResultSnake)
+        recorderDayLoop = Self.decodeIfPresent(RecorderDayMemoryLoopResult.self, from: container, forKey: .dayLoop)
+            ?? Self.decodeIfPresent(RecorderDayMemoryLoopResult.self, from: container, forKey: .dayLoopSnake)
+        recorderEvidenceCandidate = Self.decodeIfPresent(RecorderEvidenceCandidateSummary.self, from: container, forKey: .recorderEvidenceCandidate)
+            ?? Self.decodeIfPresent(RecorderEvidenceCandidateSummary.self, from: container, forKey: .recorderEvidenceCandidateSnake)
+        recorderRetentionResult = type == "recorder_retention_result"
+            ? try? RecorderRetentionApplyResult(from: decoder)
+            : nil
         dayClosePolicy = Self.decodeIfPresent(OfficeHoursDayClosePolicy.self, from: container, forKey: .dayClosePolicy)
         programNotificationSchedule = Self.decodeIfPresent(ProgramNotificationSchedule.self, from: container, forKey: .programNotificationSchedule)
         needsCommitment = Self.decodeIfPresent(Bool.self, from: container, forKey: .needsCommitment)

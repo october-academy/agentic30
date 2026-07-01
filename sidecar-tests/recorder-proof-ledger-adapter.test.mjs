@@ -176,3 +176,130 @@ test("normalizeRecorderProofCandidate rejects non-proof sources for customer, ac
     "ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE",
   );
 });
+
+test("normalizeRecorderProofCandidate fails closed when a protected gate has no external source kinds", () => {
+  // Empty source kinds must not skip the gate (corrupt plain-string source rows).
+  assertAdapterCode(
+    () => normalizeRecorderProofCandidate(baseCandidate({
+      proofKind: "customer_evidence",
+      targetGate: "customer_evidence",
+      sourceIds: ["frame:1", "memory:2"],
+      sourceKinds: [],
+    })),
+    "ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE",
+  );
+  // A single unknown/garbage source kind must not satisfy the gate.
+  assertAdapterCode(
+    () => normalizeRecorderProofCandidate(baseCandidate({
+      proofKind: "active_user_progress",
+      targetGate: "active_user",
+      sourceKinds: ["banana"],
+    })),
+    "ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE",
+  );
+  // Recorder-only legacy sources (recorder_source) are not external proof.
+  assertAdapterCode(
+    () => normalizeRecorderProofCandidate(baseCandidate({
+      proofKind: "revenue_proof",
+      targetGate: "revenue",
+      sourceKinds: ["recorder_source"],
+    })),
+    "ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE",
+  );
+});
+
+test("normalizeRecorderProofCandidate accepts a protected gate with allowlisted external evidence", () => {
+  // Mirrors the legit approve path: external_evidence marker + known evidence kind,
+  // even when recorder-only sources are also present.
+  const normalized = normalizeRecorderProofCandidate(baseCandidate({
+    proofKind: "customer_evidence",
+    targetGate: "customer_evidence",
+    sourceIds: [
+      { id: "artifact-1", source_kind: "customer_reply", source_type: "external_evidence" },
+      { id: "frame:1", source_kind: "recorder_source", source_type: "recorder_source" },
+    ],
+    sourceKinds: undefined,
+  }));
+  assert.equal(normalized.proofKind, "customer_evidence");
+  assert.equal(normalized.targetGate, "customer_evidence");
+  assert.ok(normalized.sourceKinds.includes("external_evidence"));
+});
+
+test("normalizeRecorderProofCandidate protects revenue/customer proof EVENT TYPES even when targetGate/proofKind are unprotected", () => {
+  // Forge attempt #1 (revenue): omit targetGate and use a non-protected proofKind,
+  // but write an accepted payment_record event from recorder-only sources.
+  assertAdapterCode(
+    () => normalizeRecorderProofCandidate(baseCandidate({
+      proofKind: "action_evidence",
+      sourceIds: ["frame:1", "memory:2", "product_event:3"],
+      sourceKinds: ["raw_frame", "memory_summary", "product_event"],
+      proofLedgerMapping: { event: { type: "payment_record", status: "accepted", strength: "strong" } },
+      // no targetGate set anywhere
+    })),
+    "ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE",
+  );
+  // Forge attempt #2 (customer): dm_ask event with a targetGate outside PROTECTED_GATE_TARGETS.
+  assertAdapterCode(
+    () => normalizeRecorderProofCandidate(baseCandidate({
+      proofKind: "action_evidence",
+      targetGate: "paying_customer",
+      sourceIds: ["transcript:1"],
+      sourceKinds: ["transcript_hit"],
+      proofLedgerMapping: { event: { type: "dm_ask", status: "accepted", strength: "strong" } },
+    })),
+    "ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE",
+  );
+  // Legit: the same protected event type with external accepted evidence still writes.
+  const normalized = normalizeRecorderProofCandidate(baseCandidate({
+    proofKind: "action_evidence",
+    sourceIds: [{ id: "receipt-1", source_kind: "payment_receipt", source_type: "external_evidence" }],
+    sourceKinds: ["external_evidence"],
+    proofLedgerMapping: { event: { type: "payment_record", status: "accepted", strength: "strong" } },
+  }));
+  assert.equal(normalized.proofEvent.type, "payment_record");
+  assert.ok(normalized.sourceKinds.includes("external_evidence"));
+});
+
+test("normalizeRecorderProofCandidate fail-closed protects gate-advancing event types (traffic_snapshot G5, interview G1/G2) from recorder-only sources", () => {
+  // traffic_snapshot drives the G5 first-external-traffic acquisition gate; a
+  // recorder-only screen capture must not forge it (metadata.observed defaults true).
+  assertAdapterCode(
+    () => normalizeRecorderProofCandidate(baseCandidate({
+      proofKind: "action_evidence",
+      sourceIds: ["rec-1"],
+      sourceKinds: ["screen_recording"],
+      proofLedgerMapping: { event: { type: "traffic_snapshot", status: "accepted", strength: "strong", metadata: { observed: true } } },
+    })),
+    "ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE",
+  );
+  // Same with no metadata at all (observed defaults true downstream in the gate engine).
+  assertAdapterCode(
+    () => normalizeRecorderProofCandidate(baseCandidate({
+      proofKind: "action_evidence",
+      sourceIds: ["rec-2"],
+      sourceKinds: ["ocr_text"],
+      proofLedgerMapping: { event: { type: "traffic_snapshot", status: "complete", strength: "weak" } },
+    })),
+    "ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE",
+  );
+  // interview drives G1/G2 interview_strong_evidence; recorder-only audio must not forge it.
+  assertAdapterCode(
+    () => normalizeRecorderProofCandidate(baseCandidate({
+      proofKind: "action_evidence",
+      sourceIds: ["rec-3"],
+      sourceKinds: ["audio_transcript"],
+      proofLedgerMapping: { event: { type: "interview", status: "verified", strength: "strong" } },
+    })),
+    "ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE",
+  );
+  // Not over-blocked: a self-reportable internal milestone (work_log) from
+  // recorder-only sources is still accepted — recorder data is valid INPUT; the
+  // boundary only blocks recorder-only customer/active/revenue/foundation PROOF.
+  const normalized = normalizeRecorderProofCandidate(baseCandidate({
+    proofKind: "action_evidence",
+    sourceIds: ["rec-4"],
+    sourceKinds: ["screen_recording"],
+    proofLedgerMapping: { event: { type: "work_log", status: "complete", strength: "weak" } },
+  }));
+  assert.equal(normalized.proofEvent.type, "work_log");
+});

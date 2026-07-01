@@ -43,7 +43,7 @@ function envelope(overrides = {}) {
       encrypted: false,
     },
     text: {
-      textSource: "accessibility",
+      textSource: "ax_plus_ocr",
       accessibilityText: "raw customer@example.com secret token",
       ocrText: "raw OCR",
       redactedText: "customer reply activation friction",
@@ -74,13 +74,19 @@ test("recordFrameCaptureEnvelope writes media and frame rows with redacted FTS o
     assert.equal(result.mediaAsset.relative_path, "media/frames/2026-06-27/frame-1.jpg");
     assert.equal(result.frame.browser_domain, "example.com");
     assert.equal(result.frame.browser_url_normalized, "https://example.com/customer");
+    assert.equal(result.frame.browser_url_search_label, "example.com");
+    assert.equal(result.frame.text_source, "ax_plus_ocr");
+    assert.equal(result.frame.text_provenance_root_cause, null);
 
     const frame = store.getRecord("frames", "frame-1");
     const media = store.getRecord("media_assets", "asset-1");
     assert.equal(frame.snapshot_asset_id, "asset-1");
+    assert.equal(frame.text_source, "ax_plus_ocr");
     assert.equal(media.sha256, "sha256:snapshot");
 
     assert.equal(store.search("activation friction").length, 1);
+    assert.equal(store.search("example.com").length, 1);
+    assert.equal(store.search("private").length, 0);
     assert.equal(store.search("customer@example.com").length, 0);
   } finally {
     store.close();
@@ -92,7 +98,7 @@ test("normalizeFrameCaptureEnvelope rejects unsafe search indexing without redac
     () => normalizeFrameCaptureEnvelope(envelope({
       safeForSearch: true,
       text: {
-        textSource: "accessibility",
+        textSource: "accessibility_only",
         accessibilityText: "raw only",
         redactionStatus: "raw",
       },
@@ -100,6 +106,134 @@ test("normalizeFrameCaptureEnvelope rejects unsafe search indexing without redac
     (error) => error instanceof RecorderIngestError
       && error.code === "ERR_RECORDER_INGEST_SEARCH_REQUIRES_REDACTED_TEXT",
   );
+});
+
+test("normalizeFrameCaptureEnvelope derives redacted public text for safe local AX/OCR search sinks", async () => {
+  const { store } = await makeStore();
+  try {
+    const result = recordFrameCaptureEnvelope(store, envelope({
+      id: "frame-redaction-adapter",
+      safeForSearch: true,
+      safeForMemory: false,
+      safeForExport: false,
+      browserUrl: "https://private.example.com/customer/secret-path?token=raw",
+      snapshot: {
+        id: "asset-redaction-adapter",
+        relativePath: "media/frames/2026-06-27/frame-redaction-adapter.jpg",
+        sha256: "sha256:redaction-adapter",
+        byteSize: 12345,
+        encrypted: false,
+      },
+      text: {
+        textSource: "accessibility_only",
+        accessibilityText: "Customer customer@example.com opened https://private.example.com/customer/secret-path token=local-sensitive-token-value from /Users/october/secret.txt and asked about activation friction.",
+        redactionStatus: "redacted",
+      },
+    }));
+
+    assert.equal(result.frame.redaction_status, "redacted");
+    assert.match(result.frame.redacted_text, /activation friction/);
+    assert.match(result.frame.redacted_text, /\[redacted-email\]/);
+    assert.match(result.frame.redacted_text, /\[redacted-secret\]/);
+    assert.match(result.frame.redacted_text, /\[redacted-path\]/);
+    assert.equal(result.frame.redacted_text.includes("customer@example.com"), false);
+    assert.equal(result.frame.redacted_text.includes("/Users/october"), false);
+    assert.equal(result.frame.redacted_text.includes("secret-path"), false);
+
+    assert.equal(store.search("activation friction").length, 1);
+    assert.equal(store.search("customer@example.com").length, 0);
+    assert.equal(store.search("secret-path").length, 0);
+    assert.equal(store.search("local-sensitive-token-value").length, 0);
+  } finally {
+    store.close();
+  }
+});
+
+test("normalizeFrameCaptureEnvelope fails closed when safe sinks lack text to redact", () => {
+  assert.throws(
+    () => normalizeFrameCaptureEnvelope(envelope({
+      safeForSearch: true,
+      text: {
+        textSource: "ocr_unavailable_named_root_cause",
+        textProvenanceRootCause: "vision_ocr_unavailable_named_root_cause",
+        redactionStatus: "redacted",
+      },
+    })),
+    (error) => error instanceof RecorderIngestError
+      && error.code === "ERR_RECORDER_INGEST_REDACTION_INPUT_REQUIRED",
+  );
+});
+
+test("normalizeFrameCaptureEnvelope rejects unsafe supplied public redaction before receipt exposure", () => {
+  assert.throws(
+    () => normalizeFrameCaptureEnvelope(envelope({
+      safeForSearch: false,
+      safeForMemory: false,
+      safeForExport: false,
+      text: {
+        textSource: "accessibility_only",
+        accessibilityText: "raw local frame text",
+        redactedText: "caller supplied https://private.example.test/customer/secret from /Users/october/private-note.md",
+        redactionStatus: "redacted",
+      },
+    })),
+    (error) => error instanceof RecorderIngestError
+      && error.code === "ERR_RECORDER_REDACTION_POLICY_UNSAFE_PUBLIC_LOCATOR",
+  );
+});
+
+test("normalizeFrameCaptureEnvelope rejects non-canonical text provenance states", () => {
+  assert.throws(
+    () => normalizeFrameCaptureEnvelope(envelope({
+      text: {
+        textSource: "screen_capture",
+        redactionStatus: "not_redacted",
+      },
+    })),
+    (error) => error instanceof RecorderIngestError
+      && error.code === "ERR_RECORDER_INGEST_INVALID_TEXT_PROVENANCE",
+  );
+
+  assert.throws(
+    () => normalizeFrameCaptureEnvelope(envelope({
+      text: {
+        textSource: "accessibility_only",
+        accessibilityText: "raw AX",
+        ocrText: "raw OCR",
+        redactedText: "redacted",
+        redactionStatus: "redacted",
+      },
+    })),
+    (error) => error instanceof RecorderIngestError
+      && error.code === "ERR_RECORDER_INGEST_TEXT_PROVENANCE_MISMATCH",
+  );
+});
+
+test("normalizeFrameCaptureEnvelope requires named root cause when OCR is unavailable", () => {
+  assert.throws(
+    () => normalizeFrameCaptureEnvelope(envelope({
+      safeForSearch: false,
+      text: {
+        textSource: "ocr_unavailable_named_root_cause",
+        redactionStatus: "not_redacted",
+      },
+    })),
+    (error) => error instanceof RecorderIngestError
+      && error.code === "ERR_RECORDER_INGEST_OCR_UNAVAILABLE_ROOT_CAUSE_REQUIRED",
+  );
+
+  const normalized = normalizeFrameCaptureEnvelope(envelope({
+    safeForSearch: false,
+    text: {
+      textSource: "ocr_unavailable_named_root_cause",
+      textProvenanceRootCause: "vision_ocr_unavailable_named_root_cause",
+      redactionStatus: "not_redacted",
+    },
+  }));
+  assert.equal(normalized.frame.text_source, "ocr_unavailable_named_root_cause");
+  assert.equal(normalized.frame.text_provenance_root_cause, "vision_ocr_unavailable_named_root_cause");
+  assert.equal(normalized.frame.accessibility_text, null);
+  assert.equal(normalized.frame.ocr_text, null);
 });
 
 test("normalizeFrameCaptureEnvelope rejects frame media paths outside recorder media", () => {

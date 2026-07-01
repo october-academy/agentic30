@@ -43,7 +43,7 @@ done
 fail() { echo "❌ PREFLIGHT FAIL: $*" >&2; exit 1; }
 ok()   { echo "  ✓ $*"; }
 
-echo "[1/4] Version source consistency (Info.plist <-> project.pbxproj)"
+echo "[1/5] Version source consistency (Info.plist <-> project.pbxproj)"
 command -v /usr/libexec/PlistBuddy >/dev/null 2>&1 || fail "PlistBuddy not found (run on macOS)"
 info_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")"
 info_short="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")"
@@ -56,7 +56,7 @@ pbx_short="$(grep -oE 'MARKETING_VERSION = [0-9.]+;' "$PBXPROJ" | grep -oE '[0-9
 [ "$info_short" = "$pbx_short" ] || fail "CFBundleShortVersionString ($info_short) != MARKETING_VERSION ($pbx_short) — bump BOTH files"
 ok "version $info_short (build $info_build) consistent across Info.plist + pbxproj"
 
-echo "[2/4] Sparkle monotonicity vs live feed ($APPCAST_URL)"
+echo "[2/5] Sparkle monotonicity vs live feed ($APPCAST_URL)"
 live_build="$(curl -fsSL "$APPCAST_URL" 2>/dev/null | grep -oE '<sparkle:version>[0-9]+' | grep -oE '[0-9]+' | sort -n | tail -1 || true)"
 if [ -z "$live_build" ]; then
   echo "  ! could not read live appcast; skipping monotonicity check (network?)"
@@ -65,7 +65,14 @@ else
   ok "build $info_build > live $live_build"
 fi
 
-echo "[3/4] Release compile dry-run"
+echo "[3/5] Permission onboarding release identity source"
+expected_actor_key="$(/usr/libexec/PlistBuddy -c 'Print :Agentic30ExpectedPermissionActorBundleIdentifier' "$INFO_PLIST" 2>/dev/null || true)"
+permission_onboarding_key="$(/usr/libexec/PlistBuddy -c 'Print :Agentic30ExternalPermissionOnboardingAllowed' "$INFO_PLIST" 2>/dev/null || true)"
+[ "$expected_actor_key" = '$(PRODUCT_BUNDLE_IDENTIFIER)' ] || fail "Agentic30ExpectedPermissionActorBundleIdentifier must be \$(PRODUCT_BUNDLE_IDENTIFIER) (got '$expected_actor_key')"
+[ "$permission_onboarding_key" = '$(AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED)' ] || fail "Agentic30ExternalPermissionOnboardingAllowed must be \$(AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED) (got '$permission_onboarding_key')"
+ok "permission actor identity gates are build-setting backed"
+
+echo "[4/5] Release compile dry-run"
 if [ "$skip_build" = "1" ]; then
   echo "  - skipped (--skip-build)"
 else
@@ -76,13 +83,14 @@ else
       -configuration Release \
       -destination 'generic/platform=macOS' \
       CODE_SIGNING_ALLOWED=NO \
+      AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED=1 \
       -quiet; then
     fail "Release build failed — fix compile/actor-isolation errors before tagging"
   fi
   ok "Release configuration compiles"
 fi
 
-echo "[4/4] Sidecar test suite"
+echo "[5/5] Sidecar test suite"
 if [ "$skip_tests" = "1" ]; then
   echo "  - skipped (--skip-tests)"
 else

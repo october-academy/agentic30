@@ -100,8 +100,14 @@ fi
 
 require_env DEVELOPMENT_TEAM
 require_env SPARKLE_PUBLIC_ED_KEY
+require_env AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED
 require_env ASC_KEY_ID
 require_env ASC_ISSUER_ID
+if [ "${AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED:-}" = "1" ]; then
+  pass "external permission onboarding release gate is enabled"
+else
+  fail "AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED must be 1 for release builds"
+fi
 if [ -n "${ASC_API_KEY_P8:-}" ] || [ -n "${ASC_API_KEY_BASE64:-}" ] || { [ -n "${ASC_API_KEY_PATH:-}" ] && [ -f "$ASC_API_KEY_PATH" ]; }; then
   pass "App Store Connect API key material is available"
 else

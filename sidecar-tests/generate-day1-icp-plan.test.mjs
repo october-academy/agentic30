@@ -377,6 +377,40 @@ test("Day 1 alignment extracts user-facing signals from source when docs are abs
   }
 });
 
+test("Day 1 alignment treats generic markdown quotes as readiness evidence without canonical docs", async () => {
+  const root = await tempWorkspace();
+  try {
+    await writeFile(
+      root,
+      "PRODUCT_NOTES.md",
+      [
+        "# LaunchDesk notes",
+        "",
+        "Target user: solo founders preparing a paid launch.",
+        "Problem: they do not know which buyer signal to test before publishing.",
+        "Goal: prove one buyer signal with three founder calls this week.",
+        "Outcome: solo founders confirm a buyer signal in customer calls before launch.",
+      ].join("\n"),
+    );
+
+    const plan = await generateDay1AlignmentPlan({
+      workspaceRoot: root,
+      scanResult: {},
+      onboardingHypothesis: { confidence: "low" },
+    });
+
+    assert.equal(plan.readiness.status, "ready");
+    assert.deepEqual(plan.readiness.missingFields, []);
+    assert.match(plan.signals.currentIcpGuess, /solo founders/i);
+    assert.match(plan.signals.problem, /buyer signal/i);
+    assert.match(plan.readiness.fieldEvidence.validationAction[0].quote, /customer calls/i);
+    assert.equal(plan.signals.evidenceRefs.some((ref) => ref.path === "PRODUCT_NOTES.md"), true);
+    assert.equal(plan.signalDigest.rows.find((row) => row.key === "evidence").value, "PRODUCT_NOTES.md");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Day 1 alignment fails quality gate when only tech stack evidence exists", async () => {
   const root = await tempWorkspace();
   try {

@@ -1770,6 +1770,23 @@ private struct OfficeHoursEvidenceDraft: Identifiable, Hashable {
     var id: String { "\(mode.rawValue)-\(commitment.id)" }
 }
 
+private enum OfficeHoursSheetDraft: Identifiable {
+    case commitmentEvidence(OfficeHoursEvidenceDraft)
+    case dailyCardEvidence(OfficeHoursDailyCardEvidenceDraft)
+    case dailyCardReplacement(OfficeHoursDailyCardReplacementDraft)
+
+    var id: String {
+        switch self {
+        case .commitmentEvidence(let draft):
+            return "commitment-\(draft.id)"
+        case .dailyCardEvidence(let draft):
+            return "daily-evidence-\(draft.id)"
+        case .dailyCardReplacement(let draft):
+            return "daily-replacement-\(draft.id)"
+        }
+    }
+}
+
 struct OfficeHoursTimelineBuilder {
     static func items(
         rows: [OfficeHoursTranscriptRow],
@@ -2385,9 +2402,7 @@ struct ContentView: View {
     // Sessions whose commitment-close candidates were already requested, so the close
     // reveals (instead of waiting forever) once that one request resolves either way.
     @State private var officeHoursCommitmentCandidateRequestedSessions: Set<String> = []
-    @State private var officeHoursEvidenceDraft: OfficeHoursEvidenceDraft?
-    @State private var officeHoursDailyCardEvidenceDraft: OfficeHoursDailyCardEvidenceDraft?
-    @State private var officeHoursDailyCardReplacementDraft: OfficeHoursDailyCardReplacementDraft?
+    @State private var officeHoursSheetDraft: OfficeHoursSheetDraft?
     @FocusState private var focusedOfficeHoursStructuredFreeTextID: String?
 
     private static let officeHoursQuestionOutputRowID = "office-hours-question-output-row"
@@ -2960,12 +2975,15 @@ struct ContentView: View {
                     recorderControlRefreshing: viewModel.recorderControlRefreshing,
                     recorderControlActionInFlight: viewModel.recorderControlActionInFlight,
                     recorderControlLastError: viewModel.recorderControlLastError,
+                    recorderPermissionActor: viewModel.recorderPermissionActor,
+                    recorderPermissionReleaseIdentity: viewModel.recorderPermissionReleaseIdentity,
                     recorderFrameCaptureInFlight: viewModel.recorderFrameCaptureInFlight,
                     recorderFrameCaptureLastError: viewModel.recorderFrameCaptureLastError,
                     recorderLastFrameCapture: viewModel.recorderLastFrameCapture,
                     recorderFrameDeleteInFlight: viewModel.recorderFrameDeleteInFlight,
                     recorderFrameDeleteLastError: viewModel.recorderFrameDeleteLastError,
                     recorderLastFrameDelete: viewModel.recorderLastFrameDelete,
+                    recorderLastFrameRangeDelete: viewModel.recorderLastFrameRangeDelete,
                     recorderFrameCaptures: viewModel.recorderFrameCaptures,
                     recorderFrameCapturesRefreshing: viewModel.recorderFrameCapturesRefreshing,
                     recorderFrameCapturesLastError: viewModel.recorderFrameCapturesLastError,
@@ -2975,9 +2993,28 @@ struct ContentView: View {
                     recorderAuditSource: viewModel.recorderAuditSource,
                     recorderAuditRefreshing: viewModel.recorderAuditRefreshing,
                     recorderAuditLastError: viewModel.recorderAuditLastError,
+                    recorderSearchResult: viewModel.recorderSearchResult,
+                    recorderSearchRunning: viewModel.recorderSearchRunning,
+                    recorderSearchLastError: viewModel.recorderSearchLastError,
+                    recorderSqlQueryResult: viewModel.recorderSqlQueryResult,
+                    recorderSqlQueryRunning: viewModel.recorderSqlQueryRunning,
+                    recorderSqlQueryLastError: viewModel.recorderSqlQueryLastError,
+                    recorderMcpGrants: viewModel.recorderMcpGrants,
+                    recorderMcpGrantsRefreshing: viewModel.recorderMcpGrantsRefreshing,
+                    recorderMcpGrantActionInFlight: viewModel.recorderMcpGrantActionInFlight,
+                    recorderMcpGrantLastError: viewModel.recorderMcpGrantLastError,
                     recorderAutoCaptureRunning: viewModel.recorderAutoCaptureRunning,
                     recorderAutoCaptureLastTrigger: viewModel.recorderAutoCaptureLastTrigger,
                     recorderAutoCaptureLastError: viewModel.recorderAutoCaptureLastError,
+                    recorderAudioCaptureRunning: viewModel.recorderAudioCaptureRunning,
+                    recorderAudioCaptureLastError: viewModel.recorderAudioCaptureLastError,
+                    recorderDayMemoryLoop: viewModel.recorderDayMemoryLoop,
+                    recorderDayMemoryLoopRunning: viewModel.recorderDayMemoryLoopRunning,
+                    recorderDayMemoryLoopLastError: viewModel.recorderDayMemoryLoopLastError,
+                    recorderEvidenceCandidateReviewInFlight: viewModel.recorderEvidenceCandidateReviewInFlight,
+                    recorderRetentionApplyRunning: viewModel.recorderRetentionApplyRunning,
+                    recorderRetentionLastResult: viewModel.recorderRetentionLastResult,
+                    recorderRetentionLastError: viewModel.recorderRetentionLastError,
                     refreshRecorderControl: {
                         viewModel.refreshRecorderControlState()
                     },
@@ -2986,6 +3023,9 @@ struct ContentView: View {
                     },
                     refreshRecorderPermissions: {
                         viewModel.refreshRecorderPermissionProbe()
+                    },
+                    requestRecorderPermission: { permissionID in
+                        viewModel.requestRecorderPermission(permissionID)
                     },
                     grantRecorderConsent: {
                         viewModel.grantRecorderConsent()
@@ -3029,6 +3069,24 @@ struct ContentView: View {
                     refreshRecorderAuditEvents: {
                         viewModel.refreshRecorderAuditEvents()
                     },
+                    runRecorderSearch: { query in
+                        viewModel.runRecorderSearch(query)
+                    },
+                    runRecorderSqlQuery: { query in
+                        viewModel.runRecorderSqlQuery(query)
+                    },
+                    refreshRecorderMcpGrants: {
+                        viewModel.refreshRecorderMcpGrants()
+                    },
+                    prepareRecorderMcpGrants: {
+                        viewModel.prepareRecorderMcpGrantsForDisplay()
+                    },
+                    grantRecorderRawSqlMcpAccess: {
+                        viewModel.grantRecorderRawSqlMcpAccess()
+                    },
+                    revokeRecorderMcpGrant: { grantId in
+                        viewModel.revokeRecorderMcpGrant(id: grantId)
+                    },
                     startRecorderAutoCapture: {
                         viewModel.startRecorderAutoCapture()
                     },
@@ -3043,6 +3101,20 @@ struct ContentView: View {
                     },
                     setRecorderSystemAudioCapture: { enabled in
                         viewModel.setRecorderSystemAudioCaptureEnabled(enabled)
+                    },
+                    runRecorderDayMemoryLoop: {
+                        viewModel.runRecorderDayMemoryLoop()
+                    },
+                    reviewRecorderEvidenceCandidate: { candidateId, decision, reason, externalArtifact in
+                        viewModel.reviewRecorderEvidenceCandidate(
+                            candidateId: candidateId,
+                            decision: decision,
+                            reason: reason,
+                            externalArtifact: externalArtifact
+                        )
+                    },
+                    applyRecorderRetention: {
+                        viewModel.applyRecorderRetention()
                     },
                     recorderPipes: viewModel.recorderPipes,
                     recorderPipeRuns: viewModel.recorderPipeRuns,
@@ -3282,76 +3354,77 @@ struct ContentView: View {
         .onChange(of: conversationSession?.error) { _, _ in
             reconcileOfficeHoursActiveQuestionLoader(session: conversationSession)
         }
-        .sheet(item: $officeHoursEvidenceDraft) { draft in
-            OfficeHoursEvidenceResolutionSheet(
-                draft: draft,
-                onSubmitEvidence: { kind, locator, note in
-                    _ = viewModel.submitOfficeHoursCommitmentEvidence(
-                        commitmentId: draft.commitment.id,
-                        kind: kind,
-                        url: locator,
-                        note: note
-                    )
-                    officeHoursEvidenceDraft = nil
-                },
-                onAbandon: { reason in
-                    _ = viewModel.abandonOfficeHoursCommitment(
-                        commitmentId: draft.commitment.id,
-                        reason: reason
-                    )
-                    officeHoursEvidenceDraft = nil
-                },
-                onCancel: {
-                    officeHoursEvidenceDraft = nil
-                }
-            )
-        }
-        .sheet(item: $officeHoursDailyCardEvidenceDraft) { draft in
-            OfficeHoursDailyCardEvidenceSheet(
-                draft: draft,
-                onSubmit: { kind, locator, note in
-                    _ = viewModel.submitOfficeHoursDailyCard(
-                        draft.card,
-                        action: "attach_evidence",
-                        choiceId: "attach_evidence",
-                        evidenceRefs: [[
-                            "kind": kind,
-                            "url": locator,
-                            "note": note,
-                        ]],
-                        note: note
-                    )
-                    officeHoursDailyCardEvidenceDraft = nil
-                },
-                onCancel: {
-                    officeHoursDailyCardEvidenceDraft = nil
-                }
-            )
-        }
-        .sheet(item: $officeHoursDailyCardReplacementDraft) { draft in
-            OfficeHoursDailyCardReplacementSheet(
-                draft: draft,
-                onSubmit: { candidateName, actionText in
-                    guard let replacement = OfficeHoursDailyCardPresentation.replacementCandidate(
-                        candidateName: candidateName,
-                        actionText: actionText
-                    ) else {
-                        return
+        .sheet(item: $officeHoursSheetDraft) { draft in
+            switch draft {
+            case .commitmentEvidence(let draft):
+                OfficeHoursEvidenceResolutionSheet(
+                    draft: draft,
+                    onSubmitEvidence: { kind, locator, note in
+                        _ = viewModel.submitOfficeHoursCommitmentEvidence(
+                            commitmentId: draft.commitment.id,
+                            kind: kind,
+                            url: locator,
+                            note: note
+                        )
+                        officeHoursSheetDraft = nil
+                    },
+                    onAbandon: { reason in
+                        _ = viewModel.abandonOfficeHoursCommitment(
+                            commitmentId: draft.commitment.id,
+                            reason: reason
+                        )
+                        officeHoursSheetDraft = nil
+                    },
+                    onCancel: {
+                        officeHoursSheetDraft = nil
                     }
-                    _ = viewModel.submitOfficeHoursDailyCard(
-                        draft.card,
-                        action: "replace_candidate",
-                        choiceId: "replace_candidate",
-                        resolutionReason: "replaced_by_next_candidate",
-                        replacementCandidate: replacement.payload,
-                        note: "교체: \(replacement.candidateName) · \(replacement.actionText)"
-                    )
-                    officeHoursDailyCardReplacementDraft = nil
-                },
-                onCancel: {
-                    officeHoursDailyCardReplacementDraft = nil
-                }
-            )
+                )
+            case .dailyCardEvidence(let draft):
+                OfficeHoursDailyCardEvidenceSheet(
+                    draft: draft,
+                    onSubmit: { kind, locator, note in
+                        _ = viewModel.submitOfficeHoursDailyCard(
+                            draft.card,
+                            action: "attach_evidence",
+                            choiceId: "attach_evidence",
+                            evidenceRefs: [[
+                                "kind": kind,
+                                "url": locator,
+                                "note": note,
+                            ]],
+                            note: note
+                        )
+                        officeHoursSheetDraft = nil
+                    },
+                    onCancel: {
+                        officeHoursSheetDraft = nil
+                    }
+                )
+            case .dailyCardReplacement(let draft):
+                OfficeHoursDailyCardReplacementSheet(
+                    draft: draft,
+                    onSubmit: { candidateName, actionText in
+                        guard let replacement = OfficeHoursDailyCardPresentation.replacementCandidate(
+                            candidateName: candidateName,
+                            actionText: actionText
+                        ) else {
+                            return
+                        }
+                        _ = viewModel.submitOfficeHoursDailyCard(
+                            draft.card,
+                            action: "replace_candidate",
+                            choiceId: "replace_candidate",
+                            resolutionReason: "replaced_by_next_candidate",
+                            replacementCandidate: replacement.payload,
+                            note: "교체: \(replacement.candidateName) · \(replacement.actionText)"
+                        )
+                        officeHoursSheetDraft = nil
+                    },
+                    onCancel: {
+                        officeHoursSheetDraft = nil
+                    }
+                )
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("opendesign.officeHours.screen")
@@ -3841,13 +3914,13 @@ struct ContentView: View {
                             position: 1,
                             total: previousCommitmentGate.totalCount,
                             onAttachEvidence: {
-                                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: previousDebt, mode: .evidence)
+                                officeHoursSheetDraft = .commitmentEvidence(OfficeHoursEvidenceDraft(commitment: previousDebt, mode: .evidence))
                             },
                             onCarryForward: {
                                 _ = viewModel.carryForwardOfficeHoursCommitment(commitmentId: previousDebt.id)
                             },
                             onAbandon: {
-                                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: previousDebt, mode: .abandon)
+                                officeHoursSheetDraft = .commitmentEvidence(OfficeHoursEvidenceDraft(commitment: previousDebt, mode: .abandon))
                             }
                         )
                         .transition(.officeHoursPromptReveal)
@@ -4114,13 +4187,13 @@ struct ContentView: View {
     private func officeHoursCommitmentDebtActions(_ debt: CommitmentRecord) -> some View {
         HStack(spacing: 6) {
             officeHoursEvidenceActionButton(systemName: "paperclip", title: "증거") {
-                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: debt, mode: .evidence)
+                officeHoursSheetDraft = .commitmentEvidence(OfficeHoursEvidenceDraft(commitment: debt, mode: .evidence))
             }
             officeHoursEvidenceActionButton(systemName: "arrow.forward.circle", title: "이월") {
                 _ = viewModel.carryForwardOfficeHoursCommitment(commitmentId: debt.id)
             }
             officeHoursEvidenceActionButton(systemName: "xmark.circle", title: "포기") {
-                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: debt, mode: .abandon)
+                officeHoursSheetDraft = .commitmentEvidence(OfficeHoursEvidenceDraft(commitment: debt, mode: .abandon))
             }
         }
         .accessibilityElement(children: .contain)
@@ -4306,7 +4379,7 @@ struct ContentView: View {
                     OfficeHoursDailyStateTransitionCardView(
                         card: card,
                         onAttachEvidence: {
-                            officeHoursDailyCardEvidenceDraft = OfficeHoursDailyCardEvidenceDraft(card: card, title: "증거 붙이기")
+                            officeHoursSheetDraft = .dailyCardEvidence(OfficeHoursDailyCardEvidenceDraft(card: card, title: "증거 붙이기"))
                         },
                         onResolveWithoutEvidence: { reason in
                             _ = viewModel.submitOfficeHoursDailyCard(
@@ -4318,7 +4391,7 @@ struct ContentView: View {
                             )
                         },
                         onReplaceCandidate: {
-                            officeHoursDailyCardReplacementDraft = OfficeHoursDailyCardReplacementDraft(card: card)
+                            officeHoursSheetDraft = .dailyCardReplacement(OfficeHoursDailyCardReplacementDraft(card: card))
                         },
                         onKeepOpenToday: {
                             _ = viewModel.submitOfficeHoursDailyCard(
@@ -4332,7 +4405,7 @@ struct ContentView: View {
                     OfficeHoursDailyWorkpackCardView(
                         card: card,
                         onSubmitProof: {
-                            officeHoursDailyCardEvidenceDraft = OfficeHoursDailyCardEvidenceDraft(card: card, title: "증거 제출")
+                            officeHoursSheetDraft = .dailyCardEvidence(OfficeHoursDailyCardEvidenceDraft(card: card, title: "증거 제출"))
                         }
                     )
                 case .programScoreboardSnapshot:
@@ -5148,13 +5221,13 @@ struct ContentView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 6) {
                             officeHoursEvidenceActionButton(systemName: "paperclip", title: "증거") {
-                                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: commitment, mode: .evidence)
+                                officeHoursSheetDraft = .commitmentEvidence(OfficeHoursEvidenceDraft(commitment: commitment, mode: .evidence))
                             }
                             officeHoursEvidenceActionButton(systemName: "arrow.forward.circle", title: "이월") {
                                 _ = viewModel.carryForwardOfficeHoursCommitment(commitmentId: commitment.id)
                             }
                             officeHoursEvidenceActionButton(systemName: "xmark.circle", title: "포기") {
-                                officeHoursEvidenceDraft = OfficeHoursEvidenceDraft(commitment: commitment, mode: .abandon)
+                                officeHoursSheetDraft = .commitmentEvidence(OfficeHoursEvidenceDraft(commitment: commitment, mode: .abandon))
                             }
                         }
                     }
@@ -5917,7 +5990,7 @@ struct ContentView: View {
 
     private func officeHoursGoalEvidenceDisplay(_ refs: [String]) -> String {
         let text = refs.prefix(3).joined(separator: ", ").trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? "scan 근거 없음 · 질문 답변으로 보강" : text
+        return text.isEmpty ? "폴더에서 바로 확인된 항목 없음 · 질문으로 채웁니다" : text
     }
 
     private func officeHoursReadinessBlockedCopy(_ readiness: Day1AlignmentReadiness) -> String {
@@ -5928,8 +6001,8 @@ struct ContentView: View {
         let rootCause = readiness.rootCause?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !rootCause.isEmpty { return rootCause }
         return fields.isEmpty
-            ? "필수 근거는 Day 1 질문에서 먼저 확인합니다."
-            : "\(fields) 근거는 Day 1 질문에서 먼저 확인합니다."
+            ? "필수 정보는 Day 1 질문에서 먼저 확인합니다."
+            : "\(fields) 정보는 Day 1 질문에서 먼저 확인합니다."
     }
 
     private func officeHoursReadinessFieldLabel(_ field: String) -> String {
@@ -8942,7 +9015,7 @@ struct ContentView: View {
         let hintParts = officeHoursStructuredPromptHintParts(prompt)
         let blockedSubmitLabel = officeHoursStructuredPromptBlockedSubmitLabel(prompt)
         let defaultSubmitLabel = officeHoursDefaultSubmitButtonLabel(prompt)
-        let footerVerticalPadding: CGFloat = (prompt.generation?.dimensionStepIndex ?? 1) > 1 ? 11 : 16
+        let footerVerticalPadding: CGFloat = 11
         return VStack(alignment: .leading, spacing: 0) {
             officeHoursStructuredPromptContext(prompt)
 
@@ -9543,9 +9616,9 @@ struct ContentView: View {
     private func officeHoursPrimaryTextRequirementStatusText(hasSelection: Bool, hasText: Bool) -> String {
         switch (hasSelection, hasText) {
         case (false, false):
-            return "두 항목을 모두 채워야 제출됩니다"
+            return "도움안 선택 후 한 줄 입력"
         case (true, false):
-            return "남은 단계: 한 줄 보강"
+            return "남은 단계: 아래에 한 줄 입력"
         case (false, true):
             return "남은 단계: 도움안 선택"
         case (true, true):
@@ -9560,13 +9633,13 @@ struct ContentView: View {
             let hasSelection = !hasOptions || !draft.selectedOptions.isEmpty
             let hasText = !draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             if !hasSelection && !hasText {
-                return hasOptions ? "도움안 + 보강 필요" : "보강 필요"
+                return hasOptions ? "선택 + 한 줄 입력 필요" : "한 줄 입력 필요"
             }
             if !hasSelection {
-                return "도움안 필요"
+                return "도움안 선택 필요"
             }
             if !hasText {
-                return "보강 필요"
+                return "한 줄 입력 필요"
             }
         }
         return nil
@@ -9608,7 +9681,7 @@ struct ContentView: View {
             ?? question.freeTextPlaceholder?.nonEmpty
             ?? "예: 실제 사용자, 현재 대안, 이번 주 행동"
         let requirementText = question.primaryTextInput?.validationMessage?.nonEmpty
-            ?? "시간, 채널, 찾는 방법, 보낼 요청을 한 줄로 적어야 합니다."
+            ?? "선택 후 아래 입력칸에 오늘 실행할 한 문장을 적어야 제출됩니다."
         let focusID = officeHoursFreeTextFocusID(question: question, prompt: prompt)
         let showsPromptFocusRing = !isDisabled
             && focusedOfficeHoursStructuredFreeTextID == focusID
@@ -9616,7 +9689,7 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 Text(isRequiredText && question.primaryTextInput != nil ? "2. \(label)" : label)
                 Spacer(minLength: 0)
-                Text(isRequiredText ? "필수 · 제출 조건" : hasOptions ? "선택사항" : "Enter 제출")
+                Text(isRequiredText ? "필수 · 한 줄 입력" : hasOptions ? "선택사항" : "Enter 제출")
                     .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
                     .tracking(0.4)
             }
@@ -11082,9 +11155,14 @@ struct ContentView: View {
         ]
         var day1PendingGoalFields: [String] = []
         if let goal = viewModel.day1GoalSelection {
-            let customer = goal.customer.trimmingCharacters(in: .whitespacesAndNewlines)
-            let problem = goal.problem.trimmingCharacters(in: .whitespacesAndNewlines)
-            let validationAction = goal.validationAction.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedGoalDetail: (String) -> String = { value in
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                let diagnostics = ["quote 근거 부족", "scan 근거 없음", "근거 부족"]
+                return diagnostics.contains(where: { trimmed.localizedCaseInsensitiveContains($0) }) ? "" : trimmed
+            }
+            let customer = normalizedGoalDetail(goal.customer)
+            let problem = normalizedGoalDetail(goal.problem)
+            let validationAction = normalizedGoalDetail(goal.validationAction)
             if customer.isEmpty {
                 day1PendingGoalFields.append("customer")
             }
@@ -15942,6 +16020,7 @@ private func dailyCardActionButton(
         )
     }
     .buttonStyle(.plain)
+    .accessibilityLabel(title)
     .accessibilityIdentifier(accessibilityID)
 }
 

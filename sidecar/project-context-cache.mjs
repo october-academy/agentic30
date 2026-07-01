@@ -18,6 +18,7 @@ export const PROJECT_CONTEXT_SCHEMA = "agentic30.project_context.v1";
 
 const MAX_EVIDENCE_REFS = 12;
 const MAX_ANSWER_REFS = 6;
+const MISSING_FIELD_DIAGNOSTIC_PATTERN = /(?:quote\s*근거\s*부족|scan\s*근거\s*없음|근거\s*부족)/i;
 
 export function resolveProjectContextCachePath(workspaceRoot) {
   return path.join(resolveAgentic30MemoryDir(workspaceRoot), "project-context.json");
@@ -128,6 +129,7 @@ function looksInvalidContextField(field, value) {
   const text = cleanString(value);
   if (!text) return true;
   if (/^[\d\s,./:;+-]+$/.test(text)) return true;
+  if (field !== "productName" && MISSING_FIELD_DIAGNOSTIC_PATTERN.test(text)) return true;
   if (/\bz\.[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(text)) return true;
   if (/\b(?:zod|schema|enum|literal|object|array|optional|passthrough)\b/i.test(text) && /[().{}[\],:]/.test(text)) {
     return true;

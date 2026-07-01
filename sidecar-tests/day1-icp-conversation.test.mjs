@@ -1036,6 +1036,8 @@ test("Day 1 bulk document handoff asks clarity instead of document judge when ha
     assert.equal(pending.toolName, "agentic30_request_user_input");
     assert.equal(pending.questions?.[0]?.allowFreeText, true);
     assert.equal(pending.questions?.[0]?.requiresFreeText, false);
+    assert.equal(pending.questions?.[0]?.primaryTextInput?.required, true);
+    assert.equal(pending.questions?.[0]?.primaryTextInput?.label, "후보/채널 한 줄 답변");
     assert.match(pending.questions?.[0]?.question || "", /첫 후보/);
     assert.equal(
       events.some((event) =>
@@ -1077,6 +1079,37 @@ test("Day 1 bulk document handoff asks clarity instead of document judge when ha
 
     const noCandidateOption = pending.questions[0].options.find((option) => option.nextIntent === "unblock_action");
     assert.ok(noCandidateOption, "expected unblock option");
+    const missingFreeTextMarker = events.length;
+    ws.send(JSON.stringify({
+      type: "submit_user_input",
+      sessionId: clarity.session.id,
+      requestId: pending.requestId,
+      responses: [{
+        question: pending.questions[0].question,
+        selectedOptions: [noCandidateOption.label],
+        freeText: "",
+      }],
+    }));
+    const missingFreeText = await waitForEvent(events, (event) =>
+      events.indexOf(event) >= missingFreeTextMarker
+      && event.type === "session_updated"
+      && event.session?.id === clarity.session.id
+      && event.session?.status === "awaiting_input"
+      && event.session?.pendingUserInput?.requestId === pending.requestId
+    );
+    assert.equal(
+      missingFreeText.session.pendingUserInput.generation.signalId,
+      "day1_clarity_candidate_or_channel",
+    );
+    assert.equal(
+      events.slice(missingFreeTextMarker).some((event) =>
+        event.type === "session_updated"
+        && event.session?.pendingUserInput?.generation?.signalId === "day1_clarity_unblock_action"
+      ),
+      false,
+      "selection-only clarity submit must not advance to the next slot",
+    );
+
     ws.send(JSON.stringify({
       type: "submit_user_input",
       sessionId: clarity.session.id,
@@ -1096,6 +1129,15 @@ test("Day 1 bulk document handoff asks clarity instead of document judge when ha
     );
     assert.equal(unblock.session.status, "awaiting_input");
     assert.notEqual(unblock.session.pendingUserInput.generation.signalId, pending.generation.signalId);
+    assert.equal(unblock.session.pendingUserInput.questions?.[0]?.primaryTextInput?.required, true);
+    assert.equal(
+      unblock.session.pendingUserInput.questions?.[0]?.primaryTextInput?.label,
+      "오늘 찾을 사람·채널·행동",
+    );
+    assert.deepEqual(unblock.session.pendingUserInput.questions?.[0]?.options.map((option) => option.label), [
+      "오늘 찾을 행동 적기",
+      "시간·채널부터 적기",
+    ]);
     assert.equal(
       events.some((event) =>
         (event.type === "session_created" || event.type === "session_updated")

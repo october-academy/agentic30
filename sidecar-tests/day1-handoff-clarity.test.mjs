@@ -29,6 +29,14 @@ test("Day 1 handoff clarity gate asks candidate/channel first for vague handoff"
   assert.equal(input.generation.docType, "day1_handoff_clarity");
   assert.equal(input.generation.signalId, "day1_clarity_candidate_or_channel");
   assert.equal(input.questions[0].allowFreeText, true);
+  assert.equal(input.questions[0].requiresFreeText, false);
+  assert.equal(input.questions[0].primaryTextInput.required, true);
+  assert.equal(input.questions[0].primaryTextInput.label, "후보/채널 한 줄 답변");
+  assert.match(input.questions[0].primaryTextInput.validationMessage, /선택만으로는 부족/);
+  assert.deepEqual(input.questions[0].options.map((option) => option.label), [
+    "지금 답하기",
+    "아직 없음 - 아래에 찾을 행동 적기",
+  ]);
   assert.doesNotMatch(input.title, /저장 전 근거/);
 });
 
@@ -42,6 +50,32 @@ test("Day 1 handoff clarity gate does not repeat same low-information signal", (
   });
 
   assert.equal(isLowInformationDay1HandoffClarityAnswer("아직 후보 없음"), true);
+  assert.equal(assessment.ready, false);
+  assert.equal(assessment.nextSlot, "unblock_action");
+  assert.equal(assessment.signalId, "day1_clarity_unblock_action");
+
+  const input = buildDay1HandoffClarityStructuredInput({
+    toolName: "agentic30_request_user_input",
+    assessment,
+  });
+  assert.equal(input.questions[0].primaryTextInput.required, true);
+  assert.equal(input.questions[0].primaryTextInput.label, "오늘 찾을 사람·채널·행동");
+  assert.deepEqual(input.questions[0].options.map((option) => option.label), [
+    "오늘 찾을 행동 적기",
+    "시간·채널부터 적기",
+  ]);
+  assert.doesNotMatch(input.questions[0].options.map((option) => option.label).join(" "), /아직 없음/);
+});
+
+test("Day 1 handoff clarity gate stays on unblock action after low-information unblock answer", () => {
+  const assessment = assessDay1HandoffClarity({
+    targetUser: "macOS에서 AI 코딩 도구를 쓰는 전업 1인 개발자",
+    currentAlternative: "노션과 스프레드시트로 인터뷰 메모를 복사함",
+  }, {
+    lastSignalId: "day1_clarity_unblock_action",
+    lastAnswerState: "low_information",
+  });
+
   assert.equal(assessment.ready, false);
   assert.equal(assessment.nextSlot, "unblock_action");
   assert.equal(assessment.signalId, "day1_clarity_unblock_action");

@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 
 import { insertRecorderEvidenceCandidate } from "./recorder-evidence-candidates.mjs";
+import { assertRecorderRedactionPolicyForRecord } from "./recorder-redaction-policy.mjs";
 
 export const RECORDER_EVIDENCE_INBOX_BUILDER_SCHEMA_VERSION = 1;
 
 const SOURCE_KIND_PRODUCT_EVENT = "product_event";
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
-const UNSAFE_TEXT_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?:api[_-]?key|oauth|secret|token|password)\s*[:=]/i;
 
 const EVENT_CANDIDATE_MAPPINGS = Object.freeze({
   customer_interview: {
@@ -252,11 +252,15 @@ function isEligibleProductEvent(row, { scope, timeRange }) {
 }
 
 function assertSafeProductEventText(event) {
-  const text = `${event.title || ""}\n${event.summary || ""}`;
-  if (UNSAFE_TEXT_PATTERN.test(text)) {
+  try {
+    assertRecorderRedactionPolicyForRecord("product_events", event, { fail });
+  } catch (error) {
+    if (!(error instanceof RecorderEvidenceInboxBuilderError)) throw error;
     fail("ERR_RECORDER_EVIDENCE_BUILDER_UNSAFE_PRODUCT_EVENT_TEXT", "safe_for_memory product event appears to contain unredacted sensitive text", {
       productEventId: event.id,
       product_event_id: event.id,
+      policyErrorCode: error.code,
+      policy_error_code: error.code,
     });
   }
 }

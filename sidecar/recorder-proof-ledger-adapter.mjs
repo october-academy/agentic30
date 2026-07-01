@@ -61,24 +61,38 @@ const PROTECTED_GATE_TARGETS = Object.freeze(new Set([
   "revenue",
   "first_revenue",
 ]));
-const NON_PROOF_SOURCE_KINDS = Object.freeze(new Set([
-  ...REJECTED_EVIDENCE_KINDS,
-  "agent_workpack",
-  "build_log",
-  "code_change",
-  "demo_video",
-  "internal_trace",
-  "memory",
-  "memory_item",
-  "memory_summary",
-  "pipe_output",
-  "product_event",
-  "raw_frame",
-  "raw_search_hit",
-  "search_hit",
-  "transcript_hit",
-  "work_log",
+const EXTERNAL_PROOF_SOURCE_KINDS = Object.freeze(new Set([
+  ...Object.keys(EVIDENCE_KIND_GRADE),
+  ...EVIDENCE_GRADES,
+  "external_evidence",
+  "manual_evidence_approved",
 ]));
+// Proof event types a recorder candidate MAY self-report from recorder-only
+// sources: internal process milestones that do not, on their own, claim a
+// customer / active-user / revenue / foundation gate. Every OTHER proof event
+// type requires external accepted evidence through the recorder adapter.
+const RECORDER_SELF_REPORTABLE_PROOF_EVENT_TYPES = Object.freeze(new Set([
+  PROOF_EVENT_TYPES.setup,
+  PROOF_EVENT_TYPES.mission,
+  PROOF_EVENT_TYPES.bip,
+  PROOF_EVENT_TYPES.workLog,
+  PROOF_EVENT_TYPES.actionEvidence,
+  PROOF_EVENT_TYPES.dayDecision,
+  PROOF_EVENT_TYPES.landingMetric,
+]));
+// Fail-closed: the protected-gate check must key on the ACTUAL ledger event type,
+// not only the optional, attacker-controlled targetGate / proofKind metadata.
+// Deriving this set as "every known proof event type EXCEPT the self-reportable
+// process milestones" means gate-advancing events the program-gate engine reads
+// — interview (G1/G2), payment_intent/payment_record/payment_failure (G3/G6),
+// traffic_snapshot (G5), plus dm_ask/referral/presale_deposit/refund — all
+// require external evidence, AND any NEW event type added to PROOF_EVENT_TYPES
+// later defaults to protected rather than silently forgeable from recorder data.
+const EXTERNAL_REQUIRED_PROOF_EVENT_TYPES = Object.freeze(new Set(
+  Object.values(PROOF_EVENT_TYPES).filter(
+    (type) => !RECORDER_SELF_REPORTABLE_PROOF_EVENT_TYPES.has(type),
+  ),
+));
 const ALLOWED_PROOF_KINDS = Object.freeze(new Set([
   ...Object.keys(EVIDENCE_KIND_GRADE),
   ...EVIDENCE_GRADES,
@@ -156,7 +170,7 @@ export function normalizeRecorderProofCandidate(candidate = {}, {
       ?? proofLedgerMapping.targetGate ?? proofLedgerMapping.target_gate
       ?? proofEvent.metadata?.targetGate ?? proofEvent.metadata?.target_gate,
   );
-  assertExternalSourceForProtectedGate({ targetGate, proofKind, sourceKinds });
+  assertExternalSourceForProtectedGate({ targetGate, proofKind, proofEventType: proofEvent.type, sourceKinds });
 
   return {
     candidateId,
@@ -269,20 +283,22 @@ function normalizeMappedProofEvent(mapping = {}) {
   };
 }
 
-function assertExternalSourceForProtectedGate({ targetGate, proofKind, sourceKinds }) {
-  const protectedGate = PROTECTED_GATE_TARGETS.has(targetGate) || [
-    "customer_evidence",
-    "active_user_progress",
-    "revenue_proof",
-  ].includes(proofKind);
+function assertExternalSourceForProtectedGate({ targetGate, proofKind, proofEventType, sourceKinds }) {
+  const protectedGate = PROTECTED_GATE_TARGETS.has(targetGate)
+    || [
+      "customer_evidence",
+      "active_user_progress",
+      "revenue_proof",
+    ].includes(proofKind)
+    || EXTERNAL_REQUIRED_PROOF_EVENT_TYPES.has(normalizeToken(proofEventType));
   if (!protectedGate) return;
   const normalizedKinds = sourceKinds.map(normalizeToken).filter(Boolean);
-  if (!normalizedKinds.length) return;
-  if (normalizedKinds.every((kind) => NON_PROOF_SOURCE_KINDS.has(kind))) {
+  const hasExternalSource = normalizedKinds.some((kind) => EXTERNAL_PROOF_SOURCE_KINDS.has(kind));
+  if (!hasExternalSource) {
     fail(
       "ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE",
-      "customer, active-user, and revenue gates require external accepted evidence; non-proof sources alone cannot write proof",
-      { targetGate, sourceKinds: normalizedKinds },
+      "customer, active-user, and revenue proof events require external accepted evidence; recorder-derived sources alone cannot write proof",
+      { targetGate, proofKind, proofEventType: normalizeToken(proofEventType), sourceKinds: normalizedKinds },
     );
   }
 }

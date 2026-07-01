@@ -63,7 +63,7 @@ function envelope() {
       byteSize: 12345,
     },
     text: {
-      textSource: "accessibility",
+      textSource: "accessibility_only",
       accessibilityText: "raw private customer@example.com",
       redactedText: "redacted activation friction",
       redactionStatus: "redacted",
@@ -94,12 +94,41 @@ test("recorder control state blocks capture until consent, indicator, and core p
     type: "grant_consent",
     visibleIndicatorAcknowledged: true,
   }, { now });
+  assert.equal(consented.consent.grantId, "recorder-consent-2026-06-27t09-00-00-000z");
+  assert.equal(consented.consent.grant_id, "recorder-consent-2026-06-27t09-00-00-000z");
   const readyState = grantCorePermissions(consented);
   const ready = evaluateRecorderCaptureReadiness(readyState, { now });
   assert.equal(ready.canRecord, true);
   assert.equal(ready.state, "degraded");
   assert.deepEqual(ready.blockers, []);
   assert.equal(ready.warnings.some((warning) => warning.id === "input_monitoring_degraded"), true);
+  assert.equal(ready.modeReadiness.coreFrameCapture.ready, true);
+  assert.equal(ready.modeReadiness.coreFrameCapture.state, "ready");
+  assert.equal(ready.modeReadiness.eventDrivenCapture.ready, false);
+  assert.equal(
+    ready.modeReadiness.eventDrivenCapture.blockers.some((blocker) => blocker.id === "input_monitoring_missing"),
+    true,
+  );
+  assert.equal(ready.modeReadiness.ocrTextCompletion.ready, false);
+  assert.equal(
+    ready.modeReadiness.ocrTextCompletion.blockers.some((blocker) => blocker.id === "vision_ocr_unavailable_named_root_cause"),
+    true,
+  );
+
+  let fullModeState = transitionRecorderControlState(readyState, {
+    type: "set_permission",
+    permission: "input_monitoring",
+    state: "granted",
+  }, { now });
+  fullModeState = transitionRecorderControlState(fullModeState, {
+    type: "set_permission",
+    permission: "vision_ocr",
+    state: "granted",
+  }, { now });
+  const fullModeReadiness = evaluateRecorderCaptureReadiness(fullModeState, { now });
+  assert.equal(fullModeReadiness.canRecord, true);
+  assert.equal(fullModeReadiness.modeReadiness.eventDrivenCapture.ready, true);
+  assert.equal(fullModeReadiness.modeReadiness.ocrTextCompletion.ready, true);
 });
 
 test("recorder control state models pause, resume, and stop-for-today explicitly", () => {
@@ -266,6 +295,7 @@ test("recorder control state models Gate C clipboard, audio, and metadata polici
   const readiness = evaluateRecorderCaptureReadiness(state, { now });
   assert.equal(readiness.canRecord, true);
   assert.equal(readiness.expandedMedia.clipboard.status, "content_enabled");
+  assert.equal(readiness.modeReadiness.sensitiveCapture.ready, true);
 });
 
 test("recorder control state persists under the recorder host directory and fails on corrupt JSON", async () => {

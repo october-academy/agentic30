@@ -7,6 +7,7 @@ import path from "node:path";
 import { loadProofLedger } from "../sidecar/execution-os.mjs";
 import {
   RecorderDayLoopError,
+  recorderDayMemoryLoopLocalDayRange,
   runRecorderDayMemoryLoop,
 } from "../sidecar/recorder-day-loop.mjs";
 import { recordFrameCaptureEnvelope } from "../sidecar/recorder-ingest.mjs";
@@ -34,7 +35,7 @@ function frameEnvelope(overrides = {}) {
     browserDomain: "example.com",
     contentHash: "content-hash-1",
     text: {
-      textSource: "accessibility",
+      textSource: "accessibility_only",
       accessibilityText: "raw private customer@example.com",
       redactedText: "redacted founder activation friction",
       redactionStatus: "redacted",
@@ -173,4 +174,35 @@ test("runRecorderDayMemoryLoop fails explicitly for invalid range and missing sn
   } finally {
     store.close();
   }
+});
+
+test("recorderDayMemoryLoopLocalDayRange yields a local-day window that feeds runRecorderDayMemoryLoop without a range error", async () => {
+  const range = recorderDayMemoryLoopLocalDayRange(new Date(2026, 6, 1, 9, 0, 0, 0));
+  const start = new Date(range.startedAt);
+  const end = new Date(range.endedAt);
+  assert.equal(start.getHours(), 0);
+  assert.equal(start.getMinutes(), 0);
+  assert.equal(end.getHours(), 9);
+  assert.ok(end.getTime() > start.getTime());
+
+  const { store } = await makeContext();
+  try {
+    const result = await runRecorderDayMemoryLoop({
+      store,
+      startedAt: range.startedAt,
+      endedAt: range.endedAt,
+      now: new Date(2026, 6, 1, 9, 0, 0, 0),
+    });
+    assert.equal(result.schema, "agentic30.recorder.day_loop.v1");
+  } finally {
+    store.close();
+  }
+});
+
+test("recorderDayMemoryLoopLocalDayRange bumps endedAt +1ms at exactly local midnight", () => {
+  const range = recorderDayMemoryLoopLocalDayRange(new Date(2026, 6, 1, 0, 0, 0, 0));
+  const start = new Date(range.startedAt);
+  const end = new Date(range.endedAt);
+  assert.equal(end.getTime() - start.getTime(), 1);
+  assert.ok(end.getTime() > start.getTime());
 });

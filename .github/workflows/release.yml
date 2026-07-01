@@ -125,6 +125,7 @@ jobs:
       GITHUB_RELEASE_DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
       AGENTIC30_UPLOAD_APPCAST_R2: ${{ github.event.inputs.dry_run == 'true' && '0' || '1' }}
       AGENTIC30_UPLOAD_POSTHOG_DSYMS: ${{ github.event.inputs.dry_run == 'true' && '0' || '1' }}
+      AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED: "1"
       POSTHOG_CLI_HOST: https://us.posthog.com
       POSTHOG_CLI_PROJECT_ID: "293397"
       POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}

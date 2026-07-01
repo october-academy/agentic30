@@ -51,7 +51,8 @@ function insertFrame(store, overrides = {}) {
     snapshot_sha256: `sha256-${id}`,
     content_hash: `content-hash-${id}`,
     simhash: "",
-    text_source: "accessibility",
+    text_source: "ax_plus_ocr",
+    text_provenance_root_cause: null,
     accessibility_text: "raw customer@example.com secret token",
     ocr_text: "raw OCR token",
     redacted_text: "redacted founder activation friction",
@@ -183,6 +184,8 @@ test("buildRecorderSearchResults returns scoped redacted results without raw URL
     assert.equal(response.results[0].sourceType, "frame");
     assert.equal(response.results[0].sourceId, "frame-1");
     assert.equal(response.results[0].metadata.browserDomain, "example.com");
+    assert.equal(response.results[0].metadata.browserUrlSearchLabel, "example.com");
+    assert.equal(response.results[0].metadata.documentPathSearchLabel, "md document");
     assert.equal(response.proofBoundary.proofAcceptedBySearch, false);
 
     const json = JSON.stringify(response);
@@ -190,10 +193,44 @@ test("buildRecorderSearchResults returns scoped redacted results without raw URL
     assert.doesNotMatch(json, /secret token/);
     assert.doesNotMatch(json, /private\/customer-notes/);
     assert.doesNotMatch(json, /private\?token=secret/);
-    assert.doesNotMatch(json, /browser_url/);
-    assert.doesNotMatch(json, /browserUrl/);
-    assert.doesNotMatch(json, /document_path/);
-    assert.doesNotMatch(json, /documentPath/);
+    assert.doesNotMatch(json, /"browser_url"\s*:/);
+    assert.doesNotMatch(json, /"browserUrl"\s*:/);
+    assert.doesNotMatch(json, /"document_path"\s*:/);
+    assert.doesNotMatch(json, /"documentPath"\s*:/);
+  } finally {
+    store.close();
+  }
+});
+
+test("buildRecorderSearchResults fails explicitly on corrupt safe-for-search rows", async () => {
+  const { store } = await makeStore();
+  try {
+    insertProductEvent(store, {
+      id: "event-unsafe-search",
+      title: "Unsafe search candidate",
+      summary: "unsafe search summary contains sk-1234567890abcdef",
+      safe_for_search: 0,
+      safe_for_memory: 0,
+      safe_for_export: 0,
+    });
+    store.database().prepare(`
+      UPDATE product_events
+      SET safe_for_search = 1
+      WHERE id = 'event-unsafe-search'
+    `).run();
+
+    assert.throws(
+      () => buildRecorderSearchResults({
+        store,
+        query: "unsafe",
+        sourceTypes: ["product_event"],
+        limit: 10,
+      }),
+      (error) => error instanceof RecorderSearchError
+        && error.code === "ERR_RECORDER_SEARCH_UNSAFE_PUBLIC_RECORD"
+        && error.details.policyErrorCode === "ERR_RECORDER_REDACTION_POLICY_UNSAFE_TEXT"
+        && error.details.sourceId === "event-unsafe-search",
+    );
   } finally {
     store.close();
   }

@@ -84,6 +84,8 @@ function auditDto(row) {
     reason: cleanString(row.reason, 500),
     createdAt: cleanString(row.created_at, 80),
     created_at: cleanString(row.created_at, 80),
+    deletedAt: cleanString(row.deleted_at, 80) || null,
+    deleted_at: cleanString(row.deleted_at, 80) || null,
   };
 }
 

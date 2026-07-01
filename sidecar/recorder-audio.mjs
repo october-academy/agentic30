@@ -9,7 +9,7 @@ import {
   assertRawMediaEncryptionPolicy,
   normalizeMediaCaptureMode,
 } from "./recorder-media-protection.mjs";
-import { redactSecrets } from "./workspace-safety.mjs";
+import { redactRecorderPublicText } from "./recorder-redaction-policy.mjs";
 
 export const RECORDER_AUDIO_CHUNK_SCHEMA_VERSION = 1;
 
@@ -45,6 +45,14 @@ const SPEAKER_LABEL_PROVENANCE = new Set([
   "unknown",
 ]);
 const LOCAL_UNAVAILABLE_NO_CLOUD_FALLBACK = "local_unavailable_no_cloud_fallback";
+const TRANSCRIPTION_TERMINAL_STATES = new Set([
+  LOCAL_UNAVAILABLE_NO_CLOUD_FALLBACK,
+  "local_unavailable_speech_framework_missing_no_cloud_fallback",
+  "local_unavailable_speech_permission_missing_no_cloud_fallback",
+  "local_unavailable_speech_recognizer_unavailable_no_cloud_fallback",
+  "local_unavailable_speech_recognition_error_no_cloud_fallback",
+  "local_unavailable_speech_timeout_no_cloud_fallback",
+]);
 const CLOUD_TRANSCRIPTION_PROVIDERS = new Set([
   "cloud",
   "openai",
@@ -175,10 +183,10 @@ export function normalizeAudioChunk(audio = {}, { createdAt = new Date().toISOSt
     fail,
   });
   const transcriptStatus = normalizeTranscriptStatus(source.transcriptStatus ?? source.transcript_status ?? "not_requested");
-  const consentGrantId = textOrNull(source.consentGrantId ?? source.consent_grant_id);
+  const consentGrantId = requiredText(source.consentGrantId ?? source.consent_grant_id, "consent_grant_id");
   const visibleNoticeId = textOrNull(source.visibleNoticeId ?? source.visible_notice_id);
   const rawAudioIndicatorState = normalizeRawAudioIndicatorState(
-    source.rawAudioIndicatorState ?? source.raw_audio_indicator_state ?? "unknown",
+    source.rawAudioIndicatorState ?? source.raw_audio_indicator_state,
   );
   const localTranscriberName = textOrNull(source.localTranscriberName ?? source.local_transcriber_name);
   const localTranscriberVersion = textOrNull(source.localTranscriberVersion ?? source.local_transcriber_version);
@@ -380,7 +388,7 @@ function normalizeTranscriptRedaction({
   const canDeriveLocalRedaction = transcriptStatus === "local_complete"
     && (!normalizedRedactedText || !normalizedStatus || TRANSCRIPT_REDACTION_STATUS_OVERRIDES.has(normalizedStatus));
   if (canDeriveLocalRedaction) {
-    const derivedRedactedText = redactRecorderTranscriptText(rawText);
+    const derivedRedactedText = redactRecorderPublicText(rawText, { fail });
     normalizedRedactedText = normalizedRedactedText || derivedRedactedText;
     if (!normalizedStatus || TRANSCRIPT_REDACTION_STATUS_OVERRIDES.has(normalizedStatus)) {
       normalizedStatus = derivedRedactedText === rawText ? "safe" : "redacted";
@@ -392,14 +400,6 @@ function normalizeTranscriptRedaction({
     redactionStatus: normalizedStatus,
     searchEligible: Boolean(normalizedRedactedText && SEARCH_SAFE_REDACTION_STATUSES.has(normalizedStatus)),
   };
-}
-
-function redactRecorderTranscriptText(value = "") {
-  let text = redactSecrets(String(value ?? ""));
-  text = text.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "‹redacted:email›");
-  text = text.replace(/\bhttps?:\/\/[^\s<>"')]+/gi, "‹redacted:url›");
-  text = text.replace(/\b(?:\+?\d[\d\s().-]{7,}\d)\b/g, "‹redacted:phone›");
-  return text.replace(/\s+/g, " ").trim();
 }
 
 function assertAudioProvenance({
@@ -551,6 +551,12 @@ function normalizeTranscriptStatus(value) {
 
 function normalizeRawAudioIndicatorState(value) {
   const state = cleanToken(value);
+  if (!state || state === "unknown") {
+    fail(
+      "ERR_RECORDER_AUDIO_INDICATOR_STATE_REQUIRED",
+      "audio ingest requires explicit raw_audio_indicator_state",
+    );
+  }
   if (RAW_AUDIO_INDICATOR_STATES.has(state)) return state;
   fail("ERR_RECORDER_AUDIO_UNKNOWN_INDICATOR_STATE", `unknown recorder raw_audio_indicator_state: ${state || "(missing)"}`);
 }
@@ -567,7 +573,7 @@ function normalizeTranscriptionTerminalState(value, { transcriptStatus } = {}) {
       "transcription_terminal_state is only valid when transcript_status=local_transcription_unavailable",
     );
   }
-  if (state === LOCAL_UNAVAILABLE_NO_CLOUD_FALLBACK) return state;
+  if (TRANSCRIPTION_TERMINAL_STATES.has(state)) return state;
   fail("ERR_RECORDER_AUDIO_UNKNOWN_TRANSCRIPTION_TERMINAL_STATE", `unknown recorder transcription_terminal_state: ${state}`);
 }
 

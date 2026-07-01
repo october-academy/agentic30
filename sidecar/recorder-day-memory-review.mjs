@@ -244,10 +244,19 @@ function buildCaptureSummary({ frames, activeFrames }) {
     search_safe_frame_count: searchableFrames.length,
     memorySafeFrameCount: memorySafeFrames.length,
     memory_safe_frame_count: memorySafeFrames.length,
-    topApps: topCounts(activeFrames.map((row) => row.app_name), 8),
-    top_apps: topCounts(activeFrames.map((row) => row.app_name), 8),
-    topDomains: topCounts(activeFrames.map((row) => row.browser_domain), 8),
-    top_domains: topCounts(activeFrames.map((row) => row.browser_domain), 8),
+    // topApps/topDomains expose hostile-controllable frame metadata
+    // (app_name/browser_domain) as content in this memory_safe-labeled
+    // snapshot, so they must be derived only from memory-safe frames — the
+    // ones whose metadata passed the redaction-policy value scan at store
+    // insert (same set samples[] uses). A raw_local frame (the default, all
+    // safe_for_* = 0) is never sink-scanned, so aggregating it here leaked raw
+    // email/secret-shaped app_name/browser_domain into the memory snapshot.
+    // capture_trigger is a coarse collector-set id (not screen content), so it
+    // stays over activeFrames.
+    topApps: topCounts(memorySafeFrames.map((row) => row.app_name), 8),
+    top_apps: topCounts(memorySafeFrames.map((row) => row.app_name), 8),
+    topDomains: topCounts(memorySafeFrames.map((row) => row.browser_domain), 8),
+    top_domains: topCounts(memorySafeFrames.map((row) => row.browser_domain), 8),
     triggers: topCounts(activeFrames.map((row) => row.capture_trigger), 8),
     samples,
   };
@@ -451,7 +460,20 @@ function assertNoUnsafeRawKeys(value, pathSegments = []) {
     return;
   }
   for (const [key, nested] of Object.entries(value)) {
-    if (["accessibility_text", "accessibilityText", "ocr_text", "ocrText", "browser_url", "browserUrl"].includes(key)) {
+    if ([
+      "accessibility_text",
+      "accessibilityText",
+      "ocr_text",
+      "ocrText",
+      "browser_url",
+      "browserUrl",
+      "document_path",
+      "documentPath",
+      "snapshot_path",
+      "snapshotPath",
+      "relative_path",
+      "relativePath",
+    ].includes(key)) {
       fail("ERR_RECORDER_DAY_REVIEW_RAW_FIELD", "Day Memory Review snapshot includes an unsafe raw field", {
         fieldPath: [...pathSegments, key].join("."),
         field_path: [...pathSegments, key].join("."),

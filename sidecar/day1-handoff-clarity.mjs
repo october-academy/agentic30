@@ -93,9 +93,15 @@ export function assessDay1HandoffClarity(handoff = {}, {
   const missingSlots = DAY1_HANDOFF_CLARITY_SLOTS.filter((slot) => !passedSlots.includes(slot));
   let nextSlot = missingSlots[0] || "";
   const previousSlot = slotFromSignalId(lastSignalId);
+  const normalizedLastAnswerState = cleanText(lastAnswerState, 80).toLowerCase();
   const answeredPreviously = ["asked", "answered", "low_information", "blocked", "unknown"].includes(
-    cleanText(lastAnswerState, 80).toLowerCase(),
+    normalizedLastAnswerState,
   );
+  const lowInformationUnblockPreviously = previousSlot === DAY1_HANDOFF_CLARITY_UNBLOCK_SLOT
+    && ["low_information", "blocked", "unknown"].includes(normalizedLastAnswerState);
+  if (nextSlot && lowInformationUnblockPreviously) {
+    nextSlot = DAY1_HANDOFF_CLARITY_UNBLOCK_SLOT;
+  }
   if (nextSlot && previousSlot === nextSlot && answeredPreviously) {
     nextSlot = DAY1_HANDOFF_CLARITY_UNBLOCK_SLOT;
   }
@@ -168,6 +174,42 @@ export function buildDay1HandoffClarityStructuredInput({
   const slot = assessment?.nextSlot || DAY1_HANDOFF_CLARITY_SLOTS[0];
   const copy = SLOT_COPY[slot] || SLOT_COPY[DAY1_HANDOFF_CLARITY_SLOTS[0]];
   const signalId = assessment?.signalId || signalIdForSlot(slot);
+  const isUnblockSlot = slot === DAY1_HANDOFF_CLARITY_UNBLOCK_SLOT;
+  const options = isUnblockSlot
+    ? [
+        {
+          label: "오늘 찾을 행동 적기",
+          description: "사람, 채널, 무엇을 할지 한 줄로 적어 이 루프를 닫습니다.",
+          recommended: true,
+          nextIntent: "answer_unblock_action",
+        },
+        {
+          label: "시간·채널부터 적기",
+          description: "정확한 후보가 없어도 언제 어디에서 찾을지부터 고정합니다.",
+          nextIntent: "answer_unblock_channel",
+        },
+      ]
+    : [
+        {
+          label: "지금 답하기",
+          description: "선택 후 아래 필수 입력칸에 바로 실행 가능한 한 문장을 적습니다.",
+          nextIntent: `answer_${slot}`,
+        },
+        {
+          label: "아직 없음 - 아래에 찾을 행동 적기",
+          description: "후보가 없으면 아래에 오늘 확보할 사람·채널·행동을 한 문장으로 적습니다.",
+          nextIntent: "unblock_action",
+        },
+      ];
+  const primaryTextInput = {
+    label: isUnblockSlot ? "오늘 찾을 사람·채널·행동" : `${copy.label} 한 줄 답변`,
+    placeholder: copy.placeholder,
+    required: true,
+    submitLabel: isUnblockSlot ? "해소 행동 제출" : "답변 제출",
+    validationMessage: isUnblockSlot
+      ? "사람·채널·무엇을 할지 한 문장으로 적어야 반복 질문을 닫을 수 있습니다."
+      : "선택만으로는 부족합니다. 아래 입력칸에 오늘 실행 가능한 한 문장을 적어주세요.",
+  };
   return {
     toolName,
     title: "Office Hours 구체화",
@@ -177,22 +219,12 @@ export function buildDay1HandoffClarityStructuredInput({
         header: copy.header,
         question: copy.question,
         helperText: copy.helperText,
-        options: [
-          {
-            label: "지금 답하기",
-            description: "아래 입력칸에 오늘 실행 가능한 한 문장으로 적습니다.",
-            nextIntent: `answer_${slot}`,
-          },
-          {
-            label: "아직 없음 - 오늘 찾을 행동 정하기",
-            description: "같은 질문을 반복하지 않고 오늘 확보할 사람·채널·행동으로 전환합니다.",
-            nextIntent: "unblock_action",
-          },
-        ],
+        options,
         multiSelect: false,
         allowFreeText: true,
         requiresFreeText: false,
         freeTextPlaceholder: copy.placeholder,
+        primaryTextInput,
         textMode: "short",
       },
     ],

@@ -427,7 +427,7 @@ struct IntakeV2FolderPickView: View {
 
         Agentic30을 재시작해도 같은 문제가 발생하면 Node 설치 상태를 확인하거나 GitHub Issue로 알려주세요.
         """
-        alert.addButton(withTitle: "확인")
+        alert.addButton(withTitle: "닫기")
         alert.runModal()
     }
 

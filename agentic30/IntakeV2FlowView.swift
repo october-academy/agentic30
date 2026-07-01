@@ -332,7 +332,7 @@ struct IntakeV2Footer: View {
     let nextEnabled: Bool
     var nextVisible: Bool = true
     var nextLoading: Bool = false
-    var nextAccessibilityIdentifier: String? = nil
+    var nextAccessibilityIdentifier: String? = "intakeV2.footer.nextButton"
     let onBack: () -> Void
     let onNext: () -> Void
 
@@ -465,13 +465,8 @@ struct IntakeV2PinnedStepScaffold<Content: View, Footer: View>: View {
                     .background { IntakeV2Color.bg }
             }
             .frame(maxWidth: IntakeV2Layout.contentMaxWidth, maxHeight: .infinity, alignment: .topLeading)
-            .overlay {
-                IntakeV2Color.invisibleHitArea
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Intake step shell")
-                    .accessibilityIdentifier("intakeV2.stepShell")
-                    .allowsHitTesting(false)
-            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("intakeV2.stepShell")
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
     }

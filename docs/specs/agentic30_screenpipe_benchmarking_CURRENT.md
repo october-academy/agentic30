@@ -30,6 +30,34 @@ SPEC Section 17 unless this file is insufficient.
 
 ## Latest Implementation Pending Live Acceptance
 
+- Gate C live-recorder audio acceptance verifier now rejects seeded audio
+  fixtures instead of accepting any `audio-` row:
+  - `sidecar/recorder-live-verify.mjs` now exposes
+    `isSeedFixtureAudioChunkRow`, `isLiveCapturedAudioChunkRow`, and
+    `assertLiveRecorderAudioChunkRow`. A full live audio row must be non-deleted,
+    non-fixture, shaped like the Swift collector output (`audio-<uuid>` plus
+    `asset-<uuid>`), use a live source (`microphone` or `system_audio`), carry a
+    `recorder-consent-*` consent grant, and report
+    `raw_audio_indicator_state=visible_indicator_active`.
+  - `scripts/verify-live-recorder-acceptance.mjs` now uses that shared audio
+    discriminator for full audio acceptance. `--allow-missing-audio` remains a
+    frame-only triage escape hatch, but without that flag a seeded
+    `audio-live-fixture` row fails closed with
+    `ERR_RECORDER_LIVE_VERIFY_AUDIO_IS_SEED_FIXTURE`.
+  - The subprocess acceptance test now uses UUID-shaped audio fixtures for the
+    positive path and adds a negative seeded-audio fixture case, preventing the
+    future signed-app audio leg from being certified by fixture rows.
+  - Focused verification passed: syntax checks for
+    `sidecar/recorder-live-verify.mjs`,
+    `scripts/verify-live-recorder-acceptance.mjs`,
+    `sidecar-tests/recorder-live-verify.test.mjs`, and
+    `sidecar-tests/verify-live-recorder-acceptance.test.mjs`; targeted
+    `git diff --check`; and `node --test
+    sidecar-tests/recorder-live-verify.test.mjs
+    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`11/11`).
+  - This tightens the next live signed audio acceptance gate. It is still not
+    live signed-app recorder acceptance, foreground UI E2E acceptance, granted
+    microphone/System Audio TCC proof, or proof-ledger acceptance.
 - Gate A Day Memory loop now auto-fires inside the Day-0-3 Office Hours path:
   - `sidecar/recorder-day-loop-autofire.mjs` owns the pure decision rule:
     fire at most once per local day, only while the recorder store is running,
@@ -620,8 +648,8 @@ SPEC Section 17 unless this file is insufficient.
   - The verifier opens a live app-support root, requires an undeleted live
     `frame-` row with `capture_trigger` containing `screencapturekit`, a live
     `asset-` media file on disk with bytes, a redacted search hit for that
-    same live frame, a live `audio-` chunk with media unless explicitly
-    allowed missing, and an accepted raw-read audit row referencing the live
+    same live frame, a live `audio-<uuid>` chunk with `asset-<uuid>` media
+    unless explicitly allowed missing, and an accepted raw-read audit row referencing the live
     frame unless explicitly allowed missing. It always reports
     `proofAccepted:false`.
   - With `--apply-retention`, the verifier runs the production
@@ -634,7 +662,7 @@ SPEC Section 17 unless this file is insufficient.
     scripts/verify-live-recorder-acceptance.mjs --help`, and a temporary
     live-like fixture smoke that produced schema
     `agentic30.live_recorder_acceptance.v1`, a live `frame-live-fixture`
-    search hit, live `audio-live-fixture`, accepted raw-read audit, and
+    search hit, UUID-shaped live audio fixture, accepted raw-read audit, and
     retention result `{status:"applied", deletedFrameCount:1,
     deletedAudioChunkCount:1, deletedMediaCount:2}`.
   - This is an operator acceptance harness, not a live signed-app PASS. It must

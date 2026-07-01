@@ -14,6 +14,13 @@ export const RECORDER_CONTROL_MODES = Object.freeze({
   stoppedForToday: "stopped_for_today",
 });
 
+export const RECORDER_READINESS_MODE_IDS = Object.freeze({
+  coreFrameCapture: "core_frame_capture_ready",
+  eventDrivenCapture: "event_driven_capture_ready",
+  ocrTextCompletion: "ocr_text_completion_ready",
+  sensitiveCapture: "sensitive_capture_ready",
+});
+
 const PERMISSION_STATES = new Set([
   "unknown",
   "not_determined",
@@ -128,6 +135,10 @@ export function transitionRecorderControlState(state = {}, action = {}, { now = 
         consent: {
           ...current.consent,
           status: "granted",
+          grantId: cleanString(action.consentGrantId ?? action.consent_grant_id, 240)
+            || consentGrantIdFromTimestamp(timestamp),
+          grant_id: cleanString(action.consentGrantId ?? action.consent_grant_id, 240)
+            || consentGrantIdFromTimestamp(timestamp),
           grantedAt: timestamp,
           granted_at: timestamp,
           revokedAt: null,
@@ -294,6 +305,10 @@ export function evaluateRecorderCaptureReadiness(state = {}, { now = new Date() 
   warnings.push(...expandedMedia.degradedStates);
 
   const ready = blockers.length === 0;
+  const modeReadiness = buildRecorderModeReadiness(normalized, {
+    coreBlockers: blockers,
+    expandedMedia,
+  });
   return {
     schemaVersion: RECORDER_CONTROL_SCHEMA_VERSION,
     schema_version: RECORDER_CONTROL_SCHEMA_VERSION,
@@ -310,6 +325,8 @@ export function evaluateRecorderCaptureReadiness(state = {}, { now = new Date() 
     visible_indicator_required: normalized.consent.visibleIndicatorRequired,
     visibleIndicatorAcknowledged: normalized.consent.visibleIndicatorAcknowledged,
     visible_indicator_acknowledged: normalized.consent.visibleIndicatorAcknowledged,
+    modeReadiness,
+    mode_readiness: modeReadiness,
     expandedMedia,
     expanded_media: expandedMedia,
   };
@@ -362,6 +379,101 @@ export function evaluateRecorderExpandedMediaPolicy(state = {}, { now = new Date
   };
 }
 
+function buildRecorderModeReadiness(normalized, { coreBlockers = [], expandedMedia = null } = {}) {
+  const mediaPolicy = expandedMedia || evaluateRecorderExpandedMediaPolicy(normalized);
+  const core = readinessModeDto(RECORDER_READINESS_MODE_IDS.coreFrameCapture, coreBlockers);
+  const eventBlockers = [...coreBlockers];
+  if (normalized.permissions.inputMonitoring !== "granted") {
+    eventBlockers.push(blocker(
+      "input_monitoring_missing",
+      "Input Monitoring/Event Tap permission and runtime probe are required for event-driven capture.",
+      { permission: "inputMonitoring", state: normalized.permissions.inputMonitoring },
+    ));
+  }
+  const ocrBlockers = [...coreBlockers];
+  if (normalized.permissions.visionOcr !== "granted") {
+    ocrBlockers.push(blocker(
+      "vision_ocr_unavailable_named_root_cause",
+      "Vision OCR fallback is unavailable; OCR text completion cannot be claimed.",
+      { permission: "visionOcr", state: normalized.permissions.visionOcr },
+    ));
+  }
+  const sensitiveBlockers = buildSensitiveCaptureReadinessBlockers(normalized, mediaPolicy);
+  return {
+    coreFrameCapture: core,
+    core_frame_capture: core,
+    eventDrivenCapture: readinessModeDto(RECORDER_READINESS_MODE_IDS.eventDrivenCapture, eventBlockers),
+    event_driven_capture: readinessModeDto(RECORDER_READINESS_MODE_IDS.eventDrivenCapture, eventBlockers),
+    ocrTextCompletion: readinessModeDto(RECORDER_READINESS_MODE_IDS.ocrTextCompletion, ocrBlockers),
+    ocr_text_completion: readinessModeDto(RECORDER_READINESS_MODE_IDS.ocrTextCompletion, ocrBlockers),
+    sensitiveCapture: readinessModeDto(
+      RECORDER_READINESS_MODE_IDS.sensitiveCapture,
+      [...coreBlockers, ...sensitiveBlockers],
+    ),
+    sensitive_capture: readinessModeDto(
+      RECORDER_READINESS_MODE_IDS.sensitiveCapture,
+      [...coreBlockers, ...sensitiveBlockers],
+    ),
+  };
+}
+
+function readinessModeDto(id, blockers = [], warnings = []) {
+  const ready = blockers.length === 0;
+  return {
+    id,
+    ready,
+    state: ready ? (warnings.length ? "degraded" : "ready") : "blocked",
+    blockers,
+    warnings,
+    proofAcceptedByReadinessMode: false,
+    proof_accepted_by_readiness_mode: false,
+  };
+}
+
+function buildSensitiveCaptureReadinessBlockers(normalized, expandedMedia) {
+  const blockers = [];
+  if (normalized.sensitiveCapture.clipboardContents !== true) {
+    blockers.push(blocker(
+      "clipboard_content_opt_in_missing",
+      "Clipboard contents require explicit opt-in before sensitive capture can be ready.",
+      { permission: "clipboard", state: expandedMedia.clipboard.status },
+    ));
+  } else if (expandedMedia.clipboard.status !== "content_enabled") {
+    blockers.push(blocker(
+      "clipboard_content_capture_blocked",
+      "Clipboard content capture is enabled by policy but blocked by permission.",
+      { permission: "clipboard", state: expandedMedia.clipboard.status },
+    ));
+  }
+  if (normalized.sensitiveCapture.microphone !== true) {
+    blockers.push(blocker(
+      "microphone_capture_opt_in_missing",
+      "Microphone capture requires explicit opt-in before sensitive capture can be ready.",
+      { permission: "microphone", state: expandedMedia.audio.microphone.status },
+    ));
+  } else if (expandedMedia.audio.microphone.status !== "enabled") {
+    blockers.push(blocker(
+      "microphone_capture_blocked",
+      "Microphone capture is enabled by policy but blocked by permission.",
+      { permission: "microphone", state: expandedMedia.audio.microphone.status },
+    ));
+  }
+  if (normalized.sensitiveCapture.systemAudio !== true) {
+    blockers.push(blocker(
+      "system_audio_capture_opt_in_missing",
+      "System Audio capture requires explicit opt-in before sensitive capture can be ready.",
+      { permission: "systemAudio", state: expandedMedia.audio.systemAudio.status },
+    ));
+  } else if (expandedMedia.audio.systemAudio.status !== "enabled") {
+    blockers.push(blocker(
+      "system_audio_capture_blocked",
+      "System Audio capture is enabled by policy but blocked by permission.",
+      { permission: "systemAudio", state: expandedMedia.audio.systemAudio.status },
+    ));
+  }
+  return blockers;
+}
+
 export function normalizeRecorderControlState(value = {}, { now = new Date() } = {}) {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const generatedAt = toIso(now);
@@ -408,10 +520,15 @@ function normalizeConsent(value = {}, { now = new Date() } = {}) {
   const status = ["not_requested", "granted", "revoked"].includes(cleanToken(raw.status))
     ? cleanToken(raw.status)
     : "not_requested";
+  const grantedAt = normalizeNullableIso(raw.grantedAt ?? raw.granted_at);
+  const grantId = cleanString(raw.grantId ?? raw.grant_id, 240)
+    || (status !== "not_requested" && grantedAt ? consentGrantIdFromTimestamp(grantedAt) : null);
   return {
     status,
-    grantedAt: normalizeNullableIso(raw.grantedAt ?? raw.granted_at),
-    granted_at: normalizeNullableIso(raw.grantedAt ?? raw.granted_at),
+    grantId,
+    grant_id: grantId,
+    grantedAt,
+    granted_at: grantedAt,
     revokedAt: normalizeNullableIso(raw.revokedAt ?? raw.revoked_at),
     revoked_at: normalizeNullableIso(raw.revokedAt ?? raw.revoked_at),
     visibleIndicatorRequired: raw.visibleIndicatorRequired ?? raw.visible_indicator_required ?? true ? true : false,
@@ -421,6 +538,14 @@ function normalizeConsent(value = {}, { now = new Date() } = {}) {
     firstSeenAt: normalizeIso(raw.firstSeenAt ?? raw.first_seen_at, toIso(now)),
     first_seen_at: normalizeIso(raw.firstSeenAt ?? raw.first_seen_at, toIso(now)),
   };
+}
+
+function consentGrantIdFromTimestamp(value) {
+  const compact = String(value ?? "")
+    .replace(/[^0-9A-Za-z]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return `recorder-consent-${compact || "unknown"}`;
 }
 
 function normalizeSensitiveCapture(value = {}) {

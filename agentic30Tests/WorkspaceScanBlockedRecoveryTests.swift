@@ -156,8 +156,8 @@ final class WorkspaceScanBlockedRecoveryTests: XCTestCase {
         ))
         XCTAssertEqual(recovery.primaryAction, .reviewEvidence)
         XCTAssertEqual(recovery.alternateProviders, [])
-        XCTAssertEqual(recovery.title, "프로젝트 근거가 부족해요")
-        XCTAssertTrue(recovery.body.contains("Day 1 질문"))
+        XCTAssertEqual(recovery.title, "처음 기준을 정합니다")
+        XCTAssertTrue(recovery.body.contains("첫 질문"))
     }
 
     func testNothingInstalledRoutesToSettings() {

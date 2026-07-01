@@ -6,21 +6,48 @@
 //
 
 import AppKit
+import ApplicationServices
 import Darwin
 import Foundation
 import XCTest
 
 final class agentic30UITests: XCTestCase {
+    private var latestUITestingLaunchDiagnosticsURL: URL?
+
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.
 
         // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
+        if let lockedSessionMessage = macScreenLockFailureMessage() {
+            XCTFail(lockedSessionMessage)
+            throw NSError(
+                domain: "agentic30UITests.ScreenLock",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: lockedSessionMessage]
+            )
+        }
         addUIInterruptionMonitor(withDescription: "Dismiss system alerts") { alert in
             self.dismissSystemAlert(alert)
         }
 
         // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
+    }
+
+    private func macScreenLockFailureMessage() -> String? {
+        let session = (CGSessionCopyCurrentDictionary() as? [String: Any]) ?? [:]
+        let screenLocked = session["CGSSessionScreenIsLocked"] as? Bool
+        let frontmostBundleIdentifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        guard screenLocked == true || frontmostBundleIdentifier == "com.apple.loginwindow" else {
+            return nil
+        }
+        let lockedAt = session["CGSSessionScreenLockedTime"].map { "\($0)" } ?? "unknown"
+        let frontmost = frontmostBundleIdentifier ?? "unknown"
+        return """
+        Refusing to run Agentic30 UI E2E while macOS is locked or loginwindow-shielded.
+        XCUITest can see parts of the accessibility tree behind loginwindow, but Agentic30 windows are disabled and controls are not reliably hittable.
+        Unlock the Mac and rerun the UI E2E command. CGSSessionScreenIsLocked=\(screenLocked == true), CGSSessionScreenLockedTime=\(lockedAt), frontmostApplication=\(frontmost).
+        """
     }
 
     override func tearDownWithError() throws {
@@ -88,7 +115,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_CODEX_MODEL": "gpt-5.5",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -106,7 +133,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         tapRequired(button(in: app, matching: ["Back"]), in: app, named: "Intake V2 Back")
         verifyBootIntroLayout(in: app)
-        tapRequired(button(in: app, matching: ["Continue →", "Continue"]), in: app, named: "Intake V2 boot Continue")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 boot Continue")
         XCTAssertTrue(app.staticTexts["요즘 어디에 시간을 가장 많이 쓰고 있나요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
@@ -114,8 +141,8 @@ final class agentic30UITests: XCTestCase {
             baseline: &intakeLayoutBaseline
         )
         tapIntakeOption(in: app, identifier: "intakeV2.focusArea.option.development")
-        XCTAssertTrue(button(in: app, matching: ["Next →", "Next"]).isEnabled)
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next")
+        XCTAssertTrue(intakeFooterNextButton(in: app).isEnabled)
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 role Next")
         XCTAssertTrue(app.staticTexts["지금 제품을 만들거나 키우는 과정에서 가장 큰 병목은 어디인가요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
@@ -130,7 +157,7 @@ final class agentic30UITests: XCTestCase {
             current: 2,
             baseline: &intakeLayoutBaseline
         )
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next after Back")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 role Next after Back")
         XCTAssertTrue(app.staticTexts["지금 제품을 만들거나 키우는 과정에서 가장 큰 병목은 어디인가요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
@@ -138,8 +165,8 @@ final class agentic30UITests: XCTestCase {
             baseline: &intakeLayoutBaseline
         )
         tapIntakeOption(in: app, identifier: "intakeV2.bottleneck.option.problem_definition")
-        XCTAssertTrue(button(in: app, matching: ["Next →", "Next"]).isEnabled)
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 blocker Next")
+        XCTAssertTrue(intakeFooterNextButton(in: app).isEnabled)
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 blocker Next")
         XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
@@ -148,7 +175,7 @@ final class agentic30UITests: XCTestCase {
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         tapIntakeOption(in: app, identifier: "intakeV2.commitment.option.full_time_6h")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 commitment Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 commitment Next")
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
@@ -156,7 +183,7 @@ final class agentic30UITests: XCTestCase {
             baseline: &intakeLayoutBaseline
         )
         tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.work_log")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
@@ -167,7 +194,7 @@ final class agentic30UITests: XCTestCase {
         // Continue is now always present but disabled until a folder is connected
         // (the PR dropped `nextVisible: store.folderURL != nil`, so the footer renders it
         //  via `.disabled(!nextEnabled)`, which keeps it in the accessibility tree).
-        let folderContinueBeforeConnect = button(in: app, matching: ["Continue →", "Continue"])
+        let folderContinueBeforeConnect = intakeFooterNextButton(in: app)
         XCTAssertTrue(folderContinueBeforeConnect.waitForExistence(timeout: 3))
         XCTAssertFalse(folderContinueBeforeConnect.isEnabled)
         tapRequired(elementWithIdentifier(in: app, "intakeV2.folderPromptCopyButton"), in: app, named: "Intake V2 folder prompt copy")
@@ -179,7 +206,7 @@ final class agentic30UITests: XCTestCase {
         let selectedFolderName = elementWithIdentifier(in: app, "intakeV2.selectedFolderName")
         XCTAssertTrue(selectedFolderName.waitForExistence(timeout: 3))
         XCTAssertEqual(selectedFolderName.label, (workspacePath as NSString).lastPathComponent)
-        tapRequired(button(in: app, matching: ["Continue →", "Continue"]), in: app, named: "Intake V2 folder Continue")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 folder Continue")
 
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
         assertStableIntakeStepLayout(
@@ -188,9 +215,9 @@ final class agentic30UITests: XCTestCase {
             baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
-        XCTAssertTrue(button(in: app, matching: ["Continue →", "Continue"]).exists)
+        XCTAssertTrue(intakeFooterNextButton(in: app).exists)
 
-        let continueButton = button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"])
+        let continueButton = intakeFooterNextButton(in: app)
         XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
         tapRequired(continueButton, in: app, named: "Intake V2 sources Continue")
 
@@ -261,7 +288,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -270,20 +297,20 @@ final class agentic30UITests: XCTestCase {
 
         advanceToIntakeFocusAreaStep(in: app, timeout: 10)
         tapIntakeOption(in: app, identifier: "intakeV2.focusArea.option.development")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 role Next")
         XCTAssertTrue(app.staticTexts["지금 제품을 만들거나 키우는 과정에서 가장 큰 병목은 어디인가요?"].waitForExistence(timeout: 5))
         tapIntakeOption(in: app, identifier: "intakeV2.bottleneck.option.problem_definition")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 blocker Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 blocker Next")
         XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 10))
         tapIntakeOption(in: app, identifier: "intakeV2.commitment.option.full_time_6h")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 commitment Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 commitment Next")
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
         tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.community")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
         // Continue is present-but-disabled before a folder is connected; advancing without a
         // folder goes through the explicit "폴더 없이 시작" skip button below, not Continue.
-        let folderContinueSkipPath = button(in: app, matching: ["Continue →", "Continue"])
+        let folderContinueSkipPath = intakeFooterNextButton(in: app)
         XCTAssertTrue(folderContinueSkipPath.waitForExistence(timeout: 3))
         XCTAssertFalse(folderContinueSkipPath.isEnabled)
         tapRequired(elementWithIdentifier(in: app, "intakeV2.folderSkipButton"), in: app, named: "Intake V2 folder skip")
@@ -313,7 +340,7 @@ final class agentic30UITests: XCTestCase {
             XCTAssertTrue(buttonContaining(in: app, text: "Connected later").waitForExistence(timeout: 3))
             XCTAssertFalse(element(sourceTile, contains: "Connected ·"))
         }
-        tapRequired(button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]), in: app, named: "Intake V2 sources Continue")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 sources Continue")
 
         assertIntakeProgress(in: app, current: 8, timeout: 10)
         let openInbox = elementWithIdentifier(in: app, "intakeV2.openInboxButton")
@@ -384,7 +411,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -394,22 +421,22 @@ final class agentic30UITests: XCTestCase {
 
         advanceToIntakeFocusAreaStep(in: app, timeout: 10)
         tapIntakeOption(in: app, identifier: "intakeV2.focusArea.option.development")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 role Next")
         XCTAssertTrue(app.staticTexts["지금 제품을 만들거나 키우는 과정에서 가장 큰 병목은 어디인가요?"].waitForExistence(timeout: 5))
         tapIntakeOption(in: app, identifier: "intakeV2.bottleneck.option.problem_definition")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 blocker Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 blocker Next")
         XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 5))
         tapIntakeOption(in: app, identifier: "intakeV2.commitment.option.full_time_6h")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 commitment Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 commitment Next")
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
         tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.work_log")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
         tapRequired(elementWithIdentifier(in: app, "intakeV2.folderPickButton"), in: app, named: "Intake V2 folder pick")
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.folderPickButton", containing: "다른 폴더 선택", timeout: 3))
-        tapRequired(button(in: app, matching: ["Continue →", "Continue"]), in: app, named: "Intake V2 folder Continue")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 folder Continue")
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
-        tapRequired(button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]), in: app, named: "Intake V2 sources Continue")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 sources Continue")
 
         assertIntakeProgress(in: app, current: 8, timeout: 10)
         let bootLog = elementWithIdentifier(in: app, "intakeV2.bootLog")
@@ -483,7 +510,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -493,22 +520,22 @@ final class agentic30UITests: XCTestCase {
 
         advanceToIntakeFocusAreaStep(in: app, timeout: 10)
         tapIntakeOption(in: app, identifier: "intakeV2.focusArea.option.development")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 role Next")
         XCTAssertTrue(app.staticTexts["지금 제품을 만들거나 키우는 과정에서 가장 큰 병목은 어디인가요?"].waitForExistence(timeout: 5))
         tapIntakeOption(in: app, identifier: "intakeV2.bottleneck.option.problem_definition")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 blocker Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 blocker Next")
         XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 5))
         tapIntakeOption(in: app, identifier: "intakeV2.commitment.option.full_time_6h")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 commitment Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 commitment Next")
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
         tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.work_log")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
         tapRequired(elementWithIdentifier(in: app, "intakeV2.folderPickButton"), in: app, named: "Intake V2 folder pick")
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.folderPickButton", containing: "다른 폴더 선택", timeout: 3))
-        tapRequired(button(in: app, matching: ["Continue →", "Continue"]), in: app, named: "Intake V2 folder Continue")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 folder Continue")
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
-        tapRequired(button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]), in: app, named: "Intake V2 sources Continue")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 sources Continue")
 
         assertIntakeProgress(in: app, current: 8, timeout: 10)
         XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.progress").waitForExistence(timeout: 5))
@@ -535,7 +562,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -544,16 +571,16 @@ final class agentic30UITests: XCTestCase {
 
         advanceToIntakeFocusAreaStep(in: app, timeout: 10)
         tapIntakeOption(in: app, identifier: "intakeV2.focusArea.option.development")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 role Next")
         XCTAssertTrue(app.staticTexts["지금 제품을 만들거나 키우는 과정에서 가장 큰 병목은 어디인가요?"].waitForExistence(timeout: 5))
         tapIntakeOption(in: app, identifier: "intakeV2.bottleneck.option.problem_definition")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 blocker Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 blocker Next")
         XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 10))
         tapIntakeOption(in: app, identifier: "intakeV2.commitment.option.full_time_6h")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 commitment Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 commitment Next")
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
         tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.community")
-        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
+        tapRequired(intakeFooterNextButton(in: app), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
         tapRequired(elementWithIdentifier(in: app, "intakeV2.folderSkipButton"), in: app, named: "Intake V2 folder skip")
 
@@ -586,10 +613,10 @@ final class agentic30UITests: XCTestCase {
         }
 
         let addSourceButton = elementWithIdentifier(in: app, "intakeV2.addSource")
-        XCTAssertTrue(scrollElementToVisible(addSourceButton, in: app, timeout: 5))
+        XCTAssertTrue(scrollElementToFullyVisible(addSourceButton, in: app, timeout: 5))
         tapRequired(addSourceButton, in: app, named: "Intake V2 Add Source")
-        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.addSource.modal").waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["기록 소스 추가"].exists)
+        XCTAssertTrue(waitForAddSourceModal(in: app, timeout: 5))
+        XCTAssertTrue(waitForStaticText(containing: "기록 소스 추가", in: app, timeout: 1))
 
         let search = textField(in: app, matching: ["intakeV2.addSource.search", "소스 검색"])
         XCTAssertTrue(search.waitForExistence(timeout: 3))
@@ -612,7 +639,7 @@ final class agentic30UITests: XCTestCase {
         let addSelectedInModal = elementWithIdentifier(in: app, "intakeV2.addSource.addSelected")
         XCTAssertTrue(addSelectedInModal.waitForExistence(timeout: 3))
         tapRequired(addSelectedInModal, in: app, named: "Intake V2 Add Selected")
-        XCTAssertTrue(waitForElementToDisappear(elementWithIdentifier(in: app, "intakeV2.addSource.modal"), timeout: 5))
+        XCTAssertTrue(waitForAddSourceModalToDisappear(in: app, timeout: 5))
 
         for source in sourceSelections {
             XCTAssertTrue(app.staticTexts[source.displayName].waitForExistence(timeout: 5))
@@ -620,9 +647,9 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Connect later · Settings"].exists)
 
         let reopenedAddSourceButton = elementWithIdentifier(in: app, "intakeV2.addSource")
-        XCTAssertTrue(scrollElementToVisible(reopenedAddSourceButton, in: app, timeout: 5))
+        XCTAssertTrue(scrollElementToFullyVisible(reopenedAddSourceButton, in: app, timeout: 5))
         tapRequired(reopenedAddSourceButton, in: app, named: "Intake V2 reopened Add Source")
-        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.addSource.modal").waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForAddSourceModal(in: app, timeout: 5))
         let reopenedSearch = textField(in: app, matching: ["intakeV2.addSource.search", "소스 검색"])
         XCTAssertTrue(reopenedSearch.waitForExistence(timeout: 3))
         replaceSearchText("Linear", in: reopenedSearch)
@@ -658,7 +685,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -832,7 +859,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -873,7 +900,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -931,7 +958,7 @@ final class agentic30UITests: XCTestCase {
         addTeardownBlock {
             firstLaunch.terminate()
         }
-        firstLaunch.activate()
+        activateApp(firstLaunch)
 
         XCTAssertTrue(elementWithIdentifier(in: firstLaunch, "opendesign.day.shell").waitForExistence(timeout: 10))
         XCTAssertFalse(elementWithIdentifier(in: firstLaunch, "opendesign.day.planPreparing").exists)
@@ -950,7 +977,7 @@ final class agentic30UITests: XCTestCase {
         addTeardownBlock {
             relaunched.terminate()
         }
-        relaunched.activate()
+        activateApp(relaunched)
 
         let shell = elementWithIdentifier(in: relaunched, "opendesign.day.shell")
         if !shell.waitForExistence(timeout: 10) {
@@ -978,13 +1005,13 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
-            "--ui-testing-workspace-window-size=1360x820",
+            "--ui-testing-workspace-window-size=1360x960",
         ], environment: [
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1054,7 +1081,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1105,17 +1132,9 @@ final class agentic30UITests: XCTestCase {
         }
 
         let matrix = elementWithIdentifier(in: app, "strategy.matrix")
-        XCTAssertTrue(scrollElementToVisible(
-            matrix,
-            in: app,
-            timeout: 12,
-            scrollViewIdentifier: strategyScrollIdentifier
-        ))
         XCTAssertTrue(matrix.waitForExistence(timeout: 5))
         let matrixBoard = elementWithIdentifier(in: app, "strategy.matrix.board")
         let matrixDetail = elementWithIdentifier(in: app, "strategy.matrix.detail")
-        XCTAssertTrue(matrixBoard.waitForExistence(timeout: 3))
-        XCTAssertTrue(matrixDetail.waitForExistence(timeout: 3))
 
         let agentic30Node = elementWithIdentifier(in: app, "strategy.matrix.node.agentic30")
         let agentic30Label = elementWithIdentifier(in: app, "strategy.matrix.label.agentic30")
@@ -1139,6 +1158,14 @@ final class agentic30UITests: XCTestCase {
         let ozFounderCampLabel = elementWithIdentifier(in: app, "strategy.matrix.label.oz-founder-camp")
         let agentic30Quadrant = elementWithIdentifier(in: app, "strategy.matrix.quadrant.agentic30")
         let aiBuildQuadrant = elementWithIdentifier(in: app, "strategy.matrix.quadrant.ai-build")
+        XCTAssertTrue(scrollElementToHittable(
+            agentic30Node,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: strategyScrollIdentifier
+        ))
+        XCTAssertTrue(matrixBoard.waitForExistence(timeout: 3))
+        XCTAssertTrue(matrixDetail.waitForExistence(timeout: 3))
         XCTAssertTrue(agentic30Node.waitForExistence(timeout: 3))
         XCTAssertTrue(agentic30Label.waitForExistence(timeout: 3))
         XCTAssertTrue(sparkClawNode.waitForExistence(timeout: 3))
@@ -1183,14 +1210,14 @@ final class agentic30UITests: XCTestCase {
             timeout: 5,
             scrollViewIdentifier: strategyScrollIdentifier
         ))
-        clickCenter(of: cursorNode)
+        cursorNode.click()
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.matrix.detail", containing: "Cursor", timeout: 3))
         attachScreenshot(from: app, named: "Strategy Matrix Cursor Visual QA")
         assertNoVisualOverlap(cursorNode, aiBuildQuadrant, message: "Selected Cursor should remain clear of AI build quadrant label")
         assertNoVisualOverlap(cursorLabel, aiBuildQuadrant, message: "Selected Cursor label should remain clear of AI build quadrant label")
         assertInlineDotLabelAligned(cursorNode, cursorLabel, labelIsLeading: true, message: "Selected Cursor dot and text should share a centerline")
 
-        clickCenter(of: founderPalNode)
+        founderPalNode.click()
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.matrix.detail", containing: "FounderPal", timeout: 3))
         assertNoVisualOverlap(founderPalLabel, cofounderLabel, message: "Selected FounderPal label should remain clear of CoFounder.im label")
         assertInlineDotLabelAligned(founderPalNode, founderPalLabel, labelIsLeading: true, message: "Selected FounderPal dot and text should share a centerline")
@@ -1202,15 +1229,10 @@ final class agentic30UITests: XCTestCase {
             timeout: 5,
             scrollViewIdentifier: strategyScrollIdentifier
         ))
-        clickCenter(of: ycNode)
+        ycNode.click()
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.matrix.detail", containing: "YC Startup School", timeout: 3))
 
-        XCTAssertTrue(scrollElementToVisible(
-            elementWithIdentifier(in: app, "strategy.swot"),
-            in: app,
-            timeout: 5,
-            scrollViewIdentifier: strategyScrollIdentifier
-        ))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.swot").waitForExistence(timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "strategy.swot.matrix").exists)
         for swotGroupID in ["strengths", "weaknesses", "opportunities", "threats"] {
             XCTAssertTrue(scrollElementToVisible(
@@ -1258,7 +1280,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1282,15 +1304,16 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.generated.badge", containing: "동적 리서치", timeout: 3))
 
         let matrix = elementWithIdentifier(in: app, "strategy.matrix")
-        XCTAssertTrue(scrollElementToVisible(
-            matrix,
+        XCTAssertTrue(matrix.waitForExistence(timeout: 5))
+        let matrixBoard = elementWithIdentifier(in: app, "strategy.matrix.board")
+        let indieFoundersNode = elementWithIdentifier(in: app, "strategy.matrix.node.indiefounders")
+        let indieFoundersLabel = elementWithIdentifier(in: app, "strategy.matrix.label.indiefounders")
+        XCTAssertTrue(scrollElementToHittable(
+            indieFoundersNode,
             in: app,
             timeout: 12,
             scrollViewIdentifier: "strategy.scroll"
         ))
-        let matrixBoard = elementWithIdentifier(in: app, "strategy.matrix.board")
-        let indieFoundersNode = elementWithIdentifier(in: app, "strategy.matrix.node.indiefounders")
-        let indieFoundersLabel = elementWithIdentifier(in: app, "strategy.matrix.label.indiefounders")
         XCTAssertTrue(matrixBoard.waitForExistence(timeout: 5))
         XCTAssertTrue(indieFoundersNode.waitForExistence(timeout: 5))
         XCTAssertTrue(indieFoundersLabel.waitForExistence(timeout: 5))
@@ -1304,8 +1327,288 @@ final class agentic30UITests: XCTestCase {
     @MainActor
     func testStrategyResearchRunsThroughSidecarAndPersistsCanonicalRunDiagnostics() throws {
         let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-strategy-sidecar-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-strategy-sidecar-support-\(runID)"
+        let testRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-sidecar", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        let workspacePath = testRoot
+            .appendingPathComponent("workspace", isDirectory: true)
+            .path
+        let appSupportPath = testRoot
+            .appendingPathComponent("app-support", isDirectory: true)
+            .path
+        resetDirectory(at: testRoot.path)
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-workspace-scan-cache",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
+            "--ui-testing-open-workspace",
+            "--ui-testing-direct-workspace-window",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x960",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
+            "EXA_API_KEY": "exa_test_key",
+        ])
+        hideKnownInterferingApplications()
+        activateApp(app)
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            if (self.testRun?.failureCount ?? 0) == 0,
+               (self.testRun?.unexpectedExceptionCount ?? 0) == 0 {
+                self.removeDirectory(at: testRoot.path)
+            } else {
+                print("Preserving Strategy sidecar UI test artifacts at \(testRoot.path)")
+            }
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 15))
+        try waitForSidecarStartupPhase(
+            appSupportPath: appSupportPath,
+            phase: "ready_event_received",
+            timeout: 45
+        )
+        elementWithIdentifier(in: app, "opendesign.day.rail.item.strategy").click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.screen").waitForExistence(timeout: 10))
+
+        let researchButton = elementWithIdentifier(in: app, "strategy.action.research")
+        XCTAssertTrue(researchButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitUntilHittable(researchButton, timeout: 10))
+        researchButton.click()
+
+        XCTAssertNotNil(waitForAnyElement(
+            in: app,
+            identifiers: ["strategy.research.progress", "strategy.generated.badge"],
+            timeout: 15
+        ))
+        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.research.error").exists)
+
+        let latestRun = try waitForStrategyReportRun(
+            workspacePath: workspacePath,
+            state: "ready",
+            timeout: 30
+        )
+        assertStrategyReportRunHasCanonicalCanvasAndDiagnostics(latestRun)
+
+        let cache = try readStrategyReportCache(workspacePath: workspacePath)
+        assertStrategyReportRunHasRawProviderPasses(cache)
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.generated.badge").waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.generated.badge", containing: "동적 리서치", timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.research.error").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.canvas.block.value-proposition").waitForExistence(timeout: 5))
+
+        let matrix = elementWithIdentifier(in: app, "strategy.matrix")
+        XCTAssertTrue(matrix.waitForExistence(timeout: 5))
+        let matrixBoard = elementWithIdentifier(in: app, "strategy.matrix.board")
+        let indieFoundersNode = elementWithIdentifier(in: app, "strategy.matrix.node.indiefounders")
+        XCTAssertTrue(scrollElementToHittable(
+            indieFoundersNode,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: "strategy.scroll"
+        ))
+        XCTAssertTrue(matrixBoard.waitForExistence(timeout: 5))
+        XCTAssertTrue(indieFoundersNode.waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.cursor").exists)
+    }
+
+    @MainActor
+    func testFounderReplayPermissionLadderExposesNativeRequestsAndActorDiagnostics() throws {
+        let runID = UUID().uuidString
+        let testRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-recorder-permissions", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        let workspacePath = testRoot
+            .appendingPathComponent("workspace", isDirectory: true)
+            .path
+        let appSupportPath = testRoot
+            .appendingPathComponent("app-support", isDirectory: true)
+            .path
+        resetDirectory(at: testRoot.path)
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-workspace-scan-cache",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
+            "--ui-testing-open-workspace",
+            "--ui-testing-direct-workspace-window",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x960",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
+        ])
+        hideKnownInterferingApplications()
+        activateApp(app)
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            if (self.testRun?.failureCount ?? 0) == 0,
+               (self.testRun?.unexpectedExceptionCount ?? 0) == 0 {
+                self.removeDirectory(at: testRoot.path)
+            } else {
+                print("Preserving Founder Replay permission UI test artifacts at \(testRoot.path)")
+            }
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 15))
+        try waitForSidecarStartupPhase(
+            appSupportPath: appSupportPath,
+            phase: "ready_event_received",
+            timeout: 45
+        )
+
+        let founderReplayRail = elementWithIdentifier(in: app, "opendesign.day.rail.item.founder-replay")
+        XCTAssertTrue(founderReplayRail.waitForExistence(timeout: 10))
+        clickCenter(of: founderReplayRail)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.founder-replay", containing: "active", timeout: 5))
+        let lockedPreview = elementWithIdentifier(in: app, "opendesign.rail.lockedPreview.founder-replay")
+        if lockedPreview.exists {
+            attachWindowScreenshot(from: app, named: "Founder Replay Permission Ladder Unexpectedly Locked")
+            attachText(app.debugDescription, named: "Founder Replay Permission Ladder Locked Tree")
+            XCTFail("Founder Replay rail remained locked despite the Day 1 unlock seed.")
+            return
+        }
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.founderReplay.screen").waitForExistence(timeout: 10))
+
+        let controlMode = elementWithIdentifier(in: app, "opendesign.founderReplay.mode.control")
+        tapRequired(controlMode, in: app, named: "Founder Replay Permission Ladder Control mode")
+        let controlSurface = elementWithIdentifier(in: app, "opendesign.founderReplay.control")
+        XCTAssertTrue(controlSurface.waitForExistence(timeout: 10))
+
+        let permissionActor = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.actor")
+        XCTAssertTrue(permissionActor.waitForExistence(timeout: 15))
+        XCTAssertTrue(element(permissionActor, contains: "Permission actor source mainApp"))
+        XCTAssertTrue(element(permissionActor, contains: "bundle "))
+        XCTAssertTrue(element(permissionActor, contains: "translocation "))
+        XCTAssertTrue(element(permissionActor, contains: "releaseGate "))
+        XCTAssertTrue(element(permissionActor, contains: "releaseBlockers "))
+        XCTAssertTrue(element(permissionActor, contains: "sparkleKeyPresent "))
+        XCTAssertTrue(element(permissionActor, contains: "sparkleFeedURL "))
+        XCTAssertTrue(element(permissionActor, contains: "releasePolicyVerified "))
+
+        func assertPermissionSurface(
+            _ id: String,
+            markers: [String],
+            file: StaticString = #filePath,
+            line: UInt = #line
+        ) {
+            let request = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.request.\(id)")
+            XCTAssertTrue(
+                request.waitForExistence(timeout: 15),
+                "Missing native request button for \(id).",
+                file: file,
+                line: line
+            )
+            XCTAssertTrue(
+                waitUntilEnabled(request, timeout: 8),
+                "Native request button for \(id) stayed disabled after permission probe settled.",
+                file: file,
+                line: line
+            )
+
+            let row = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.row.\(id)")
+            XCTAssertTrue(
+                row.waitForExistence(timeout: 8),
+                "Missing permission diagnostic row for \(id).",
+                file: file,
+                line: line
+            )
+            for marker in markers {
+                XCTAssertTrue(
+                    element(row, contains: marker),
+                    "Permission row \(id) did not expose marker: \(marker).",
+                    file: file,
+                    line: line
+                )
+            }
+            attachText(elementDiagnostics(row), named: "Founder Replay Permission Row \(id)")
+        }
+
+        assertPermissionSurface("screenRecording", markers: [
+            "Screen Recording state",
+            "service kTCCServiceScreenCapture",
+            "manualPath System Settings -> Privacy & Security -> Screen & System Audio Recording",
+            "relaunchScope app relaunch",
+            "settingsAnchor candidate_anchor_manual_fallback",
+            "drag disabled_api_registered",
+            "actorSource mainApp",
+            "releaseGate ",
+            "releaseBlockers ",
+        ])
+        assertPermissionSurface("accessibility", markers: [
+            "Accessibility state",
+            "service kTCCServiceAccessibility",
+            "manualPath System Settings -> Privacy & Security -> Accessibility",
+            "settingsAnchor candidate_anchor_manual_fallback",
+            "drag disabled_unverified_pane",
+            "actorSource mainApp",
+        ])
+        assertPermissionSurface("inputMonitoring", markers: [
+            "Input Monitoring state",
+            "service kTCCServiceListenEvent",
+            "manualPath System Settings -> Privacy & Security -> Input Monitoring",
+            "relaunchScope app relaunch",
+            "settingsAnchor candidate_anchor_manual_fallback",
+            "drag disabled_unverified_pane",
+            "actorSource mainApp",
+        ])
+        assertPermissionSurface("microphone", markers: [
+            "Microphone state",
+            "service kTCCServiceMicrophone",
+            "manualPath System Settings -> Privacy & Security -> Microphone",
+            "drag disabled_native_prompt",
+            "actorSource mainApp",
+        ])
+        assertPermissionSurface("systemAudio", markers: [
+            "System Audio state",
+            "service kTCCServiceScreenCapture",
+            "manualPath System Settings -> Privacy & Security -> Screen & System Audio Recording",
+            "relaunchScope recorder restart",
+            "drag disabled_screen_capture_gate",
+            "actorSource mainApp",
+        ])
+
+        attachText(elementDiagnostics(permissionActor), named: "Founder Replay Permission Actor Diagnostics")
+        attachWindowScreenshot(from: app, named: "Founder Replay Permission Ladder Accepted")
+    }
+
+    @MainActor
+    func testFounderReplaySensitiveAudioConsentExposesVisibleIndicatorAndNamedOutcome() throws {
+        let runID = UUID().uuidString
+        let testRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-sensitive-audio", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        let workspacePath = testRoot
+            .appendingPathComponent("workspace", isDirectory: true)
+            .path
+        let appSupportPath = testRoot
+            .appendingPathComponent("app-support", isDirectory: true)
+            .path
+        resetDirectory(at: testRoot.path)
         resetDirectory(at: workspacePath)
         resetDirectory(at: appSupportPath)
 
@@ -1324,56 +1627,1963 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
             "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
-            "EXA_API_KEY": "exa_test_key",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
+            if (self.testRun?.failureCount ?? 0) == 0,
+               (self.testRun?.unexpectedExceptionCount ?? 0) == 0 {
+                self.removeDirectory(at: testRoot.path)
+            } else {
+                print("Preserving Founder Replay sensitive audio UI test artifacts at \(testRoot.path)")
+            }
         }
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 15))
-        elementWithIdentifier(in: app, "opendesign.day.rail.item.strategy").click()
-        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.screen").waitForExistence(timeout: 10))
+        try waitForSidecarStartupPhase(
+            appSupportPath: appSupportPath,
+            phase: "ready_event_received",
+            timeout: 45
+        )
 
-        let researchButton = elementWithIdentifier(in: app, "strategy.action.research")
-        XCTAssertTrue(researchButton.waitForExistence(timeout: 10))
-        XCTAssertTrue(waitUntilHittable(researchButton, timeout: 10))
-        researchButton.click()
+        let founderReplayRail = elementWithIdentifier(in: app, "opendesign.day.rail.item.founder-replay")
+        XCTAssertTrue(founderReplayRail.waitForExistence(timeout: 10))
+        clickCenter(of: founderReplayRail)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.founder-replay", containing: "active", timeout: 5))
+        let lockedPreview = elementWithIdentifier(in: app, "opendesign.rail.lockedPreview.founder-replay")
+        if lockedPreview.exists {
+            attachWindowScreenshot(from: app, named: "Founder Replay Sensitive Audio Unexpectedly Locked")
+            attachText(app.debugDescription, named: "Founder Replay Sensitive Audio Locked Tree")
+            XCTFail("Founder Replay rail remained locked despite the Day 1 unlock seed.")
+            return
+        }
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.founderReplay.screen").waitForExistence(timeout: 10))
 
-        XCTAssertNotNil(waitForAnyElement(
-            in: app,
-            identifiers: ["strategy.research.progress", "strategy.generated.badge"],
-            timeout: 15
-        ))
-        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.research.error").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.generated.badge").waitForExistence(timeout: 20))
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "strategy.generated.badge", containing: "동적 리서치", timeout: 5))
-        XCTAssertFalse(elementWithIdentifier(in: app, "strategy.research.error").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.canvas.block.value-proposition").waitForExistence(timeout: 5))
+        let controlMode = elementWithIdentifier(in: app, "opendesign.founderReplay.mode.control")
+        tapRequired(controlMode, in: app, named: "Founder Replay Sensitive Audio Control mode")
+        let controlSurface = elementWithIdentifier(in: app, "opendesign.founderReplay.control")
+        XCTAssertTrue(controlSurface.waitForExistence(timeout: 10))
 
-        let matrix = elementWithIdentifier(in: app, "strategy.matrix")
-        XCTAssertTrue(scrollElementToVisible(
-            matrix,
+        let controlScrollIdentifier = "opendesign.founderReplay.control.scroll"
+        let grantConsentID = "opendesign.founderReplay.control.grantConsent"
+        let revokeConsentID = "opendesign.founderReplay.control.revokeConsent"
+        let grantConsent = elementWithIdentifier(in: app, grantConsentID)
+        if grantConsent.waitForExistence(timeout: 5) {
+            guard scrollElementToHittable(
+                grantConsent,
+                in: app,
+                timeout: 10,
+                scrollViewIdentifier: controlScrollIdentifier
+            ), waitUntilEnabled(grantConsent, timeout: 8) else {
+                attachWindowScreenshot(from: app, named: "Founder Replay Sensitive Audio Consent Not Hittable")
+                attachText(elementDiagnostics(grantConsent), named: "Founder Replay Sensitive Audio Consent Diagnostics")
+                attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Sensitive Audio Consent Diagnostics")
+                XCTFail("Founder Replay consent grant control did not become hittable and enabled.")
+                return
+            }
+            clickCenter(of: grantConsent)
+        }
+
+        let revokeConsent = elementWithIdentifier(in: app, revokeConsentID)
+        XCTAssertTrue(revokeConsent.waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForStaticText(containing: "granted", in: app, timeout: 5))
+        XCTAssertTrue(waitForStaticText(containing: "indicator ack", in: app, timeout: 5))
+        attachText(elementDiagnostics(revokeConsent), named: "Founder Replay Sensitive Audio Consent Granted")
+
+        let controlScroll = scrollViewElement(in: app, identifier: controlScrollIdentifier)
+        let microphoneToggle = elementWithIdentifier(in: app, "opendesign.founderReplay.control.sensitive.microphone")
+        let systemAudioToggle = elementWithIdentifier(in: app, "opendesign.founderReplay.control.sensitive.systemAudio")
+        for _ in 0..<4 where !elementIsVisible(microphoneToggle, in: controlScroll, app: app) {
+            scrollUp(in: controlScroll)
+        }
+        guard scrollElementToHittable(
+            microphoneToggle,
             in: app,
             timeout: 12,
-            scrollViewIdentifier: "strategy.scroll"
-        ))
-        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.indiefounders").waitForExistence(timeout: 5))
-        XCTAssertTrue(elementWithIdentifier(in: app, "strategy.matrix.node.cursor").exists)
-
-        let latestRun = try waitForStrategyReportRun(
-            workspacePath: workspacePath,
-            state: "ready",
-            timeout: 20
+            scrollViewIdentifier: controlScrollIdentifier
+        ) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Sensitive Audio Microphone Missing")
+            attachText(app.debugDescription, named: "Founder Replay Sensitive Audio Microphone Missing Tree")
+            XCTFail("Founder Replay control surface did not expose the Microphone sensitive-capture toggle.")
+            return
+        }
+        XCTAssertTrue(waitUntilEnabled(microphoneToggle, timeout: 8))
+        tapRequired(
+            microphoneToggle,
+            in: app,
+            named: "Founder Replay sensitive microphone opt-in",
+            scrollViewIdentifier: controlScrollIdentifier
         )
-        assertStrategyReportRunHasCanonicalCanvasAndDiagnostics(latestRun)
 
-        let cache = try readStrategyReportCache(workspacePath: workspacePath)
-        assertStrategyReportRunHasRawProviderPasses(cache)
+        guard scrollElementToHittable(
+            systemAudioToggle,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Sensitive Audio System Audio Missing")
+            attachText(app.debugDescription, named: "Founder Replay Sensitive Audio System Audio Missing Tree")
+            XCTFail("Founder Replay control surface did not expose the System Audio sensitive-capture toggle.")
+            return
+        }
+        XCTAssertTrue(waitUntilEnabled(systemAudioToggle, timeout: 8))
+        tapRequired(
+            systemAudioToggle,
+            in: app,
+            named: "Founder Replay sensitive system audio opt-in",
+            scrollViewIdentifier: controlScrollIdentifier
+        )
+
+        let audioError = elementWithIdentifier(in: app, "opendesign.founderReplay.control.audioError")
+        let audioStatus = elementWithIdentifier(in: app, "opendesign.founderReplay.control.audioStatus")
+        let audioDeadline = Date().addingTimeInterval(20)
+        var audioOutcome: XCUIElement?
+        repeat {
+            if audioError.exists && element(audioError, contains: "ERR_RECORDER_") {
+                audioOutcome = audioError
+                break
+            }
+            if audioStatus.exists && element(audioStatus, contains: "audio running") {
+                audioOutcome = audioStatus
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < audioDeadline
+
+        guard let audioOutcome else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Sensitive Audio Outcome Silent")
+            attachText(app.debugDescription, named: "Founder Replay Sensitive Audio Outcome Silent Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Sensitive Audio Outcome Silent Diagnostics")
+            XCTFail("Founder Replay sensitive audio opt-in did not expose audio running or a named ERR_RECORDER_* blocker.")
+            return
+        }
+        attachText(elementDiagnostics(audioStatus), named: "Founder Replay Sensitive Audio Status")
+        attachText(elementDiagnostics(audioOutcome), named: "Founder Replay Sensitive Audio Named Outcome")
+        attachWindowScreenshot(from: app, named: "Founder Replay Sensitive Audio Accepted")
+    }
+
+    @MainActor
+    func testFounderReplayLiveSignedAppRunnerAccessibilityPreflight() throws {
+        let signedAppBundleURL = try liveSignedAppBundleURL()
+        let runID = UUID().uuidString
+        let testRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-live-signed-preflight", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        let workspacePath = testRoot
+            .appendingPathComponent("workspace", isDirectory: true)
+            .path
+        let appSupportPath = testRoot
+            .appendingPathComponent("app-support", isDirectory: true)
+            .path
+        resetDirectory(at: testRoot.path)
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchAppByAttachingToProcess(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-workspace-scan-cache",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
+            "--ui-testing-open-workspace",
+            "--ui-testing-direct-workspace-window",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x960",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
+        ], appBundleURLOverride: signedAppBundleURL)
+        hideKnownInterferingApplications()
+        activateApp(app)
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            if self.shouldPreserveLiveSignedUITestArtifacts() {
+                print("Preserving Founder Replay live signed-app preflight UI test artifacts because AGENTIC30_LIVE_SIGNED_PRESERVE_ARTIFACTS is enabled at \(testRoot.path)")
+            } else if (self.testRun?.failureCount ?? 0) == 0,
+                      (self.testRun?.unexpectedExceptionCount ?? 0) == 0 {
+                self.removeDirectory(at: testRoot.path)
+            } else {
+                print("Preserving Founder Replay live signed-app preflight UI test artifacts at \(testRoot.path)")
+            }
+        }
+
+        attachText(
+            liveSignedRunnerAccessibilityDiagnostics(
+                app: app,
+                signedAppBundleURL: signedAppBundleURL,
+                appSupportPath: appSupportPath
+            ),
+            named: "Founder Replay Live Signed Runner Accessibility Trust"
+        )
+        guard AXIsProcessTrusted() else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed Runner Accessibility Trust Missing")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed Runner Accessibility Trust Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed Runner Accessibility Trust Missing Diagnostics")
+            XCTFail(
+                "runner_accessibility_blocked: AXIsProcessTrusted=false for the XCUITest runner. Grant Accessibility to october-academy.agentic30UITests.xctrunner, then rerun the live signed recorder UI E2E."
+            )
+            return
+        }
+
+        let window = app.windows.firstMatch
+        let knownWorkspaceText = app.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@ OR label CONTAINS %@ OR value CONTAINS %@", "Office Hours", "Office Hours", "Day 2", "Day 2"))
+            .firstMatch
+        let deadline = Date().addingTimeInterval(20)
+        var sawWindow = false
+        var sawKnownStaticText = false
+        repeat {
+            sawWindow = sawWindow || window.exists
+            sawKnownStaticText = sawKnownStaticText || knownWorkspaceText.exists
+            if sawWindow && sawKnownStaticText {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+
+        guard sawWindow && sawKnownStaticText else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed Runner Accessibility Blocked")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed Runner Accessibility Blocked Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed Runner Accessibility Blocked Diagnostics")
+            XCTFail(
+                "runner_accessibility_blocked: the signed Agentic30 app launched, but XCUITest could not observe its window/static text. Grant Accessibility to october-academy.agentic30UITests.xctrunner, then rerun the live signed recorder UI E2E."
+            )
+            return
+        }
+
+        attachText(elementDiagnostics(window), named: "Founder Replay Live Signed Runner Window")
+        attachText(elementDiagnostics(knownWorkspaceText), named: "Founder Replay Live Signed Runner Static Text")
+    }
+
+    @MainActor
+    func testFounderReplayLiveSignedAppCoreFrameCaptureAndDeleteWhenTccGranted() throws {
+        let signedAppBundleURL = try liveSignedAppBundleURL()
+        let runID = UUID().uuidString
+        let testRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-live-signed-capture", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        let workspacePath = testRoot
+            .appendingPathComponent("workspace", isDirectory: true)
+            .path
+        let appSupportPath = testRoot
+            .appendingPathComponent("app-support", isDirectory: true)
+            .path
+        resetDirectory(at: testRoot.path)
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchAppByAttachingToProcess(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-workspace-scan-cache",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
+            "--ui-testing-open-workspace",
+            "--ui-testing-direct-workspace-window",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x960",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
+        ], appBundleURLOverride: signedAppBundleURL)
+        hideKnownInterferingApplications()
+        activateApp(app)
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            if self.shouldPreserveLiveSignedUITestArtifacts() {
+                print("Preserving Founder Replay live signed-app capture UI test artifacts because AGENTIC30_LIVE_SIGNED_PRESERVE_ARTIFACTS is enabled at \(testRoot.path)")
+            } else if (self.testRun?.failureCount ?? 0) == 0,
+                      (self.testRun?.unexpectedExceptionCount ?? 0) == 0 {
+                self.removeDirectory(at: testRoot.path)
+            } else {
+                print("Preserving Founder Replay live signed-app capture UI test artifacts at \(testRoot.path)")
+            }
+        }
+
+        let dayShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        let dayMain = elementWithIdentifier(in: app, "opendesign.day.main")
+        let day2Main = elementWithIdentifier(in: app, "opendesign.day2.main")
+        let workspaceReadyDeadline = Date().addingTimeInterval(20)
+        var workspaceReady = false
+        repeat {
+            if dayShell.exists
+                || dayMain.exists
+                || day2Main.exists
+                || app.staticTexts["Office Hours · Day 2"].exists
+                || app.staticTexts["Day 2+ source 연결 필요"].exists
+            {
+                workspaceReady = true
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < workspaceReadyDeadline
+        guard workspaceReady else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Workspace Missing")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Workspace Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Workspace Missing Diagnostics")
+            XCTFail("Live signed-app recorder acceptance could not observe the OpenDesign workspace surface.")
+            return
+        }
+        try waitForSidecarStartupPhase(
+            appSupportPath: appSupportPath,
+            phase: "ready_event_received",
+            timeout: 60
+        )
+
+        let founderReplayRail = elementWithIdentifier(in: app, "opendesign.day.rail.item.founder-replay")
+        XCTAssertTrue(founderReplayRail.waitForExistence(timeout: 10))
+        clickCenter(of: founderReplayRail)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.founder-replay", containing: "active", timeout: 5))
+        let lockedPreview = elementWithIdentifier(in: app, "opendesign.rail.lockedPreview.founder-replay")
+        if lockedPreview.exists {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Unexpectedly Locked")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Locked Tree")
+            XCTFail("Founder Replay rail remained locked despite the Day 1 unlock seed.")
+            return
+        }
+
+        let controlMode = elementWithIdentifier(in: app, "opendesign.founderReplay.mode.control")
+        tapRequired(controlMode, in: app, named: "Founder Replay live signed app Control mode")
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.founderReplay.control").waitForExistence(timeout: 10))
+
+        let permissionActor = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.actor")
+        XCTAssertTrue(permissionActor.waitForExistence(timeout: 15))
+        guard element(permissionActor, contains: "releaseGate release_ready"),
+              element(permissionActor, contains: "releasePolicyVerified true")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Release Gate Blocked")
+            attachText(elementDiagnostics(permissionActor), named: "Founder Replay Live Signed App Permission Actor")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Release Gate Diagnostics")
+            XCTFail("Live signed-app recorder acceptance requires release-ready permission actor diagnostics.")
+            return
+        }
+
+        let permissionCheck = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permissions.check")
+        if scrollElementToHittable(
+            permissionCheck,
+            in: app,
+            timeout: 8,
+            scrollViewIdentifier: "opendesign.founderReplay.control.scroll"
+        ), waitUntilEnabled(permissionCheck, timeout: 5) {
+            clickCenter(of: permissionCheck)
+        }
+
+        let captureButton = elementWithIdentifier(in: app, "opendesign.founderReplay.control.captureFrame")
+        XCTAssertTrue(captureButton.waitForExistence(timeout: 10))
+        guard waitUntilEnabled(captureButton, timeout: 15) else {
+            let blocker = waitForIdentifierPrefix(
+                in: app,
+                prefix: "opendesign.founderReplay.control.readiness.blockers.",
+                timeout: 10
+            )
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App TCC Blocked")
+            if let blocker {
+                attachText(elementDiagnostics(blocker), named: "Founder Replay Live Signed App Readiness Blocker")
+            }
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App TCC Blocked Tree")
+            XCTFail("Live signed-app core frame capture requires granted Screen Recording, Accessibility, and Input Monitoring TCC.")
+            return
+        }
+
+        XCTAssertTrue(scrollElementToHittable(
+            captureButton,
+            in: app,
+            timeout: 8,
+            scrollViewIdentifier: "opendesign.founderReplay.control.scroll"
+        ))
+        clickCenter(of: captureButton)
+
+        let lastFrameCapture = elementWithIdentifier(in: app, "opendesign.founderReplay.control.lastFrameCapture")
+        let deleteButton = elementWithIdentifier(in: app, "opendesign.founderReplay.control.deleteFrame")
+        guard lastFrameCapture.waitForExistence(timeout: 45),
+              waitUntilEnabled(deleteButton, timeout: 10)
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Capture Missing")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Capture Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Capture Diagnostics")
+            XCTFail("Live signed-app capture did not produce a visible frame receipt and deletable media row.")
+            return
+        }
+        attachText(elementDiagnostics(lastFrameCapture), named: "Founder Replay Live Signed App Frame Receipt")
+        let liveFrameReceiptLabel = lastFrameCapture.label
+        guard liveFrameReceiptLabel.hasPrefix("frame-"),
+              liveFrameReceiptLabel.contains("asset-"),
+              !liveFrameReceiptLabel.contains("ui-frame-"),
+              !liveFrameReceiptLabel.contains("ui-asset")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Seeded Receipt")
+            attachText(liveFrameReceiptLabel, named: "Founder Replay Live Signed App Receipt Label")
+            XCTFail("Live signed-app capture must expose a live frame-/asset- receipt, not a seeded ui-frame/ui-asset fixture.")
+            return
+        }
+        let liveFrameId = try extractLiveFrameId(from: liveFrameReceiptLabel)
+
+        let controlScrollIdentifier = "opendesign.founderReplay.control.scroll"
+        let searchQuery = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.query")
+        XCTAssertTrue(scrollElementToHittable(
+            searchQuery,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        searchQuery.click()
+        searchQuery.typeText("Agentic30")
+        let searchRunButton = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.run")
+        XCTAssertTrue(scrollElementToHittable(
+            searchRunButton,
+            in: app,
+            timeout: 8,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        guard waitUntilEnabled(searchRunButton, timeout: 5) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Search Run Disabled")
+            attachText(elementDiagnostics(searchQuery), named: "Founder Replay Live Signed App Search Query")
+            XCTFail("Live signed-app redacted search did not enable after entering the Agentic30 query.")
+            return
+        }
+        clickCenter(of: searchRunButton)
+        let searchSummary = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.summary")
+        let searchError = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.error")
+        let searchDeadline = Date().addingTimeInterval(30)
+        var searchFailedError: XCUIElement?
+        repeat {
+            if searchSummary.exists,
+               element(searchSummary, contains: " results"),
+               !element(searchSummary, contains: "0 results") {
+                break
+            }
+            if searchError.exists {
+                searchFailedError = searchError
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < searchDeadline
+        if let searchFailedError {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Search Error")
+            attachText(elementDiagnostics(searchFailedError), named: "Founder Replay Live Signed App Search Error")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Search Error Diagnostics")
+            XCTFail("Live signed-app redacted search returned an error: \(searchFailedError.label)")
+            return
+        }
+        guard searchSummary.exists,
+              element(searchSummary, contains: " results"),
+              !element(searchSummary, contains: "0 results"),
+              element(searchSummary, contains: "query Agentic30"),
+              element(searchSummary, contains: "search proof rejected"),
+              element(searchSummary, contains: "schema agentic30.recorder.search.v1")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Search Missing")
+            attachText(elementDiagnostics(searchSummary), named: "Founder Replay Live Signed App Search Summary")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Search Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Search Diagnostics")
+            XCTFail("Live signed-app redacted search did not return a non-proof Agentic30 result for the captured frame.")
+            return
+        }
+        let liveSearchResultRows = (0..<5).map { index in
+            elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.result.\(index)")
+        }
+        let liveSearchResultDeadline = Date().addingTimeInterval(10)
+        var liveFrameSearchResult: XCUIElement?
+        repeat {
+            if let row = liveSearchResultRows.first(where: { row in
+                row.exists
+                    && element(row, contains: "frame-")
+                    && !element(row, contains: "ui-frame-")
+                    && element(row, contains: "redacted search result")
+                    && element(row, contains: "search proof rejected")
+            }) {
+                liveFrameSearchResult = row
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < liveSearchResultDeadline
+        guard let liveFrameSearchResult else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Search Result Missing")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Search Result Missing Tree")
+            XCTFail("Live signed-app redacted search returned results, but none exposed a live frame- result row.")
+            return
+        }
+        XCTAssertTrue(scrollElementToHittable(
+            liveFrameSearchResult,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        attachText(elementDiagnostics(searchSummary), named: "Founder Replay Live Signed App Search Summary")
+        attachText(elementDiagnostics(liveFrameSearchResult), named: "Founder Replay Live Signed App Search Result")
+        try verifyLiveRecorderAcceptance(
+            appSupportPath: appSupportPath,
+            outputPath: testRoot
+                .appendingPathComponent("live-recorder-frame-search-verifier.json", isDirectory: false)
+                .path,
+            frameId: liveFrameId,
+            allowMissingAudio: true,
+            allowMissingAudit: true
+        )
+
+        clickCenter(of: deleteButton)
+        let lastFrameDelete = elementWithIdentifier(in: app, "opendesign.founderReplay.control.lastFrameDelete")
+        guard lastFrameDelete.waitForExistence(timeout: 30),
+              waitUntilDisabled(deleteButton, timeout: 10)
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Delete Missing")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Delete Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Delete Diagnostics")
+            XCTFail("Live signed-app frame delete did not return a visible tombstone receipt.")
+            return
+        }
+        XCTAssertTrue(element(lastFrameDelete, contains: "media removed"))
+        XCTAssertTrue(element(lastFrameDelete, contains: "path exposed no"))
+        attachText(elementDiagnostics(lastFrameDelete), named: "Founder Replay Live Signed App Delete Receipt")
+        try verifyLiveRecorderAcceptance(
+            appSupportPath: appSupportPath,
+            outputPath: testRoot
+                .appendingPathComponent("live-recorder-frame-delete-verifier.json", isDirectory: false)
+                .path,
+            deletedFrameId: liveFrameId
+        )
+        attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Capture Delete Accepted")
+    }
+
+    @MainActor
+    func testFounderReplayLiveSignedAppSensitiveAudioRunsWhenTccGranted() throws {
+        let signedAppBundleURL = try liveSignedAppBundleURL()
+        let runID = UUID().uuidString
+        let testRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-live-signed-audio", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        let workspacePath = testRoot
+            .appendingPathComponent("workspace", isDirectory: true)
+            .path
+        let appSupportPath = testRoot
+            .appendingPathComponent("app-support", isDirectory: true)
+            .path
+        resetDirectory(at: testRoot.path)
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchAppByAttachingToProcess(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-workspace-scan-cache",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
+            "--ui-testing-open-workspace",
+            "--ui-testing-direct-workspace-window",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x960",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
+        ], appBundleURLOverride: signedAppBundleURL)
+        hideKnownInterferingApplications()
+        activateApp(app)
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            if self.shouldPreserveLiveSignedUITestArtifacts() {
+                print("Preserving Founder Replay live signed-app audio UI test artifacts because AGENTIC30_LIVE_SIGNED_PRESERVE_ARTIFACTS is enabled at \(testRoot.path)")
+            } else if (self.testRun?.failureCount ?? 0) == 0,
+                      (self.testRun?.unexpectedExceptionCount ?? 0) == 0 {
+                self.removeDirectory(at: testRoot.path)
+            } else {
+                print("Preserving Founder Replay live signed-app audio UI test artifacts at \(testRoot.path)")
+            }
+        }
+
+        let dayShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        let dayMain = elementWithIdentifier(in: app, "opendesign.day.main")
+        let day2Main = elementWithIdentifier(in: app, "opendesign.day2.main")
+        let workspaceReadyDeadline = Date().addingTimeInterval(20)
+        var workspaceReady = false
+        repeat {
+            if dayShell.exists
+                || dayMain.exists
+                || day2Main.exists
+                || app.staticTexts["Office Hours · Day 2"].exists
+                || app.staticTexts["Day 2+ source 연결 필요"].exists
+            {
+                workspaceReady = true
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < workspaceReadyDeadline
+        guard workspaceReady else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Audio Workspace Missing")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Audio Workspace Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Audio Workspace Diagnostics")
+            XCTFail("Live signed-app audio acceptance could not observe the OpenDesign workspace surface.")
+            return
+        }
+        try waitForSidecarStartupPhase(
+            appSupportPath: appSupportPath,
+            phase: "ready_event_received",
+            timeout: 60
+        )
+
+        let founderReplayRail = elementWithIdentifier(in: app, "opendesign.day.rail.item.founder-replay")
+        XCTAssertTrue(founderReplayRail.waitForExistence(timeout: 10))
+        clickCenter(of: founderReplayRail)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.founder-replay", containing: "active", timeout: 5))
+        let lockedPreview = elementWithIdentifier(in: app, "opendesign.rail.lockedPreview.founder-replay")
+        if lockedPreview.exists {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Audio Unexpectedly Locked")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Audio Locked Tree")
+            XCTFail("Founder Replay rail remained locked despite the Day 1 unlock seed.")
+            return
+        }
+
+        let controlMode = elementWithIdentifier(in: app, "opendesign.founderReplay.mode.control")
+        tapRequired(controlMode, in: app, named: "Founder Replay live signed app Audio Control mode")
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.founderReplay.control").waitForExistence(timeout: 10))
+
+        let permissionActor = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.actor")
+        XCTAssertTrue(permissionActor.waitForExistence(timeout: 15))
+        guard element(permissionActor, contains: "releaseGate release_ready"),
+              element(permissionActor, contains: "releasePolicyVerified true")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Audio Release Gate Blocked")
+            attachText(elementDiagnostics(permissionActor), named: "Founder Replay Live Signed App Audio Permission Actor")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Audio Release Gate Diagnostics")
+            XCTFail("Live signed-app audio acceptance requires release-ready permission actor diagnostics.")
+            return
+        }
+
+        let controlScrollIdentifier = "opendesign.founderReplay.control.scroll"
+        let permissionCheck = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permissions.check")
+        if scrollElementToHittable(
+            permissionCheck,
+            in: app,
+            timeout: 8,
+            scrollViewIdentifier: controlScrollIdentifier
+        ), waitUntilEnabled(permissionCheck, timeout: 5) {
+            clickCenter(of: permissionCheck)
+        }
+
+        let grantConsent = elementWithIdentifier(in: app, "opendesign.founderReplay.control.grantConsent")
+        if grantConsent.waitForExistence(timeout: 5) {
+            guard scrollElementToHittable(
+                grantConsent,
+                in: app,
+                timeout: 10,
+                scrollViewIdentifier: controlScrollIdentifier
+            ), waitUntilEnabled(grantConsent, timeout: 8) else {
+                attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Audio Consent Not Hittable")
+                attachText(elementDiagnostics(grantConsent), named: "Founder Replay Live Signed App Audio Consent Diagnostics")
+                attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Audio Consent Diagnostics")
+                XCTFail("Founder Replay live signed-app audio consent grant control did not become hittable and enabled.")
+                return
+            }
+            clickCenter(of: grantConsent)
+        }
+
+        let revokeConsent = elementWithIdentifier(in: app, "opendesign.founderReplay.control.revokeConsent")
+        XCTAssertTrue(revokeConsent.waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForStaticText(containing: "granted", in: app, timeout: 5))
+        XCTAssertTrue(waitForStaticText(containing: "indicator ack", in: app, timeout: 5))
+        attachText(elementDiagnostics(revokeConsent), named: "Founder Replay Live Signed App Audio Consent Granted")
+
+        let controlScroll = scrollViewElement(in: app, identifier: controlScrollIdentifier)
+        let microphoneToggle = elementWithIdentifier(in: app, "opendesign.founderReplay.control.sensitive.microphone")
+        let systemAudioToggle = elementWithIdentifier(in: app, "opendesign.founderReplay.control.sensitive.systemAudio")
+        for _ in 0..<4 where !elementIsVisible(microphoneToggle, in: controlScroll, app: app) {
+            scrollUp(in: controlScroll)
+        }
+        guard scrollElementToHittable(
+            microphoneToggle,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Audio Microphone Missing")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Audio Microphone Missing Tree")
+            XCTFail("Founder Replay live signed-app control surface did not expose the Microphone sensitive-capture toggle.")
+            return
+        }
+        XCTAssertTrue(waitUntilEnabled(microphoneToggle, timeout: 8))
+        tapRequired(
+            microphoneToggle,
+            in: app,
+            named: "Founder Replay live signed app microphone opt-in",
+            scrollViewIdentifier: controlScrollIdentifier
+        )
+
+        guard scrollElementToHittable(
+            systemAudioToggle,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Audio System Audio Missing")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Audio System Audio Missing Tree")
+            XCTFail("Founder Replay live signed-app control surface did not expose the System Audio sensitive-capture toggle.")
+            return
+        }
+        XCTAssertTrue(waitUntilEnabled(systemAudioToggle, timeout: 8))
+        tapRequired(
+            systemAudioToggle,
+            in: app,
+            named: "Founder Replay live signed app system audio opt-in",
+            scrollViewIdentifier: controlScrollIdentifier
+        )
+
+        let audioError = elementWithIdentifier(in: app, "opendesign.founderReplay.control.audioError")
+        let audioStatus = elementWithIdentifier(in: app, "opendesign.founderReplay.control.audioStatus")
+        let audioDeadline = Date().addingTimeInterval(30)
+        var namedAudioError: XCUIElement?
+        repeat {
+            if audioError.exists && element(audioError, contains: "ERR_RECORDER_") {
+                namedAudioError = audioError
+                break
+            }
+            if audioStatus.exists && element(audioStatus, contains: "audio running") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < audioDeadline
+
+        if let namedAudioError {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Audio Error")
+            attachText(elementDiagnostics(namedAudioError), named: "Founder Replay Live Signed App Audio Error")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Audio Error Diagnostics")
+            XCTFail("Live signed-app audio acceptance requires audio running under granted TCC, but got \(namedAudioError.label).")
+            return
+        }
+        guard audioStatus.exists,
+              element(audioStatus, contains: "audio running")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Audio Did Not Run")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Audio Did Not Run Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Audio Did Not Run Diagnostics")
+            XCTFail("Live signed-app audio acceptance did not reach audio running.")
+            return
+        }
+        attachText(elementDiagnostics(audioStatus), named: "Founder Replay Live Signed App Audio Status")
+        attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Audio Accepted")
+    }
+
+    @MainActor
+    func testFounderReplayRecorderControlSurfaceReportsTccReadinessAndDrivesCaptureWhenGranted() throws {
+        let runID = UUID().uuidString
+        let testRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-recorder", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        let workspacePath = testRoot
+            .appendingPathComponent("workspace", isDirectory: true)
+            .path
+        let appSupportPath = testRoot
+            .appendingPathComponent("app-support", isDirectory: true)
+            .path
+        resetDirectory(at: testRoot.path)
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+        try seedFounderReplayDayMemoryCandidateFixture(appSupportPath: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-workspace-scan-cache",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
+        ])
+        hideKnownInterferingApplications()
+        activateApp(app)
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            if (self.testRun?.failureCount ?? 0) == 0,
+               (self.testRun?.unexpectedExceptionCount ?? 0) == 0 {
+                self.removeDirectory(at: testRoot.path)
+            } else {
+                print("Preserving Founder Replay recorder UI test artifacts at \(testRoot.path)")
+            }
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 15))
+        try waitForSidecarStartupPhase(
+            appSupportPath: appSupportPath,
+            phase: "ready_event_received",
+            timeout: 45
+        )
+
+        let founderReplayRail = elementWithIdentifier(in: app, "opendesign.day.rail.item.founder-replay")
+        XCTAssertTrue(founderReplayRail.waitForExistence(timeout: 10))
+        clickCenter(of: founderReplayRail)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.founder-replay", containing: "active", timeout: 5))
+        let lockedPreview = elementWithIdentifier(in: app, "opendesign.rail.lockedPreview.founder-replay")
+        if lockedPreview.exists {
+            attachWindowScreenshot(from: app, named: "Founder Replay Unexpectedly Locked")
+            attachText(app.debugDescription, named: "Founder Replay Unexpectedly Locked Tree")
+            XCTFail("Founder Replay rail remained locked despite the Day 1 unlock seed.")
+            return
+        }
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.founderReplay.screen").waitForExistence(timeout: 10))
+
+        let controlMode = elementWithIdentifier(in: app, "opendesign.founderReplay.mode.control")
+        if !controlMode.waitForExistence(timeout: 5) {
+            attachWindowScreenshot(from: app, named: "Founder Replay Control Mode Missing")
+            attachText(app.debugDescription, named: "Founder Replay Control Mode Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Control Mode Missing Diagnostics")
+            XCTFail("Founder Replay screen did not expose the Control mode selector.")
+            return
+        }
+        tapRequired(controlMode, in: app, named: "Founder Replay Control mode")
+        let controlSurface = elementWithIdentifier(in: app, "opendesign.founderReplay.control")
+        if !controlSurface.waitForExistence(timeout: 10) {
+            attachWindowScreenshot(from: app, named: "Founder Replay Control Surface Missing")
+            attachText(app.debugDescription, named: "Founder Replay Control Surface Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Control Surface Missing Diagnostics")
+            XCTFail("Founder Replay Control mode did not switch to the recorder control surface.")
+            return
+        }
+
+        let dayMemoryRun = elementWithIdentifier(in: app, "opendesign.founderReplay.control.dayMemory.run")
+        let dayMemorySummary = elementWithIdentifier(in: app, "opendesign.founderReplay.control.dayMemory.summary")
+        XCTAssertTrue(dayMemorySummary.waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollElementToHittable(
+            dayMemoryRun,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: "opendesign.founderReplay.control.scroll"
+        ))
+        clickCenter(of: dayMemoryRun)
+        let dayMemoryDeadline = Date().addingTimeInterval(25)
+        repeat {
+            if element(dayMemorySummary, contains: "next action review_evidence_inbox")
+                && element(dayMemorySummary, contains: "candidate rows 1") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < dayMemoryDeadline
+        guard element(dayMemorySummary, contains: "proof rejected"),
+              element(dayMemorySummary, contains: "next action review_evidence_inbox"),
+              element(dayMemorySummary, contains: "candidate rows 1")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Day Memory Loop Missing")
+            attachText(elementDiagnostics(dayMemorySummary), named: "Founder Replay Day Memory Summary")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Day Memory Diagnostics")
+            XCTFail("Founder Replay control surface did not run Day Memory Review to a non-proof Evidence Inbox candidate row.")
+            return
+        }
+        let controlScrollIdentifier = "opendesign.founderReplay.control.scroll"
+        let dayMemoryCandidate = elementWithIdentifier(in: app, "opendesign.founderReplay.control.dayMemory.candidate.0")
+        XCTAssertTrue(scrollElementToHittable(
+            dayMemoryCandidate,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "recorder-candidate"))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "pending_review"))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "customer_reply"))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "Customer reply candidate"))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "evidence inbox candidate"))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "non-proof"))
+
+        let searchQuery = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.query")
+        XCTAssertTrue(scrollElementToHittable(
+            searchQuery,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        let searchRunButton = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.run")
+        XCTAssertTrue(scrollElementToHittable(
+            searchRunButton,
+            in: app,
+            timeout: 8,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        guard waitUntilEnabled(searchRunButton, timeout: 5) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Search Run Disabled")
+            attachText(elementDiagnostics(searchQuery), named: "Founder Replay Search Query Diagnostics")
+            attachText(app.debugDescription, named: "Founder Replay Search Run Disabled Tree")
+            XCTFail("Founder Replay redacted search run button did not enable after entering a seeded query.")
+            return
+        }
+        clickCenter(of: searchRunButton)
+        let searchSummary = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.summary")
+        let searchError = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.error")
+        let searchDeadline = Date().addingTimeInterval(30)
+        var searchFailedError: XCUIElement?
+        repeat {
+            if searchSummary.exists,
+               element(searchSummary, contains: " results"),
+               !element(searchSummary, contains: "0 results") {
+                break
+            }
+            if searchError.exists {
+                searchFailedError = searchError
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < searchDeadline
+        if let searchFailedError {
+            attachWindowScreenshot(from: app, named: "Founder Replay Redacted Search Error")
+            attachText(elementDiagnostics(searchFailedError), named: "Founder Replay Redacted Search Error")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Redacted Search Error Diagnostics")
+            XCTFail("Founder Replay redacted search returned an error: \(searchFailedError.label)")
+            return
+        }
+        guard searchSummary.exists,
+              element(searchSummary, contains: " results"),
+              !element(searchSummary, contains: "0 results"),
+              element(searchSummary, contains: "query activation"),
+              element(searchSummary, contains: "search proof rejected"),
+              element(searchSummary, contains: "schema agentic30.recorder.search.v1")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Redacted Search Missing")
+            attachText(elementDiagnostics(searchSummary), named: "Founder Replay Redacted Search Summary")
+            attachText(app.debugDescription, named: "Founder Replay Redacted Search Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Redacted Search Diagnostics")
+            XCTFail("Founder Replay redacted search did not return the seeded non-proof frame result.")
+            return
+        }
+        let searchResultRows = (0..<3).map { index in
+            elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.result.\(index)")
+        }
+        let resultRowDeadline = Date().addingTimeInterval(10)
+        var matchingSearchResultRow: XCUIElement?
+        repeat {
+            if let row = searchResultRows.first(where: { row in
+                row.exists && element(row, contains: "ui-frame-1")
+            }) {
+                matchingSearchResultRow = row
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < resultRowDeadline
+        guard let searchResultRow = matchingSearchResultRow else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Seeded Search Result Missing")
+            attachText(app.debugDescription, named: "Founder Replay Seeded Search Result Missing Tree")
+            XCTFail("Founder Replay redacted search returned results, but none exposed the seeded ui-frame-1 row.")
+            return
+        }
+        XCTAssertTrue(scrollElementToHittable(
+            searchResultRow,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        XCTAssertTrue(element(searchResultRow, contains: "frame"))
+        XCTAssertTrue(element(searchResultRow, contains: "ui-frame-1"))
+        XCTAssertTrue(element(searchResultRow, contains: "activation"))
+        XCTAssertTrue(element(searchResultRow, contains: "redacted search result"))
+        XCTAssertTrue(element(searchResultRow, contains: "search proof rejected"))
+        let acceptedSearchAudit = elementWithIdentifier(in: app, "opendesign.founderReplay.control.audit.search.accepted")
+        guard scrollElementToHittable(
+            acceptedSearchAudit,
+            in: app,
+            timeout: 20,
+            scrollViewIdentifier: controlScrollIdentifier
+        ) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Redacted Search Audit Missing")
+            attachText(app.debugDescription, named: "Founder Replay Redacted Search Audit Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Redacted Search Audit Diagnostics")
+            XCTFail("Founder Replay redacted search returned a result, but no accepted search audit row became visible.")
+            return
+        }
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "/recorder/search"))
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "search"))
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "accepted"))
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "authorized_raw_read"))
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "no sources"))
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "audit proof rejected"))
+        attachText(elementDiagnostics(searchSummary), named: "Founder Replay Redacted Search Summary")
+        attachText(elementDiagnostics(searchResultRow), named: "Founder Replay Redacted Search Result Row")
+        attachText(elementDiagnostics(acceptedSearchAudit), named: "Founder Replay Redacted Search Audit Row")
+
+        let mcpGrantSummary = elementWithIdentifier(in: app, "opendesign.founderReplay.control.mcpGrant.summary")
+        let mcpGrantButton = elementWithIdentifier(in: app, "opendesign.founderReplay.control.mcpGrant.grant")
+        XCTAssertTrue(scrollElementToHittable(
+            mcpGrantButton,
+            in: app,
+            timeout: 20,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        XCTAssertTrue(element(mcpGrantSummary, contains: "Recorder MCP raw_sql"))
+        XCTAssertTrue(element(mcpGrantSummary, contains: "deny by default"))
+        XCTAssertTrue(element(mcpGrantSummary, contains: "mcp grant non-proof"))
+        guard waitUntilEnabled(mcpGrantButton, timeout: 8) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay MCP Grant Button Disabled")
+            attachText(elementDiagnostics(mcpGrantButton), named: "Founder Replay MCP Grant Button")
+            attachText(elementDiagnostics(mcpGrantSummary), named: "Founder Replay MCP Grant Summary")
+            XCTFail("Founder Replay MCP raw_sql grant button did not enable.")
+            return
+        }
+        clickElement(mcpGrantButton)
+        let mcpGrantCreateDeadline = Date().addingTimeInterval(20)
+        repeat {
+            if element(mcpGrantSummary, contains: "active grant") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < mcpGrantCreateDeadline
+        guard element(mcpGrantSummary, contains: "active grant"),
+              element(mcpGrantSummary, contains: "mcp grant non-proof")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay MCP Grant Missing")
+            attachText(elementDiagnostics(mcpGrantSummary), named: "Founder Replay MCP Grant Summary After Create")
+            attachText(app.debugDescription, named: "Founder Replay MCP Grant Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay MCP Grant Diagnostics")
+            XCTFail("Founder Replay MCP raw_sql grant did not create an active non-proof grant.")
+            return
+        }
+        let mcpGrantRow = elementWithIdentifier(in: app, "opendesign.founderReplay.control.mcpGrant.row.0")
+        XCTAssertTrue(scrollElementToHittable(
+            mcpGrantRow,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        XCTAssertTrue(element(mcpGrantRow, contains: "recorder_raw_sql_query"))
+        XCTAssertTrue(element(mcpGrantRow, contains: "raw_sql"))
+        XCTAssertTrue(element(mcpGrantRow, contains: "active"))
+        XCTAssertTrue(element(mcpGrantRow, contains: "mcp grant proof rejected"))
+        let mcpGrantRevoke = elementWithIdentifier(in: app, "opendesign.founderReplay.control.mcpGrant.revoke")
+        XCTAssertTrue(scrollElementToHittable(
+            mcpGrantRevoke,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        XCTAssertTrue(waitUntilEnabled(mcpGrantRevoke, timeout: 8))
+        clickElement(mcpGrantRevoke)
+        let mcpGrantRevokeDeadline = Date().addingTimeInterval(20)
+        repeat {
+            if element(mcpGrantSummary, contains: "deny by default") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < mcpGrantRevokeDeadline
+        guard element(mcpGrantSummary, contains: "deny by default") else {
+            attachWindowScreenshot(from: app, named: "Founder Replay MCP Grant Revoke Missing")
+            attachText(elementDiagnostics(mcpGrantSummary), named: "Founder Replay MCP Grant Summary After Revoke")
+            attachText(app.debugDescription, named: "Founder Replay MCP Grant Revoke Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay MCP Grant Revoke Diagnostics")
+            XCTFail("Founder Replay MCP raw_sql grant did not return to deny-by-default after revoke.")
+            return
+        }
+        XCTAssertTrue(element(mcpGrantRow, contains: "revoked"))
+        XCTAssertTrue(element(mcpGrantRow, contains: "inactive"))
+        attachText(elementDiagnostics(mcpGrantSummary), named: "Founder Replay MCP Grant Summary")
+        attachText(elementDiagnostics(mcpGrantRow), named: "Founder Replay MCP Grant Row")
+
+        let grantConsentID = "opendesign.founderReplay.control.grantConsent"
+        let revokeConsentID = "opendesign.founderReplay.control.revokeConsent"
+        let grantConsent = elementWithIdentifier(in: app, grantConsentID)
+        var recorderConsentConfirmed = false
+        if grantConsent.waitForExistence(timeout: 3) {
+            if scrollElementToFullyVisible(
+                grantConsent,
+                in: app,
+                timeout: 8,
+                scrollViewIdentifier: controlScrollIdentifier
+            ), waitUntilHittable(grantConsent, timeout: 2),
+               waitUntilEnabled(grantConsent, timeout: 8) {
+                clickCenter(of: grantConsent)
+
+                let consentDeadline = Date().addingTimeInterval(20)
+                repeat {
+                    if elementWithIdentifier(in: app, revokeConsentID).exists {
+                        recorderConsentConfirmed = true
+                        break
+                    }
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+                } while Date() < consentDeadline
+
+                if !recorderConsentConfirmed {
+                    let currentGrantConsent = elementWithIdentifier(in: app, grantConsentID)
+                    let currentRevokeConsent = elementWithIdentifier(in: app, revokeConsentID)
+                    attachWindowScreenshot(from: app, named: "Founder Replay Consent Grant Did Not Flip")
+                    attachText(elementDiagnostics(currentGrantConsent), named: "Founder Replay Grant Consent After Tap")
+                    attachText(elementDiagnostics(currentRevokeConsent), named: "Founder Replay Revoke Consent After Tap")
+                    attachText(app.debugDescription, named: "Founder Replay Consent Grant Did Not Flip Tree")
+                    attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Consent Grant Did Not Flip Diagnostics")
+                    XCTFail("Founder Replay consent grant did not expose the revoke control.")
+                    return
+                }
+            } else {
+                attachWindowScreenshot(from: app, named: "Founder Replay Grant Consent Not Hittable")
+                attachText(elementDiagnostics(grantConsent), named: "Founder Replay Grant Consent Diagnostics")
+                attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Grant Consent Diagnostics")
+                attachText(
+                    "Skipping sensitive audio opt-in because consent grant is present but not hittable/enabled.",
+                    named: "Founder Replay Consent Grant Skipped"
+                )
+            }
+        } else {
+            let revokeConsent = elementWithIdentifier(in: app, revokeConsentID)
+            guard revokeConsent.waitForExistence(timeout: 3) else {
+                attachWindowScreenshot(from: app, named: "Founder Replay Consent Controls Missing")
+                attachText(app.debugDescription, named: "Founder Replay Consent Controls Missing Tree")
+                attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Consent Controls Missing Diagnostics")
+                XCTFail("Founder Replay control surface exposed neither grant nor revoke consent controls.")
+                return
+            }
+            recorderConsentConfirmed = true
+        }
+
+        let permissionCheck = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permissions.check")
+        XCTAssertTrue(permissionCheck.waitForExistence(timeout: 5))
+        clickCenter(of: permissionCheck)
+        let readinessModes = [
+            (id: "core_frame_capture_ready", element: elementWithIdentifier(in: app, "opendesign.founderReplay.control.readiness.mode.core_frame_capture_ready")),
+            (id: "event_driven_capture_ready", element: elementWithIdentifier(in: app, "opendesign.founderReplay.control.readiness.mode.event_driven_capture_ready")),
+            (id: "ocr_text_completion_ready", element: elementWithIdentifier(in: app, "opendesign.founderReplay.control.readiness.mode.ocr_text_completion_ready")),
+            (id: "sensitive_capture_ready", element: elementWithIdentifier(in: app, "opendesign.founderReplay.control.readiness.mode.sensitive_capture_ready")),
+        ]
+        for mode in readinessModes {
+            XCTAssertTrue(mode.element.waitForExistence(timeout: 15), "Missing readiness mode row \(mode.id)")
+            XCTAssertTrue(element(mode.element, contains: "mode \(mode.id)"))
+            XCTAssertTrue(element(mode.element, contains: "state "))
+            XCTAssertTrue(element(mode.element, contains: "proof rejected"))
+            if element(mode.element, contains: "ready false") {
+                XCTAssertTrue(element(mode.element, contains: "blockers "))
+                XCTAssertFalse(element(mode.element, contains: "blockers none"))
+            }
+            attachText(elementDiagnostics(mode.element), named: "Founder Replay Readiness Mode \(mode.id)")
+        }
+
+        let screenRecordingSettings = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.screenRecording")
+        let accessibilitySettings = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.accessibility")
+        let inputMonitoringSettings = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.inputMonitoring")
+        XCTAssertTrue(screenRecordingSettings.waitForExistence(timeout: 5))
+        XCTAssertTrue(accessibilitySettings.exists)
+        XCTAssertTrue(inputMonitoringSettings.exists)
+        let screenRecordingRequest = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.request.screenRecording")
+        let accessibilityRequest = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.request.accessibility")
+        let inputMonitoringRequest = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.request.inputMonitoring")
+        let microphoneRequest = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.request.microphone")
+        let systemAudioRequest = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.request.systemAudio")
+        XCTAssertTrue(screenRecordingRequest.waitForExistence(timeout: 5))
+        XCTAssertTrue(accessibilityRequest.exists)
+        XCTAssertTrue(inputMonitoringRequest.exists)
+        XCTAssertTrue(microphoneRequest.exists)
+        XCTAssertTrue(systemAudioRequest.exists)
+        let permissionActor = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.actor")
+        XCTAssertTrue(permissionActor.waitForExistence(timeout: 5))
+        XCTAssertTrue(element(permissionActor, contains: "Permission actor source"))
+        XCTAssertTrue(element(permissionActor, contains: "bundle "))
+        XCTAssertTrue(element(permissionActor, contains: "translocation "))
+        XCTAssertTrue(element(permissionActor, contains: "releaseGate "))
+        XCTAssertTrue(element(permissionActor, contains: "sparkleKeyPresent "))
+        XCTAssertTrue(element(permissionActor, contains: "releasePolicyVerified "))
+        let screenRecordingRow = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.row.screenRecording")
+        let accessibilityRow = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.row.accessibility")
+        let inputMonitoringRow = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.row.inputMonitoring")
+        let visionOcrRow = elementWithIdentifier(in: app, "opendesign.founderReplay.control.permission.row.visionOcr")
+        XCTAssertTrue(screenRecordingRow.waitForExistence(timeout: 5))
+        XCTAssertTrue(accessibilityRow.exists)
+        XCTAssertTrue(inputMonitoringRow.waitForExistence(timeout: 5))
+        XCTAssertTrue(visionOcrRow.exists)
+        XCTAssertTrue(element(screenRecordingRow, contains: "service kTCCServiceScreenCapture"))
+        XCTAssertTrue(element(screenRecordingRow, contains: "manualPath System Settings -> Privacy & Security -> Screen & System Audio Recording"))
+        XCTAssertTrue(element(screenRecordingRow, contains: "settingsAnchor candidate_anchor_manual_fallback"))
+        XCTAssertTrue(element(screenRecordingRow, contains: "drag disabled_api_registered"))
+        XCTAssertTrue(element(accessibilityRow, contains: "service kTCCServiceAccessibility"))
+        XCTAssertTrue(element(accessibilityRow, contains: "drag disabled_unverified_pane"))
+        XCTAssertTrue(element(inputMonitoringRow, contains: "Input Monitoring state"))
+        XCTAssertTrue(element(inputMonitoringRow, contains: "service kTCCServiceListenEvent"))
+        XCTAssertTrue(element(inputMonitoringRow, contains: "drag disabled_unverified_pane"))
+        XCTAssertTrue(element(visionOcrRow, contains: "Vision OCR state"))
+
+        if recorderConsentConfirmed {
+            let controlScroll = scrollViewElement(in: app, identifier: "opendesign.founderReplay.control.scroll")
+            let microphoneToggle = elementWithIdentifier(in: app, "opendesign.founderReplay.control.sensitive.microphone")
+            let systemAudioToggle = elementWithIdentifier(in: app, "opendesign.founderReplay.control.sensitive.systemAudio")
+            for _ in 0..<4 where !elementIsVisible(microphoneToggle, in: controlScroll, app: app) {
+                scrollUp(in: controlScroll)
+            }
+            guard scrollElementToHittable(
+                microphoneToggle,
+                in: app,
+                timeout: 12,
+                scrollViewIdentifier: "opendesign.founderReplay.control.scroll"
+            ) else {
+                attachWindowScreenshot(from: app, named: "Founder Replay Microphone Toggle Not Visible")
+                attachText(app.debugDescription, named: "Founder Replay Microphone Toggle Not Visible Tree")
+                XCTFail("Founder Replay control surface did not expose the Microphone sensitive-capture toggle.")
+                return
+            }
+            XCTAssertTrue(waitUntilEnabled(microphoneToggle, timeout: 8))
+            tapRequired(
+                microphoneToggle,
+                in: app,
+                named: "Founder Replay Microphone opt-in",
+                scrollViewIdentifier: "opendesign.founderReplay.control.scroll"
+            )
+            guard scrollElementToHittable(
+                systemAudioToggle,
+                in: app,
+                timeout: 12,
+                scrollViewIdentifier: "opendesign.founderReplay.control.scroll"
+            ) else {
+                attachWindowScreenshot(from: app, named: "Founder Replay System Audio Toggle Not Visible")
+                attachText(app.debugDescription, named: "Founder Replay System Audio Toggle Not Visible Tree")
+                XCTFail("Founder Replay control surface did not expose the System Audio sensitive-capture toggle.")
+                return
+            }
+            XCTAssertTrue(waitUntilEnabled(systemAudioToggle, timeout: 8))
+            tapRequired(
+                systemAudioToggle,
+                in: app,
+                named: "Founder Replay System Audio opt-in",
+                scrollViewIdentifier: "opendesign.founderReplay.control.scroll"
+            )
+
+            let audioError = elementWithIdentifier(in: app, "opendesign.founderReplay.control.audioError")
+            let audioStatus = elementWithIdentifier(in: app, "opendesign.founderReplay.control.audioStatus")
+            let audioDeadline = Date().addingTimeInterval(20)
+            var audioOutcome: XCUIElement?
+            repeat {
+                if audioError.exists && element(audioError, contains: "ERR_RECORDER_") {
+                    audioOutcome = audioError
+                    break
+                }
+                if audioStatus.exists && element(audioStatus, contains: "audio running") {
+                    audioOutcome = audioStatus
+                    break
+                }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            } while Date() < audioDeadline
+
+            guard let audioOutcome else {
+                attachWindowScreenshot(from: app, named: "Founder Replay Audio Opt-In Silent")
+                attachText(app.debugDescription, named: "Founder Replay Audio Opt-In Silent Tree")
+                attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Audio Opt-In Silent Diagnostics")
+                XCTFail("Founder Replay sensitive audio opt-in did not expose running state or a named ERR_RECORDER_* blocker.")
+                return
+            }
+            attachText(elementDiagnostics(audioOutcome), named: "Founder Replay Audio Opt-In Outcome")
+        } else {
+            attachText(
+                "Sensitive audio opt-in skipped because recorder consent was not confirmed in this local UI run.",
+                named: "Founder Replay Audio Opt-In Skipped"
+            )
+        }
+
+        let sqlRunButton = elementWithIdentifier(in: app, "opendesign.founderReplay.control.sql.run")
+        if !scrollElementToHittable(
+            sqlRunButton,
+            in: app,
+            timeout: 20,
+            scrollViewIdentifier: "opendesign.founderReplay.control.scroll"
+        ) {
+            attachWindowScreenshot(from: app, named: "Founder Replay SQL Run Not Hittable")
+            attachText(elementDiagnostics(sqlRunButton), named: "Founder Replay SQL Run Button Diagnostics")
+            attachText(app.debugDescription, named: "Founder Replay SQL Run Not Hittable Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay SQL Run Not Hittable Diagnostics")
+            guard sqlRunButton.exists, waitUntilEnabled(sqlRunButton, timeout: 2) else {
+                XCTFail("Founder Replay raw SQL inspector run button did not become visible and enabled.")
+                return
+            }
+        }
+        clickElement(sqlRunButton)
+        let sqlSummary = elementWithIdentifier(in: app, "opendesign.founderReplay.control.sql.summary")
+        let sqlError = elementWithIdentifier(in: app, "opendesign.founderReplay.control.sql.error")
+        let sqlDeadline = Date().addingTimeInterval(30)
+        var sqlFailedError: XCUIElement?
+        repeat {
+            if sqlSummary.exists {
+                break
+            }
+            if sqlError.exists {
+                sqlFailedError = sqlError
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < sqlDeadline
+        if let sqlFailedError {
+            attachWindowScreenshot(from: app, named: "Founder Replay SQL Inspector Error")
+            attachText(elementDiagnostics(sqlFailedError), named: "Founder Replay SQL Inspector Error")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay SQL Inspector Error Diagnostics")
+            XCTFail("Founder Replay raw SQL inspector returned an error: \(sqlFailedError.label)")
+            return
+        }
+        guard sqlSummary.exists else {
+            attachWindowScreenshot(from: app, named: "Founder Replay SQL Inspector Result Missing")
+            attachText(app.debugDescription, named: "Founder Replay SQL Inspector Result Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay SQL Inspector Diagnostics")
+            XCTFail("Founder Replay raw SQL inspector did not return a visible result summary.")
+            return
+        }
+        XCTAssertTrue(element(sqlSummary, contains: "redacted views"))
+        XCTAssertTrue(element(sqlSummary, contains: "path hidden"))
+        XCTAssertTrue(element(sqlSummary, contains: "proof write off"))
+        XCTAssertTrue(element(sqlSummary, contains: "raw sql proof rejected"))
+        XCTAssertTrue(element(sqlSummary, contains: "raw api proof rejected"))
+        XCTAssertTrue(element(sqlSummary, contains: "downstream off"))
+        XCTAssertTrue(element(sqlSummary, contains: "recorder_sql_frames_redacted"))
+        attachText(elementDiagnostics(sqlSummary), named: "Founder Replay SQL Inspector Summary")
+
+        let auditSummary = elementWithIdentifier(in: app, "opendesign.founderReplay.control.audit.summary")
+        let acceptedSqlAudit = elementWithIdentifier(in: app, "opendesign.founderReplay.control.audit.sql.accepted")
+        let auditDeadline = Date().addingTimeInterval(20)
+        repeat {
+            if acceptedSqlAudit.exists {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < auditDeadline
+        guard acceptedSqlAudit.exists else {
+            attachWindowScreenshot(from: app, named: "Founder Replay SQL Audit Missing")
+            attachText(app.debugDescription, named: "Founder Replay SQL Audit Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay SQL Audit Diagnostics")
+            XCTFail("Founder Replay raw SQL inspector returned a result, but no accepted raw_sql audit row became visible.")
+            return
+        }
+        XCTAssertTrue(element(auditSummary, contains: "audit proof rejected"))
+        XCTAssertTrue(element(auditSummary, contains: "non-proof"))
+        XCTAssertTrue(element(acceptedSqlAudit, contains: "/recorder/sql/query"))
+        XCTAssertTrue(element(acceptedSqlAudit, contains: "raw_sql"))
+        XCTAssertTrue(element(acceptedSqlAudit, contains: "accepted"))
+        XCTAssertTrue(element(acceptedSqlAudit, contains: "authorized_raw_read"))
+        XCTAssertTrue(element(acceptedSqlAudit, contains: "sources recorder_sql_query:raw_sql"))
+        XCTAssertTrue(element(acceptedSqlAudit, contains: "audit proof rejected"))
+        attachText(elementDiagnostics(acceptedSqlAudit), named: "Founder Replay SQL Audit Row")
+
+        let replayMode = elementWithIdentifier(in: app, "opendesign.founderReplay.mode.replay")
+        tapRequired(replayMode, in: app, named: "Founder Replay Replay mode")
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.founderReplay.mode.replay", containing: "active", timeout: 5))
+        let frameRefresh = elementWithIdentifier(in: app, "opendesign.founderReplay.frames.refresh")
+        if frameRefresh.waitForExistence(timeout: 2), waitUntilEnabled(frameRefresh, timeout: 3) {
+            clickCenter(of: frameRefresh)
+        }
+        let seededTimelineFrame = elementWithIdentifier(in: app, "opendesign.founderReplay.timeline.frame.0")
+        let timelineDeadline = Date().addingTimeInterval(20)
+        repeat {
+            if seededTimelineFrame.exists && element(seededTimelineFrame, contains: "ui-frame-1") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < timelineDeadline
+        guard seededTimelineFrame.exists,
+              element(seededTimelineFrame, contains: "ui-frame-1"),
+              element(seededTimelineFrame, contains: "ui-asset-frame-1"),
+              element(seededTimelineFrame, contains: "timeline frame non-proof")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Seeded Timeline Frame Missing")
+            attachText(elementDiagnostics(seededTimelineFrame), named: "Founder Replay Seeded Timeline Frame")
+            attachText(app.debugDescription, named: "Founder Replay Seeded Timeline Frame Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Seeded Timeline Frame Diagnostics")
+            XCTFail("Founder Replay replay rail did not expose the seeded recorder frame.")
+            return
+        }
+        let deleteVisible = elementWithIdentifier(in: app, "opendesign.founderReplay.frames.deleteVisible")
+        XCTAssertTrue(deleteVisible.waitForExistence(timeout: 5))
+        guard waitUntilEnabled(deleteVisible, timeout: 8) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Visible Range Delete Disabled")
+            attachText(elementDiagnostics(deleteVisible), named: "Founder Replay Visible Range Delete")
+            attachText(app.debugDescription, named: "Founder Replay Visible Range Delete Disabled Tree")
+            XCTFail("Founder Replay visible-range delete did not enable for the seeded frame list.")
+            return
+        }
+        clickCenter(of: deleteVisible)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.founderReplay.frames.deleteVisible", containing: "확인 삭제", timeout: 5))
+        clickCenter(of: deleteVisible)
+        let rangeDeleteReceipt = elementWithIdentifier(in: app, "opendesign.founderReplay.frames.lastRangeDelete")
+        let rangeDeleteDeadline = Date().addingTimeInterval(30)
+        repeat {
+            if rangeDeleteReceipt.exists && element(rangeDeleteReceipt, contains: "ui-frame-1") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < rangeDeleteDeadline
+        guard rangeDeleteReceipt.exists else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Visible Range Delete Receipt Missing")
+            attachText(app.debugDescription, named: "Founder Replay Visible Range Delete Receipt Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Visible Range Delete Diagnostics")
+            XCTFail("Founder Replay visible-range delete did not expose a range tombstone receipt.")
+            return
+        }
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "deleted range 1 frames"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "media 0 removed"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "path exposed no"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "ui-frame-1"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "ui-asset-frame-1"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "range delete proof rejected"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "non-proof"))
+        attachText(elementDiagnostics(rangeDeleteReceipt), named: "Founder Replay Visible Range Delete Receipt")
+
+        tapRequired(elementWithIdentifier(in: app, "opendesign.founderReplay.mode.control"), in: app, named: "Founder Replay Control mode after range delete")
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.founderReplay.mode.control", containing: "active", timeout: 5))
+
+        let captureButton = elementWithIdentifier(in: app, "opendesign.founderReplay.control.captureFrame")
+        XCTAssertTrue(captureButton.waitForExistence(timeout: 5))
+        if !waitUntilEnabled(captureButton, timeout: 5) {
+            guard let blocker = waitForIdentifierPrefix(
+                in: app,
+                prefix: "opendesign.founderReplay.control.readiness.blockers.",
+                timeout: 10
+            ) else {
+                attachWindowScreenshot(from: app, named: "Founder Replay Missing Readiness Blocker")
+                attachText(app.debugDescription, named: "Founder Replay Missing Readiness Blocker Tree")
+                attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Missing Readiness Blocker Diagnostics")
+                XCTFail("Founder Replay capture is disabled, but the control surface did not expose a readiness blocker.")
+                return
+            }
+            attachText(elementDiagnostics(blocker), named: "Founder Replay Readiness Blocker")
+            attachWindowScreenshot(from: app, named: "Founder Replay TCC Blocked")
+            return
+        }
+
+        XCTAssertTrue(scrollElementToHittable(
+            captureButton,
+            in: app,
+            timeout: 8,
+            scrollViewIdentifier: "opendesign.founderReplay.control.scroll"
+        ))
+        clickCenter(of: captureButton)
+
+        let lastFrameCapture = elementWithIdentifier(in: app, "opendesign.founderReplay.control.lastFrameCapture")
+        let deleteButton = elementWithIdentifier(in: app, "opendesign.founderReplay.control.deleteFrame")
+        guard waitUntilEnabled(deleteButton, timeout: 45),
+              lastFrameCapture.waitForExistence(timeout: 3)
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Capture Did Not Produce Frame")
+            attachText(app.debugDescription, named: "Founder Replay Capture Did Not Produce Frame Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Capture Diagnostics")
+            XCTFail("Founder Replay readiness allowed capture, but no frame receipt became deletable.")
+            return
+        }
+
+        clickCenter(of: deleteButton)
+        let lastFrameDelete = elementWithIdentifier(in: app, "opendesign.founderReplay.control.lastFrameDelete")
+        guard lastFrameDelete.waitForExistence(timeout: 30),
+              waitUntilDisabled(deleteButton, timeout: 10)
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Delete Did Not Tombstone Frame")
+            attachText(app.debugDescription, named: "Founder Replay Delete Did Not Tombstone Frame Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Delete Diagnostics")
+            XCTFail("Founder Replay frame delete did not return a visible tombstone receipt.")
+            return
+        }
+        XCTAssertTrue(element(lastFrameDelete, contains: "path exposed no"))
+        attachWindowScreenshot(from: app, named: "Founder Replay Capture Delete Accepted")
+    }
+
+    @MainActor
+    func testFounderReplaySeededDayMemoryCandidateAndRedactedSearchReceipt() throws {
+        let runID = UUID().uuidString
+        let testRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-recorder-search", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        let workspacePath = testRoot
+            .appendingPathComponent("workspace", isDirectory: true)
+            .path
+        let appSupportPath = testRoot
+            .appendingPathComponent("app-support", isDirectory: true)
+            .path
+        resetDirectory(at: testRoot.path)
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+        try seedFounderReplayDayMemoryCandidateFixture(appSupportPath: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-workspace-scan-cache",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x960",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
+        ])
+        hideKnownInterferingApplications()
+        activateApp(app)
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            if (self.testRun?.failureCount ?? 0) == 0,
+               (self.testRun?.unexpectedExceptionCount ?? 0) == 0 {
+                self.removeDirectory(at: testRoot.path)
+            } else {
+                print("Preserving Founder Replay recorder search UI test artifacts at \(testRoot.path)")
+            }
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 15))
+        try waitForSidecarStartupPhase(
+            appSupportPath: appSupportPath,
+            phase: "ready_event_received",
+            timeout: 45
+        )
+
+        let founderReplayRail = elementWithIdentifier(in: app, "opendesign.day.rail.item.founder-replay")
+        XCTAssertTrue(founderReplayRail.waitForExistence(timeout: 10))
+        clickCenter(of: founderReplayRail)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.founder-replay", containing: "active", timeout: 5))
+        let lockedPreview = elementWithIdentifier(in: app, "opendesign.rail.lockedPreview.founder-replay")
+        if lockedPreview.exists {
+            attachWindowScreenshot(from: app, named: "Founder Replay Search Unexpectedly Locked")
+            attachText(app.debugDescription, named: "Founder Replay Search Locked Tree")
+            XCTFail("Founder Replay rail remained locked despite the Day 1 unlock seed.")
+            return
+        }
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.founderReplay.screen").waitForExistence(timeout: 10))
+
+        let controlMode = elementWithIdentifier(in: app, "opendesign.founderReplay.mode.control")
+        tapRequired(controlMode, in: app, named: "Founder Replay Control mode")
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.founderReplay.mode.control", containing: "active", timeout: 5))
+        let controlSurface = elementWithIdentifier(in: app, "opendesign.founderReplay.control")
+        XCTAssertTrue(controlSurface.waitForExistence(timeout: 10))
+        let controlScrollIdentifier = "opendesign.founderReplay.control.scroll"
+
+        let dayMemoryRun = elementWithIdentifier(in: app, "opendesign.founderReplay.control.dayMemory.run")
+        let dayMemorySummary = elementWithIdentifier(in: app, "opendesign.founderReplay.control.dayMemory.summary")
+        XCTAssertTrue(dayMemorySummary.waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollElementToHittable(
+            dayMemoryRun,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        clickCenter(of: dayMemoryRun)
+        let dayMemoryDeadline = Date().addingTimeInterval(25)
+        repeat {
+            if element(dayMemorySummary, contains: "next action review_evidence_inbox")
+                && element(dayMemorySummary, contains: "candidate rows 1") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < dayMemoryDeadline
+        guard dayMemorySummary.exists,
+              element(dayMemorySummary, contains: "proof rejected"),
+              element(dayMemorySummary, contains: "next action review_evidence_inbox"),
+              element(dayMemorySummary, contains: "candidate rows 1")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Focused Day Memory Loop Missing")
+            attachText(elementDiagnostics(dayMemorySummary), named: "Founder Replay Focused Day Memory Summary")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Focused Day Memory Diagnostics")
+            XCTFail("Founder Replay focused test did not run Day Memory Review to a non-proof Evidence Inbox candidate row.")
+            return
+        }
+
+        let dayMemoryCandidate = elementWithIdentifier(in: app, "opendesign.founderReplay.control.dayMemory.candidate.0")
+        XCTAssertTrue(scrollElementToHittable(
+            dayMemoryCandidate,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "recorder-candidate"))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "pending_review"))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "customer_reply"))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "Customer reply candidate"))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "evidence inbox candidate"))
+        XCTAssertTrue(element(dayMemoryCandidate, contains: "non-proof"))
+
+        let searchQuery = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.query")
+        XCTAssertTrue(scrollElementToHittable(
+            searchQuery,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        clickCenter(of: searchQuery)
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey(.delete, modifierFlags: [])
+        searchQuery.typeText("founder activation")
+        let searchRunButton = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.run")
+        XCTAssertTrue(scrollElementToHittable(
+            searchRunButton,
+            in: app,
+            timeout: 8,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        guard waitUntilEnabled(searchRunButton, timeout: 5) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Focused Search Run Disabled")
+            attachText(elementDiagnostics(searchQuery), named: "Founder Replay Focused Search Query Diagnostics")
+            attachText(app.debugDescription, named: "Founder Replay Focused Search Run Disabled Tree")
+            XCTFail("Founder Replay redacted search run button did not enable after entering the seeded query.")
+            return
+        }
+        clickCenter(of: searchRunButton)
+
+        let searchSummary = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.summary")
+        let searchError = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.error")
+        let searchDeadline = Date().addingTimeInterval(30)
+        var searchFailedError: XCUIElement?
+        repeat {
+            if searchSummary.exists && element(searchSummary, contains: "1 results") {
+                break
+            }
+            if searchError.exists {
+                searchFailedError = searchError
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < searchDeadline
+        if let searchFailedError {
+            attachWindowScreenshot(from: app, named: "Founder Replay Focused Redacted Search Error")
+            attachText(elementDiagnostics(searchFailedError), named: "Founder Replay Focused Redacted Search Error")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Focused Redacted Search Error Diagnostics")
+            XCTFail("Founder Replay redacted search returned an error: \(searchFailedError.label)")
+            return
+        }
+        guard searchSummary.exists,
+              element(searchSummary, contains: "1 results"),
+              element(searchSummary, contains: "query founder activation"),
+              element(searchSummary, contains: "search proof rejected"),
+              element(searchSummary, contains: "schema agentic30.recorder.search.v1")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Focused Redacted Search Missing")
+            attachText(elementDiagnostics(searchSummary), named: "Founder Replay Focused Redacted Search Summary")
+            attachText(app.debugDescription, named: "Founder Replay Focused Redacted Search Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Focused Redacted Search Diagnostics")
+            XCTFail("Founder Replay redacted search did not return the seeded non-proof frame result.")
+            return
+        }
+
+        let searchResultRow = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.result.0")
+        XCTAssertTrue(scrollElementToHittable(
+            searchResultRow,
+            in: app,
+            timeout: 12,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        XCTAssertTrue(element(searchResultRow, contains: "frame"))
+        XCTAssertTrue(element(searchResultRow, contains: "ui-frame-1"))
+        XCTAssertTrue(element(searchResultRow, contains: "founder activation"))
+        XCTAssertTrue(element(searchResultRow, contains: "redacted search result"))
+        XCTAssertTrue(element(searchResultRow, contains: "search proof rejected"))
+
+        let acceptedSearchAudit = elementWithIdentifier(in: app, "opendesign.founderReplay.control.audit.search.accepted")
+        guard scrollElementToHittable(
+            acceptedSearchAudit,
+            in: app,
+            timeout: 20,
+            scrollViewIdentifier: controlScrollIdentifier
+        ) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Focused Redacted Search Audit Missing")
+            attachText(app.debugDescription, named: "Founder Replay Focused Redacted Search Audit Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Focused Redacted Search Audit Diagnostics")
+            XCTFail("Founder Replay redacted search returned a result, but no accepted search audit row became visible.")
+            return
+        }
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "/recorder/search"))
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "search"))
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "accepted"))
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "authorized_raw_read"))
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "no sources"))
+        XCTAssertTrue(element(acceptedSearchAudit, contains: "audit proof rejected"))
+        attachText(elementDiagnostics(dayMemoryCandidate), named: "Founder Replay Focused Candidate Row")
+        attachText(elementDiagnostics(searchSummary), named: "Founder Replay Focused Redacted Search Summary")
+        attachText(elementDiagnostics(searchResultRow), named: "Founder Replay Focused Redacted Search Result Row")
+        attachText(elementDiagnostics(acceptedSearchAudit), named: "Founder Replay Focused Redacted Search Audit Row")
+    }
+
+    @MainActor
+    func testFounderReplaySeededVisibleRangeDeleteReceipt() throws {
+        let runID = UUID().uuidString
+        let testRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-recorder-delete", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        let workspacePath = testRoot
+            .appendingPathComponent("workspace", isDirectory: true)
+            .path
+        let appSupportPath = testRoot
+            .appendingPathComponent("app-support", isDirectory: true)
+            .path
+        resetDirectory(at: testRoot.path)
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+        try seedFounderReplayDayMemoryCandidateFixture(appSupportPath: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-workspace-scan-cache",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x960",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
+        ])
+        hideKnownInterferingApplications()
+        activateApp(app)
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            if (self.testRun?.failureCount ?? 0) == 0,
+               (self.testRun?.unexpectedExceptionCount ?? 0) == 0 {
+                self.removeDirectory(at: testRoot.path)
+            } else {
+                print("Preserving Founder Replay recorder visible-delete UI test artifacts at \(testRoot.path)")
+            }
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 15))
+        try waitForSidecarStartupPhase(
+            appSupportPath: appSupportPath,
+            phase: "ready_event_received",
+            timeout: 45
+        )
+
+        let founderReplayRail = elementWithIdentifier(in: app, "opendesign.day.rail.item.founder-replay")
+        XCTAssertTrue(founderReplayRail.waitForExistence(timeout: 10))
+        clickCenter(of: founderReplayRail)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.founder-replay", containing: "active", timeout: 5))
+        let lockedPreview = elementWithIdentifier(in: app, "opendesign.rail.lockedPreview.founder-replay")
+        if lockedPreview.exists {
+            attachWindowScreenshot(from: app, named: "Founder Replay Visible Delete Unexpectedly Locked")
+            attachText(app.debugDescription, named: "Founder Replay Visible Delete Locked Tree")
+            XCTFail("Founder Replay rail remained locked despite the Day 1 unlock seed.")
+            return
+        }
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.founderReplay.screen").waitForExistence(timeout: 10))
+
+        let replayMode = elementWithIdentifier(in: app, "opendesign.founderReplay.mode.replay")
+        tapRequired(replayMode, in: app, named: "Founder Replay Replay mode")
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.founderReplay.mode.replay", containing: "active", timeout: 5))
+        let frameRefresh = elementWithIdentifier(in: app, "opendesign.founderReplay.frames.refresh")
+        if frameRefresh.waitForExistence(timeout: 2), waitUntilEnabled(frameRefresh, timeout: 3) {
+            clickCenter(of: frameRefresh)
+        }
+
+        let frameStatus = elementWithIdentifier(in: app, "opendesign.founderReplay.frames.status")
+        let timelineDeadline = Date().addingTimeInterval(20)
+        repeat {
+            if frameStatus.exists && element(frameStatus, contains: "ui-frame-1") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < timelineDeadline
+        guard frameStatus.exists,
+              element(frameStatus, contains: "ui-frame-1"),
+              element(frameStatus, contains: "ui-asset-frame-1"),
+              element(frameStatus, contains: "frame list non-proof")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Visible Delete Seeded Timeline Frame Missing")
+            attachText(elementDiagnostics(frameStatus), named: "Founder Replay Visible Delete Frame Status")
+            attachText(app.debugDescription, named: "Founder Replay Visible Delete Timeline Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Visible Delete Timeline Diagnostics")
+            XCTFail("Founder Replay replay rail did not expose the seeded recorder frame.")
+            return
+        }
+        let seededTimelineFrame = elementWithIdentifier(in: app, "opendesign.founderReplay.timeline.frame.0")
+        if seededTimelineFrame.exists {
+            XCTAssertTrue(element(seededTimelineFrame, contains: "ui-frame-1"))
+            XCTAssertTrue(element(seededTimelineFrame, contains: "ui-asset-frame-1"))
+            XCTAssertTrue(element(seededTimelineFrame, contains: "timeline frame non-proof"))
+        }
+
+        let deleteVisible = elementWithIdentifier(in: app, "opendesign.founderReplay.frames.deleteVisible")
+        XCTAssertTrue(deleteVisible.waitForExistence(timeout: 5))
+        guard waitUntilEnabled(deleteVisible, timeout: 8) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Visible Range Delete Disabled")
+            attachText(elementDiagnostics(deleteVisible), named: "Founder Replay Visible Range Delete")
+            attachText(app.debugDescription, named: "Founder Replay Visible Range Delete Disabled Tree")
+            XCTFail("Founder Replay visible-range delete did not enable for the seeded frame list.")
+            return
+        }
+        clickCenter(of: deleteVisible)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.founderReplay.frames.deleteVisible", containing: "확인 삭제", timeout: 5))
+        clickCenter(of: deleteVisible)
+
+        let rangeDeleteReceipt = elementWithIdentifier(in: app, "opendesign.founderReplay.frames.lastRangeDelete")
+        let rangeDeleteDeadline = Date().addingTimeInterval(30)
+        repeat {
+            if rangeDeleteReceipt.exists && element(rangeDeleteReceipt, contains: "ui-frame-1") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < rangeDeleteDeadline
+        guard rangeDeleteReceipt.exists else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Visible Range Delete Receipt Missing")
+            attachText(app.debugDescription, named: "Founder Replay Visible Range Delete Receipt Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Visible Range Delete Diagnostics")
+            XCTFail("Founder Replay visible-range delete did not expose a range tombstone receipt.")
+            return
+        }
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "deleted range 1 frames"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "media 0 removed"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "path exposed no"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "ui-frame-1"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "ui-asset-frame-1"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "range delete proof rejected"))
+        XCTAssertTrue(element(rangeDeleteReceipt, contains: "non-proof"))
+        attachText(elementDiagnostics(seededTimelineFrame), named: "Founder Replay Visible Delete Seeded Frame")
+        attachText(elementDiagnostics(rangeDeleteReceipt), named: "Founder Replay Visible Range Delete Receipt")
+    }
+
+    @MainActor
+    func testFounderReplayPipesRunBuiltInPipeAndSchedulerThroughSidecar() throws {
+        let runID = UUID().uuidString
+        let testRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-pipes", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        let workspacePath = testRoot
+            .appendingPathComponent("workspace", isDirectory: true)
+            .path
+        let appSupportPath = testRoot
+            .appendingPathComponent("app-support", isDirectory: true)
+            .path
+        resetDirectory(at: testRoot.path)
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-workspace-scan-cache",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-rail-unlocked-through-day1",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_DISABLE_CODEX_WARMUP": "1",
+        ])
+        hideKnownInterferingApplications()
+        activateApp(app)
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            if (self.testRun?.failureCount ?? 0) == 0,
+               (self.testRun?.unexpectedExceptionCount ?? 0) == 0 {
+                self.removeDirectory(at: testRoot.path)
+            } else {
+                print("Preserving Founder Replay pipes UI test artifacts at \(testRoot.path)")
+            }
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 15))
+        try waitForSidecarStartupPhase(
+            appSupportPath: appSupportPath,
+            phase: "ready_event_received",
+            timeout: 45
+        )
+
+        let founderReplayRail = elementWithIdentifier(in: app, "opendesign.day.rail.item.founder-replay")
+        XCTAssertTrue(founderReplayRail.waitForExistence(timeout: 10))
+        clickCenter(of: founderReplayRail)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.founder-replay", containing: "active", timeout: 5))
+        let lockedPreview = elementWithIdentifier(in: app, "opendesign.rail.lockedPreview.founder-replay")
+        if lockedPreview.exists {
+            attachWindowScreenshot(from: app, named: "Founder Replay Pipes Unexpectedly Locked")
+            attachText(app.debugDescription, named: "Founder Replay Pipes Unexpectedly Locked Tree")
+            XCTFail("Founder Replay rail remained locked despite the Day 1 unlock seed.")
+            return
+        }
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.founderReplay.screen").waitForExistence(timeout: 10))
+
+        let pipesMode = elementWithIdentifier(in: app, "opendesign.founderReplay.mode.pipes")
+        XCTAssertTrue(pipesMode.waitForExistence(timeout: 5))
+        tapRequired(pipesMode, in: app, named: "Founder Replay Pipes mode")
+        let pipesSurface = elementWithIdentifier(in: app, "opendesign.founderReplay.pipes")
+        XCTAssertTrue(pipesSurface.waitForExistence(timeout: 10))
+
+        let pipesSummary = elementWithIdentifier(in: app, "opendesign.founderReplay.pipes.summary")
+        let dailyDefinition = elementWithIdentifier(in: app, "opendesign.founderReplay.pipes.definition.daily-founder-memory")
+        let evidenceDefinition = elementWithIdentifier(in: app, "opendesign.founderReplay.pipes.definition.evidence-inbox-builder")
+        let staleDefinition = elementWithIdentifier(in: app, "opendesign.founderReplay.pipes.definition.stale-debt-resurfacer")
+        XCTAssertTrue(dailyDefinition.waitForExistence(timeout: 20))
+        XCTAssertTrue(evidenceDefinition.exists)
+        XCTAssertTrue(staleDefinition.exists)
+        XCTAssertTrue(element(pipesSummary, contains: "3 pipes"))
+        for definition in [dailyDefinition, evidenceDefinition, staleDefinition] {
+            XCTAssertTrue(element(definition, contains: "built_in"))
+            XCTAssertTrue(element(definition, contains: "enabled"))
+            XCTAssertTrue(element(definition, contains: "definition proof rejected"))
+            XCTAssertTrue(element(definition, contains: "definition non-proof"))
+        }
+
+        let dailyRunButton = elementWithIdentifier(in: app, "opendesign.founderReplay.pipes.run.daily-founder-memory")
+        XCTAssertTrue(dailyRunButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntilEnabled(dailyRunButton, timeout: 8))
+        clickCenter(of: dailyRunButton)
+
+        let dailyRun = elementWithIdentifier(in: app, "opendesign.founderReplay.pipes.run.latest.daily-founder-memory")
+        let dailyDeadline = Date().addingTimeInterval(35)
+        repeat {
+            if dailyRun.exists && element(dailyRun, contains: "succeeded") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < dailyDeadline
+        guard dailyRun.exists && element(dailyRun, contains: "succeeded") else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Daily Pipe Did Not Succeed")
+            attachText(app.debugDescription, named: "Founder Replay Daily Pipe Did Not Succeed Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Daily Pipe Diagnostics")
+            XCTFail("Founder Replay daily-founder-memory Pipe did not expose a succeeded run.")
+            return
+        }
+        XCTAssertTrue(element(dailyRun, contains: "manual"))
+        XCTAssertTrue(element(dailyRun, contains: "day_memory_review"))
+        XCTAssertTrue(element(dailyRun, contains: "memory_safe"))
+        XCTAssertTrue(element(dailyRun, contains: "pipe proof rejected"))
+        XCTAssertTrue(element(dailyRun, contains: "proof write off"))
+        attachText(elementDiagnostics(dailyRun), named: "Founder Replay Daily Pipe Run")
+
+        let schedulerButton = elementWithIdentifier(in: app, "opendesign.founderReplay.pipes.scheduler")
+        XCTAssertTrue(schedulerButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntilEnabled(schedulerButton, timeout: 8))
+        clickCenter(of: schedulerButton)
+        let schedulerDeadline = Date().addingTimeInterval(35)
+        repeat {
+            if pipesSummary.exists && element(pipesSummary, contains: "scheduler queued") {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < schedulerDeadline
+        XCTAssertTrue(element(pipesSummary, contains: "scheduler queued"))
+        XCTAssertTrue(element(pipesSummary, contains: "failed 0"))
+        XCTAssertTrue(element(pipesSummary, contains: "pipe runs non-proof"))
+        attachText(elementDiagnostics(pipesSummary), named: "Founder Replay Pipe Scheduler Summary")
     }
 
     @MainActor
@@ -1401,7 +3611,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1479,7 +3689,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1526,7 +3736,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1603,7 +3813,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1671,7 +3881,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1751,7 +3961,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1833,7 +4043,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1923,7 +4133,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1963,7 +4173,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -1984,7 +4194,21 @@ final class agentic30UITests: XCTestCase {
         let replaceCandidate = app.buttons["opendesign.officeHours.dailyCard.stateTransition.replaceCandidate"]
         XCTAssertTrue(replaceCandidate.waitForExistence(timeout: 3))
         replaceCandidate.click()
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.dailyCard.replacement.sheet").waitForExistence(timeout: 3))
+        let replacementSheet = elementWithIdentifier(in: app, "opendesign.officeHours.dailyCard.replacement.sheet")
+        guard replacementSheet.waitForExistence(timeout: 3) else {
+            attachWindowScreenshot(from: app, named: "Office Hours replacement sheet missing")
+            attachText(
+                """
+                replaceCandidate: \(elementDiagnostics(replaceCandidate))
+                replacementSheet: \(elementDiagnostics(replacementSheet))
+
+                \(app.debugDescription)
+                """,
+                named: "Office Hours replacement sheet missing tree"
+            )
+            XCTFail("Expected replacement sheet after pressing replace candidate.")
+            return
+        }
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.dailyCard.replacement.candidate").waitForExistence(timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.dailyCard.replacement.action").waitForExistence(timeout: 3))
         XCTAssertFalse(app.buttons["opendesign.officeHours.dailyCard.replacement.submit"].isEnabled)
@@ -2013,7 +4237,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2272,7 +4496,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2339,7 +4563,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_UI_TEST_AUTO_SUBMIT_OFFICE_HOURS_REVISION": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2426,7 +4650,7 @@ final class agentic30UITests: XCTestCase {
             return
         }
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.업무에 이미 의존함", containing: "완료된 미선택", timeout: 3))
-        q1RevisedChoice.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.5)).click()
+        clickElement(q1RevisedChoice, normalizedOffset: CGVector(dx: 0.16, dy: 0.5))
 
         let revisedQuestionLoader = elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader")
         let sawRevisionLoader = revisedQuestionLoader.waitForExistence(timeout: 2)
@@ -2477,7 +4701,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2543,7 +4767,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2603,7 +4827,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2646,7 +4870,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2691,7 +4915,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2731,7 +4955,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2771,7 +4995,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2850,7 +5074,7 @@ final class agentic30UITests: XCTestCase {
             ]
         )
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -2888,8 +5112,6 @@ final class agentic30UITests: XCTestCase {
             )
         )
         XCTAssertTrue(waitForModelID(in: app, identifier: "settings.codex.modelID", value: "gpt-5.5"))
-
-        app.scrollViews.firstMatch.swipeUp()
 
         XCTAssertTrue(
             chooseModelOption(
@@ -2945,7 +5167,7 @@ final class agentic30UITests: XCTestCase {
             ]
         )
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3010,7 +5232,7 @@ final class agentic30UITests: XCTestCase {
             ]
         )
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3118,7 +5340,7 @@ final class agentic30UITests: XCTestCase {
             ]
         )
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3177,7 +5399,7 @@ final class agentic30UITests: XCTestCase {
             ]
         )
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3220,7 +5442,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-opaque-window",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3256,7 +5478,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-opaque-window",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3303,7 +5525,7 @@ final class agentic30UITests: XCTestCase {
             ]
         )
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3352,7 +5574,7 @@ final class agentic30UITests: XCTestCase {
             ]
         )
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3400,7 +5622,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3438,7 +5660,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3479,7 +5701,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3517,7 +5739,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3554,7 +5776,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3590,7 +5812,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-opaque-window",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3598,7 +5820,13 @@ final class agentic30UITests: XCTestCase {
         }
 
         // The Day shell renders, and on Day 1 routes to the Office Hours main column.
-        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 10))
+        let dayShell = app.descendants(matching: .any)["opendesign.day.shell"]
+        if !dayShell.waitForExistence(timeout: 10) {
+            attachWindowScreenshot(from: app, named: "Workspace Startup Day Shell Missing")
+            attachText(app.debugDescription, named: "Workspace Startup Day Shell Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Workspace Startup Launch Diagnostics")
+            XCTFail("Expected seeded Day 1 workspace startup to render the OpenDesign day shell.")
+        }
         XCTAssertTrue(app.descendants(matching: .any)["opendesign.officeHours.main"].waitForExistence(timeout: 10))
 
         // The 30-day task grid (and its task identifiers) is therefore absent on Day 1.
@@ -3631,7 +5859,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3669,7 +5897,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-stub-morning-briefing-events",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3768,7 +5996,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-stub-morning-briefing-loading",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3803,7 +6031,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-stub-morning-briefing-failed-source",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3847,7 +6075,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-stub-morning-briefing-events",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -3914,25 +6142,20 @@ final class agentic30UITests: XCTestCase {
         arguments: [String],
         environment: [String: String] = [:]
     ) -> XCUIApplication {
-        terminateRunningAgenticAppIfNeeded()
-
-        let app = XCUIApplication()
-        app.launchArguments = arguments
-        app.launchEnvironment = environment
-        app.launch()
-        return app
+        return launchAppByAttachingToProcess(arguments: arguments, environment: environment)
     }
 
     @MainActor
     private func launchAppByAttachingToProcess(
         arguments: [String],
         environment: [String: String] = [:],
+        appBundleURLOverride: URL? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> XCUIApplication {
         terminateRunningAgenticAppIfNeeded()
 
-        let appBundleURL = Bundle.main.bundleURL
+        let appBundleURL = appBundleURLOverride ?? Bundle.main.bundleURL
             .deletingLastPathComponent()
             .appendingPathComponent("agentic30.app", isDirectory: true)
 
@@ -3950,13 +6173,25 @@ final class agentic30UITests: XCTestCase {
             return XCUIApplication(bundleIdentifier: "october-academy.agentic30")
         }
 
+        let diagnosticsURL = makeUITestingLaunchDiagnosticsURL()
+        latestUITestingLaunchDiagnosticsURL = diagnosticsURL
+        var processArguments = arguments
+        normalizeUITestingSeedWorkspaceArgument(&processArguments, file: file, line: line)
+        processArguments.append("--ui-testing-diagnostics-path=\(diagnosticsURL.path)")
+
+        preseedUITestingAppStateIfNeeded(arguments: processArguments, file: file, line: line)
+
         let process = Process()
         process.executableURL = executableURL
-        process.arguments = arguments
-        var launchEnvironment = ProcessInfo.processInfo.environment
+        process.arguments = processArguments
+        var launchEnvironment = ProcessInfo.processInfo.environment.filter { key, _ in
+            !key.hasPrefix("AGENTIC30_")
+        }
         environment.forEach { key, value in
             launchEnvironment[key] = value
         }
+        mirrorUITestingArguments(processArguments, into: &launchEnvironment)
+        launchEnvironment["AGENTIC30_UI_TESTING_DIAGNOSTICS_PATH"] = diagnosticsURL.path
         process.environment = launchEnvironment
         do {
             try process.run()
@@ -3965,8 +6200,322 @@ final class agentic30UITests: XCTestCase {
         }
 
         let app = XCUIApplication(bundleIdentifier: "october-academy.agentic30")
-        waitForRunningAgenticApp(timeout: 5)
+        let launchedProcessIdentifier = process.processIdentifier
+        if !waitForRunningAgenticApp(processIdentifier: launchedProcessIdentifier, timeout: 5) {
+            XCTFail("Timed out waiting for Agentic30 UI test app to start.", file: file, line: line)
+            return app
+        }
+        activateRunningAgenticApp(processIdentifier: launchedProcessIdentifier)
         return app
+    }
+
+    private func liveSignedAppBundleURL(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> URL {
+        guard let rawPath = liveSignedAppPathFromEnvironmentOrMarker(),
+              !rawPath.isEmpty else {
+            throw XCTSkip("Set AGENTIC30_LIVE_SIGNED_APP_PATH or run scripts/run-live-signed-recorder-ui-e2e.sh with a signed agentic30.app bundle with granted TCC to run live recorder acceptance.")
+        }
+
+        let expandedPath = (rawPath as NSString).expandingTildeInPath
+        let appBundleURL = URL(fileURLWithPath: expandedPath, isDirectory: true).standardizedFileURL
+        guard appBundleURL.pathExtension == "app" else {
+            XCTFail("AGENTIC30_LIVE_SIGNED_APP_PATH must point to an .app bundle: \(appBundleURL.path)", file: file, line: line)
+            throw XCTSkip("Invalid AGENTIC30_LIVE_SIGNED_APP_PATH.")
+        }
+        guard FileManager.default.fileExists(atPath: appBundleURL.path) else {
+            XCTFail("AGENTIC30_LIVE_SIGNED_APP_PATH does not exist: \(appBundleURL.path)", file: file, line: line)
+            throw XCTSkip("Missing signed app bundle for live recorder acceptance.")
+        }
+        return appBundleURL
+    }
+
+    private func liveSignedAppPathFromEnvironmentOrMarker() -> String? {
+        let environment = ProcessInfo.processInfo.environment
+        if let rawPath = environment["AGENTIC30_LIVE_SIGNED_APP_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawPath.isEmpty {
+            return rawPath
+        }
+
+        let markerURL = URL(fileURLWithPath: "/tmp/agentic30-live-signed-recorder-ui-e2e-app-path-\(getuid()).txt", isDirectory: false)
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: markerURL.path),
+              let modifiedAt = attributes[.modificationDate] as? Date,
+              Date().timeIntervalSince(modifiedAt) <= 600,
+              let rawPath = try? String(contentsOf: markerURL, encoding: .utf8)
+        else {
+            return nil
+        }
+        let trimmedPath = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedPath.isEmpty ? nil : trimmedPath
+    }
+
+    private func normalizeUITestingSeedWorkspaceArgument(
+        _ arguments: inout [String],
+        file: StaticString,
+        line: UInt
+    ) {
+        guard let argumentIndex = arguments.firstIndex(where: {
+            $0 == "--ui-testing-seed-workspace" || $0.hasPrefix("--ui-testing-seed-workspace=")
+        }) else {
+            return
+        }
+
+        let rawWorkspacePath: String
+        if arguments[argumentIndex].hasPrefix("--ui-testing-seed-workspace=") {
+            rawWorkspacePath = String(arguments[argumentIndex].dropFirst("--ui-testing-seed-workspace=".count))
+        } else {
+            guard arguments.indices.contains(argumentIndex + 1) else { return }
+            rawWorkspacePath = arguments[argumentIndex + 1]
+        }
+
+        let requestedWorkspaceURL = URL(fileURLWithPath: rawWorkspacePath, isDirectory: true)
+        let workspaceURL = appReadableUITestingWorkspaceURL(preferred: requestedWorkspaceURL)
+        do {
+            try mirrorUITestingWorkspaceFixture(from: requestedWorkspaceURL, to: workspaceURL)
+        } catch {
+            XCTFail("Failed to prepare app-readable UI test workspace: \(error)", file: file, line: line)
+            return
+        }
+
+        guard workspaceURL.path != rawWorkspacePath else { return }
+        if arguments[argumentIndex].hasPrefix("--ui-testing-seed-workspace=") {
+            arguments[argumentIndex] = "--ui-testing-seed-workspace=\(workspaceURL.path)"
+        } else {
+            arguments[argumentIndex + 1] = workspaceURL.path
+        }
+    }
+
+    private func appReadableUITestingWorkspaceURL(preferred: URL) -> URL {
+        let path = preferred.path
+        guard path == "/tmp" || path.hasPrefix("/tmp/") || path.hasPrefix("/private/tmp/") else {
+            return writableUITestingWorkspaceURL(preferred: preferred)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-workspaces", isDirectory: true)
+            .appendingPathComponent(preferred.lastPathComponent, isDirectory: true)
+    }
+
+    private func mirrorUITestingWorkspaceFixture(from source: URL, to destination: URL) throws {
+        let fileManager = FileManager.default
+        if source == destination {
+            try fileManager.createDirectory(at: destination, withIntermediateDirectories: true, attributes: nil)
+            return
+        }
+
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        if fileManager.fileExists(atPath: source.path) {
+            try fileManager.copyItem(at: source, to: destination)
+        } else {
+            try fileManager.createDirectory(at: destination, withIntermediateDirectories: true, attributes: nil)
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: destination)
+        }
+    }
+
+    private func mirrorUITestingArguments(_ arguments: [String], into environment: inout [String: String]) {
+        guard arguments.contains(where: { $0.hasPrefix("--ui-testing") }) else { return }
+        environment["AGENTIC30_UI_TESTING"] = "1"
+        for argument in arguments where argument.hasPrefix("--ui-testing") {
+            let parts = argument.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            let name = String(parts[0])
+            let value = parts.count == 2 ? String(parts[1]) : "1"
+            environment[Self.uiTestingEnvironmentKey(for: name)] = value
+        }
+    }
+
+    private static func uiTestingEnvironmentKey(for argument: String) -> String {
+        let trimmed = argument.hasPrefix("--") ? String(argument.dropFirst(2)) : argument
+        let normalized = trimmed
+            .replacingOccurrences(of: "-", with: "_")
+            .uppercased()
+        return "AGENTIC30_\(normalized)"
+    }
+
+    private func makeUITestingLaunchDiagnosticsURL() -> URL {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-test-diagnostics", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appendingPathComponent("\(UUID().uuidString).json", isDirectory: false)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: url)
+        }
+        return url
+    }
+
+    private func preseedUITestingAppStateIfNeeded(
+        arguments: [String],
+        file: StaticString,
+        line: UInt
+    ) {
+        if arguments.contains("--ui-testing-reset-onboarding") {
+            deleteAgentic30Default("agentic30.workspaceRoot")
+            deleteAgentic30Default("agentic30.workspaceRoots.v1")
+            deleteAgentic30Default("agentic30.macOnboardingIntroCompleted")
+            deleteAgentic30Default("agentic30.macOnboardingIntakeOnlyCompleted")
+            deleteAgentic30Default("agentic30.intakeV2.state.v3")
+            deleteAgentic30Default("agentic30.intakeV2.sources.v1")
+        }
+
+        guard let workspacePath = uiTestingArgumentValue("--ui-testing-seed-workspace", arguments: arguments) else {
+            return
+        }
+
+        let requestedWorkspaceURL = URL(fileURLWithPath: workspacePath, isDirectory: true)
+        let workspaceURL = writableUITestingWorkspaceURL(preferred: requestedWorkspaceURL)
+        do {
+            try FileManager.default.createDirectory(
+                at: workspaceURL,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            if workspaceURL != requestedWorkspaceURL {
+                addTeardownBlock {
+                    try? FileManager.default.removeItem(at: workspaceURL)
+                }
+            }
+            try writeAgentic30Default("agentic30.workspaceRoot", value: workspaceURL.path)
+            if arguments.contains("--ui-testing-seed-onboarding-context") {
+                try writeAgentic30BoolDefault("agentic30.macOnboardingIntroCompleted", value: true)
+                if arguments.contains("--ui-testing-open-workspace") {
+                    try writeAgentic30BoolDefault("agentic30.macOnboardingIntakeOnlyCompleted", value: true)
+                }
+                try writeUITestingOnboardingMemory(workspaceRoot: workspaceURL.path)
+            }
+        } catch {
+            XCTFail("Failed to preseed Agentic30 UI test app state: \(error)", file: file, line: line)
+        }
+    }
+
+    private func writableUITestingWorkspaceURL(preferred: URL) -> URL {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: preferred.path) {
+            return preferred
+        }
+        do {
+            try fileManager.createDirectory(
+                at: preferred,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            return preferred
+        } catch {
+            let fallbackRoot = fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("Caches", isDirectory: true)
+                .appendingPathComponent("agentic30-ui-test-workspaces", isDirectory: true)
+            return fallbackRoot.appendingPathComponent(preferred.lastPathComponent, isDirectory: true)
+        }
+    }
+
+    private func writeUITestingOnboardingMemory(workspaceRoot: String) throws {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let memoryURL = URL(fileURLWithPath: workspaceRoot, isDirectory: true)
+            .appendingPathComponent(".agentic30", isDirectory: true)
+            .appendingPathComponent("memory", isDirectory: true)
+            .appendingPathComponent("onboarding.json", isDirectory: false)
+        try FileManager.default.createDirectory(
+            at: memoryURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+        let context: [String: Any] = [
+            "business_description": "Agentic30 직접 사용 워크스페이스",
+            "current_stage": "First users and onboarding validation",
+            "goal": "Complete Day 1 and verify curriculum setup",
+            "custom_work_mode": "",
+            "work_mode": "full_time_solo",
+            "focus_area": "development",
+            "product_bottleneck": "first_active_users",
+            "isolation_level": "project_folder",
+            "isolation_levels": ["project_folder"],
+            "completed_at": timestamp,
+        ]
+        let memory: [String: Any] = [
+            "schemaVersion": 3,
+            "schema": "agentic30.memory.onboarding.v3",
+            "workspaceRoot": workspaceRoot,
+            "projectPath": workspaceRoot,
+            "answers": [
+                "timeBudget": [
+                    "id": "time_budget",
+                    "question": "하루에 얼마나 시간을 쓸 수 있는지",
+                    "answer": "full_time_solo",
+                    "detail": "전업으로 혼자 만들고 있음",
+                ],
+                "primaryFocus": [
+                    "id": "primary_focus",
+                    "question": "요즘 어디에 시간을 가장 많이 쓰고 있나요?",
+                    "answer": "development",
+                    "detail": "개발",
+                ],
+                "primaryBottleneck": [
+                    "id": "primary_bottleneck",
+                    "question": "지금 제품을 만들거나 키우는 과정에서 가장 큰 병목은 어디인가요?",
+                    "answer": "first_active_users",
+                    "detail": "제품은 있지만 첫 활성 사용자를 찾지 못하고 있다.",
+                ],
+                "existingRecords": [
+                    "id": "existing_records",
+                    "question": "이미 가진 기록",
+                    "answer": "project_folder",
+                    "detail": "프로젝트 폴더",
+                ],
+            ],
+            "onboardingContext": context,
+            "readSources": [],
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: memory, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: memoryURL, options: [.atomic])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: memoryURL.path)
+    }
+
+    private func uiTestingArgumentValue(_ name: String, arguments: [String]) -> String? {
+        if let inline = arguments.first(where: { $0.hasPrefix("\(name)=") }) {
+            return String(inline.dropFirst(name.count + 1))
+        }
+        guard let index = arguments.firstIndex(of: name),
+              arguments.indices.contains(index + 1)
+        else {
+            return nil
+        }
+        return arguments[index + 1]
+    }
+
+    private func deleteAgentic30Default(_ key: String) {
+        try? runDefaultsCommand(["delete", "october-academy.agentic30", key])
+    }
+
+    private func writeAgentic30Default(_ key: String, value: String) throws {
+        try runDefaultsCommand(["write", "october-academy.agentic30", key, value])
+    }
+
+    private func writeAgentic30BoolDefault(_ key: String, value: Bool) throws {
+        try runDefaultsCommand(["write", "october-academy.agentic30", key, "-bool", value ? "true" : "false"])
+    }
+
+    private func runDefaultsCommand(_ arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+        process.arguments = arguments
+        try process.run()
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            throw NSError(
+                domain: "agentic30UITests.defaults",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "defaults \(arguments.joined(separator: " ")) failed"]
+            )
+        }
     }
 
     @MainActor
@@ -4054,26 +6603,49 @@ final class agentic30UITests: XCTestCase {
         waitForAgenticAppToExit(bundleIdentifier: bundleIdentifier, timeout: 2)
     }
 
-    private func waitForRunningAgenticApp(timeout: TimeInterval) {
+    private func waitForRunningAgenticApp(processIdentifier: pid_t? = nil, timeout: TimeInterval) -> Bool {
         let bundleIdentifier = "october-academy.agentic30"
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
             let isRunning = NSWorkspace.shared.runningApplications.contains {
                 $0.bundleIdentifier == bundleIdentifier
+                    && (processIdentifier == nil || $0.processIdentifier == processIdentifier)
             }
-            if isRunning { return }
+            if isRunning { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
+        return false
     }
 
-    private func activateRunningAgenticApp() {
+    private func activateRunningAgenticApp(processIdentifier: pid_t? = nil) {
         let bundleIdentifier = "october-academy.agentic30"
         guard let application = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == bundleIdentifier
+                && (processIdentifier == nil || $0.processIdentifier == processIdentifier)
         }) else {
             return
         }
         application.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+    }
+
+    @MainActor
+    private func activateApp(_ app: XCUIApplication) {
+        activateRunningAgenticApp()
+        let deadline = Date().addingTimeInterval(2)
+        repeat {
+            if app.state == .runningForeground || isRunningAgenticAppActive() {
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            activateRunningAgenticApp()
+        } while Date() < deadline
+    }
+
+    private func isRunningAgenticAppActive() -> Bool {
+        let bundleIdentifier = "october-academy.agentic30"
+        return NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == bundleIdentifier && $0.isActive
+        }
     }
 
     private func waitForAgenticAppToExit(bundleIdentifier: String, timeout: TimeInterval) {
@@ -4093,7 +6665,7 @@ final class agentic30UITests: XCTestCase {
             return true
         }
 
-        app.activate()
+        activateApp(app)
         app.typeKey(",", modifierFlags: .command)
         if waitForSettingsWindow(in: app, timeout: 3) {
             return true
@@ -4175,7 +6747,7 @@ final class agentic30UITests: XCTestCase {
         }
 
         for _ in 0..<3 {
-            app.activate()
+            activateApp(app)
             let shortcut = elementWithIdentifier(in: app, optionIdentifier)
             if shortcut.waitForExistence(timeout: 1) {
                 clickCenter(of: shortcut)
@@ -4253,24 +6825,42 @@ final class agentic30UITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let focusAreaPrompt = app.staticTexts["요즘 어디에 시간을 가장 많이 쓰고 있나요?"]
-        if focusAreaPrompt.waitForExistence(timeout: 1) {
+        if waitForIntakeFocusAreaStep(in: app, timeout: 1) {
             return
         }
 
-        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
-            advanceOnboardingIntroToContext(in: app)
-        } else if elementWithIdentifier(in: app, "intakeV2.boot.cards").waitForExistence(timeout: 5) {
+        if elementWithIdentifier(in: app, "intakeV2.boot.cards").waitForExistence(timeout: 5) {
             verifyBootIntroLayout(in: app)
-            tapRequired(button(in: app, matching: ["Continue →", "Continue"]), in: app, named: "Intake V2 boot Continue", file: file, line: line)
+            let continueButton = intakeFooterNextButton(in: app)
+            if continueButton.exists && !continueButton.isHittable {
+                attachText(elementDiagnostics(continueButton), named: "Intake V2 boot Continue diagnostics before tap")
+            }
+            tapRequired(continueButton, in: app, named: "Intake V2 boot Continue", file: file, line: line)
+        } else if waitForStaticText(containing: "Welcome to Agentic30", in: app, timeout: 1) {
+            advanceOnboardingIntroToContext(in: app)
         }
 
-        guard focusAreaPrompt.waitForExistence(timeout: timeout) else {
+        guard waitForIntakeFocusAreaStep(in: app, timeout: timeout) else {
             attachWindowScreenshot(from: app, named: "Intake V2 Focus Area Step Missing")
             attachText(app.debugDescription, named: "Intake V2 Focus Area Step Missing Tree")
             XCTFail("Expected Intake V2 focus area step.", file: file, line: line)
             return
         }
+    }
+
+    @MainActor
+    private func waitForIntakeFocusAreaStep(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if intakeProgressElement(in: app, current: 2).exists
+                || waitForStaticText(containing: "요즘 어디에 시간을 가장 많이 쓰고 있나요?", in: app, timeout: 0.1) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < deadline
+
+        return intakeProgressElement(in: app, current: 2).exists
+            || waitForStaticText(containing: "요즘 어디에 시간을 가장 많이 쓰고 있나요?", in: app, timeout: 0.1)
     }
 
     @MainActor
@@ -4306,15 +6896,15 @@ final class agentic30UITests: XCTestCase {
         ] {
             XCTAssertTrue(primary.waitForExistence(timeout: 5))
             clickCenter(of: primary)
-            XCTAssertTrue(app.staticTexts[expectedTitle].waitForExistence(timeout: 5))
+            XCTAssertTrue(waitForStaticText(containing: expectedTitle, in: app, timeout: 5))
         }
 
         XCTAssertTrue(primary.waitForExistence(timeout: 5))
         clickCenter(of: primary)
 
         verifyBootIntroLayout(in: app)
-        XCTAssertFalse(app.staticTexts["요즘 어디에 시간을 가장 많이 쓰고 있나요?"].exists)
-        let continueButton = button(in: app, matching: ["Continue →", "Continue"])
+        XCTAssertFalse(waitForStaticText(containing: "요즘 어디에 시간을 가장 많이 쓰고 있나요?", in: app, timeout: 0.1))
+        let continueButton = intakeFooterNextButton(in: app)
         XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
         clickCenter(of: continueButton)
     }
@@ -4352,7 +6942,7 @@ final class agentic30UITests: XCTestCase {
         )
         RunLoop.current.run(until: Date().addingTimeInterval(0.8))
         assertFrame(decideVisual.frame, isInside: bootCards.frame, message: "Animated Decide visual viewport must stay inside the BOOT card container")
-        XCTAssertTrue(button(in: app, matching: ["Continue →", "Continue"]).exists)
+        XCTAssertTrue(intakeFooterNextButton(in: app).exists)
         XCTAssertFalse(button(in: app, matching: ["Back"]).exists)
     }
 
@@ -4517,7 +7107,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         addTeardownBlock {
             app.terminate()
             self.unhideKnownInterferingApplications()
@@ -4943,16 +7533,21 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    private func intakeFooterNextButton(in app: XCUIApplication) -> XCUIElement {
+        app.buttons["intakeV2.footer.nextButton"]
+    }
+
+    @MainActor
     private func intakePrimaryButton(in app: XCUIApplication, current: Int) -> XCUIElement {
         switch current {
         case 2, 3, 4, 5:
-            return button(in: app, matching: ["Next →", "Next"])
+            return intakeFooterNextButton(in: app)
         case 7:
-            return button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"])
+            return intakeFooterNextButton(in: app)
         case 8:
             return elementWithIdentifier(in: app, "intakeV2.openInboxButton")
         default:
-            return button(in: app, matching: ["Continue →", "Continue"])
+            return intakeFooterNextButton(in: app)
         }
     }
 
@@ -5002,8 +7597,352 @@ final class agentic30UITests: XCTestCase {
         )
     }
 
+    private func shouldPreserveLiveSignedUITestArtifacts() -> Bool {
+        switch ProcessInfo.processInfo.environment["AGENTIC30_LIVE_SIGNED_PRESERVE_ARTIFACTS"]?.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    @MainActor
+    private func liveSignedRunnerAccessibilityDiagnostics(
+        app: XCUIApplication,
+        signedAppBundleURL: URL,
+        appSupportPath: String
+    ) -> String {
+        let runner = NSRunningApplication.current
+        let agenticApps = NSWorkspace.shared.runningApplications
+            .filter { $0.bundleIdentifier == "october-academy.agentic30" }
+            .map { application in
+                [
+                    "pid=\(application.processIdentifier)",
+                    "name=\(application.localizedName ?? "<unknown>")",
+                    "active=\(application.isActive)",
+                    "hidden=\(application.isHidden)",
+                    "terminated=\(application.isTerminated)",
+                ].joined(separator: " ")
+            }
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        return [
+            "runnerAXTrusted=\(AXIsProcessTrusted())",
+            "runnerBundleIdentifier=\(Bundle.main.bundleIdentifier ?? "<unknown>")",
+            "runnerProcessIdentifier=\(runner.processIdentifier)",
+            "runnerLocalizedName=\(runner.localizedName ?? "<unknown>")",
+            "frontmostBundleIdentifier=\(frontmost?.bundleIdentifier ?? "<none>")",
+            "frontmostLocalizedName=\(frontmost?.localizedName ?? "<none>")",
+            "signedAppBundleURL=\(signedAppBundleURL.path)",
+            "appSupportPath=\(appSupportPath)",
+            "xcuiWindowExists=\(app.windows.firstMatch.exists)",
+            "xcuiStaticTextCount=\(app.staticTexts.count)",
+            "runningAgenticAppCount=\(agenticApps.count)",
+            "runningAgenticApps=\(agenticApps.isEmpty ? "<none>" : agenticApps.joined(separator: " | "))",
+        ].joined(separator: "\n")
+    }
+
     private func removeDirectory(at path: String) {
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: path, isDirectory: true))
+    }
+
+    private func resolveUITestNodeExecutableURL(repositoryRoot: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let candidates = nodeExecutableCandidatePaths(repositoryRoot: repositoryRoot)
+        for candidate in candidates where fileManager.isExecutableFile(atPath: candidate) {
+            return URL(fileURLWithPath: candidate, isDirectory: false)
+        }
+
+        throw NSError(
+            domain: "agentic30UITests.resolveUITestNodeExecutableURL",
+            code: 127,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Unable to find Node.js for UI test fixture seeding. Checked: \(candidates.joined(separator: ", ")). Set NODE_BINARY to an executable node path."
+            ]
+        )
+    }
+
+    private func nodeExecutableCandidatePaths(repositoryRoot: URL) -> [String] {
+        let environment = ProcessInfo.processInfo.environment
+        let homePaths = uiTestHomeCandidatePaths(repositoryRoot: repositoryRoot)
+        var candidates: [String] = []
+
+        if let explicitNode = environment["NODE_BINARY"], !explicitNode.isEmpty {
+            candidates.append(explicitNode)
+        }
+
+        if let pathValue = environment["PATH"] {
+            candidates.append(contentsOf: pathValue
+                .split(separator: ":")
+                .map { String($0) + "/node" })
+        }
+
+        if let shellNode = shellResolvedNodeExecutablePath(homePaths: homePaths) {
+            candidates.append(shellNode)
+        }
+
+        for homePath in homePaths {
+            candidates.append(contentsOf: [
+                "\(homePath)/.local/share/mise/installs/node/latest/bin/node",
+                "\(homePath)/.local/share/mise/installs/node/lts/bin/node",
+                "\(homePath)/.asdf/installs/nodejs/latest/bin/node",
+            ])
+            appendNodeInstallCandidates(from: "\(homePath)/.local/share/mise/installs/node", to: &candidates)
+            appendNodeInstallCandidates(from: "\(homePath)/.asdf/installs/nodejs", to: &candidates)
+        }
+
+        candidates.append(contentsOf: [
+            "/opt/homebrew/bin/node",
+            "/usr/local/bin/node",
+            "/usr/bin/node",
+        ])
+
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0).inserted }
+    }
+
+    private func shellResolvedNodeExecutablePath(homePaths: [String]) -> String? {
+        for homePath in homePaths.reversed() {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", "source ~/.zshrc >/dev/null 2>&1 || true; command -v node"]
+            var environment = ProcessInfo.processInfo.environment
+            environment["HOME"] = homePath
+            environment["PATH"] = [
+                "\(homePath)/.local/bin",
+                "\(homePath)/bin",
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/usr/bin",
+                "/bin",
+                "/usr/sbin",
+                "/sbin",
+                environment["PATH"] ?? "",
+            ].filter { !$0.isEmpty }.joined(separator: ":")
+            process.environment = environment
+
+            let stdout = Pipe()
+            process.standardOutput = stdout
+            process.standardError = Pipe()
+            do {
+                try process.run()
+            } catch {
+                continue
+            }
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { continue }
+            let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !output.isEmpty {
+                return output
+            }
+        }
+        return nil
+    }
+
+    private func uiTestHomeCandidatePaths(repositoryRoot: URL) -> [String] {
+        var candidates = [FileManager.default.homeDirectoryForCurrentUser.path]
+        let components = repositoryRoot.standardizedFileURL.pathComponents
+        if components.count >= 3, components[0] == "/", components[1] == "Users" {
+            candidates.append("/Users/\(components[2])")
+        }
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0).inserted }
+    }
+
+    private func appendNodeInstallCandidates(from rootPath: String, to candidates: inout [String]) {
+        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
+        let installDirectories = (try? FileManager.default.contentsOfDirectory(
+            at: rootURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for installDirectory in installDirectories.sorted(by: {
+            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedDescending
+        }) {
+            candidates.append(installDirectory.appendingPathComponent("bin/node", isDirectory: false).path)
+        }
+    }
+
+    private func verifyLiveRecorderAcceptance(
+        appSupportPath: String,
+        outputPath: String,
+        frameId: String? = nil,
+        deletedFrameId: String? = nil,
+        allowMissingAudio: Bool = false,
+        allowMissingAudit: Bool = false
+    ) throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let nodeExecutableURL = try resolveUITestNodeExecutableURL(repositoryRoot: repositoryRoot)
+        let process = Process()
+        process.executableURL = nodeExecutableURL
+        var arguments = [
+            "scripts/verify-live-recorder-acceptance.mjs",
+            "--app-support", appSupportPath,
+            "--search-query", "Agentic30",
+            "--json-output", outputPath,
+            "--skip-wal-checkpoint",
+        ]
+        if let frameId, !frameId.isEmpty {
+            arguments.append(contentsOf: ["--frame-id", frameId])
+        }
+        if let deletedFrameId, !deletedFrameId.isEmpty {
+            arguments.append(contentsOf: ["--deleted-frame-id", deletedFrameId])
+        }
+        if allowMissingAudio {
+            arguments.append("--allow-missing-audio")
+        }
+        if allowMissingAudit {
+            arguments.append("--allow-missing-audit")
+        }
+        process.arguments = arguments
+        process.currentDirectoryURL = repositoryRoot
+        var environment = ProcessInfo.processInfo.environment
+        let nodeDirectory = nodeExecutableURL.deletingLastPathComponent().path
+        let existingPath = environment["PATH"].map { ":\($0)" } ?? ""
+        environment["PATH"] = "\(nodeDirectory)\(existingPath)"
+        process.environment = environment
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let errorOutput = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        attachText(output, named: "Founder Replay Live Recorder Operator Verifier")
+        if FileManager.default.fileExists(atPath: outputPath),
+           let verifierJSON = try? String(contentsOfFile: outputPath, encoding: .utf8) {
+            attachText(verifierJSON, named: "Founder Replay Live Recorder Operator Verifier JSON")
+        }
+        guard process.terminationStatus == 0 else {
+            throw uiTestError(
+                "Live recorder operator verifier failed with status \(process.terminationStatus). stdout=\(output) stderr=\(errorOutput)"
+            )
+        }
+    }
+
+    private func extractLiveFrameId(from label: String) throws -> String {
+        let pattern = #"frame-[A-Za-z0-9._-]+"#
+        let range = NSRange(label.startIndex..<label.endIndex, in: label)
+        guard let match = try NSRegularExpression(pattern: pattern).firstMatch(in: label, range: range),
+              let matchRange = Range(match.range, in: label) else {
+            throw uiTestError("Live signed-app frame receipt did not include a parseable frame id: \(label)")
+        }
+        let frameId = String(label[matchRange])
+        if frameId.hasPrefix("ui-frame-") {
+            throw uiTestError("Live signed-app frame receipt resolved to a seeded UI frame id: \(label)")
+        }
+        return frameId
+    }
+
+    private func seedFounderReplayDayMemoryCandidateFixture(appSupportPath: String) throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let script = #"""
+        import { RecorderStore } from "./sidecar/recorder-store.mjs";
+        import { recordFrameCaptureEnvelope } from "./sidecar/recorder-ingest.mjs";
+
+        const appSupportRoot = process.argv[process.argv.length - 1];
+        const now = new Date();
+        const frameAt = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+        const eventAt = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+        const createdAt = new Date(now.getTime() - 25 * 60 * 1000).toISOString();
+        const snapshotSha256 = "f".repeat(64);
+        const store = new RecorderStore({ appSupportRoot }).open();
+        try {
+          recordFrameCaptureEnvelope(store, {
+            id: "ui-frame-1",
+            workspaceId: "ui-workspace-1",
+            projectId: "ui-project-1",
+            capturedAt: frameAt,
+            monitorId: "main",
+            captureTrigger: "ui_test_seed",
+            appName: "Agentic30",
+            windowTitle: "Founder Replay",
+            browserDomain: "example.com",
+            contentHash: "ui-content-hash-1",
+            text: {
+              textSource: "accessibility_only",
+              accessibilityText: "raw private customer@example.com",
+              redactedText: "redacted founder activation friction",
+              redactionStatus: "redacted",
+              safeForSearch: true,
+            },
+            privacyState: "searchable_local",
+            safeForMemory: true,
+            safeForExport: false,
+            snapshot: {
+              id: "ui-asset-frame-1",
+              relativePath: "media/frames/ui-frame-1.jpg",
+              sha256: snapshotSha256,
+              byteSize: 128,
+              encrypted: true,
+              encryption: {
+                algorithm: "aes-256-gcm",
+                keyId: "ui-test-media-key",
+                nonce: Buffer.alloc(12, 5).toString("base64"),
+                tag: Buffer.alloc(16, 6).toString("base64"),
+                ciphertextSha256: `sha256:${snapshotSha256}`,
+              },
+            },
+          });
+          store.insertRecord("product_events", {
+            id: "ui-event-1",
+            workspace_id: "ui-workspace-1",
+            project_id: "ui-project-1",
+            event_type: "customer_interview",
+            occurred_at: eventAt,
+            title: "Customer reply candidate",
+            summary: "Named founder described activation friction",
+            source_ids_json: JSON.stringify([{ id: "ui-frame-1", source_type: "frame" }]),
+            safe_for_search: 1,
+            safe_for_memory: 1,
+            safe_for_export: 0,
+            verification_status: "unverified",
+            proof_ledger_event_id: null,
+            confidence: "medium",
+            created_by: "ui-test",
+            created_at: createdAt,
+            deleted_at: null,
+          });
+          console.log(JSON.stringify({ seeded: true, appSupportRoot }));
+        } finally {
+          store.close();
+        }
+        """#
+
+        let nodeExecutableURL = try resolveUITestNodeExecutableURL(repositoryRoot: repositoryRoot)
+        let process = Process()
+        process.executableURL = nodeExecutableURL
+        process.arguments = ["--input-type=module", "-e", script, "--", appSupportPath]
+        process.currentDirectoryURL = repositoryRoot
+        var environment = ProcessInfo.processInfo.environment
+        let nodeDirectory = nodeExecutableURL.deletingLastPathComponent().path
+        let existingPath = environment["PATH"].map { ":\($0)" } ?? ""
+        environment["PATH"] = "\(nodeDirectory)\(existingPath)"
+        process.environment = environment
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let errorOutput = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "agentic30UITests.seedFounderReplayDayMemoryCandidateFixture",
+                code: Int(process.terminationStatus),
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Failed to seed Founder Replay Day Memory candidate fixture. stdout=\(output) stderr=\(errorOutput)"
+                ]
+            )
+        }
     }
 
     private func waitForStrategyReportRun(
@@ -5024,7 +7963,46 @@ final class agentic30UITests: XCTestCase {
 
         let observed = (((latestRun?["snapshot"] as? [String: Any])?["status"] as? [String: Any])?["state"] as? String)
             ?? "missing"
-        throw uiTestError("Expected latest strategy report run state \(expectedState), observed \(observed)")
+        let traceTail = sidecarStartupTraceTail(
+            workspacePath: workspacePath
+                .split(separator: "/", omittingEmptySubsequences: false)
+                .dropLast()
+                .joined(separator: "/")
+        )
+        throw uiTestError("Expected latest strategy report run state \(expectedState), observed \(observed). Startup trace tail: \(traceTail)")
+    }
+
+    private func waitForSidecarStartupPhase(
+        appSupportPath: String,
+        phase expectedPhase: String,
+        timeout: TimeInterval
+    ) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let trace = sidecarStartupTraceTail(appSupportPath: appSupportPath)
+            if trace.contains("\"phase\":\"\(expectedPhase)\"") {
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+
+        throw uiTestError("Expected sidecar startup phase \(expectedPhase). Startup trace tail: \(sidecarStartupTraceTail(appSupportPath: appSupportPath))")
+    }
+
+    private func sidecarStartupTraceTail(workspacePath: String) -> String {
+        let rootURL = URL(fileURLWithPath: workspacePath, isDirectory: true)
+        let appSupportURL = rootURL.appendingPathComponent("app-support", isDirectory: true)
+        return sidecarStartupTraceTail(appSupportPath: appSupportURL.path)
+    }
+
+    private func sidecarStartupTraceTail(appSupportPath: String) -> String {
+        let traceURL = URL(fileURLWithPath: appSupportPath, isDirectory: true)
+            .appendingPathComponent("startup-traces.jsonl", isDirectory: false)
+        guard let text = try? String(contentsOf: traceURL, encoding: .utf8) else {
+            return "missing at \(traceURL.path)"
+        }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true).suffix(8)
+        return lines.joined(separator: " | ")
     }
 
     private func latestStrategyReportRun(workspacePath: String) throws -> [String: Any]? {
@@ -5277,15 +8255,161 @@ final class agentic30UITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        if element.waitForExistence(timeout: 2), element.isHittable {
-            element.click()
-            return
-        }
-        guard element.exists else {
+        guard element.waitForExistence(timeout: 2) else {
             XCTFail("Expected element to exist before center click.", file: file, line: line)
             return
         }
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        clickElement(element, file: file, line: line)
+    }
+
+    @MainActor
+    private func clickElement(
+        _ element: XCUIElement,
+        normalizedOffset: CGVector = CGVector(dx: 0.5, dy: 0.5),
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard element.exists else {
+            XCTFail("Expected element to exist before raw click.", file: file, line: line)
+            return
+        }
+        let frame = element.frame
+        guard !frame.isNull, !frame.isEmpty else {
+            XCTFail("Expected element to have a non-empty frame before raw click.", file: file, line: line)
+            return
+        }
+
+        activateRunningAgenticApp()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        if element.isHittable && element.isEnabled {
+            element.click()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            return
+        }
+
+        let point = CGPoint(
+            x: frame.minX + frame.width * normalizedOffset.dx,
+            y: frame.minY + frame.height * normalizedOffset.dy
+        )
+        CGWarpMouseCursorPosition(point)
+        postMouseEvent(.leftMouseDown, at: point)
+        postMouseEvent(.leftMouseUp, at: point)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+
+        if !element.isHittable {
+            _ = pressElementThroughAccessibilityIfPossible(element, targetFrame: frame)
+        }
+    }
+
+    @MainActor
+    private func pressElementThroughAccessibilityIfPossible(_ element: XCUIElement, targetFrame: CGRect) -> Bool {
+        guard !element.identifier.isEmpty else { return false }
+        switch element.elementType {
+        case .button, .menuItem, .popUpButton, .checkBox, .radioButton:
+            break
+        default:
+            return false
+        }
+        guard let processIdentifier = runningAgenticProcessIdentifier() else { return false }
+
+        let appElement = AXUIElementCreateApplication(processIdentifier)
+        guard let target = accessibilityElement(
+            in: appElement,
+            matchingIdentifier: element.identifier,
+            targetFrame: targetFrame
+        ) else {
+            return false
+        }
+
+        let result = AXUIElementPerformAction(target, kAXPressAction as CFString)
+        guard result == .success else { return false }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        return true
+    }
+
+    private func runningAgenticProcessIdentifier() -> pid_t? {
+        let bundleIdentifier = "october-academy.agentic30"
+        return NSWorkspace.shared.runningApplications.first {
+            $0.bundleIdentifier == bundleIdentifier
+        }?.processIdentifier
+    }
+
+    private func accessibilityElement(
+        in root: AXUIElement,
+        matchingIdentifier identifier: String,
+        targetFrame: CGRect
+    ) -> AXUIElement? {
+        var stack = [root]
+        var visited = 0
+        var bestMatch: (element: AXUIElement, score: CGFloat)?
+
+        while let current = stack.popLast(), visited < 4_000 {
+            visited += 1
+
+            if accessibilityStringAttribute("AXIdentifier", of: current) == identifier {
+                let score = accessibilityFrame(of: current)
+                    .map { accessibilityFrameScore($0, target: targetFrame) }
+                    ?? CGFloat.greatestFiniteMagnitude
+                if bestMatch == nil || score < bestMatch!.score {
+                    bestMatch = (current, score)
+                }
+                if score < 2 {
+                    return current
+                }
+            }
+
+            stack.append(contentsOf: accessibilityChildren(of: current).reversed())
+        }
+
+        return bestMatch?.element
+    }
+
+    private func accessibilityStringAttribute(_ attribute: String, of element: AXUIElement) -> String? {
+        var rawValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &rawValue) == .success else {
+            return nil
+        }
+        return rawValue as? String
+    }
+
+    private func accessibilityChildren(of element: AXUIElement) -> [AXUIElement] {
+        var rawValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &rawValue) == .success else {
+            return []
+        }
+        return rawValue as? [AXUIElement] ?? []
+    }
+
+    private func accessibilityFrame(of element: AXUIElement) -> CGRect? {
+        var rawPosition: CFTypeRef?
+        var rawSize: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &rawPosition) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &rawSize) == .success,
+              let rawPosition,
+              let rawSize,
+              CFGetTypeID(rawPosition) == AXValueGetTypeID(),
+              CFGetTypeID(rawSize) == AXValueGetTypeID()
+        else {
+            return nil
+        }
+
+        let positionValue = rawPosition as! AXValue
+        let sizeValue = rawSize as! AXValue
+        var point = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionValue, .cgPoint, &point),
+              AXValueGetValue(sizeValue, .cgSize, &size)
+        else {
+            return nil
+        }
+        return CGRect(origin: point, size: size)
+    }
+
+    private func accessibilityFrameScore(_ frame: CGRect, target: CGRect) -> CGFloat {
+        abs(frame.midX - target.midX)
+            + abs(frame.midY - target.midY)
+            + abs(frame.width - target.width) * 0.1
+            + abs(frame.height - target.height) * 0.1
     }
 
     @MainActor
@@ -5332,6 +8456,27 @@ final class agentic30UITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         } while Date() < deadline
         return elementIsVisible(element, in: scrollViewElement(in: app, identifier: scrollViewIdentifier), app: app)
+    }
+
+    @MainActor
+    private func scrollElementToFullyVisible(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval,
+        scrollViewIdentifier: String? = nil
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let scrollView = scrollViewElement(in: app, identifier: scrollViewIdentifier)
+            if elementIsFullyVisible(element, in: scrollView, app: app) {
+                return true
+            }
+            if scrollView.exists {
+                scrollToward(element, in: scrollView)
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        } while Date() < deadline
+        return elementIsFullyVisible(element, in: scrollViewElement(in: app, identifier: scrollViewIdentifier), app: app)
     }
 
     @MainActor
@@ -5430,6 +8575,21 @@ final class agentic30UITests: XCTestCase {
         }
         let windowFrame = app.windows.firstMatch.frame.insetBy(dx: 0, dy: 6)
         return !windowFrame.isEmpty && windowFrame.intersects(elementFrame)
+    }
+
+    @MainActor
+    private func elementIsFullyVisible(_ element: XCUIElement, in scrollView: XCUIElement, app: XCUIApplication) -> Bool {
+        guard element.exists, scrollView.exists else {
+            return false
+        }
+        let elementFrame = element.frame
+        let scrollFrame = scrollView.frame.insetBy(dx: 0, dy: 12)
+        let windowFrame = app.windows.firstMatch.frame.insetBy(dx: 0, dy: 12)
+        let visibleFrame = scrollFrame.intersection(windowFrame)
+        guard !elementFrame.isEmpty, !visibleFrame.isEmpty else {
+            return false
+        }
+        return visibleFrame.contains(elementFrame)
     }
 
     @MainActor
@@ -5542,6 +8702,7 @@ final class agentic30UITests: XCTestCase {
         guard !frame.isEmpty else { return }
 
         let deltaY: CGFloat = direction == .movesElementUp ? -distance : distance
+        activateRunningAgenticApp()
         scrollView.scroll(byDeltaX: 0, deltaY: deltaY)
         RunLoop.current.run(until: Date().addingTimeInterval(0.16))
     }
@@ -5573,6 +8734,18 @@ final class agentic30UITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < deadline
         return element.exists && element.isEnabled
+    }
+
+    @MainActor
+    private func waitUntilDisabled(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.exists && !element.isEnabled {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return element.exists && !element.isEnabled
     }
 
     @MainActor
@@ -5614,7 +8787,7 @@ final class agentic30UITests: XCTestCase {
         line: UInt = #line
     ) {
         hideKnownInterferingApplications()
-        app.activate()
+        activateApp(app)
         let nextButton = buttonContaining(in: app, text: text)
         guard waitForOpenDesignMainHittable(nextButton, in: app, timeout: 6) else {
             attachScreenshot(from: app, named: "OpenDesign handoff button not hittable before \(identifier)")
@@ -5684,18 +8857,13 @@ final class agentic30UITests: XCTestCase {
         in app: XCUIApplication,
         timeout: TimeInterval
     ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if app.staticTexts.allElementsBoundByIndex.contains(where: { element in
-                element.exists && self.element(element, contains: marker)
-            }) {
-                return true
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-        return app.staticTexts.allElementsBoundByIndex.contains(where: { element in
-            element.exists && self.element(element, contains: marker)
-        })
+        let predicate = NSPredicate(
+            format: "label CONTAINS %@ OR value CONTAINS %@",
+            marker,
+            marker
+        )
+        let element = app.staticTexts.matching(predicate).firstMatch
+        return element.waitForExistence(timeout: timeout)
     }
 
     @MainActor
@@ -5717,6 +8885,24 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    private func waitForIdentifierPrefix(
+        in app: XCUIApplication,
+        prefix: String,
+        timeout: TimeInterval
+    ) -> XCUIElement? {
+        let matches = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let element = matches.allElementsBoundByIndex.first(where: { $0.exists }) {
+                return element
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return matches.allElementsBoundByIndex.first(where: { $0.exists })
+    }
+
+    @MainActor
     private func waitForElementToDisappear(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
@@ -5726,6 +8912,44 @@ final class agentic30UITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         } while Date() < deadline
         return !element.exists
+    }
+
+    @MainActor
+    private func waitForAddSourceModal(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if addSourceModalIsVisible(in: app) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < deadline
+        return addSourceModalIsVisible(in: app)
+    }
+
+    @MainActor
+    private func waitForAddSourceModalToDisappear(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if !addSourceModalIsVisible(in: app) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < deadline
+        return !addSourceModalIsVisible(in: app)
+    }
+
+    @MainActor
+    private func addSourceModalIsVisible(in app: XCUIApplication) -> Bool {
+        if elementWithIdentifier(in: app, "intakeV2.addSource.modal").exists {
+            return true
+        }
+        if elementWithIdentifier(in: app, "intakeV2.addSource.search").exists {
+            return true
+        }
+        return app.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "기록 소스 추가", "기록 소스 추가"))
+            .firstMatch
+            .exists
     }
 
     @MainActor
@@ -5767,6 +8991,22 @@ final class agentic30UITests: XCTestCase {
         add(attachment)
     }
 
+    private func attachLatestUITestingLaunchDiagnostics(named name: String) {
+        guard let diagnosticsURL = latestUITestingLaunchDiagnosticsURL else {
+            attachText("No UI testing launch diagnostics path was registered.", named: name)
+            return
+        }
+        do {
+            let text = try String(contentsOf: diagnosticsURL, encoding: .utf8)
+            attachText(text, named: name)
+        } catch {
+            attachText(
+                "Unable to read UI testing launch diagnostics at \(diagnosticsURL.path): \(error)",
+                named: name
+            )
+        }
+    }
+
     @MainActor
     private func elementDiagnostics(_ element: XCUIElement) -> String {
         guard element.exists else {
@@ -5778,9 +9018,17 @@ final class agentic30UITests: XCTestCase {
     @MainActor
     private func button(in app: XCUIApplication, matching names: [String]) -> XCUIElement {
         for name in names {
-            let element = app.buttons[name]
-            if element.exists {
-                return element
+            let candidates = app.buttons
+                .matching(NSPredicate(format: "identifier == %@ OR label == %@", name, name))
+                .allElementsBoundByIndex
+            if let hittable = candidates.first(where: { $0.exists && $0.isHittable && $0.isEnabled }) {
+                return hittable
+            }
+            if let enabled = candidates.first(where: { $0.exists && $0.isEnabled }) {
+                return enabled
+            }
+            if let existing = candidates.first(where: { $0.exists }) {
+                return existing
             }
         }
         return app.buttons[names[0]]

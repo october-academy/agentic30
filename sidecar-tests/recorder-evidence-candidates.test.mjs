@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { loadProofLedger } from "../sidecar/execution-os.mjs";
+import { appendProofLedgerEvent, loadProofLedger } from "../sidecar/execution-os.mjs";
 import {
   insertRecorderEvidenceCandidate,
   writeEvidenceCandidateThroughProofLedger,
@@ -74,6 +74,85 @@ test("writeEvidenceCandidateThroughProofLedger marks approved candidates written
     const ledger = await loadProofLedger({ workspaceRoot });
     assert.equal(ledger.events.length, 1);
     assert.equal(ledger.events[0].metadata.recorderEvidenceCandidateId, "candidate-1");
+  } finally {
+    store.close();
+  }
+});
+
+test("writeEvidenceCandidateThroughProofLedger double-writing an already-written candidate is an idempotent no-op", async () => {
+  const { workspaceRoot, store } = await makeContext();
+  try {
+    insertRecorderEvidenceCandidate(store, candidate());
+
+    const first = await writeEvidenceCandidateThroughProofLedger({
+      store,
+      workspaceRoot,
+      candidateId: "candidate-1",
+      now: new Date("2026-06-27T13:00:00.000Z"),
+    });
+    assert.equal(first.status, "written_to_ledger");
+    const eventId = first.candidate.proof_ledger_event_id;
+    assert.equal(Boolean(eventId), true);
+
+    const second = await writeEvidenceCandidateThroughProofLedger({
+      store,
+      workspaceRoot,
+      candidateId: "candidate-1",
+      now: new Date("2026-06-27T15:00:00.000Z"),
+    });
+
+    // Idempotent no-op: status preserved, NOT flipped to verifier_rejected.
+    assert.equal(second.status, "written_to_ledger");
+    assert.equal(second.idempotent, true);
+    assert.equal(second.proof_ledger_event_id, eventId);
+
+    const reloaded = store.getRecord("evidence_candidates", "candidate-1");
+    assert.equal(reloaded.candidate_status, "written_to_ledger");
+    assert.equal(reloaded.proof_ledger_event_id, eventId);
+
+    // The first call's ledger event must survive — no second event, no desync.
+    const ledger = await loadProofLedger({ workspaceRoot });
+    assert.equal(ledger.events.length, 1);
+    assert.equal(ledger.events[0].metadata.recorderEvidenceCandidateId, "candidate-1");
+  } finally {
+    store.close();
+  }
+});
+
+test("writeEvidenceCandidateThroughProofLedger does not clobber a candidate deleted while the ledger append was in flight", async () => {
+  const { workspaceRoot, store } = await makeContext();
+  try {
+    insertRecorderEvidenceCandidate(store, candidate());
+
+    const result = await writeEvidenceCandidateThroughProofLedger({
+      store,
+      workspaceRoot,
+      candidateId: "candidate-1",
+      now: new Date("2026-06-27T13:00:00.000Z"),
+      // Simulate a concurrent retention/consent-revocation delete that
+      // rejects this exact candidate while the (real, async) ledger append
+      // is in flight, then let the real append complete normally.
+      append: async (args) => {
+        store.updateRecord("evidence_candidates", "candidate-1", {
+          candidate_status: "rejected",
+          deleted_at: "2026-06-27T13:00:00.500Z",
+        });
+        return appendProofLedgerEvent(args);
+      },
+    });
+
+    assert.equal(result.status, "written_to_ledger_candidate_deleted");
+
+    const reloaded = store.getRecord("evidence_candidates", "candidate-1");
+    // The deletion's protective state must survive the race, not be
+    // silently overwritten back to written_to_ledger.
+    assert.equal(reloaded.candidate_status, "rejected");
+    assert.equal(reloaded.deleted_at, "2026-06-27T13:00:00.500Z");
+
+    // The ledger append is append-only and already durably completed; it
+    // cannot be retracted, but it must not be duplicated either.
+    const ledger = await loadProofLedger({ workspaceRoot });
+    assert.equal(ledger.events.length, 1);
   } finally {
     store.close();
   }

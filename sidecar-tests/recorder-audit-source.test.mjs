@@ -14,7 +14,7 @@ import { RecorderStore } from "../sidecar/recorder-store.mjs";
 test("recorder audit source lists sanitized non-proof audit rows", async () => {
   const { root, store } = await makeContext();
   try {
-    recordRecorderAudit({
+    const acceptedAudit = recordRecorderAudit({
       store,
       requestId: "request-health",
       actorType: "local_user",
@@ -27,6 +27,9 @@ test("recorder audit source lists sanitized non-proof audit rows", async () => {
       decision: "accepted",
       reason: "authorized_raw_read",
       now: new Date("2026-06-28T10:00:00.000Z"),
+    });
+    store.updateRecord("recorder_audit", acceptedAudit.id, {
+      deleted_at: "2026-06-29T10:00:00.000Z",
     });
     recordRecorderAudit({
       store,
@@ -73,6 +76,7 @@ test("recorder audit source lists sanitized non-proof audit rows", async () => {
     assert.equal(source.audit[0].endpoint, "/recorder/health");
     assert.equal(source.audit[0].accessLevel, "summary");
     assert.equal(source.audit[0].decision, "accepted");
+    assert.equal(source.audit[0].deletedAt, "2026-06-29T10:00:00.000Z");
     assert.deepEqual(source.audit[0].sourceIds, [{ id: "frame-1", sourceType: "frame", source_type: "frame" }]);
 
     const json = JSON.stringify(source);

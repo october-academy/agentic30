@@ -58,6 +58,15 @@ export async function writeEvidenceCandidateThroughProofLedger({
   if (!row) {
     fail("ERR_RECORDER_EVIDENCE_CANDIDATE_NOT_FOUND", `evidence candidate not found: ${candidateId || "(missing)"}`);
   }
+  if (String(row.candidate_status ?? "").trim() === "written_to_ledger") {
+    return {
+      status: "written_to_ledger",
+      idempotent: true,
+      candidate: row,
+      proofLedgerEventId: row.proof_ledger_event_id || "",
+      proof_ledger_event_id: row.proof_ledger_event_id || "",
+    };
+  }
   try {
     const result = await writeRecorderProofCandidateToLedger({
       workspaceRoot,
@@ -66,6 +75,21 @@ export async function writeEvidenceCandidateThroughProofLedger({
       now,
       append,
     });
+    // The ledger append above is async file I/O and can yield the event loop.
+    // A concurrent retention sweep or consent-revocation delete may have
+    // rejected/tombstoned this same candidate while we were awaiting it. The
+    // ledger event is already durably appended (append-only, cannot be
+    // retracted), but we must not clobber the deletion's protective state by
+    // blindly resetting candidate_status back to "written_to_ledger".
+    const latest = store.getRecord("evidence_candidates", row.id);
+    if (!latest || latest.deleted_at) {
+      return {
+        status: "written_to_ledger_candidate_deleted",
+        candidate: latest,
+        proofLedgerResult: result,
+        proof_ledger_result: result,
+      };
+    }
     const reviewedAt = toIso(now);
     const verifierResult = {
       status: "written_to_ledger",

@@ -47,6 +47,7 @@ const ENTRY_POINTS = [
   "onboarding-helper.mjs",
   "acp-adapter.mjs",
   "preflight-cli.mjs",
+  "recorder-sql-worker.mjs",
 ];
 
 // External packages kept unbundled because they ship native binaries or

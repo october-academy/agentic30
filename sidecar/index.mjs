@@ -525,6 +525,9 @@ import { RecorderStore } from "./recorder-store.mjs";
 import { buildRecorderAuditSource } from "./recorder-audit-source.mjs";
 import { createRecorderRawApiServer } from "./recorder-raw-api-server.mjs";
 import { issueRecorderApiToken } from "./recorder-raw-api-auth.mjs";
+import { writeEvidenceCandidateThroughProofLedger } from "./recorder-evidence-candidates.mjs";
+import { reviewRecorderEvidenceCandidate } from "./recorder-evidence-review.mjs";
+import { applyRecorderRetentionPolicy } from "./recorder-retention.mjs";
 import {
   assertPersistedRecorderMcpAccess,
   grantRecorderMcpAccess,
@@ -552,6 +555,14 @@ import {
   deleteRecorderFrameCapture,
   deleteRecorderFrameCapturesInRange,
 } from "./recorder-delete.mjs";
+import {
+  recorderDayMemoryLoopLocalDayRange,
+  runRecorderDayMemoryLoop,
+} from "./recorder-day-loop.mjs";
+import {
+  recorderDayMemoryLoopRanForDayKey,
+  shouldAutoRunRecorderDayMemoryLoop,
+} from "./recorder-day-loop-autofire.mjs";
 
 const sidecarProcessStartedAt = performance.now();
 const sidecarProcessStartedAtIso = new Date().toISOString();
@@ -647,6 +658,10 @@ const CHAT_BIP_SHEET_MAX_ROWS = 25;
 const CHAT_BIP_EXTERNAL_CACHE_TTL_MS = 5 * 60 * 1000;
 const INSTANT_CHAT_COMPLETE_SLO_MS = 1_000;
 const RECORDER_PIPE_SCHEDULER_INTERVAL_MS = 60_000;
+const RECORDER_RETENTION_SWEEP_INTERVAL_MS = Number.parseInt(
+  process.env.AGENTIC30_RECORDER_RETENTION_SWEEP_INTERVAL_MS || "",
+  10,
+) || 60 * 60 * 1000;
 const NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS = normalizeNewsMarketRadarProviderTimeout(
   process.env.AGENTIC30_NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS,
 );
@@ -716,6 +731,10 @@ const state = {
   recorderStore: null,
   recorderRawApiServer: null,
   recorderPipeSchedulerTimer: null,
+  recorderRetentionSweepTimer: null,
+  recorderRetentionSweepPromise: null,
+  recorderRetentionLastResult: null,
+  recorderDayMemoryLoop: null,
   workspaceSetupTelemetry: {
     root: "",
     started: false,
@@ -787,6 +806,7 @@ try {
     store: state.recorderStore,
   });
   state.recorderPipeSchedulerTimer = startRecorderPipeScheduler();
+  state.recorderRetentionSweepTimer = startRecorderRetentionSweepScheduler();
   const detachedOfficeHoursFailed = await failDetachedOfficeHoursPendingSessions({
     emitEvents: false,
     reason: "bootstrap",
@@ -1233,6 +1253,10 @@ async function shutdown() {
     clearInterval(state.recorderPipeSchedulerTimer);
     state.recorderPipeSchedulerTimer = null;
   }
+  if (state.recorderRetentionSweepTimer) {
+    clearInterval(state.recorderRetentionSweepTimer);
+    state.recorderRetentionSweepTimer = null;
+  }
   for (const run of state.activeRuns.values()) {
     run.abortController.abort();
     await run.stop?.();
@@ -1351,6 +1375,14 @@ async function handleClientMessage(socket, payload) {
       handleRecorderFrameCapturesList(socket, payload);
       return;
     }
+    case "recorder_day_memory_loop_run": {
+      await handleRecorderDayMemoryLoopRun(socket, payload);
+      return;
+    }
+    case "recorder_evidence_candidate_review": {
+      await handleRecorderEvidenceCandidateReview(socket, payload);
+      return;
+    }
     case "recorder_pipes_list": {
       handleRecorderPipesList(socket, payload);
       return;
@@ -1365,6 +1397,10 @@ async function handleClientMessage(socket, payload) {
     }
     case "recorder_pipe_scheduler_tick": {
       await handleRecorderPipeSchedulerTick(socket, payload);
+      return;
+    }
+    case "recorder_retention_apply": {
+      await handleRecorderRetentionApply(socket, payload);
       return;
     }
     case "recorder_raw_api_token_issue": {
@@ -3774,6 +3810,70 @@ function startRecorderPipeScheduler() {
   return timer;
 }
 
+function startRecorderRetentionSweepScheduler() {
+  const timer = setInterval(() => {
+    fireAndForget("recorderRetentionSweepTick", runRecorderRetentionSweep({ reason: "interval" }));
+  }, RECORDER_RETENTION_SWEEP_INTERVAL_MS);
+  timer.unref?.();
+  fireAndForget("recorderRetentionSweepBootTick", runRecorderRetentionSweep({ reason: "boot" }));
+  return timer;
+}
+
+async function runRecorderRetentionSweep({ reason = "manual", policy = null, now = new Date() } = {}) {
+  const store = state.recorderStore;
+  if (!store) {
+    throw new Error("ERR_RECORDER_RETENTION_STORE_NOT_STARTED");
+  }
+  if (state.recorderRetentionSweepPromise) {
+    return {
+      schema: "agentic30.recorder.retention_scheduler_result.v1",
+      status: "skipped",
+      reason: "already_running",
+      proofAcceptedByRetention: false,
+      proof_accepted_by_retention: false,
+    };
+  }
+  const run = (async () => {
+    const result = await applyRecorderRetentionPolicy(store, {
+      ...(policy && typeof policy === "object" ? { policy } : {}),
+      now,
+    });
+    const schedulerResult = {
+      schema: "agentic30.recorder.retention_scheduler_result.v1",
+      status: result.status,
+      reason,
+      retention: result,
+      deletedFrameCount: result.deletedFrameCount ?? result.deleted_frame_count ?? 0,
+      deleted_frame_count: result.deletedFrameCount ?? result.deleted_frame_count ?? 0,
+      deletedAudioChunkCount: result.deletedAudioChunkCount ?? result.deleted_audio_chunk_count ?? 0,
+      deleted_audio_chunk_count: result.deletedAudioChunkCount ?? result.deleted_audio_chunk_count ?? 0,
+      deletedMediaCount: result.deletedMediaCount ?? result.deleted_media_count ?? 0,
+      deleted_media_count: result.deletedMediaCount ?? result.deleted_media_count ?? 0,
+      proofAcceptedByRetention: false,
+      proof_accepted_by_retention: false,
+      proofLedgerWriteAllowed: false,
+      proof_ledger_write_allowed: false,
+    };
+    state.recorderRetentionLastResult = schedulerResult;
+    telemetry.captureEvent("mac_sidecar_recorder_retention_sweep", {
+      reason,
+      status: schedulerResult.status,
+      deleted_frame_count: schedulerResult.deleted_frame_count,
+      deleted_audio_chunk_count: schedulerResult.deleted_audio_chunk_count,
+      deleted_media_count: schedulerResult.deleted_media_count,
+    });
+    return schedulerResult;
+  })();
+  state.recorderRetentionSweepPromise = run;
+  try {
+    return await run;
+  } finally {
+    if (state.recorderRetentionSweepPromise === run) {
+      state.recorderRetentionSweepPromise = null;
+    }
+  }
+}
+
 async function runRecorderPipeSchedulerTick() {
   const store = state.recorderStore;
   if (!store) {
@@ -4048,6 +4148,163 @@ function handleRecorderFrameCapturesList(socket, payload = {}) {
   });
 }
 
+async function handleRecorderDayMemoryLoopRun(socket, payload = {}) {
+  const now = payload.now ?? payload.generatedAt ?? payload.generated_at
+    ? new Date(payload.now ?? payload.generatedAt ?? payload.generated_at)
+    : new Date();
+  const result = await runRecorderDayMemoryLoop({
+    store: requireRecorderStore(),
+    workspaceRoot,
+    workspaceId: payload.workspaceId ?? payload.workspace_id,
+    projectId: payload.projectId ?? payload.project_id,
+    startedAt: payload.startedAt ?? payload.started_at,
+    endedAt: payload.endedAt ?? payload.ended_at,
+    persistReviewSnapshot: payload.persistReviewSnapshot === true || payload.persist_review_snapshot === true,
+    limit: payload.limit,
+    now,
+  });
+  state.recorderDayMemoryLoop = result;
+  send(socket, {
+    type: "recorder_day_memory_loop_result",
+    dayLoop: result,
+    day_loop: result,
+    review: result.review,
+    evidenceBuildResult: result.evidenceBuildResult,
+    evidence_build_result: result.evidence_build_result,
+    nextAction: result.nextAction,
+    next_action: result.next_action,
+    snapshot: result.snapshot,
+    proofAcceptedByDayLoop: false,
+    proof_accepted_by_day_loop: false,
+    proofLedgerWriteAllowed: false,
+    proof_ledger_write_allowed: false,
+  });
+}
+
+// Auto-fire the Day Memory loop within the Day-0-3 journey so the loop's product
+// value surfaces even when the user never clicks the manual Control-tab button.
+// Single authority for state: only refreshes the reducer-owned cache
+// state.recorderDayMemoryLoop (the same field the manual button writes). The
+// office-hours effector stays a pure read-only context producer; this runs in the
+// reducer path BEFORE computeOfficeHoursEffectorContext reads the cache. Fires at
+// most once per local day, only when recorder capture is ready, is fail-open (any
+// error leaves the cache untouched and never blocks the office-hours turn), never
+// persists a snapshot, and NEVER writes proof (result keeps proofAcceptedByDayLoop:false).
+async function maybeAutoRunRecorderDayMemoryLoop({ now = new Date(), debtSink = null } = {}) {
+  let day = null;
+  try {
+    if (!state.recorderStore) {
+      telemetry.captureEvent("mac_sidecar_recorder_day_loop_auto_fired", { day: null, fired: false, reason: "not_running" });
+      return state.recorderDayMemoryLoop;
+    }
+    day = state.dayProgress
+      ? computeDayNumber({ challengeStartedAt: state.dayProgress.challengeStartedAt })
+      : null;
+    const todayKeyStr = todayKey(now);
+    const lastRunDayKey = recorderDayMemoryLoopRanForDayKey(state.recorderDayMemoryLoop, { todayKey });
+    const controlState = await loadRecorderControlState({ appSupportRoot: appSupportPath, now });
+    const readiness = evaluateRecorderCaptureReadiness(controlState, { now });
+    const decision = shouldAutoRunRecorderDayMemoryLoop({
+      recorderStoreReady: true,
+      day,
+      readinessCanRecord: readiness?.canRecord === true,
+      lastRunDayKey,
+      todayKey: todayKeyStr,
+    });
+    if (!decision.fire) {
+      if (decision.reason === "not_ready" && Array.isArray(debtSink)) {
+        debtSink.push("recorder_day_loop_capture_not_ready");
+      }
+      telemetry.captureEvent("mac_sidecar_recorder_day_loop_auto_fired", { day, fired: false, reason: decision.reason });
+      return state.recorderDayMemoryLoop;
+    }
+    const { startedAt, endedAt } = recorderDayMemoryLoopLocalDayRange(now);
+    const result = await runRecorderDayMemoryLoop({
+      store: state.recorderStore,
+      workspaceRoot,
+      startedAt,
+      endedAt,
+      now,
+      persistReviewSnapshot: false,
+    });
+    state.recorderDayMemoryLoop = result;
+    telemetry.captureEvent("mac_sidecar_recorder_day_loop_auto_fired", { day, fired: true, reason: "ok" });
+    return result;
+  } catch (error) {
+    if (Array.isArray(debtSink)) debtSink.push("recorder_day_loop_auto_run_failed");
+    telemetry.captureEvent("mac_sidecar_recorder_day_loop_auto_fired", { day, fired: false, reason: "error" });
+    return state.recorderDayMemoryLoop;
+  }
+}
+
+async function handleRecorderEvidenceCandidateReview(socket, payload = {}) {
+  const now = payload.now ? new Date(payload.now) : new Date();
+  const decision = payload.decision || payload.reviewDecision || payload.review_decision || "approve_bundle";
+  const review = reviewRecorderEvidenceCandidate({
+    store: requireRecorderStore(),
+    candidateId: payload.candidateId ?? payload.candidate_id,
+    decision,
+    reviewerId: "sidecar_websocket_local_user",
+    reason: payload.reason,
+    externalArtifact: payload.externalArtifact ?? payload.external_artifact,
+    now,
+  });
+  const normalizedDecision = String(decision || "").trim().toLowerCase();
+  const shouldWrite = ["approve", "approved", "approve_bundle", "approved_bundle"].includes(normalizedDecision);
+  const writeResult = shouldWrite
+    ? await writeEvidenceCandidateThroughProofLedger({
+      store: requireRecorderStore(),
+      workspaceRoot,
+      candidateId: review.candidate?.id ?? payload.candidateId ?? payload.candidate_id,
+      now,
+    })
+    : null;
+  const candidate = writeResult?.candidate ?? review.candidate;
+  const proofLedgerEventId = writeResult?.proofLedgerEventId
+    ?? writeResult?.proof_ledger_event_id
+    ?? candidate?.proof_ledger_event_id
+    ?? "";
+  const proofAccepted = writeResult?.status === "written_to_ledger"
+    || writeResult?.status === "written_to_ledger_candidate_deleted";
+  const dayLoop = updateRecorderDayMemoryLoopCandidate(candidate);
+  send(socket, {
+    type: "recorder_evidence_candidate_review_result",
+    review,
+    write: writeResult,
+    write_result: writeResult,
+    candidate,
+    proofLedgerEventId,
+    proof_ledger_event_id: proofLedgerEventId,
+    dayLoop,
+    day_loop: dayLoop,
+    proofAcceptedByReview: false,
+    proof_accepted_by_review: false,
+    proofAcceptedByEvidenceCandidate: proofAccepted,
+    proof_accepted_by_evidence_candidate: proofAccepted,
+    proofLedgerWriteAllowed: proofAccepted,
+    proof_ledger_write_allowed: proofAccepted,
+  });
+}
+
+function updateRecorderDayMemoryLoopCandidate(candidate = null) {
+  if (!candidate?.id || !state.recorderDayMemoryLoop) return state.recorderDayMemoryLoop;
+  const current = state.recorderDayMemoryLoop;
+  const evidenceBuild = current.evidenceBuildResult ?? current.evidence_build_result;
+  const created = Array.isArray(evidenceBuild?.created) ? evidenceBuild.created : [];
+  if (!created.length) return current;
+  const nextCreated = created.map((item) => item?.id === candidate.id ? candidate : item);
+  const nextEvidenceBuild = {
+    ...evidenceBuild,
+    created: nextCreated,
+  };
+  state.recorderDayMemoryLoop = {
+    ...current,
+    evidenceBuildResult: nextEvidenceBuild,
+    evidence_build_result: nextEvidenceBuild,
+  };
+  return state.recorderDayMemoryLoop;
+}
+
 function recorderFrameDeleteDto(result = {}) {
   return {
     status: result.status,
@@ -4109,6 +4366,12 @@ function recorderFrameIngestDto(frame = {}) {
     app_name: frame.app_name,
     windowTitle: frame.window_title,
     window_title: frame.window_title,
+    browserDomain: frame.browser_domain,
+    browser_domain: frame.browser_domain,
+    browserUrlSearchLabel: frame.browser_url_search_label,
+    browser_url_search_label: frame.browser_url_search_label,
+    documentPathSearchLabel: frame.document_path_search_label,
+    document_path_search_label: frame.document_path_search_label,
     snapshotAssetId: frame.snapshot_asset_id,
     snapshot_asset_id: frame.snapshot_asset_id,
     snapshotSha256: frame.snapshot_sha256,
@@ -4117,6 +4380,8 @@ function recorderFrameIngestDto(frame = {}) {
     content_hash: frame.content_hash,
     textSource: frame.text_source,
     text_source: frame.text_source,
+    textProvenanceRootCause: frame.text_provenance_root_cause || null,
+    text_provenance_root_cause: frame.text_provenance_root_cause || null,
     redactionStatus: frame.redaction_status,
     redaction_status: frame.redaction_status,
     privacyState: frame.privacy_state,
@@ -4174,9 +4439,31 @@ function handleRecorderPipesList(socket, payload = {}) {
   });
 }
 
+async function assertRecorderPipeBridgeCaptureReady({ code, message, now }) {
+  const controlState = await loadRecorderControlState({ appSupportRoot: appSupportPath, now });
+  const readiness = evaluateRecorderCaptureReadiness(controlState, { now });
+  if (!readiness.canRecord) {
+    const blockerIds = Array.isArray(readiness.blockers)
+      ? readiness.blockers.map((blocker) => blocker.id).filter(Boolean).join(",")
+      : "unknown";
+    const error = new Error(`${code}: ${message} (${blockerIds || "unknown"})`);
+    error.code = code;
+    error.readiness = readiness;
+    throw error;
+  }
+  return readiness;
+}
+
 async function handleRecorderPipeRun(socket, payload = {}) {
+  const store = requireRecorderStore();
+  const now = new Date();
+  await assertRecorderPipeBridgeCaptureReady({
+    code: "ERR_RECORDER_PIPE_RUN_CAPTURE_NOT_READY",
+    message: "recorder capture must be ready before running a Pipe",
+    now,
+  });
   const result = await runBuiltInRecorderPipe({
-    store: requireRecorderStore(),
+    store,
     pipeId: payload.pipeId ?? payload.pipe_id,
     workspaceId: payload.workspaceId ?? payload.workspace_id,
     projectId: payload.projectId ?? payload.project_id,
@@ -4186,10 +4473,10 @@ async function handleRecorderPipeRun(socket, payload = {}) {
     runId: payload.runId ?? payload.run_id,
     limit: payload.limit,
     timeoutMs: payload.timeoutMs ?? payload.timeout_ms,
-    now: new Date(),
+    now,
   });
   const runs = listRecorderPipeRuns({
-    store: requireRecorderStore(),
+    store,
     limit: payload.runLimit ?? payload.run_limit ?? 50,
   });
   send(socket, {
@@ -4229,12 +4516,18 @@ function handleRecorderPipeCancel(socket, payload = {}) {
 
 async function handleRecorderPipeSchedulerTick(socket, payload = {}) {
   const store = requireRecorderStore();
+  const now = new Date();
+  await assertRecorderPipeBridgeCaptureReady({
+    code: "ERR_RECORDER_PIPE_SCHEDULER_CAPTURE_NOT_READY",
+    message: "recorder capture must be ready before running scheduled Pipes",
+    now,
+  });
   const enqueueResult = enqueueDueRecorderPipeRuns({
     store,
     workspaceId: payload.workspaceId ?? payload.workspace_id,
     projectId: payload.projectId ?? payload.project_id,
     limit: payload.limit,
-    now: new Date(),
+    now,
   });
   const drainResult = payload.autoRun === false || payload.auto_run === false
     ? null
@@ -4242,7 +4535,7 @@ async function handleRecorderPipeSchedulerTick(socket, payload = {}) {
       store,
       maxRuns: payload.maxRuns ?? payload.max_runs,
       timeoutMs: payload.timeoutMs ?? payload.timeout_ms,
-      now: new Date(),
+      now,
     });
   const runs = listRecorderPipeRuns({
     store,
@@ -4258,6 +4551,30 @@ async function handleRecorderPipeSchedulerTick(socket, payload = {}) {
     runs,
     proofAcceptedByScheduler: false,
     proof_accepted_by_scheduler: false,
+  });
+}
+
+async function handleRecorderRetentionApply(socket, payload = {}) {
+  const now = payload.now ? new Date(payload.now) : new Date();
+  const result = await runRecorderRetentionSweep({
+    reason: "manual",
+    policy: payload.policy,
+    now,
+  });
+  send(socket, {
+    type: "recorder_retention_result",
+    retention: result.retention ?? null,
+    scheduler: result,
+    deletedFrameCount: result.deletedFrameCount ?? 0,
+    deleted_frame_count: result.deleted_frame_count ?? 0,
+    deletedAudioChunkCount: result.deletedAudioChunkCount ?? 0,
+    deleted_audio_chunk_count: result.deleted_audio_chunk_count ?? 0,
+    deletedMediaCount: result.deletedMediaCount ?? 0,
+    deleted_media_count: result.deleted_media_count ?? 0,
+    proofAcceptedByRetention: false,
+    proof_accepted_by_retention: false,
+    proofLedgerWriteAllowed: false,
+    proof_ledger_write_allowed: false,
   });
 }
 
@@ -5854,11 +6171,16 @@ async function runPrompt(
         provider: session.provider,
       });
       const officeHoursProjectContextBrief = await buildOfficeHoursProjectContextBrief(workspaceRoot);
+      // Day-0-3 journey: auto-refresh the recorder Day Memory loop cache (single
+      // authority, idempotent per day, readiness-gated, fail-open) before the
+      // effector reads state.recorderDayMemoryLoop.
+      await maybeAutoRunRecorderDayMemoryLoop();
       // Host EFFECTS (port-on-top): assemble the gstack effector phases as a pure
       // read-only context block. Graceful — degrades to "" when nothing is available.
       const officeHoursEffectorContext = await computeOfficeHoursEffectorContext({
         workspaceRoot,
         context: officeHoursContext,
+        recorderDayLoop: state.recorderDayMemoryLoop,
         // §7: only emit the Phase 6 close on the actual interview-completion turn.
         isHandoffTurn: officeHoursRuntimeGatherComplete(session),
       }).catch(() => "");
@@ -10506,11 +10828,17 @@ async function generateDay1OfficeHoursWarmupQuestion({
     context: providerContext.context,
     lastAnswer: "Office Hours",
   });
+  // Auto-refresh the recorder Day Memory loop cache before the effector reads it
+  // (single authority, idempotent per day, readiness-gated, fail-open). Sequenced
+  // BEFORE the Promise.all: it mutates state.recorderDayMemoryLoop, which the
+  // sibling computeOfficeHoursEffectorContext reads.
+  await maybeAutoRunRecorderDayMemoryLoop();
   const [projectContextBrief, effectorContext] = await Promise.all([
     buildOfficeHoursProjectContextBrief(scanRoot),
     computeOfficeHoursEffectorContext({
       workspaceRoot: scanRoot,
       context: providerContext.context,
+      recorderDayLoop: state.recorderDayMemoryLoop,
     }),
   ]);
   const abortController = new AbortController();
@@ -11379,6 +11707,11 @@ async function runOfficeHours(session, {
       provider: session.provider,
       execution_mode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
     });
+    // Auto-refresh the recorder Day Memory loop cache before the effector reads
+    // it (single authority, idempotent per day, readiness-gated, fail-open).
+    // Sequenced BEFORE the Promise.all: it mutates state.recorderDayMemoryLoop,
+    // which the sibling computeOfficeHoursEffectorContext reads.
+    await maybeAutoRunRecorderDayMemoryLoop();
     const [
       officeHoursProjectContextBrief,
       officeHoursEffectorContext,
@@ -11387,6 +11720,7 @@ async function runOfficeHours(session, {
       computeOfficeHoursEffectorContext({
         workspaceRoot,
         context: officeHoursRuntime.context,
+        recorderDayLoop: state.recorderDayMemoryLoop,
         // §7: only emit the Phase 6 close on the actual interview-completion turn.
         isHandoffTurn: officeHoursRuntimeGatherComplete(session),
       }),
@@ -17563,34 +17897,46 @@ async function runNewsMarketRadarProviderResearch({
   if (!provider) {
     throw new Error(`${route.label || "웹 검색 도구"} 사용 불가: AI 연결이 설정되지 않았습니다`);
   }
+  const routeLabel = route.label || `${providerLabel(provider)} 웹 검색 도구`;
+  if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1" && isStrategyReportStubProviderRequest({
+    prompt,
+    mode,
+    structuredOutputSchemaName,
+  })) {
+    const stubText = buildStrategyReportStubProviderText(prompt);
+    if (!stubText) {
+      throw new Error("Strategy report UI test stub fixture is missing for this provider prompt.");
+    }
+    if (typeof onProgress === "function") {
+      onProgress({
+        stage: "running_provider_research",
+        progressText: `${routeLabel} UI 테스트 fixture를 적용하는 중`,
+        researchSource: routeLabel,
+      });
+    }
+    return {
+      text: stubText,
+      provider,
+      researchSource: routeLabel,
+      exaResearchRoute: redactExaResearchRoute(route),
+      ...structuredOutputResultMetadata({
+        provider,
+        structuredOutputSchema,
+        structuredOutputSchemaName,
+        structuredOutputSchemaLimits,
+      }),
+    };
+  }
   const authState = getProviderAuthState(provider);
   if (!authState.available) {
     throw new Error(`${providerLabel(provider)} 사용 불가: ${authState.message || authState.source || "설정되지 않음"}`);
   }
-  const routeLabel = route.label || `${providerLabel(provider)} 웹 검색 도구`;
   if (typeof onProgress === "function") {
     onProgress({
       stage: "running_provider_research",
       progressText: `${routeLabel}로 공개 근거를 검색하는 중`,
       researchSource: routeLabel,
     });
-  }
-  if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
-    const stubText = buildStrategyReportStubProviderText(prompt);
-    if (stubText) {
-      return {
-        text: stubText,
-        provider,
-        researchSource: routeLabel,
-        exaResearchRoute: redactExaResearchRoute(route),
-        ...structuredOutputResultMetadata({
-          provider,
-          structuredOutputSchema,
-          structuredOutputSchemaName,
-          structuredOutputSchemaLimits,
-        }),
-      };
-    }
   }
   if (!usesDirectExaResearchMode(mode)) {
     const text = await runWithMarketResearchProviderBudget(async () => {
@@ -17675,25 +18021,29 @@ async function runNewsMarketRadarProviderSynthesis({
   // Single explicit provider (or codex default). No precedence fallback: if the
   // chosen provider is unavailable or fails, surface the error directly.
   const candidate = normalizeProviderName(provider) || normalizeProviderName(preferredProvider) || "codex";
+  if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1" && isStrategyReportStubProviderRequest({
+    prompt,
+    structuredOutputSchemaName,
+  })) {
+    const stubText = buildStrategyReportStubProviderText(prompt);
+    if (!stubText) {
+      throw new Error("Strategy report UI test stub fixture is missing for this provider prompt.");
+    }
+    return {
+      text: stubText,
+      provider: candidate,
+      researchSource: `${providerLabel(candidate)} synthesis`,
+      ...structuredOutputResultMetadata({
+        provider: candidate,
+        structuredOutputSchema,
+        structuredOutputSchemaName,
+        structuredOutputSchemaLimits,
+      }),
+    };
+  }
   const authState = getProviderAuthState(candidate);
   if (!authState.available) {
     throw new Error(`${providerLabel(candidate)} 합성 사용 불가: ${authState.message || authState.source || "설정되지 않음"}`);
-  }
-  if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
-    const stubText = buildStrategyReportStubProviderText(prompt);
-    if (stubText) {
-      return {
-        text: stubText,
-        provider: candidate,
-        researchSource: `${providerLabel(candidate)} synthesis`,
-        ...structuredOutputResultMetadata({
-          provider: candidate,
-          structuredOutputSchema,
-          structuredOutputSchemaName,
-          structuredOutputSchemaLimits,
-        }),
-      };
-    }
   }
   const text = candidate === "claude"
     ? await runNewsMarketRadarClaudeSynthesis({ prompt, structuredOutputSchema, structuredOutputSchemaName })
@@ -17833,6 +18183,19 @@ function assertStructuredOutputJsonText({
       cause: error,
     });
   }
+}
+
+function isStrategyReportStubProviderRequest({
+  prompt = "",
+  mode = "",
+  structuredOutputSchemaName = "",
+} = {}) {
+  const schemaName = String(structuredOutputSchemaName || "");
+  const promptText = String(prompt || "");
+  return mode === "exa_research"
+    || /StrategyReport/i.test(schemaName)
+    || /Agentic30 strategy report/i.test(promptText)
+    || /Adversarial strategy review for Agentic30/i.test(promptText);
 }
 
 function buildStrategyReportStubProviderText(prompt = "") {
@@ -19697,7 +20060,9 @@ function normalizeUserInputResponse(promptRequest, payload) {
       ? selectedOptions.join(", ")
       : freeText;
     const primaryTextInput = normalizeResponsePrimaryTextInput(question);
-    const primaryAnswerValue = primaryTextInput && freeText && !selectedOptions.some(isNoCandidateBlockerSelectionLabel)
+    const shouldKeepNoCandidateLabelAsPrimary = structuredPromptQuestionId(question) === GET_USERS_FIRST_CANDIDATE_SIGNAL_ID
+      && selectedOptions.some(isNoCandidateBlockerSelectionLabel);
+    const primaryAnswerValue = primaryTextInput && freeText && !shouldKeepNoCandidateLabelAsPrimary
       ? freeText
       : answerValue;
 

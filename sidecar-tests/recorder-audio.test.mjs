@@ -170,7 +170,7 @@ test("recordAudioChunk derives search-safe redaction for local transcript segmen
           id: "segment-derived-redaction",
           startedAt: "2026-06-28T14:01:10.000Z",
           endedAt: "2026-06-28T14:01:50.000Z",
-          text: `activation friction from founder@example.com using ${fakeOpenAIToken} and https://example.com/path?token=abc`,
+          text: `activation friction from founder@example.com using ${fakeOpenAIToken} and https://example.com/path?token=abc near /Users/october/private-note.md plus +1 555 123 4567`,
           redactionStatus: "not_redacted",
           privacyState: "raw_local",
           safeForSearch: false,
@@ -187,21 +187,29 @@ test("recordAudioChunk derives search-safe redaction for local transcript segmen
     assert.equal(segment.safeForSearch, true);
     assert.equal(segment.safeForMemory, true);
     assert.match(segment.redactedText, /activation friction/);
-    assert.match(segment.redactedText, /‹redacted:email›/);
-    assert.match(segment.redactedText, /‹redacted:openai-token›/);
-    assert.match(segment.redactedText, /‹redacted:url›/);
+    assert.match(segment.redactedText, /\[redacted-email\]/);
+    assert.match(segment.redactedText, /\[redacted-token\]/);
+    assert.match(segment.redactedText, /example\.com/);
+    assert.match(segment.redactedText, /\[redacted-path\]/);
+    assert.match(segment.redactedText, /\[redacted-phone\]/);
+    assert.equal(segment.redactedText.includes("https://"), false);
+    assert.equal(segment.redactedText.includes("/path?token=abc"), false);
+    assert.equal(segment.redactedText.includes("/Users/october"), false);
     assert.equal(segment.rawTranscriptExposed, false);
-    assert.doesNotMatch(JSON.stringify(result), /founder@example\.com|sk-proj-|example\.com\/path|relative_path|media\/audio/);
+    assert.doesNotMatch(JSON.stringify(result), /founder@example\.com|sk-proj-|example\.com\/path|\/Users\/october|relative_path|media\/audio/);
 
     const segmentRow = store.getRecord("transcript_segments", "segment-derived-redaction");
     assert.match(segmentRow.text, /founder@example\.com/);
     assert.match(segmentRow.text, /sk-proj-/);
-    assert.match(segmentRow.redacted_text, /‹redacted:email›/);
+    assert.match(segmentRow.text, /\/Users\/october\/private-note\.md/);
+    assert.match(segmentRow.redacted_text, /\[redacted-email\]/);
+    assert.match(segmentRow.redacted_text, /\[redacted-path\]/);
     assert.equal(segmentRow.safe_for_search, 1);
     assert.equal(segmentRow.safe_for_memory, 1);
     assert.equal(store.search("activation", { sourceTypes: ["transcript"] }).some((row) => row.source_id === "segment-derived-redaction"), true);
     assert.deepEqual(store.search("founder@example.com", { sourceTypes: ["transcript"] }), []);
     assert.deepEqual(store.search("sk-proj", { sourceTypes: ["transcript"] }), []);
+    assert.deepEqual(store.search("/Users/october", { sourceTypes: ["transcript"] }), []);
   } finally {
     store.close();
     await fs.rm(root, { recursive: true, force: true });
@@ -250,9 +258,96 @@ test("recordAudioChunk records local transcription unavailable without segments 
   }
 });
 
+test("recordAudioChunk preserves typed local transcription unavailable root causes", async () => {
+  const { root, store } = await makeStore();
+  try {
+    const terminalStates = [
+      "local_unavailable_speech_framework_missing_no_cloud_fallback",
+      "local_unavailable_speech_permission_missing_no_cloud_fallback",
+      "local_unavailable_speech_recognizer_unavailable_no_cloud_fallback",
+      "local_unavailable_speech_recognition_error_no_cloud_fallback",
+      "local_unavailable_speech_timeout_no_cloud_fallback",
+    ];
+
+    for (const [index, terminalState] of terminalStates.entries()) {
+      const id = `audio-transcription-unavailable-${index + 1}`;
+      const result = recordAudioChunk(store, audioChunk({
+        id,
+        transcriptStatus: "local_transcription_unavailable",
+        localTranscriberName: undefined,
+        localTranscriberVersion: undefined,
+        transcriptionTerminalState: terminalState,
+        redactionStatus: "not_redacted",
+        transcriptSegments: [],
+        audioAsset: {
+          id: `asset-${id}`,
+          relativePath: `media/audio/2026-06-28/${id}.m4a`,
+          sha256: String(index + 1).repeat(64),
+          byteSize: 512 + index,
+          encrypted: false,
+        },
+      }), {
+        controlState: readyControlState(),
+        now: new Date("2026-06-28T14:04:35.000Z"),
+      });
+
+      assert.equal(result.audioChunk.transcriptStatus, "local_transcription_unavailable");
+      assert.equal(result.audioChunk.transcriptionTerminalState, terminalState);
+      assert.equal(result.audioChunk.localTranscriberName, null);
+      assert.equal(result.transcriptSegments.length, 0);
+      const audioRow = store.getRecord("audio_chunks", id);
+      assert.equal(audioRow.transcription_terminal_state, terminalState);
+    }
+
+    assert.deepEqual(store.search("activation", { sourceTypes: ["transcript"] }), []);
+  } finally {
+    store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("recordAudioChunk fails closed when local transcript provenance is missing", async () => {
   const { root, store } = await makeStore();
   try {
+    assert.throws(
+      () => recordAudioChunk(store, audioChunk({
+        id: "audio-missing-consent-grant",
+        consentGrantId: "",
+      }), {
+        controlState: readyControlState(),
+        now: new Date("2026-06-28T14:04:38.000Z"),
+      }),
+      (error) => error instanceof RecorderAudioError
+        && error.code === "ERR_RECORDER_AUDIO_MISSING_FIELD",
+    );
+    assert.equal(store.getRecord("audio_chunks", "audio-missing-consent-grant"), null);
+
+    assert.throws(
+      () => recordAudioChunk(store, audioChunk({
+        id: "audio-missing-indicator",
+        rawAudioIndicatorState: "",
+      }), {
+        controlState: readyControlState(),
+        now: new Date("2026-06-28T14:04:39.000Z"),
+      }),
+      (error) => error instanceof RecorderAudioError
+        && error.code === "ERR_RECORDER_AUDIO_INDICATOR_STATE_REQUIRED",
+    );
+    assert.equal(store.getRecord("audio_chunks", "audio-missing-indicator"), null);
+
+    assert.throws(
+      () => recordAudioChunk(store, audioChunk({
+        id: "audio-unknown-indicator",
+        rawAudioIndicatorState: "unknown",
+      }), {
+        controlState: readyControlState(),
+        now: new Date("2026-06-28T14:04:39.500Z"),
+      }),
+      (error) => error instanceof RecorderAudioError
+        && error.code === "ERR_RECORDER_AUDIO_INDICATOR_STATE_REQUIRED",
+    );
+    assert.equal(store.getRecord("audio_chunks", "audio-unknown-indicator"), null);
+
     assert.throws(
       () => recordAudioChunk(store, audioChunk({
         id: "audio-missing-local-transcriber",
@@ -368,6 +463,20 @@ test("recordAudioChunk rejects cloud transcription fallback and unsafe transcrip
       }),
       (error) => error instanceof RecorderAudioError
         && error.code === "ERR_RECORDER_AUDIO_TRANSCRIPT_UNSAFE_SEARCH_REDACTION",
+    );
+
+    assert.throws(
+      () => recordAudioChunk(store, audioChunk({
+        id: "audio-unknown-transcription-terminal-state",
+        transcriptStatus: "local_transcription_unavailable",
+        transcriptionTerminalState: "cloud_retry_available",
+        transcriptSegments: [],
+      }), {
+        controlState: readyControlState(),
+        now: new Date("2026-06-28T14:08:30.000Z"),
+      }),
+      (error) => error instanceof RecorderAudioError
+        && error.code === "ERR_RECORDER_AUDIO_UNKNOWN_TRANSCRIPTION_TERMINAL_STATE",
     );
   } finally {
     store.close();

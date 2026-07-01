@@ -41,6 +41,11 @@ import {
   redactSecrets,
   SEARCH_EXCLUDE_GLOBS,
 } from "./workspace-safety.mjs";
+import { RecorderStore } from "./recorder-store.mjs";
+import {
+  RECORDER_MCP_RAW_SQL_TOOL,
+  runRecorderMcpRawSqlQueryFromAppSupport,
+} from "./recorder-mcp-tools.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
@@ -94,6 +99,7 @@ server.tool(
                 "list_workspace_files",
                 "read_workspace_file",
                 "search_workspace",
+                RECORDER_MCP_RAW_SQL_TOOL,
                 "get_bip_context",
                 "read_project_doc",
                 "get_social_context",
@@ -240,6 +246,59 @@ server.tool(
         },
       ],
     };
+  },
+);
+
+server.tool(
+  RECORDER_MCP_RAW_SQL_TOOL,
+  "Run a bounded, read-only, redacted SQL query against the local recorder store's allowlisted views (e.g. recorder_sql_frames_redacted). Deny-by-default: fails closed with a named reason unless the local user has granted THIS tool a scoped raw_sql capability. Output is local, redacted, audited, and never proof.",
+  {
+    query: z.string().min(1),
+    timeoutMs: z.number().int().min(1).max(5000).optional(),
+  },
+  async ({ query, timeoutMs }) => {
+    let store = null;
+    try {
+      store = new RecorderStore({ appSupportRoot: appSupportPath }).open();
+      // mcp-server is a separate process from the main sidecar; both may hold
+      // recorder.sqlite (WAL). Wait on a writer instead of failing immediately.
+      store.database().pragma("busy_timeout = 5000");
+      const result = await runRecorderMcpRawSqlQueryFromAppSupport({
+        store,
+        appSupportPath,
+        toolName: RECORDER_MCP_RAW_SQL_TOOL,
+        query,
+        timeoutMs,
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        ...(Number(result?.status) >= 400 ? { isError: true } : {}),
+      };
+    } catch (error) {
+      // Deny-by-default and other fail-closed paths surface as a structured error,
+      // never a crash.
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              ok: false,
+              code: error?.code || "ERR_RECORDER_MCP_TOOL_FAILED",
+              message: error?.message || String(error),
+            }),
+          },
+        ],
+        isError: true,
+      };
+    } finally {
+      if (store) {
+        try {
+          store.close();
+        } catch {
+          // ignore close errors
+        }
+      }
+    }
   },
 );
 

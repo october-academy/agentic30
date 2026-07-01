@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>Agentic30ExternalPermissionOnboardingAllowed</key>
+	<string>$(AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED)</string>
+	<key>Agentic30ExpectedPermissionActorBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>Agentic30LiveSignedUIE2EAllowed</key>
+	<string>$(AGENTIC30_LIVE_SIGNED_UI_E2E_ALLOWED)</string>
 	<key>Agentic30PostHogHost</key>
 	<string>$(POSTHOG_HOST)</string>
 	<key>Agentic30PostHogProjectAPIKey</key>

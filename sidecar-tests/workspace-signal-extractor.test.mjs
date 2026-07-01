@@ -52,6 +52,78 @@ test("canonical project docs ignore non-canonical and noisy root ICP docs", asyn
   });
 });
 
+test("initial scan accepts root docs as pre-canonical field evidence", async () => {
+  await withTempWorkspace(async (root) => {
+    await writeFile(
+      root,
+      "docs/ICP.md",
+      [
+        "# ICP",
+        "",
+        "## Our ICP: 전업 1인 개발자 (수익 0원, macOS)",
+        "",
+        "## Validation Signals",
+        "### Positive",
+        "- 첫 외부 ICP 인터뷰에서 반복 가능한 pain point와 현재 대안이 확인됨",
+      ].join("\n"),
+    );
+    await writeFile(
+      root,
+      "docs/SPEC.md",
+      "# SPEC\n\n핵심 문제는 “만들 줄은 알지만 무엇을 팔아야 하는지 모른다”는 것이다.\n",
+    );
+    await writeFile(
+      root,
+      "docs/GOAL.md",
+      "# Goal\n\nGoal: 30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.\n",
+    );
+    await writeFile(
+      root,
+      "docs/VALUES.md",
+      "# Values\n\n쉽게 만든다. 오늘 바로 실행할 수 있는 좁은 행동을 우선한다.\n",
+    );
+
+    const extracted = await extractWorkspaceEvidence(root, { includeSource: false });
+
+    assert.equal(extracted.docs.icp, "docs/ICP.md");
+    assert.equal(extracted.docs.spec, "docs/SPEC.md");
+    assert.equal(extracted.docs.goal, "docs/GOAL.md");
+    assert.match(extracted.signals.targetUser, /전업 1인 개발자/);
+    assert.match(extracted.signals.problem, /무엇을 팔아야 하는지/);
+    assert.ok(extracted.evidence.some((item) => item.path === "docs/ICP.md" && item.field === "targetUser"));
+    assert.ok(extracted.evidence.some((item) => item.path === "docs/SPEC.md" && item.field === "problem"));
+    assert.ok(extracted.evidence.some((item) => item.path === "docs/ICP.md" && item.reason === "explicit_validation_action"));
+  });
+});
+
+test("initial scan extracts quote-backed fields from generic markdown without promoting doc path", async () => {
+  await withTempWorkspace(async (root) => {
+    await writeFile(
+      root,
+      "PRODUCT_NOTES.md",
+      [
+        "# LaunchDesk notes",
+        "",
+        "Target user: solo founders preparing a paid launch.",
+        "Problem: they do not know which buyer signal to test before publishing.",
+        "Outcome: solo founders confirm a buyer signal in customer calls before launch.",
+      ].join("\n"),
+    );
+
+    const extracted = await extractWorkspaceEvidence(root, { includeSource: false });
+
+    assert.equal(extracted.docs.icp, null);
+    assert.equal(extracted.docs.spec, null);
+    assert.equal(extracted.docs.goal, null);
+    assert.match(extracted.signals.targetUser, /solo founders/i);
+    assert.match(extracted.signals.problem, /buyer signal/i);
+    assert.match(extracted.signals.outcome, /customer calls/i);
+    assert.ok(extracted.evidence.some((item) => item.path === "PRODUCT_NOTES.md" && item.field === "targetUser"));
+    assert.ok(extracted.evidence.some((item) => item.path === "PRODUCT_NOTES.md" && item.field === "problem"));
+    assert.ok(extracted.evidence.some((item) => item.path === "PRODUCT_NOTES.md" && item.reason === "explicit_validation_action"));
+  });
+});
+
 test("provider-returned bad paths are rejected before docs are exposed", async () => {
   await withTempWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "archive"), { recursive: true });

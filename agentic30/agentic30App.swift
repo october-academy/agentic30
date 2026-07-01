@@ -29,7 +29,8 @@ struct agentic30App: App {
 
     init() {
         #if DEBUG
-        if CommandLine.arguments.contains(where: { $0.hasPrefix("--ui-testing") }) {
+        if CommandLine.arguments.contains(where: { $0.hasPrefix("--ui-testing") })
+            || ProcessInfo.processInfo.environment["AGENTIC30_UI_TESTING"] == "1" {
             NSApplication.shared.setActivationPolicy(.regular)
         }
         #endif
@@ -56,7 +57,12 @@ struct agentic30App: App {
         }
         .defaultSize(width: 1360, height: 820)
         .windowResizability(.contentMinSize)
-        .defaultLaunchBehavior(CommandLine.arguments.contains { $0.hasPrefix("--ui-testing") } ? .presented : .automatic)
+        .defaultLaunchBehavior(
+            (CommandLine.arguments.contains { $0.hasPrefix("--ui-testing") }
+                || ProcessInfo.processInfo.environment["AGENTIC30_UI_TESTING"] == "1")
+            ? .presented
+            : .automatic
+        )
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") {
@@ -95,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let sparkleNoUpdateErrorCode = 1001
     private var openWorkspaceHandler: (() -> Void)?
     private var pendingWorkspaceOpen = false
-    #if DEBUG
+    #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
     private var uiTestingMenuFixtureWindow: NSWindow?
     private var uiTestingWorkspaceWindow: NSWindow?
     private weak var uiTestingUpdateInvokedLabel: NSTextField?
@@ -114,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         Agentic30Theme.current.applyAppKitAppearance()
         wasLaunchedAtLogin = LoginItemsManager.wasLaunchedAtLogin()
-        #if DEBUG
+        #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
         if Self.isUITestingLaunch() {
             NSApp.setActivationPolicy(.regular)
         }
@@ -175,13 +181,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        #if DEBUG
+        #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
         presentUITestingMenuFixtureWindowIfNeeded()
         if CommandLine.arguments.contains("--ui-testing-open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 self?.openSettingsInWorkspace(source: "ui_test_launch_argument")
             }
-        } else if CommandLine.arguments.contains("--ui-testing-open-workspace") {
+        } else if Self.uiTestingFlag("--ui-testing-open-workspace") {
             scheduleUITestingWorkspaceOpen()
         }
         #endif
@@ -193,7 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    #if DEBUG
+    #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
     private func presentUITestingMenuFixtureWindowIfNeeded() {
         let showsAppCommandFixture = CommandLine.arguments.contains("--ui-testing-show-app-command-fixture")
         let showsStatusMenuFixture = CommandLine.arguments.contains("--ui-testing-show-status-menu-fixture")
@@ -382,21 +388,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static func isUITestingLaunch() -> Bool {
         CommandLine.arguments.contains { $0.hasPrefix("--ui-testing") }
+            || ProcessInfo.processInfo.environment["AGENTIC30_UI_TESTING"] == "1"
+    }
+
+    private static func uiTestingFlag(_ argument: String) -> Bool {
+        if CommandLine.arguments.contains(argument) { return true }
+        let key = uiTestingEnvironmentKey(for: argument)
+        guard let value = ProcessInfo.processInfo.environment[key] else { return false }
+        return ["1", "true", "yes", "on"].contains(value.lowercased())
+    }
+
+    private static func uiTestingEnvironmentKey(for argument: String) -> String {
+        let trimmed = argument.hasPrefix("--") ? String(argument.dropFirst(2)) : argument
+        let normalized = trimmed
+            .replacingOccurrences(of: "-", with: "_")
+            .uppercased()
+        return "AGENTIC30_\(normalized)"
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         // The user is back in the app; question-ready banners in Notification
         // Center are stale from here on.
         OfficeHoursQuestionReadyNotification.removeDelivered()
-        #if DEBUG
+        #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
         guard Self.isUITestingLaunch(),
-              CommandLine.arguments.contains("--ui-testing-open-workspace"),
+              Self.uiTestingFlag("--ui-testing-open-workspace"),
               !didRequestUITestingWorkspaceAfterActivation else {
             return
         }
         didRequestUITestingWorkspaceAfterActivation = true
         DispatchQueue.main.async { [weak self] in
-            if CommandLine.arguments.contains("--ui-testing-direct-workspace-window") {
+            if Self.uiTestingFlag("--ui-testing-direct-workspace-window") {
                 self?.presentUITestingWorkspaceWindow()
                 self?.requestUITestingOfficeHoursRouteIfNeeded()
             } else {
@@ -490,7 +512,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openWorkspaceHandler()
             focusWorkspaceWindow()
         } else {
-            #if DEBUG
+            #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
             if Self.isUITestingLaunch() {
                 presentUITestingWorkspaceWindow()
                 return
@@ -762,7 +784,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return controller
     }
 
-    #if DEBUG
+    #if DEBUG || AGENTIC30_LIVE_SIGNED_UI_E2E
     private func presentUITestingWorkspaceWindow() {
         NSApp.setActivationPolicy(.regular)
         if let uiTestingWorkspaceWindow {
@@ -795,7 +817,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func scheduleUITestingWorkspaceOpen() {
-        let useDirectWorkspaceWindow = CommandLine.arguments.contains("--ui-testing-direct-workspace-window")
+        let useDirectWorkspaceWindow = Self.uiTestingFlag("--ui-testing-direct-workspace-window")
         for delay in [0.0, 0.2, 0.6, 1.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 if useDirectWorkspaceWindow {

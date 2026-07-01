@@ -139,6 +139,42 @@ async function loadBuilderJourneyContext({ workspaceRoot, now, loadMemory, isHan
   });
 }
 
+export function formatOfficeHoursRecorderDayLoopContext(dayLoop = null) {
+  if (!dayLoop || typeof dayLoop !== "object") return "";
+  const review = dayLoop.review || {};
+  const evidenceInbox = review.evidenceInbox || review.evidence_inbox || {};
+  const evidenceBuild = dayLoop.evidenceBuildResult || dayLoop.evidence_build_result || {};
+  const nextAction = dayLoop.nextAction || dayLoop.next_action || {};
+  const action = nextAction.action || {};
+  const proofBoundary = dayLoop.proofBoundary || dayLoop.proof_boundary || {};
+  const nextProofBoundary = nextAction.proofBoundary || nextAction.proof_boundary || {};
+  const status = review.status || {};
+  const lines = [
+    "Founder Memory Gate A: Day Memory Review -> Evidence Inbox -> one next action.",
+    `day_memory_review=${cleanCompact(status.state || "unknown")}${status.reason ? ` reason=${cleanCompact(status.reason)}` : ""}`,
+    `evidence_inbox total=${safeCount(evidenceInbox.total)} unresolved=${safeCount(evidenceInbox.unresolvedCount ?? evidenceInbox.unresolved_count)} written_to_ledger=${safeCount(evidenceInbox.writtenToLedgerCount ?? evidenceInbox.written_to_ledger_count)}`,
+    `evidence_candidates created=${safeCount(evidenceBuild.createdCount ?? evidenceBuild.created_count)} skipped=${safeCount(evidenceBuild.skippedCount ?? evidenceBuild.skipped_count)}`,
+  ];
+  const actionType = cleanCompact(action.actionType || action.action_type);
+  const actionTitle = cleanCompact(action.title);
+  if (actionType || actionTitle) {
+    lines.push(`next_action=${[actionType, actionTitle].filter(Boolean).join(": ")}`);
+  }
+  lines.push(
+    `proof_boundary day_loop=${proofBoundary.proofAcceptedByDayLoop ?? proofBoundary.proof_accepted_by_day_loop ?? false} next_action=${nextProofBoundary.proofAcceptedByNextAction ?? nextProofBoundary.proof_accepted_by_next_action ?? false}; recorder context is not proof.`,
+  );
+  return lines.filter(Boolean).join("\n");
+}
+
+function cleanCompact(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+function safeCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : 0;
+}
+
 // The single host entry point. Loads read-only inputs, runs the gated second
 // opinion when summary + marker + guardrail allow, folds in the Phase 6
 // builder-journey close, and returns the PURE effector context string ("" when there
@@ -156,6 +192,7 @@ export async function computeOfficeHoursEffectorContext({
   budgetExceeded = false,
   externalContext = "",
   alternatives = [],
+  recorderDayLoop = null,
   // SPEC v3 §7: true only on the actual interview-completion (handoff/output) turn — the
   // caller computes it from the reducer runtime (officeHoursRuntimeGatherComplete). When
   // false the Phase 6 builder-journey close is not emitted at all.
@@ -181,8 +218,17 @@ export async function computeOfficeHoursEffectorContext({
 
   const builderJourney = await loadBuilderJourneyContext({ workspaceRoot, now, loadMemory, isHandoffTurn })
     .catch(() => "");
+  const recorderDayLoopContext = formatOfficeHoursRecorderDayLoopContext(recorderDayLoop);
+  const combinedExternalContext = [externalContext, recorderDayLoopContext]
+    .map((section) => String(section || "").trim())
+    .filter(Boolean)
+    .join("\n");
 
   return buildOfficeHoursEffectorContext({
-    landscape, secondOpinion, externalContext, alternatives, builderJourney,
+    landscape,
+    secondOpinion,
+    externalContext: combinedExternalContext,
+    alternatives,
+    builderJourney,
   });
 }

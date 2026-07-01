@@ -143,6 +143,24 @@ export async function runRecorderDayMemoryLoop({
   };
 }
 
+// Local-day window [startOfDay, now) for the Day-0-3 auto-fire path. Guarantees
+// endedAt > startedAt even at exactly local midnight (where now === startOfDay),
+// so normalizeTimeRange's range guard (ERR_RECORDER_DAY_LOOP_INVALID_RANGE) never
+// throws. Keeping the day-window math here co-locates it with the loop and lets
+// recorder-day-loop.test.mjs cover the midnight edge independently of index.mjs.
+export function recorderDayMemoryLoopLocalDayRange(now = new Date()) {
+  const end = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(end.getTime())) {
+    fail("ERR_RECORDER_DAY_LOOP_INVALID_TIMESTAMP", "recorderDayMemoryLoopLocalDayRange requires a valid now");
+  }
+  const start = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 0, 0, 0, 0);
+  let endedAt = end;
+  if (endedAt.getTime() <= start.getTime()) {
+    endedAt = new Date(start.getTime() + 1);
+  }
+  return { startedAt: start.toISOString(), endedAt: endedAt.toISOString() };
+}
+
 async function maybePersistReviewSnapshot({
   workspaceRoot,
   review,

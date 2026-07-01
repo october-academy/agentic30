@@ -10,6 +10,7 @@ export const DAY1_GOAL_SCHEMA = "agentic30.day1_goal.v1";
 
 const GOAL_TYPES = new Set(["make_money", "get_users", "build_product"]);
 const PROOF_SINKS = new Set(["local", "bip_optional"]);
+const MISSING_FIELD_DIAGNOSTIC_PATTERN = /(?:quote\s*근거\s*부족|scan\s*근거\s*없음|근거\s*부족)/i;
 
 export function resolveDay1GoalPath(workspaceRoot) {
   return path.join(resolveAgentic30Dir(workspaceRoot), "day1-goal.json");
@@ -46,9 +47,9 @@ export function normalizeDay1GoalSelection(value = {}, { now = new Date() } = {}
   if (!GOAL_TYPES.has(goalType)) return null;
 
   const rawGoalText = cleanString(value.goalText ?? value.goal_text, 500) || buildDay1GoalText({ goalType });
-  const rawCustomer = cleanString(value.customer, 300);
-  const problem = cleanString(value.problem, 500);
-  const validationAction = cleanString(value.validationAction ?? value.validation_action, 500);
+  const rawCustomer = cleanGoalDetail(value.customer, 300);
+  const problem = cleanGoalDetail(value.problem, 500);
+  const validationAction = cleanGoalDetail(value.validationAction ?? value.validation_action, 500);
   const customer = sanitizeDay1GoalCustomer(rawCustomer, { problem });
   const goalText = sanitizeDay1GoalText(rawGoalText, {
     goalType,
@@ -138,6 +139,11 @@ function cleanToken(value = "") {
 
 function cleanString(value = "", maxLength = 500) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function cleanGoalDetail(value = "", maxLength = 500) {
+  const text = cleanString(value, maxLength);
+  return MISSING_FIELD_DIAGNOSTIC_PATTERN.test(text) ? "" : text;
 }
 
 function sanitizeDay1GoalCustomer(value, { problem = "" } = {}) {

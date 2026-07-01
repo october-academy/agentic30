@@ -2277,9 +2277,11 @@ test("Office Hours Day 1 asks handoff clarity instead of document readiness for 
     assert.equal(prompt.generation.signalId, "day1_clarity_candidate_or_channel");
     assert.equal(prompt.questions[0].questionId, "day1_clarity_candidate_or_channel");
     assert.equal(prompt.questions[0].requiresFreeText, false);
+    assert.equal(prompt.questions[0].primaryTextInput.required, true);
+    assert.equal(prompt.questions[0].primaryTextInput.label, "후보/채널 한 줄 답변");
     assert.deepEqual(prompt.questions[0].options.map((option) => option.label), [
       "지금 답하기",
-      "아직 없음 - 오늘 찾을 행동 정하기",
+      "아직 없음 - 아래에 찾을 행동 적기",
     ]);
     assert.equal(clarity.session.runtime.officeHours.completedByExpectedCount, undefined);
     assert.equal(clarity.session.runtime.officeHours.documentReadiness.status, "needs_followup");
@@ -5268,7 +5270,7 @@ function submitStructuredAnswer(ws, sessionId, prompt, {
       : [];
   const evidenceText = typeof freeText === "string"
     ? freeText
-    : question.requiresFreeText === true
+    : question.requiresFreeText === true || question.primaryTextInput?.required === true
     ? "6/13 실명 후보 A가 현재 대안 비용과 유료 진행 조건을 답했다"
     : "";
   ws.send(JSON.stringify({

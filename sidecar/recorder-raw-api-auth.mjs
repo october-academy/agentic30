@@ -253,6 +253,7 @@ export function recordRecorderAudit({
     decision: normalizedDecision,
     reason: cleanString(reason, 500),
     created_at: createdAt,
+    deleted_at: null,
   });
   return {
     id,
@@ -285,8 +286,8 @@ export function assertRecorderMcpAccess({
   }
   const grantToolName = cleanString(grant.toolName ?? grant.tool_name, 180);
   const requestedToolName = cleanString(toolName, 180);
-  if (requestedToolName && grantToolName && requestedToolName !== grantToolName) {
-    fail("ERR_RECORDER_MCP_GRANT_TOOL_MISMATCH", "MCP recorder grant is scoped to a different tool", {
+  if (grantToolName && requestedToolName !== grantToolName) {
+    fail("ERR_RECORDER_MCP_GRANT_TOOL_MISMATCH", "MCP recorder grant is scoped to a tool the raw call did not present", {
       requestedToolName,
       grantToolName,
     });

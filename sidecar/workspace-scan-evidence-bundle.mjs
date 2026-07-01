@@ -368,7 +368,7 @@ function filterSemanticSituationSignals(input = {}, validPaths) {
   const fields = ["channels", "analyticsTools", "events", "customerActions", "currentAlternatives", "conversionSignals"];
   const output = Object.fromEntries(fields.map((field) => [field, []]));
   output.missingAssumptions = Array.isArray(input?.missingAssumptions)
-    ? input.missingAssumptions.map((item) => cleanString(item, 80)).filter(Boolean).slice(0, 8)
+    ? input.missingAssumptions.map((item) => semanticSignalText(item, 80)).filter(Boolean).slice(0, 8)
     : [];
   for (const field of fields) {
     const values = Array.isArray(input?.[field]) ? input[field] : [];
@@ -376,7 +376,7 @@ function filterSemanticSituationSignals(input = {}, validPaths) {
       .map((item) => {
         const evidencePath = extractEvidencePath(item?.evidencePath || item?.path);
         if (!evidencePath || !validPaths.has(evidencePath.toLowerCase())) return null;
-        const label = cleanString(item?.label, 80);
+        const label = semanticSignalText(item, 80);
         const shortQuote = cleanString(item?.shortQuote || item?.quote, 220);
         if (!label || !shortQuote) return null;
         return { label, evidencePath, shortQuote };
@@ -385,6 +385,20 @@ function filterSemanticSituationSignals(input = {}, validPaths) {
       .slice(0, 8);
   }
   return output;
+}
+
+function semanticSignalText(item, maxLength = 80) {
+  if (typeof item === "string") return cleanString(item, maxLength);
+  return cleanString(
+    item?.label
+      || item?.name
+      || item?.assumption
+      || item?.text
+      || item?.title
+      || item?.shortQuote
+      || item?.quote,
+    maxLength,
+  );
 }
 
 function confidenceWithBundleSupport(confidence, evidencePathsUsed, bundle) {

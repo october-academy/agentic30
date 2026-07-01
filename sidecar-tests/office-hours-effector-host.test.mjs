@@ -4,6 +4,7 @@ import {
   shouldRunOfficeHoursSecondOpinion,
   runOfficeHoursSecondOpinion,
   computeOfficeHoursEffectorContext,
+  formatOfficeHoursRecorderDayLoopContext,
   OFFICE_HOURS_SECOND_OPINION_UNAVAILABLE_DEBT,
 } from "../sidecar/office-hours-effector-host.mjs";
 
@@ -90,6 +91,66 @@ test("computeOfficeHoursEffectorContext is graceful when the landscape snapshot 
   const loadMemory = async () => ({ cycles: [] });
   const context = await computeOfficeHoursEffectorContext({ context: "평범", loadSnapshot, loadMemory });
   assert.equal(context, "");
+});
+
+test("formatOfficeHoursRecorderDayLoopContext summarizes Gate A without raw recorder details", () => {
+  const context = formatOfficeHoursRecorderDayLoopContext({
+    review: {
+      status: { state: "ready", reason: "recorder_rows_available" },
+      evidence_inbox: {
+        total: 2,
+        unresolved_count: 1,
+        written_to_ledger_count: 0,
+      },
+    },
+    evidence_build_result: {
+      created_count: 1,
+      skipped_count: 1,
+    },
+    next_action: {
+      action: {
+        action_type: "review_evidence_inbox",
+        title: "Review one Evidence Inbox candidate",
+        instruction: "Do not leak this raw instruction",
+        sourceIds: ["frame:raw-secret"],
+        mediaPath: "media/frames/private.png",
+      },
+      proof_boundary: { proof_accepted_by_next_action: false },
+    },
+    proof_boundary: { proof_accepted_by_day_loop: false },
+  });
+
+  assert.match(context, /Founder Memory Gate A/);
+  assert.match(context, /evidence_inbox total=2 unresolved=1 written_to_ledger=0/);
+  assert.match(context, /evidence_candidates created=1 skipped=1/);
+  assert.match(context, /next_action=review_evidence_inbox: Review one Evidence Inbox candidate/);
+  assert.match(context, /recorder context is not proof/);
+  assert.doesNotMatch(context, /raw-secret|private\.png|Do not leak/);
+});
+
+test("computeOfficeHoursEffectorContext injects provided Gate A recorder context as read-only background", async () => {
+  const loadSnapshot = async () => ({ cards: [] });
+  const context = await computeOfficeHoursEffectorContext({
+    context: "평범",
+    loadSnapshot,
+    recorderDayLoop: {
+      review: {
+        status: { state: "ready" },
+        evidenceInbox: { total: 1, unresolvedCount: 1, writtenToLedgerCount: 0 },
+      },
+      evidenceBuildResult: { createdCount: 1, skippedCount: 0 },
+      nextAction: {
+        action: { actionType: "review_evidence_inbox", title: "Review one candidate" },
+        proofBoundary: { proofAcceptedByNextAction: false },
+      },
+      proofBoundary: { proofAcceptedByDayLoop: false },
+    },
+  });
+
+  assert.match(context, /읽기 전용 배경/);
+  assert.match(context, /Founder Memory Gate A/);
+  assert.match(context, /Review one candidate/);
+  assert.doesNotMatch(context, /generation\.signalId|allowFreeText|proof_ledger_write/);
 });
 
 test("computeOfficeHoursEffectorContext injects the Phase 6 builder-journey close for a returning builder", async () => {

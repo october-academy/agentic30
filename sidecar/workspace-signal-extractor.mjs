@@ -11,6 +11,7 @@ const MAX_PDF_CHARS = 12000;
 const MAX_PDF_BYTES = 20_000_000;
 const MAX_PDF_DEPTH = 2;
 const MAX_PDF_FILES = 4;
+const MAX_GENERIC_FIELD_DOCS = 80;
 const MAX_EVIDENCE_REFS = 10;
 
 const ROLES = Object.freeze([
@@ -28,6 +29,7 @@ const ROLE_CONFIG = Object.freeze({
   icp: {
     names: ["icp.md", "ideal-customer-profile.md", "ideal_customer_profile.md", "persona.md", "personas.md", "customer.md", "customers.md"],
     path: /^\.agentic30\/docs\/ICP\.md$/i,
+    initialPaths: ["docs/ICP.md"],
     heading: /\b(?:icp|ideal customer|persona|target user|target customer|customer profile|타깃|타겟|고객|사용자|페르소나|대상)\b/i,
     body: /\b(?:target user|target customer|ideal customer|persona|audience|customer segment|타깃\s*사용자|타겟\s*사용자|고객\s*세그먼트|대상\s*고객|사용자)\b/i,
     field: "targetUser",
@@ -35,6 +37,7 @@ const ROLE_CONFIG = Object.freeze({
   spec: {
     names: ["spec.md", "product_spec.md", "product-spec.md", "prd.md", "requirements.md"],
     path: /^\.agentic30\/docs\/SPEC\.md$/i,
+    initialPaths: ["docs/SPEC.md"],
     heading: /\b(?:spec|prd|requirements|problem|pain|scope|제품|명세|문제|통증|요구사항)\b/i,
     body: /\b(?:problem|pain|friction|scope|requirement|핵심\s*문제|문제는|통증|요구사항|범위)\b/i,
     field: "problem",
@@ -42,6 +45,7 @@ const ROLE_CONFIG = Object.freeze({
   values: {
     names: ["values.md", "principles.md", "product_values.md", "product-values.md"],
     path: /^\.agentic30\/docs\/VALUES\.md$/i,
+    initialPaths: ["docs/VALUES.md"],
     heading: /\b(?:values|principles|tradeoff|value|가치|원칙|판단\s*기준|거절)\b/i,
     body: /\b(?:values|principles|tradeoff|decision rule|가치|원칙|판단\s*기준|우선|거절)\b/i,
     field: "values",
@@ -63,6 +67,7 @@ const ROLE_CONFIG = Object.freeze({
   goal: {
     names: ["goal.md", "goals.md", "okr.md", "north-star.md", "north_star.md"],
     path: /^\.agentic30\/docs\/GOAL\.md$/i,
+    initialPaths: ["docs/GOAL.md"],
     heading: /\b(?:goal|goals|okr|north\s*star|mission|objective|목표|미션|핵심\s*결과|성공\s*기준)\b/i,
     body: /\b(?:goal|north\s*star|proof target|objective|목표|목표로\s*한다|달성|검증\s*목표|성공\s*기준)\b/i,
     field: "goal",
@@ -193,7 +198,28 @@ export async function extractWorkspaceEvidence(workspaceRoot, {
       quote: evidenceQuote(readme.content, "docs"),
       score: 65,
     });
+    for (const ref of collectExplicitFieldEvidence({
+      role: "docs",
+      field: "",
+      path: readme.relativePath,
+      source: "readme",
+      quote: evidenceQuote(readme.content, "docs"),
+      content: readme.content,
+      score: 65,
+    })) addEvidence(ref);
   }
+
+  const genericDocEvidence = await collectGenericDocumentFieldEvidence({
+    root,
+    fsImpl,
+    fileCache,
+    docFiles: files.docFiles,
+    excludedPaths: [
+      ...selectedCandidates.map((candidate) => candidate.path),
+      readme?.relativePath,
+    ].filter(Boolean),
+  });
+  for (const ref of genericDocEvidence) addEvidence(ref);
 
   const packageJson = await readPackageJsonEvidence({ root, fsImpl, fileCache });
   if (packageJson) addEvidence(packageJson);
@@ -317,6 +343,7 @@ async function scoreRoleCandidate({ root, role, relativePath, source, fileCache,
 
   if (source === "scan_path") score += 18;
   if (config.path.test(lowerPath)) score += 42;
+  if (isInitialRolePath(lowerPath, role)) score += 30;
   if (config.names.map((name) => name.toLowerCase()).includes(basename)) score += 34;
   if (lowerPath.startsWith(`${PROJECT_DOCS_DIR}/`)) score += 18;
   if (/^readme\.(?:md|mdx|txt|rst)$/i.test(basename) && role === "docs") score += 50;
@@ -348,8 +375,9 @@ function compareCandidates(a, b) {
 function canonicalPathRank(relativePath) {
   const pathText = cleanPath(relativePath).toLowerCase();
   if (pathText.startsWith(`${PROJECT_DOCS_DIR}/`)) return 0;
-  if (/^readme\./.test(pathText)) return 1;
-  return 2;
+  if (isAnyInitialRolePath(pathText)) return 1;
+  if (/^readme\./.test(pathText)) return 2;
+  return 3;
 }
 
 function candidateToEvidence(candidate) {
@@ -422,6 +450,65 @@ function collectExplicitFieldEvidence(candidate = {}) {
   }
 
   return refs;
+}
+
+async function collectGenericDocumentFieldEvidence({
+  root,
+  fsImpl,
+  fileCache,
+  docFiles = [],
+  excludedPaths = [],
+} = {}) {
+  const excluded = new Set(excludedPaths.map((item) => cleanPath(item).toLowerCase()).filter(Boolean));
+  const candidates = uniqueBy(docFiles, (item) => cleanPath(item).toLowerCase())
+    .filter((relativePath) => {
+      const normalized = cleanPath(relativePath);
+      if (!normalized || excluded.has(normalized.toLowerCase())) return false;
+      return DOC_EXTENSIONS.has(path.extname(normalized).toLowerCase());
+    })
+    .sort(compareGenericDocPaths)
+    .slice(0, MAX_GENERIC_FIELD_DOCS);
+
+  const refs = [];
+  for (const relativePath of candidates) {
+    const loaded = await loadWorkspaceText({ root, relativePath, fsImpl, fileCache, maxChars: MAX_DOC_CHARS });
+    if (!loaded || !SOURCE_SIGNAL_PATTERN.test(loaded.content)) continue;
+    const quote = evidenceQuote(loaded.content, "docs");
+    const genericRefs = collectExplicitFieldEvidence({
+      role: "docs",
+      field: "",
+      path: loaded.relativePath,
+      source: "generic_doc",
+      quote,
+      content: loaded.content,
+      score: genericDocScore(loaded.relativePath),
+    });
+    for (const ref of genericRefs) refs.push(ref);
+  }
+  return refs;
+}
+
+function compareGenericDocPaths(a, b) {
+  return genericDocRank(a) - genericDocRank(b)
+    || cleanPath(a).localeCompare(cleanPath(b));
+}
+
+function genericDocRank(relativePath) {
+  const normalized = cleanPath(relativePath).toLowerCase();
+  if (isAnyInitialRolePath(normalized)) return 0;
+  if (/^readme\.(?:md|mdx|txt|rst)$/i.test(normalized)) return 1;
+  const depth = normalized.split("/").filter(Boolean).length - 1;
+  if (depth <= 0) return 10;
+  if (normalized.startsWith("docs/")) return 20;
+  return 30 + depth;
+}
+
+function genericDocScore(relativePath) {
+  const rank = genericDocRank(relativePath);
+  if (rank <= 1) return 64;
+  if (rank < 20) return 58;
+  if (rank < 30) return 54;
+  return 50;
 }
 
 async function readPackageJsonEvidence({ root, fsImpl, fileCache }) {
@@ -714,10 +801,25 @@ function isAllowedRolePath(relativePath, role) {
   if (!normalized || normalized.includes("\0") || path.isAbsolute(normalized)) return false;
   if (hasDeniedSegment(normalized)) return false;
   const canonical = projectDocPath(role);
-  if (!canonical || normalized.toLowerCase() !== canonical.toLowerCase()) return false;
+  if (!canonical) return false;
+  const lower = normalized.toLowerCase();
+  const allowed = lower === canonical.toLowerCase() || isInitialRolePath(lower, role);
+  if (!allowed) return false;
   const ext = path.extname(normalized).toLowerCase();
   if (role === "sheet") return SHEET_EXTENSIONS.has(ext);
   return DOC_EXTENSIONS.has(ext);
+}
+
+function isInitialRolePath(relativePath, role) {
+  const lower = cleanPath(relativePath).toLowerCase();
+  const config = ROLE_CONFIG[role];
+  return Array.isArray(config?.initialPaths)
+    && config.initialPaths.some((candidate) => lower === candidate.toLowerCase());
+}
+
+function isAnyInitialRolePath(relativePath) {
+  const lower = cleanPath(relativePath).toLowerCase();
+  return ROLES.some((role) => isInitialRolePath(lower, role));
 }
 
 function isDocCandidatePath(relativePath) {
@@ -902,7 +1004,7 @@ function isReadableProblemSentence(value) {
   const text = cleanText(value);
   if (!text || text.length < 16 || text.length > 170) return false;
   if (looksLikeOcrContaminatedText(text)) return false;
-  return /(문제|부족|부재|어려움|불편|막힘|이어지지|모른다|못|pain|friction|problem|missed|missing|cannot|can't|unable|lack|lacks)/i.test(text);
+  return /(문제|부족|부재|어려움|불편|막힘|이어지지|모른다|못|pain|friction|problem|missed|missing|cannot|can't|do\s+not\s+know|does\s+not\s+know|don't\s+know|doesn't\s+know|unclear|unsure|unable|lack|lacks)/i.test(text);
 }
 
 function looksLikeOcrContaminatedText(value) {
@@ -1013,8 +1115,9 @@ function evidenceDisplayRank(item = {}) {
   if (normalized === projectDocPath("spec").toLowerCase()) return 2;
   if (normalized === projectDocPath("values").toLowerCase()) return 3;
   if (normalized.startsWith(`${PROJECT_DOCS_DIR}/`)) return 4;
-  if (/^readme\./i.test(normalized)) return 5;
-  if (normalized === "package.json") return 6;
+  if (isAnyInitialRolePath(normalized)) return 5;
+  if (/^readme\./i.test(normalized)) return 6;
+  if (normalized === "package.json") return 7;
   if (item.role === "source") return 13;
   return 12;
 }

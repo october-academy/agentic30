@@ -23,6 +23,10 @@ import {
   runQueuedRecorderPipeRuns,
   runBuiltInRecorderPipe,
 } from "./recorder-pipes.mjs";
+import {
+  assertRecorderPublicTextSafe,
+  assertRecorderRedactionPolicyForRecord,
+} from "./recorder-redaction-policy.mjs";
 
 export const RECORDER_RAW_API_SERVER_SCHEMA_VERSION = 1;
 
@@ -114,6 +118,20 @@ const SQL_RAW_COLUMN_TOKENS = Object.freeze([
   "output_manifest_json",
   "audit_log_json",
 ]);
+const RAW_API_PUBLIC_TEXT_COLUMNS_BY_TABLE = Object.freeze({
+  frames: Object.freeze([
+    "redacted_text",
+    "app_name",
+    "window_title",
+    "browser_domain",
+    "browser_url_search_label",
+    "document_path_search_label",
+  ]),
+  transcript_segments: Object.freeze(["redacted_text", "speaker_label"]),
+  memory_items: Object.freeze(["title", "summary"]),
+  product_events: Object.freeze(["title", "summary"]),
+});
+const RAW_API_METADATA_LABEL_COLUMNS = new Set(["browser_url_search_label", "document_path_search_label"]);
 
 export class RecorderRawApiServerError extends Error {
   constructor(code, message, details = {}) {
@@ -131,6 +149,7 @@ export async function createRecorderRawApiServer({
   trustedOrigins = undefined,
   now = () => new Date(),
   mediaKeyStore = undefined,
+  exportArchiveApprovalVerifier = undefined,
 } = {}) {
   assertLoopbackHost(host);
   assertStore(store);
@@ -146,6 +165,7 @@ export async function createRecorderRawApiServer({
         trustedOrigins,
         now: typeof now === "function" ? now() : now,
         mediaKeyStore,
+        exportArchiveApprovalVerifier,
       });
     } catch (error) {
       response = errorResponse(error);
@@ -181,6 +201,7 @@ export async function handleRecorderRawApiRequest({
   trustedOrigins = undefined,
   now = new Date(),
   mediaKeyStore = undefined,
+  exportArchiveApprovalVerifier = undefined,
 } = {}) {
   try {
     assertStore(store);
@@ -200,8 +221,12 @@ export async function handleRecorderRawApiRequest({
         fail("ERR_RECORDER_RAW_API_METHOD_NOT_ALLOWED", "recorder export archive requires POST");
       }
       const exportRequest = parseExportRequest(body);
-      assertExportArchiveConfirmed(exportRequest);
       const authorization = authorize(request, store, "export", [{ id: "export_archive", source_type: "export_archive" }], trustedOrigins);
+      await assertExportArchiveConfirmed({
+        exportRequest,
+        rawApiRequest: request,
+        verifier: exportArchiveApprovalVerifier,
+      });
       const manifest = buildExportManifest({
         store,
         request: exportRequest,
@@ -333,6 +358,8 @@ export async function handleRecorderRawApiRequest({
         frame_id: frame.id,
         textSource: cleanString(frame.text_source, 80),
         text_source: cleanString(frame.text_source, 80),
+        textProvenanceRootCause: cleanString(frame.text_provenance_root_cause, 160),
+        text_provenance_root_cause: cleanString(frame.text_provenance_root_cause, 160),
         accessibilityText: cleanString(frame.accessibility_text, 20000),
         accessibility_text: cleanString(frame.accessibility_text, 20000),
         ocrText: cleanString(frame.ocr_text, 20000),
@@ -364,7 +391,7 @@ export async function handleRecorderRawApiRequest({
     if (request.path === "/recorder/audio") {
       const authorization = authorize(request, store, "audio", [], trustedOrigins);
       const audio = listAudioRows(store, request.searchParams)
-        .map((row) => audioDto({ store, audio: row }));
+        .map((row) => audioDto({ store, audio: row, includeAdminFields: hasRawAdminScope(authorization) }));
       return jsonResponse(200, withRawApiBoundary({
         schema: RAW_API_SCHEMA,
         schemaVersion: RECORDER_RAW_API_SERVER_SCHEMA_VERSION,
@@ -385,7 +412,7 @@ export async function handleRecorderRawApiRequest({
         schema: RAW_API_SCHEMA,
         schemaVersion: RECORDER_RAW_API_SERVER_SCHEMA_VERSION,
         schema_version: RECORDER_RAW_API_SERVER_SCHEMA_VERSION,
-        audio: audioDto({ store, audio }),
+        audio: audioDto({ store, audio, includeAdminFields: hasRawAdminScope(authorization) }),
       }, authorization.audit));
     }
     const audioMediaMatch = request.path.match(/^\/recorder\/audio\/([^/]+)\/media$/);
@@ -683,6 +710,8 @@ function parseExportRequest(body) {
     range: normalizeOptionalRange({ startedAt, endedAt, label: "recorder export" }),
     limit: normalizeLimit(parsed.limit ?? DEFAULT_LIMIT),
     reason: cleanString(parsed.reason, 240) || "manual_export",
+    approvalGrantId: cleanString(parsed.approvalGrantId ?? parsed.approval_grant_id, 240) || null,
+    approval_grant_id: cleanString(parsed.approvalGrantId ?? parsed.approval_grant_id, 240) || null,
     approvedByLocalUser: parsed.approvedByLocalUser === true || parsed.approved_by_local_user === true,
     approved_by_local_user: parsed.approvedByLocalUser === true || parsed.approved_by_local_user === true,
   };
@@ -916,7 +945,6 @@ function buildExportManifest({ store, request, generatedAt }) {
 }
 
 async function writeExportArchive({ store, manifest, request, generatedAt }) {
-  assertExportArchiveConfirmed(request);
   const archiveId = `archive-${randomUUID()}`;
   const archiveFile = resolveRecorderExportArchivePath(store, archiveId);
   const payload = {
@@ -952,6 +980,42 @@ async function writeExportArchive({ store, manifest, request, generatedAt }) {
   await atomicWriteJson(archiveFile, payload);
   const raw = await fs.readFile(archiveFile);
   const sha256 = `sha256:${createHash("sha256").update(raw).digest("hex")}`;
+  const sourceIdsJson = JSON.stringify(exportArchiveSourceRefs(manifest));
+  try {
+    store.insertRecord("media_assets", {
+      id: archiveId,
+      asset_type: "export_bundle",
+      relative_path: `exports/${path.basename(archiveFile)}`,
+      sha256,
+      byte_size: raw.byteLength,
+      encrypted: 0,
+      workspace_id: cleanString(request.workspaceId, 240) || null,
+      project_id: cleanString(request.projectId, 240) || null,
+      source_ids_json: sourceIdsJson,
+      created_at: toIso(generatedAt),
+      deleted_at: null,
+    });
+  } catch (error) {
+    try {
+      await fs.unlink(archiveFile);
+    } catch (cleanupError) {
+      fail(
+        "ERR_RECORDER_RAW_API_EXPORT_ARCHIVE_REGISTER_CLEANUP_FAILED",
+        "recorder export archive registration failed and archive cleanup could not confirm removal",
+        {
+          archiveId,
+          registrationCause: sanitizeErrorCause(error),
+          registration_cause: sanitizeErrorCause(error),
+          cleanupCause: sanitizeErrorCause(cleanupError),
+          cleanup_cause: sanitizeErrorCause(cleanupError),
+        },
+      );
+    }
+    fail("ERR_RECORDER_RAW_API_EXPORT_ARCHIVE_REGISTER_FAILED", "recorder export archive could not be registered for retention", {
+      archiveId,
+      cause: sanitizeErrorCause(error),
+    });
+  }
   return {
     id: archiveId,
     archiveId,
@@ -978,6 +1042,50 @@ async function writeExportArchive({ store, manifest, request, generatedAt }) {
   };
 }
 
+function exportArchiveSourceRefs(manifest = {}) {
+  const refs = [];
+  const seen = new Set();
+  const addRef = (id, sourceType = null) => {
+    const cleanId = cleanString(id, 240);
+    if (!cleanId) return;
+    const cleanType = cleanString(sourceType, 120) || null;
+    const key = `${cleanType || ""}:${cleanId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    refs.push(cleanType ? { id: cleanId, source_type: cleanType } : { id: cleanId });
+  };
+  for (const item of Array.isArray(manifest.items) ? manifest.items : []) {
+    const dataClass = cleanString(item?.dataClass ?? item?.data_class, 120);
+    const sourceType = exportSourceTypeForDataClass(dataClass);
+    addRef(item?.sourceId ?? item?.source_id ?? item?.id, sourceType);
+    const nestedSourceIds = Array.isArray(item?.sourceIds)
+      ? item.sourceIds
+      : Array.isArray(item?.source_ids)
+        ? item.source_ids
+        : parseJsonArray(item?.sourceIds ?? item?.source_ids ?? "[]");
+    for (const nested of nestedSourceIds) {
+      if (typeof nested === "string") {
+        addRef(nested);
+      } else if (nested && typeof nested === "object") {
+        addRef(nested.id, nested.source_type ?? nested.sourceType);
+      }
+    }
+  }
+  return refs;
+}
+
+function exportSourceTypeForDataClass(dataClass) {
+  return {
+    frame: "frame",
+    frames: "frame",
+    transcript: "transcript",
+    transcripts: "transcript",
+    memory: "memory",
+    product_event: "product_event",
+    product_events: "product_event",
+  }[dataClass] || null;
+}
+
 function resolveRecorderExportArchivePath(store, archiveId) {
   const recorderRoot = path.dirname(store.dbPath);
   const id = cleanString(archiveId, 240);
@@ -987,8 +1095,19 @@ function resolveRecorderExportArchivePath(store, archiveId) {
   return path.join(recorderRoot, "exports", `${id}.json`);
 }
 
-function assertExportArchiveConfirmed(request) {
-  if (request?.approvedByLocalUser !== true && request?.approved_by_local_user !== true) {
+async function assertExportArchiveConfirmed({ exportRequest, rawApiRequest, verifier } = {}) {
+  if (typeof verifier !== "function") {
+    fail(
+      "ERR_RECORDER_RAW_API_EXPORT_ARCHIVE_INTERACTIVE_APPROVAL_REQUIRED",
+      "recorder export archive writing requires a local interactive approval verifier",
+    );
+  }
+  const allowed = await verifier({
+    exportRequest,
+    rawApiRequest,
+    approvalGrantId: cleanString(exportRequest?.approvalGrantId ?? exportRequest?.approval_grant_id, 240),
+  });
+  if (allowed !== true) {
     fail(
       "ERR_RECORDER_RAW_API_EXPORT_ARCHIVE_CONFIRMATION_REQUIRED",
       "recorder export archive writing requires explicit local user approval",
@@ -1053,6 +1172,7 @@ function transcriptExportRowAllowed(row, audio, request) {
 }
 
 function exportFrameItem(frame) {
+  assertRawApiPublicRecord("frames", frame, "export_frame");
   return stripEmpty({
     dataClass: "frame",
     data_class: "frame",
@@ -1072,12 +1192,18 @@ function exportFrameItem(frame) {
     window_title: frame.window_title,
     browserDomain: frame.browser_domain,
     browser_domain: frame.browser_domain,
+    browserUrlSearchLabel: frame.browser_url_search_label,
+    browser_url_search_label: frame.browser_url_search_label,
+    documentPathSearchLabel: frame.document_path_search_label,
+    document_path_search_label: frame.document_path_search_label,
     snapshotSha256: frame.snapshot_sha256,
     snapshot_sha256: frame.snapshot_sha256,
     contentHash: frame.content_hash,
     content_hash: frame.content_hash,
     textSource: frame.text_source,
     text_source: frame.text_source,
+    textProvenanceRootCause: frame.text_provenance_root_cause || null,
+    text_provenance_root_cause: frame.text_provenance_root_cause || null,
     redactedText: frame.redacted_text,
     redacted_text: frame.redacted_text,
     redactionStatus: frame.redaction_status,
@@ -1090,6 +1216,7 @@ function exportFrameItem(frame) {
 }
 
 function exportTranscriptItem({ transcript, audio }) {
+  assertRawApiPublicRecord("transcript_segments", transcript, "export_transcript");
   return stripEmpty({
     dataClass: "transcript",
     data_class: "transcript",
@@ -1138,6 +1265,7 @@ function exportMemoryItem(row) {
 }
 
 function exportProductEventItem(row) {
+  assertRawApiPublicRecord("product_events", row, "export_product_event");
   return stripEmpty({
     dataClass: "product_event",
     data_class: "product_event",
@@ -1178,6 +1306,13 @@ function exportProductEventItem(row) {
 function normalizeRequest({ method, url, headers, now }) {
   const parsed = new URL(url || "/", "http://127.0.0.1");
   const normalizedHeaders = normalizeHeaders(headers);
+  const requestId = cleanString(normalizedHeaders["x-agentic30-recorder-request-id"], 240);
+  if (!requestId) {
+    fail(
+      "ERR_RECORDER_RAW_API_REQUEST_ID_REQUIRED",
+      "recorder raw API requests require x-agentic30-recorder-request-id",
+    );
+  }
   return {
     method: cleanString(method, 16).toUpperCase() || "GET",
     path: parsed.pathname,
@@ -1185,7 +1320,7 @@ function normalizeRequest({ method, url, headers, now }) {
     headers: normalizedHeaders,
     token: bearerToken(normalizedHeaders.authorization) || normalizedHeaders["x-agentic30-recorder-token"] || "",
     origin: normalizedHeaders.origin || normalizedHeaders["x-agentic30-origin"] || "",
-    requestId: normalizedHeaders["x-request-id"] || randomUUID(),
+    requestId,
     now,
   };
 }
@@ -1215,6 +1350,7 @@ function healthDto(store, audit, now) {
 }
 
 function frameDto({ store, frame, includeDebugPaths = false }) {
+  assertRawApiPublicRecord("frames", frame, "frame_dto");
   const mediaAsset = frame.snapshot_asset_id ? store.getRecord("media_assets", frame.snapshot_asset_id) : null;
   const dto = stripEmpty({
     id: frame.id,
@@ -1234,12 +1370,18 @@ function frameDto({ store, frame, includeDebugPaths = false }) {
     window_title: frame.window_title,
     browserDomain: frame.browser_domain,
     browser_domain: frame.browser_domain,
+    browserUrlSearchLabel: frame.browser_url_search_label,
+    browser_url_search_label: frame.browser_url_search_label,
+    documentPathSearchLabel: frame.document_path_search_label,
+    document_path_search_label: frame.document_path_search_label,
     snapshotSha256: frame.snapshot_sha256,
     snapshot_sha256: frame.snapshot_sha256,
     contentHash: frame.content_hash,
     content_hash: frame.content_hash,
     textSource: frame.text_source,
     text_source: frame.text_source,
+    textProvenanceRootCause: frame.text_provenance_root_cause || null,
+    text_provenance_root_cause: frame.text_provenance_root_cause || null,
     redactedText: frame.redacted_text,
     redacted_text: frame.redacted_text,
     redactionStatus: frame.redaction_status,
@@ -1392,6 +1534,8 @@ function listAuditRows(store, searchParams) {
       reason: row.reason,
       createdAt: row.created_at,
       created_at: row.created_at,
+      deletedAt: row.deleted_at || null,
+      deleted_at: row.deleted_at || null,
     }));
 }
 
@@ -1470,7 +1614,7 @@ function normalizeAudioMediaRelativePath(value) {
   return normalized;
 }
 
-function audioDto({ store, audio }) {
+function audioDto({ store, audio, includeAdminFields = false }) {
   const mediaAsset = audio.audio_asset_id ? store.getRecord("media_assets", audio.audio_asset_id) : null;
   return stripEmpty({
     id: audio.id,
@@ -1485,10 +1629,18 @@ function audioDto({ store, audio }) {
     source: audio.source,
     transcriptStatus: audio.transcript_status,
     transcript_status: audio.transcript_status,
-    consentGrantId: audio.consent_grant_id,
-    consent_grant_id: audio.consent_grant_id,
-    visibleNoticeId: audio.visible_notice_id,
-    visible_notice_id: audio.visible_notice_id,
+    // consent_grant_id / visible_notice_id are classified raw_admin-only by
+    // the paired SQL-inspector views (recorder_sql_transcripts_redacted vs
+    // _raw_admin in recorder-store.mjs) — mirror that boundary here so the
+    // REST DTO and the SQL inspector agree on what the "audio" tier sees.
+    ...(includeAdminFields
+      ? {
+        consentGrantId: audio.consent_grant_id,
+        consent_grant_id: audio.consent_grant_id,
+        visibleNoticeId: audio.visible_notice_id,
+        visible_notice_id: audio.visible_notice_id,
+      }
+      : {}),
     rawAudioIndicatorState: audio.raw_audio_indicator_state,
     raw_audio_indicator_state: audio.raw_audio_indicator_state,
     localTranscriberName: audio.local_transcriber_name,
@@ -1513,6 +1665,7 @@ function audioDto({ store, audio }) {
 }
 
 function transcriptDto(row) {
+  assertRawApiPublicRecord("transcript_segments", row, "transcript_dto");
   return stripEmpty({
     id: row.id,
     audioChunkId: row.audio_chunk_id,
@@ -1545,6 +1698,7 @@ function transcriptDto(row) {
 }
 
 function memoryDto(row) {
+  assertRawApiPublicRecord("memory_items", row, "memory_dto");
   return stripEmpty({
     id: row.id,
     workspaceId: row.workspace_id,
@@ -1577,6 +1731,51 @@ function memoryDto(row) {
   });
 }
 
+function assertRawApiPublicRecord(tableName, row = {}, surface = "raw_api") {
+  try {
+    assertRecorderRedactionPolicyForRecord(tableName, row, { fail });
+    assertRawApiPublicTextColumns(tableName, row, surface);
+  } catch (error) {
+    const policyErrorCode = cleanString(error?.code, 160) || "ERR_RECORDER_REDACTION_POLICY_FAILED";
+    fail(
+      "ERR_RECORDER_RAW_API_UNSAFE_PUBLIC_RECORD",
+      `recorder raw API refused to expose ${tableName} public row because ${policyErrorCode}`,
+      {
+        tableName,
+        table_name: tableName,
+        rowId: cleanString(row?.id, 240) || null,
+        row_id: cleanString(row?.id, 240) || null,
+        surface: cleanString(surface, 120),
+        policyErrorCode,
+        policy_error_code: policyErrorCode,
+      },
+    );
+  }
+}
+
+function assertRawApiPublicTextColumns(tableName, row = {}, surface = "raw_api") {
+  const columns = RAW_API_PUBLIC_TEXT_COLUMNS_BY_TABLE[tableName] || [];
+  for (const column of columns) {
+    const value = row?.[column];
+    if (value === null || value === undefined || String(value).trim() === "") continue;
+    assertRecorderPublicTextSafe(value, {
+      fail,
+      tableName,
+      sink: surface,
+      column,
+    });
+    if (tableName === "frames" && RAW_API_METADATA_LABEL_COLUMNS.has(column)) {
+      assertRecorderRedactionPolicyForRecord("frames", {
+        redaction_status: "redacted",
+        redacted_text: "redacted raw API metadata label guard",
+        browser_url_search_label: column === "browser_url_search_label" ? value : "example.com",
+        document_path_search_label: column === "document_path_search_label" ? value : "md document",
+        safe_for_search: 1,
+      }, { fail });
+    }
+  }
+}
+
 function requireMediaAsset(store, mediaAssetId) {
   const id = cleanString(mediaAssetId, 240);
   const asset = id ? store.getRecord("media_assets", id) : null;
@@ -1595,6 +1794,10 @@ function requireMediaAsset(store, mediaAssetId) {
 function shouldExposeDebugPaths(request, authorization) {
   return authorization.canExposeFilesystemPaths === true
     && ["1", "true", "yes"].includes(cleanString(request.searchParams.get("includeDebugPaths"), 12).toLowerCase());
+}
+
+function hasRawAdminScope(authorization) {
+  return authorization?.token?.scopes?.includes("raw_admin") === true;
 }
 
 function withRawApiBoundary(payload, audit) {
@@ -1719,6 +1922,12 @@ function validateRecorderSqlQuery(sqlRequest, authorization) {
       fail("ERR_RECORDER_RAW_API_SQL_FORBIDDEN_TOKEN", `recorder SQL query uses forbidden token: ${token}`, { token });
     }
   }
+  // `\bpragma\b` above does not match pragma table-valued functions
+  // (e.g. pragma_table_info / pragma_function_list) because "_" is a word
+  // character, so reject any pragma-prefixed identifier as well.
+  if (/\bpragma_\w+/i.test(lower)) {
+    fail("ERR_RECORDER_RAW_API_SQL_FORBIDDEN_TOKEN", "recorder SQL query uses forbidden token: pragma", { token: "pragma" });
+  }
   for (const token of SQL_RAW_COLUMN_TOKENS) {
     const pattern = new RegExp(`\\b${token}\\b`, "i");
     if (pattern.test(lower) && !(includeRawColumns && rawAdminGranted)) {
@@ -1783,6 +1992,7 @@ async function executeRecorderSqlQuery({ store, sqlRequest, plan, generatedAt })
   const workerResult = await executeRecorderSqlQueryInWorker({
     dbPath: store.dbPath,
     query: sqlRequest.query,
+    allowedViews: plan.sources,
     rowCap: plan.rowCap,
     timeoutMs: sqlRequest.timeoutMs,
   });
@@ -1812,6 +2022,18 @@ async function executeRecorderSqlQuery({ store, sqlRequest, plan, generatedAt })
     rows: cappedRows.map((row) => sanitizeSqlRow(row, {
       includeRawColumns: plan.includeRawColumns,
     })),
+    safeForSearch: false,
+    safe_for_search: false,
+    safeForMemory: false,
+    safe_for_memory: false,
+    safeForExport: false,
+    safe_for_export: false,
+    providerPromptAllowed: false,
+    provider_prompt_allowed: false,
+    pipeOutputAllowed: false,
+    pipe_output_allowed: false,
+    dayProgressWriteAllowed: false,
+    day_progress_write_allowed: false,
     proofAcceptedByRawSql: false,
     proof_accepted_by_raw_sql: false,
     proofAcceptedByRawApi: false,
@@ -1824,6 +2046,7 @@ async function executeRecorderSqlQuery({ store, sqlRequest, plan, generatedAt })
 function executeRecorderSqlQueryInWorker({
   dbPath,
   query,
+  allowedViews,
   rowCap,
   timeoutMs,
 }) {
@@ -1832,6 +2055,7 @@ function executeRecorderSqlQueryInWorker({
       workerData: {
         dbPath,
         query,
+        allowedViews,
         rowCap,
       },
     });
@@ -1892,14 +2116,58 @@ function executeRecorderSqlQueryInWorker({
 function extractSqlSources(query) {
   const sources = [];
   const seen = new Set();
-  const pattern = /\b(?:from|join)\s+([`"[]?)([a-zA-Z_][a-zA-Z0-9_]*)(?:[`"\]]?)/gi;
-  for (const match of query.matchAll(pattern)) {
-    const source = cleanString(match[2], 120).toLowerCase();
-    if (!source || seen.has(source)) continue;
+  const addSource = (value) => {
+    const source = cleanString(value, 120).toLowerCase();
+    if (!source || seen.has(source)) return;
     seen.add(source);
     sources.push(source);
+  };
+  const directPattern = /\b(?:from|join)\s+([`"[]?)([a-zA-Z_][a-zA-Z0-9_]*)(?:[`"\]]?)/gi;
+  for (const match of query.matchAll(directPattern)) {
+    addSource(match[2]);
+  }
+  const fromClausePattern = /\bfrom\b([\s\S]*?)(?=\bwhere\b|\bgroup\s+by\b|\bhaving\b|\border\s+by\b|\blimit\b|\bunion\b|\bexcept\b|\bintersect\b|$)/gi;
+  for (const clause of query.matchAll(fromClausePattern)) {
+    for (const part of splitSqlTopLevelCommas(clause[1]).slice(1)) {
+      const match = /^\s*([`"[]?)([a-zA-Z_][a-zA-Z0-9_]*)(?:[`"\]]?)/.exec(part);
+      if (match) addSource(match[2]);
+    }
   }
   return sources;
+}
+
+function splitSqlTopLevelCommas(value) {
+  const parts = [];
+  let current = "";
+  let depth = 0;
+  let quote = null;
+  for (const char of String(value || "")) {
+    if (quote) {
+      current += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === "\"" || char === "`") {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === "[") {
+      quote = "]";
+      current += char;
+      continue;
+    }
+    if (char === "(") depth += 1;
+    if (char === ")" && depth > 0) depth -= 1;
+    if (char === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  parts.push(current);
+  return parts;
 }
 
 function extractSqlCteNames(query) {
@@ -1908,8 +2176,8 @@ function extractSqlCteNames(query) {
   const names = new Set();
   const pattern = /(?:\bwith\s+(?:recursive\s+)?|,\s*)([`"[]?)([a-zA-Z_][a-zA-Z0-9_]*)(?:[`"\]]?)(?:\s*\([^)]*\))?\s+as\s*\(/gi;
   for (const match of query.matchAll(pattern)) {
-    const name = cleanString(match[2], 120).toLowerCase();
-    if (name) names.add(name);
+    const source = cleanString(match[2], 120).toLowerCase();
+    if (source) names.add(source);
   }
   return names;
 }
@@ -1952,7 +2220,10 @@ function sanitizeSqlRow(row = {}, { includeRawColumns = false } = {}) {
     if (!normalizedKey || shouldDropSqlColumn(normalizedKey, { includeRawColumns })) {
       continue;
     }
-    output[normalizedKey] = sanitizeSqlValue(value, { includeRawColumns });
+    output[normalizedKey] = sanitizeSqlValue(value, {
+      includeRawColumns,
+      column: normalizedKey,
+    });
   }
   return output;
 }
@@ -1961,20 +2232,57 @@ function shouldDropSqlColumn(key = "", { includeRawColumns = false } = {}) {
   if (/token_hash|raw_api_token|bearer_token|scopes_json|permission_manifest_json|input_manifest_json|output_manifest_json|audit_log_json/i.test(key)) {
     return true;
   }
+  if (/^(browser_url_search_label|document_path_search_label)$/i.test(key)) {
+    return false;
+  }
   if (!includeRawColumns && /relative_path|document_path|browser_url|media_path|clipboard_text|content_text/i.test(key)) {
     return true;
   }
   return false;
 }
 
-function sanitizeSqlValue(value, { includeRawColumns = false } = {}) {
+function sanitizeSqlValue(value, { includeRawColumns = false, column = "" } = {}) {
   if (value === null || value === undefined) return null;
   if (Buffer.isBuffer(value)) return "[binary-redacted]";
   if (typeof value === "number" || typeof value === "boolean") return value;
   const text = String(value)
     .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]");
+  if (!includeRawColumns) {
+    assertSqlPublicValueSafe(text, column);
+  }
   return (includeRawColumns ? text : text.replace(/\/Users\/[^"'\s,}]+/g, "[redacted-local-path]"))
     .slice(0, 2000);
+}
+
+function assertSqlPublicValueSafe(value, column = "") {
+  try {
+    assertRecorderPublicTextSafe(value, {
+      fail,
+      tableName: "recorder_sql",
+      sink: "raw_sql",
+      column,
+    });
+    if (/^(browser_url_search_label|document_path_search_label)$/i.test(column)) {
+      assertRecorderRedactionPolicyForRecord("frames", {
+        redaction_status: "redacted",
+        redacted_text: "redacted sql inspector metadata label guard",
+        browser_url_search_label: column === "browser_url_search_label" ? value : "example.com",
+        document_path_search_label: column === "document_path_search_label" ? value : "md document",
+        safe_for_search: 1,
+      }, { fail });
+    }
+  } catch (error) {
+    const policyErrorCode = cleanString(error?.code, 160) || "ERR_RECORDER_REDACTION_POLICY_FAILED";
+    fail(
+      "ERR_RECORDER_RAW_API_SQL_UNSAFE_PUBLIC_VALUE",
+      `recorder SQL inspector refused unsafe public value in ${cleanString(column, 120) || "column"} because ${policyErrorCode}`,
+      {
+        column: cleanString(column, 120) || null,
+        policyErrorCode,
+        policy_error_code: policyErrorCode,
+      },
+    );
+  }
 }
 
 function recordSqlInspectorDeniedAudit({ store, request, authorization, error }) {
@@ -2078,6 +2386,20 @@ function parseJsonObject(value) {
 
 function cleanString(value = "", maxLength = 500) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function sanitizeErrorCause(error) {
+  const message = cleanString(error?.message || String(error), 300)
+    .replace(/\/Users\/[^"'\s,}]+/g, "[redacted-local-path]")
+    .replace(/\/var\/folders\/[^"'\s,}]+/g, "[redacted-local-path]")
+    .replace(/\/private\/var\/[^"'\s,}]+/g, "[redacted-local-path]")
+    .replace(/\/tmp\/[^"'\s,}]+/g, "[redacted-local-path]")
+    .replace(/[A-Za-z]:\\[^"'\s,}]+/g, "[redacted-local-path]");
+  return {
+    name: cleanString(error?.name || "Error", 120) || "Error",
+    code: cleanString(error?.code || "", 120) || null,
+    message,
+  };
 }
 
 function toIso(value) {

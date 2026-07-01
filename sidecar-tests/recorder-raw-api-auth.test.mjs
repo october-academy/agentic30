@@ -176,10 +176,12 @@ test("authorizeRecorderRawRead writes denied audit rows for permission and origi
 
     const audits = store.listRecords("recorder_audit");
     assert.equal(audits.length, 2);
-    assert.equal(audits[0].decision, "denied");
-    assert.equal(audits[0].reason, "ERR_RECORDER_RAW_API_PERMISSION_DENIED");
-    assert.equal(audits[1].actor_id, "unknown");
-    assert.equal(audits[1].reason, "ERR_RECORDER_RAW_API_ORIGIN_DENIED");
+    const scopeAudit = audits.find((row) => row.request_id === "request-denied-scope");
+    const originAudit = audits.find((row) => row.request_id === "request-denied-origin");
+    assert.equal(scopeAudit.decision, "denied");
+    assert.equal(scopeAudit.reason, "ERR_RECORDER_RAW_API_PERMISSION_DENIED");
+    assert.equal(originAudit.actor_id, "unknown");
+    assert.equal(originAudit.reason, "ERR_RECORDER_RAW_API_ORIGIN_DENIED");
   } finally {
     store.close();
   }
@@ -266,4 +268,25 @@ test("MCP recorder policy allows redacted defaults and denies raw access without
     (error) => error instanceof RecorderRawApiAuthError
       && error.code === "ERR_RECORDER_MCP_GRANT_EXPIRED",
   );
+});
+
+test("MCP recorder access fails closed when the raw call presents no tool name against a tool-scoped grant", () => {
+  const toolScopedGrant = {
+    granted: true,
+    toolName: "recorder.rawFrame",
+    accessLevels: ["raw_frame"],
+    expiresAt: "2026-06-28T10:05:00.000Z",
+  };
+  for (const emptyToolName of ["", "   ", undefined]) {
+    assert.throws(
+      () => assertRecorderMcpAccess({
+        accessLevel: "raw_frame",
+        toolName: emptyToolName,
+        grant: toolScopedGrant,
+        now: new Date("2026-06-28T10:00:00.000Z"),
+      }),
+      (error) => error instanceof RecorderRawApiAuthError
+        && error.code === "ERR_RECORDER_MCP_GRANT_TOOL_MISMATCH",
+    );
+  }
 });

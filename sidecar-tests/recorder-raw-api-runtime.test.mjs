@@ -10,6 +10,7 @@ import { WebSocket } from "ws";
 import { RecorderStore } from "../sidecar/recorder-store.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const DELETED_MEDIA_SHA256 = "0".repeat(64);
 
 test("sidecar starts recorder raw API and issues scoped tokens through the authenticated bridge", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-recorder-raw-api-runtime-"));
@@ -55,6 +56,36 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     assert.equal(initialControl.proofAcceptedByRecorderControl, false);
     assert.equal(initialControl.proofAcceptedByCaptureReadiness, false);
 
+    const blockedSchedulerMarker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "recorder_pipe_scheduler_tick",
+      autoRun: false,
+      limit: 10,
+      runLimit: 10,
+    }));
+    const blockedScheduler = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= blockedSchedulerMarker && event.type === "error"
+    );
+    assert.match(blockedScheduler.message, /ERR_RECORDER_PIPE_SCHEDULER_CAPTURE_NOT_READY/);
+    assert.match(blockedScheduler.message, /consent_not_granted|recording_inactive/);
+
+    const blockedPipeRunMarker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "recorder_pipe_run",
+      pipeId: "daily-founder-memory",
+      startedAt: "2026-06-28T08:00:00.000Z",
+      endedAt: "2026-06-28T09:00:00.000Z",
+      triggerReason: "manual",
+      runId: "run-runtime-before-consent",
+      limit: 10,
+      runLimit: 10,
+    }));
+    const blockedPipeRun = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= blockedPipeRunMarker && event.type === "error"
+    );
+    assert.match(blockedPipeRun.message, /ERR_RECORDER_PIPE_RUN_CAPTURE_NOT_READY/);
+    assert.match(blockedPipeRun.message, /consent_not_granted|recording_inactive/);
+
     const consentedControl = await sendBridgeRequest(ws, {
       type: "recorder_control_action",
       action: {
@@ -64,9 +95,11 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     }, "recorder_control_state");
     assert.equal(consentedControl.controlState.mode, "active");
     assert.equal(consentedControl.controlState.consent.status, "granted");
+    assert.match(consentedControl.controlState.consent.grantId, /^recorder-consent-/);
     assert.equal(consentedControl.controlState.consent.visibleIndicatorAcknowledged, true);
     assert.equal(consentedControl.readiness.canRecord, false);
     assert.equal(consentedControl.readiness.blockers.some((blocker) => blocker.permission === "screenRecording"), true);
+    const consentGrantId = consentedControl.controlState.consent.grantId;
 
     let captureReadyControl = consentedControl;
     for (const permission of [
@@ -141,7 +174,7 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
         appName: "Agentic30",
         windowTitle: "Founder Replay",
         contentHash: "runtime-content-hash-auto",
-        textSource: "screen_capture",
+        textSource: "accessibility_only",
         accessibilityText: "automatic raw frame must not persist",
         redactionStatus: "not_redacted",
         safeForSearch: false,
@@ -171,8 +204,10 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
         captureTrigger: "manual_runtime_test",
         appName: "Agentic30",
         windowTitle: "Founder Replay",
+        browserUrl: "https://example.com/customer?token=secret#private",
+        documentPath: "/Users/october/private/customer-notes.md",
         contentHash: "runtime-content-hash-1",
-        textSource: "screen_capture",
+        textSource: "accessibility_only",
         accessibilityText: "raw visible screen text must not echo",
         redactionStatus: "not_redacted",
         safeForSearch: false,
@@ -191,10 +226,13 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
       ws.events.indexOf(event) >= ingestMarker && event.type === "recorder_frame_capture_ingested"
     );
     assert.equal(ingested.frame.id, "frame-runtime-1");
+    assert.equal(ingested.frame.browserDomain, "example.com");
+    assert.equal(ingested.frame.browserUrlSearchLabel, "example.com");
+    assert.equal(ingested.frame.documentPathSearchLabel, "md document");
     assert.equal(ingested.mediaAsset.id, "asset-runtime-1");
     assert.equal(ingested.mediaAsset.pathExposed, false);
     assert.equal(ingested.proofAcceptedByRecorderIngest, false);
-    assert.doesNotMatch(JSON.stringify(ingested), /raw visible screen text|relative_path|media\/frames|token_hash|a30_recorder_/);
+    assert.doesNotMatch(JSON.stringify(ingested), /raw visible screen text|customer-notes|private|token=secret|relative_path|media\/frames|token_hash|a30_recorder_/);
 
     const clipboardMarker = ws.events.length;
     ws.send(JSON.stringify({
@@ -252,6 +290,8 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
         startedAt: "2026-06-28T09:00:15.000Z",
         endedAt: "2026-06-28T09:00:18.000Z",
         source: "microphone",
+        consentGrantId,
+        rawAudioIndicatorState: "visible_indicator_active",
         transcriptStatus: "not_requested",
         redactionStatus: "redacted",
         privacyState: "raw_local",
@@ -278,6 +318,7 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
         startedAt: "2026-06-28T09:00:20.000Z",
         endedAt: "2026-06-28T09:01:20.000Z",
         source: "microphone",
+        consentGrantId,
         transcriptStatus: "local_complete",
         rawAudioIndicatorState: "visible_indicator_active",
         localTranscriberName: "agentic30-local-transcriber-test",
@@ -313,6 +354,7 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     );
     assert.equal(audioRecorded.audioChunk.id, "audio-runtime-1");
     assert.equal(audioRecorded.audioChunk.source, "microphone");
+    assert.equal(audioRecorded.audioChunk.consentGrantId, consentGrantId);
     assert.equal(audioRecorded.audioChunk.rawAudioExposed, false);
     assert.equal(audioRecorded.audioChunk.pathExposed, false);
     assert.equal(audioRecorded.transcriptSegments[0].id, "segment-runtime-1");
@@ -351,7 +393,7 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
           appName: "Agentic30",
           windowTitle: "Founder Replay Range",
           contentHash: `${frame.id}-hash`,
-          textSource: "screen_capture",
+          textSource: "accessibility_only",
           accessibilityText: "range delete raw text must not echo",
           redactedText: "range delete redacted text",
           redactionStatus: "redacted",
@@ -386,6 +428,10 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
       ws.events.indexOf(event) >= frameListMarker && event.type === "recorder_frame_captures"
     );
     assert.equal(frameList.frames.some((frame) => frame.id === "frame-runtime-1"), true);
+    assert.equal(
+      frameList.frames.find((frame) => frame.id === "frame-runtime-1")?.documentPathSearchLabel,
+      "md document",
+    );
     assert.equal(frameList.frames.some((frame) => frame.id === "frame-runtime-range-1"), true);
     assert.equal(frameList.frames.some((frame) => frame.id === "frame-runtime-range-2"), true);
     assert.equal(frameList.proofAcceptedByRecorderFrames, false);
@@ -419,7 +465,7 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
       headers: {
         Origin: "agentic30://app",
         Authorization: `Bearer ${issued.token.token}`,
-        "x-request-id": "runtime-health",
+        "x-agentic30-recorder-request-id": "runtime-health",
       },
     });
     const body = await health.json();
@@ -445,7 +491,7 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
       headers: {
         Origin: "agentic30://app",
         Authorization: `Bearer ${rawFrameToken.token.token}`,
-        "x-request-id": "runtime-frame-image",
+        "x-agentic30-recorder-request-id": "runtime-frame-image",
       },
     });
     assert.equal(frameImage.status, 200);
@@ -595,6 +641,51 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     const pipeRunJson = JSON.stringify(pipeRun);
     assert.doesNotMatch(pipeRunJson, /token_hash|a30_recorder_|rawText|raw_text|media\/frames|media\/audio/);
 
+    const pipeCancelStore = new RecorderStore({ appSupportRoot: appSupportPath }).open();
+    try {
+      pipeCancelStore.insertRecord("pipe_runs", {
+        id: "run-runtime-cancel",
+        pipe_id: "daily-founder-memory",
+        workspace_id: "workspace-1",
+        project_id: "project-1",
+        trigger_reason: "scheduler",
+        status: "queued",
+        started_at: "2026-06-28T09:05:00.000Z",
+        ended_at: null,
+        input_manifest_json: JSON.stringify({
+          pipe_id: "daily-founder-memory",
+          run_id: "run-runtime-cancel",
+        }),
+        output_manifest_json: null,
+        audit_log_json: JSON.stringify([]),
+        error_message: "",
+        deleted_at: null,
+      });
+    } finally {
+      pipeCancelStore.close();
+    }
+    const cancelMarker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "recorder_pipe_cancel",
+      runId: "run-runtime-cancel",
+      reason: "runtime bridge cancel test",
+      runLimit: 10,
+    }));
+    const cancelledPipe = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= cancelMarker && event.type === "recorder_pipe_cancel_result"
+    );
+    assert.equal(cancelledPipe.pipeRun.id, "run-runtime-cancel");
+    assert.equal(cancelledPipe.pipe_run.id, "run-runtime-cancel");
+    assert.equal(cancelledPipe.pipeRun.status, "cancelled");
+    assert.equal(cancelledPipe.outputManifest.outputKind, "pipe_cancelled");
+    assert.equal(cancelledPipe.outputManifest.items.complete, false);
+    assert.equal(cancelledPipe.outputManifest.proofAcceptedByPipeRun, false);
+    assert.equal(cancelledPipe.outputManifest.proofBoundary.proofLedgerWriteAllowed, false);
+    assert.equal(cancelledPipe.proofAcceptedByPipeRun, false);
+    assert.equal(cancelledPipe.runs.some((run) => run.id === "run-runtime-cancel" && run.status === "cancelled"), true);
+    const cancelledPipeJson = JSON.stringify(cancelledPipe);
+    assert.doesNotMatch(cancelledPipeJson, /token_hash|a30_recorder_|rawText|raw_text|media\/frames|media\/audio/);
+
     const schedulerMarker = ws.events.length;
     ws.send(JSON.stringify({
       type: "recorder_pipe_scheduler_tick",
@@ -685,8 +776,16 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
       assert.equal(frameRow?.snapshot_asset_id, "asset-runtime-1");
       assert.equal(typeof frameRow?.deleted_at, "string");
       const mediaRow = runtimeStore.getRecord("media_assets", "asset-runtime-1");
-      assert.equal(mediaRow?.relative_path, "media/frames/2026-06-28/frame-runtime-1.jpg");
       assert.equal(typeof mediaRow?.deleted_at, "string");
+      assert.equal(mediaRow?.relative_path, "media/frames/deleted/asset-runtime-1.deleted");
+      assert.equal(mediaRow?.sha256, DELETED_MEDIA_SHA256);
+      assert.equal(mediaRow?.byte_size, 0);
+      assert.equal(mediaRow?.encrypted, 0);
+      assert.equal(mediaRow?.encryption_key_id, null);
+      assert.equal(mediaRow?.encryption_alg, null);
+      assert.equal(mediaRow?.encryption_nonce, null);
+      assert.equal(mediaRow?.encryption_tag, null);
+      assert.equal(mediaRow?.source_ids_json, "[]");
       const audioRow = runtimeStore.getRecord("audio_chunks", "audio-runtime-1");
       assert.equal(audioRow?.audio_asset_id, "asset-audio-runtime-1");
       assert.equal(runtimeStore.getRecord("frames", "frame-runtime-auto-unencrypted"), null);

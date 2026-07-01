@@ -63,6 +63,29 @@ test("Day 1 goal normalization accepts a selected goal lane with pending details
   assert.equal(Object.hasOwn(context, "purpose"), false);
 });
 
+test("Day 1 goal normalization treats evidence-gap diagnostics as pending details", () => {
+  const selection = normalizeDay1GoalSelection({
+    goalType: "get_users",
+    goalText: "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+    customer: "고객 quote 근거 부족",
+    problem: "문제 quote 근거 부족",
+    validationAction: "활성/검증 행동 quote 근거 부족",
+    proofSink: "local",
+    selectedAt: "2026-06-07T00:00:00.000Z",
+  });
+
+  assert.equal(selection.customer, "");
+  assert.equal(selection.problem, "");
+  assert.equal(selection.validationAction, "");
+
+  const context = buildDay1GoalProjectContext(selection);
+  assert.equal(context.confidence, "low");
+  assert.deepEqual(context.pendingGoalFields, ["customer", "problem", "validationAction"]);
+  assert.equal(Object.hasOwn(context, "targetUser"), false);
+  assert.equal(Object.hasOwn(context, "problem"), false);
+  assert.equal(Object.hasOwn(context, "purpose"), false);
+});
+
 test("Day 1 goal normalization repairs legacy sentence-composition artifacts", () => {
   const selection = normalizeDay1GoalSelection({
     goalType: "make_money",

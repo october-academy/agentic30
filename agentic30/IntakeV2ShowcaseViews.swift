@@ -1793,6 +1793,9 @@ struct IntakeV2ReadyAnalyzeView: View {
 
     private func readySubtitle(for presentation: Day1ScanWaitPresentation) -> String {
         if presentation.canOpenDay1 {
+            if presentation.isEvidenceBlocked {
+                return "고객, 문제, 검증 행동은 첫 질문에서 직접 좁힙니다."
+            }
             return "약 3분 · 선택하고 한 줄만 답하면 됩니다."
         }
         if store.folderURL == nil {
@@ -1802,6 +1805,9 @@ struct IntakeV2ReadyAnalyzeView: View {
             return "실행 보조 앱이 연결되면 폴더 신호를 읽습니다."
         }
         if presentation.isBlocked {
+            if presentation.isEvidenceBlocked {
+                return "고객, 문제, 검증 행동을 먼저 정리하고 있습니다."
+            }
             return "Day 1 질문을 만들지 못했습니다. 위 원인을 확인한 뒤 다시 시도하세요."
         }
         return "완료되면 바로 질문을 시작할 수 있습니다."
@@ -2167,10 +2173,12 @@ struct IntakeV2ReadyAnalyzeView: View {
     }
 
     private var scanBlockedNoticeBanner: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.octagon.fill")
+        let isEvidenceSetup = scanBlockedRecovery?.primaryAction == .reviewEvidence
+
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: isEvidenceSetup ? "slider.horizontal.3" : "exclamationmark.octagon.fill")
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(IntakeV2Color.textSecondary)
+                .foregroundStyle(isEvidenceSetup ? IntakeV2Color.accent : IntakeV2Color.textSecondary)
                 .frame(width: 20, height: 20)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -2340,7 +2348,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                 }
 
                 if presentation.canOpenDay1 {
-                    Text("약 3분 · 선택하고 한 줄만 답하면 됩니다")
+                    Text(presentation.isEvidenceBlocked ? "첫 질문에서 고객·문제·검증 행동을 좁힙니다" : "약 3분 · 선택하고 한 줄만 답하면 됩니다")
                         .font(.system(size: 10.5, weight: .medium, design: .rounded))
                         .foregroundStyle(IntakeV2Color.textTertiary)
                         .lineLimit(1)

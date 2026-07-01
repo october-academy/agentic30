@@ -4,9 +4,13 @@ import {
   RecorderControlStateError,
   evaluateRecorderExpandedMediaPolicy,
 } from "./recorder-control-state.mjs";
-import { containsSecret, redactSecrets } from "./workspace-safety.mjs";
+import {
+  assertRecorderRedactionPolicyForRecord,
+  redactRecorderPublicText,
+} from "./recorder-redaction-policy.mjs";
+import { containsSecret } from "./workspace-safety.mjs";
 
-export const RECORDER_CLIPBOARD_EVENT_SCHEMA_VERSION = 1;
+export const RECORDER_CLIPBOARD_EVENT_SCHEMA_VERSION = 2;
 
 const MAX_CLIPBOARD_CONTENT_CHARS = 2000;
 const EVENT_KINDS = new Set(["copy", "cut", "paste", "change", "unknown"]);
@@ -107,15 +111,20 @@ export function normalizeClipboardEvent(event = {}, {
         secret_suppression: true,
       });
     }
-    const derivedRedactedText = redactSecrets(contentText);
-    redactedText = redactedText || derivedRedactedText;
-    if (!redactionStatus || CONTENT_REDACTION_STATUS_OVERRIDES.has(redactionStatus)) {
-      redactionStatus = derivedRedactedText === contentText ? "safe" : "redacted";
-    }
+    const derivedRedactedText = redactRecorderPublicText(contentText, { fail });
+    redactedText = derivedRedactedText;
+    redactionStatus = derivedRedactedText === contentText ? "safe" : "redacted";
   } else if (!redactionStatus) {
     redactionStatus = redactedText ? "redacted" : "none";
   }
   redactionStatus = requiredText(redactionStatus, "redaction_status");
+  if (redactedText) {
+    assertRecorderRedactionPolicyForRecord("clipboard_events", {
+      redacted_text: redactedText,
+      redaction_status: redactionStatus,
+      safe_for_search: 1,
+    }, { fail });
+  }
   if (safeForSearch && !redactedText) {
     fail("ERR_RECORDER_CLIPBOARD_SEARCH_REQUIRES_REDACTED_TEXT", "safe_for_search clipboard event requires redacted_text");
   }
@@ -126,24 +135,34 @@ export function normalizeClipboardEvent(event = {}, {
     });
   }
 
-  const occurredAt = toIso(source.occurredAt ?? source.occurred_at ?? createdAt);
+  const capturedAt = toIso(source.capturedAt ?? source.captured_at ?? source.occurredAt ?? source.occurred_at ?? createdAt);
   const contentHash = textOrNull(source.contentHash ?? source.content_hash)
     || (contentText ? `sha256:${sha256Hex(contentText)}` : null);
+  const contentSize = Number.isFinite(source.contentSize)
+    ? Math.max(0, Math.trunc(source.contentSize))
+    : Number.isFinite(source.content_size)
+      ? Math.max(0, Math.trunc(source.content_size))
+      : contentText
+        ? contentText.length
+        : null;
   return {
     id: requiredText(source.id ?? source.eventId ?? source.event_id, "id"),
     workspace_id: textOrNull(source.workspaceId ?? source.workspace_id),
     project_id: textOrNull(source.projectId ?? source.project_id),
-    occurred_at: occurredAt,
+    captured_at: capturedAt,
     event_kind: normalizeToken(source.eventKind ?? source.event_kind, EVENT_KINDS, "unknown"),
-    capture_mode: captureMode,
-    app_name: textOrNull(source.appName ?? source.app_name),
-    window_title: textOrNull(source.windowTitle ?? source.window_title),
+    policy_mode: captureMode,
+    source_app_name: textOrNull(source.sourceAppName ?? source.source_app_name ?? source.appName ?? source.app_name),
+    source_window_title: textOrNull(source.sourceWindowTitle ?? source.source_window_title ?? source.windowTitle ?? source.window_title),
     content_type: normalizeToken(source.contentType ?? source.content_type, CONTENT_TYPES, contentText ? "text" : "unknown"),
+    content_size: contentSize,
     content_hash: contentHash,
     content_text: contentCaptureRequested ? contentText : null,
     redacted_text: redactedText,
     redaction_status: redactionStatus,
     privacy_state: requiredText(source.privacyState ?? source.privacy_state ?? "raw_local", "privacy_state"),
+    suppression_reason: textOrNull(source.suppressionReason ?? source.suppression_reason),
+    raw_retention_expires_at: dateOrNull(source.rawRetentionExpiresAt ?? source.raw_retention_expires_at),
     safe_for_search: safeForSearch,
     safe_for_memory: boolean01(source.safeForMemory ?? source.safe_for_memory),
     safe_for_export: boolean01(source.safeForExport ?? source.safe_for_export),
@@ -176,7 +195,7 @@ function normalizeClipboardPolicy(value = {}) {
 }
 
 function sanitizedClipboardEvent(row) {
-  const redactedText = row.capture_mode === "content_opt_in" && row.redacted_text === row.content_text
+  const redactedText = row.policy_mode === "content_opt_in" && row.redacted_text === row.content_text
     ? null
     : row.redacted_text;
   return {
@@ -185,18 +204,28 @@ function sanitizedClipboardEvent(row) {
     workspace_id: row.workspace_id,
     projectId: row.project_id,
     project_id: row.project_id,
-    occurredAt: row.occurred_at,
-    occurred_at: row.occurred_at,
+    capturedAt: row.captured_at,
+    captured_at: row.captured_at,
+    occurredAt: row.captured_at,
+    occurred_at: row.captured_at,
     eventKind: row.event_kind,
     event_kind: row.event_kind,
-    captureMode: row.capture_mode,
-    capture_mode: row.capture_mode,
-    appName: row.app_name,
-    app_name: row.app_name,
-    windowTitle: row.window_title,
-    window_title: row.window_title,
+    policyMode: row.policy_mode,
+    policy_mode: row.policy_mode,
+    captureMode: row.policy_mode,
+    capture_mode: row.policy_mode,
+    sourceAppName: row.source_app_name,
+    source_app_name: row.source_app_name,
+    appName: row.source_app_name,
+    app_name: row.source_app_name,
+    sourceWindowTitle: row.source_window_title,
+    source_window_title: row.source_window_title,
+    windowTitle: row.source_window_title,
+    window_title: row.source_window_title,
     contentType: row.content_type,
     content_type: row.content_type,
+    contentSize: row.content_size,
+    content_size: row.content_size,
     contentHash: row.content_hash,
     content_hash: row.content_hash,
     redactedText,
@@ -205,6 +234,10 @@ function sanitizedClipboardEvent(row) {
     redaction_status: row.redaction_status,
     privacyState: row.privacy_state,
     privacy_state: row.privacy_state,
+    suppressionReason: row.suppression_reason,
+    suppression_reason: row.suppression_reason,
+    rawRetentionExpiresAt: row.raw_retention_expires_at,
+    raw_retention_expires_at: row.raw_retention_expires_at,
     safeForSearch: row.safe_for_search === 1,
     safe_for_search: row.safe_for_search === 1,
     safeForMemory: row.safe_for_memory === 1,
@@ -238,6 +271,15 @@ function requiredText(value, fieldName) {
 function textOrNull(value) {
   const text = cleanString(value, 2000);
   return text || null;
+}
+
+function dateOrNull(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    fail("ERR_RECORDER_CLIPBOARD_INVALID_RAW_RETENTION_EXPIRES_AT", "clipboard event raw_retention_expires_at must be an ISO timestamp when provided");
+  }
+  return date.toISOString();
 }
 
 function clipboardContentTextOrNull(value) {

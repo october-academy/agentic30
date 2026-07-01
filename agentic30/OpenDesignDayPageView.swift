@@ -4476,7 +4476,7 @@ private struct OpenDesignInteractiveButtonStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed && !isDisabled ? pressedScale : 1)
             .offset(y: configuration.isPressed && !isDisabled ? pressedOffset : 0)
-            .animation(.easeOut(duration: reduceMotion ? 0 : 0.10), value: configuration.isPressed)
+            .animation(OpenDesignMotion.snap(reduceMotion: reduceMotion, OpenDesignMotion.durationFast), value: configuration.isPressed)
     }
 }
 
@@ -4513,8 +4513,8 @@ private struct OpenDesignHoverRowModifier: ViewModifier {
                     .stroke(resolvedBorder, lineWidth: lineWidth)
             )
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .animation(.easeOut(duration: reduceMotion ? 0 : 0.12), value: isHovered)
-            .animation(.easeOut(duration: reduceMotion ? 0 : 0.12), value: isActive)
+            .animation(OpenDesignMotion.snap(reduceMotion: reduceMotion, OpenDesignMotion.durationFast), value: isHovered)
+            .animation(OpenDesignMotion.snap(reduceMotion: reduceMotion, OpenDesignMotion.durationFast), value: isActive)
     }
 }
 
@@ -4601,12 +4601,15 @@ struct OpenDesignDayPageView: View {
     let recorderControlRefreshing: Bool
     let recorderControlActionInFlight: String?
     let recorderControlLastError: String?
+    let recorderPermissionActor: RecorderPermissionActorDiagnostic
+    let recorderPermissionReleaseIdentity: RecorderPermissionReleaseIdentityDiagnostic
     let recorderFrameCaptureInFlight: Bool
     let recorderFrameCaptureLastError: String?
     let recorderLastFrameCapture: RecorderFrameCaptureReceipt?
     let recorderFrameDeleteInFlight: Bool
     let recorderFrameDeleteLastError: String?
     let recorderLastFrameDelete: RecorderFrameDeleteReceipt?
+    let recorderLastFrameRangeDelete: RecorderFrameRangeDeleteReceipt?
     let recorderFrameCaptures: [RecorderFrameCaptureReceipt]
     let recorderFrameCapturesRefreshing: Bool
     let recorderFrameCapturesLastError: String?
@@ -4616,12 +4619,32 @@ struct OpenDesignDayPageView: View {
     let recorderAuditSource: RecorderAuditSource?
     let recorderAuditRefreshing: Bool
     let recorderAuditLastError: String?
+    let recorderSearchResult: RecorderSearchResultSet?
+    let recorderSearchRunning: Bool
+    let recorderSearchLastError: String?
+    let recorderSqlQueryResult: RecorderSqlQueryResult?
+    let recorderSqlQueryRunning: Bool
+    let recorderSqlQueryLastError: String?
+    let recorderMcpGrants: [RecorderMcpGrant]
+    let recorderMcpGrantsRefreshing: Bool
+    let recorderMcpGrantActionInFlight: String?
+    let recorderMcpGrantLastError: String?
     let recorderAutoCaptureRunning: Bool
     let recorderAutoCaptureLastTrigger: String?
     let recorderAutoCaptureLastError: String?
+    let recorderAudioCaptureRunning: Bool
+    let recorderAudioCaptureLastError: String?
+    let recorderDayMemoryLoop: RecorderDayMemoryLoopResult?
+    let recorderDayMemoryLoopRunning: Bool
+    let recorderDayMemoryLoopLastError: String?
+    let recorderEvidenceCandidateReviewInFlight: Set<String>
+    let recorderRetentionApplyRunning: Bool
+    let recorderRetentionLastResult: RecorderRetentionApplyResult?
+    let recorderRetentionLastError: String?
     let refreshRecorderControl: () -> Void
     let prepareRecorderControl: () -> Void
     let refreshRecorderPermissions: () -> Void
+    let requestRecorderPermission: (String) -> Void
     let grantRecorderConsent: () -> Void
     let revokeRecorderConsent: () -> Void
     let pauseRecorderCapture: () -> Void
@@ -4636,11 +4659,20 @@ struct OpenDesignDayPageView: View {
     let loadRecorderFrameImage: (String) -> Void
     let prepareRecorderFrameImage: (String?) -> Void
     let refreshRecorderAuditEvents: () -> Void
+    let runRecorderSearch: (String) -> Void
+    let runRecorderSqlQuery: (String) -> Void
+    let refreshRecorderMcpGrants: () -> Void
+    let prepareRecorderMcpGrants: () -> Void
+    let grantRecorderRawSqlMcpAccess: () -> Void
+    let revokeRecorderMcpGrant: (String) -> Void
     let startRecorderAutoCapture: () -> Void
     let stopRecorderAutoCapture: () -> Void
     let setRecorderClipboardMode: (String) -> Void
     let setRecorderMicrophoneCapture: (Bool) -> Void
     let setRecorderSystemAudioCapture: (Bool) -> Void
+    let runRecorderDayMemoryLoop: () -> Void
+    let reviewRecorderEvidenceCandidate: (String, String, String?, [String: Any]?) -> Void
+    let applyRecorderRetention: () -> Void
     let recorderPipes: [RecorderPipeDefinition]
     let recorderPipeRuns: [RecorderPipeRun]
     let recorderPipesRefreshing: Bool
@@ -4730,12 +4762,15 @@ struct OpenDesignDayPageView: View {
         recorderControlRefreshing: Bool = false,
         recorderControlActionInFlight: String? = nil,
         recorderControlLastError: String? = nil,
+        recorderPermissionActor: RecorderPermissionActorDiagnostic = .unknown,
+        recorderPermissionReleaseIdentity: RecorderPermissionReleaseIdentityDiagnostic = .unknown,
         recorderFrameCaptureInFlight: Bool = false,
         recorderFrameCaptureLastError: String? = nil,
         recorderLastFrameCapture: RecorderFrameCaptureReceipt? = nil,
         recorderFrameDeleteInFlight: Bool = false,
         recorderFrameDeleteLastError: String? = nil,
         recorderLastFrameDelete: RecorderFrameDeleteReceipt? = nil,
+        recorderLastFrameRangeDelete: RecorderFrameRangeDeleteReceipt? = nil,
         recorderFrameCaptures: [RecorderFrameCaptureReceipt] = [],
         recorderFrameCapturesRefreshing: Bool = false,
         recorderFrameCapturesLastError: String? = nil,
@@ -4745,12 +4780,32 @@ struct OpenDesignDayPageView: View {
         recorderAuditSource: RecorderAuditSource? = nil,
         recorderAuditRefreshing: Bool = false,
         recorderAuditLastError: String? = nil,
+        recorderSearchResult: RecorderSearchResultSet? = nil,
+        recorderSearchRunning: Bool = false,
+        recorderSearchLastError: String? = nil,
+        recorderSqlQueryResult: RecorderSqlQueryResult? = nil,
+        recorderSqlQueryRunning: Bool = false,
+        recorderSqlQueryLastError: String? = nil,
+        recorderMcpGrants: [RecorderMcpGrant] = [],
+        recorderMcpGrantsRefreshing: Bool = false,
+        recorderMcpGrantActionInFlight: String? = nil,
+        recorderMcpGrantLastError: String? = nil,
         recorderAutoCaptureRunning: Bool = false,
         recorderAutoCaptureLastTrigger: String? = nil,
         recorderAutoCaptureLastError: String? = nil,
+        recorderAudioCaptureRunning: Bool = false,
+        recorderAudioCaptureLastError: String? = nil,
+        recorderDayMemoryLoop: RecorderDayMemoryLoopResult? = nil,
+        recorderDayMemoryLoopRunning: Bool = false,
+        recorderDayMemoryLoopLastError: String? = nil,
+        recorderEvidenceCandidateReviewInFlight: Set<String> = [],
+        recorderRetentionApplyRunning: Bool = false,
+        recorderRetentionLastResult: RecorderRetentionApplyResult? = nil,
+        recorderRetentionLastError: String? = nil,
         refreshRecorderControl: @escaping () -> Void = {},
         prepareRecorderControl: @escaping () -> Void = {},
         refreshRecorderPermissions: @escaping () -> Void = {},
+        requestRecorderPermission: @escaping (String) -> Void = { _ in },
         grantRecorderConsent: @escaping () -> Void = {},
         revokeRecorderConsent: @escaping () -> Void = {},
         pauseRecorderCapture: @escaping () -> Void = {},
@@ -4765,11 +4820,20 @@ struct OpenDesignDayPageView: View {
         loadRecorderFrameImage: @escaping (String) -> Void = { _ in },
         prepareRecorderFrameImage: @escaping (String?) -> Void = { _ in },
         refreshRecorderAuditEvents: @escaping () -> Void = {},
+        runRecorderSearch: @escaping (String) -> Void = { _ in },
+        runRecorderSqlQuery: @escaping (String) -> Void = { _ in },
+        refreshRecorderMcpGrants: @escaping () -> Void = {},
+        prepareRecorderMcpGrants: @escaping () -> Void = {},
+        grantRecorderRawSqlMcpAccess: @escaping () -> Void = {},
+        revokeRecorderMcpGrant: @escaping (String) -> Void = { _ in },
         startRecorderAutoCapture: @escaping () -> Void = {},
         stopRecorderAutoCapture: @escaping () -> Void = {},
         setRecorderClipboardMode: @escaping (String) -> Void = { _ in },
         setRecorderMicrophoneCapture: @escaping (Bool) -> Void = { _ in },
         setRecorderSystemAudioCapture: @escaping (Bool) -> Void = { _ in },
+        runRecorderDayMemoryLoop: @escaping () -> Void = {},
+        reviewRecorderEvidenceCandidate: @escaping (String, String, String?, [String: Any]?) -> Void = { _, _, _, _ in },
+        applyRecorderRetention: @escaping () -> Void = {},
         recorderPipes: [RecorderPipeDefinition] = [],
         recorderPipeRuns: [RecorderPipeRun] = [],
         recorderPipesRefreshing: Bool = false,
@@ -4844,12 +4908,15 @@ struct OpenDesignDayPageView: View {
         self.recorderControlRefreshing = recorderControlRefreshing
         self.recorderControlActionInFlight = recorderControlActionInFlight
         self.recorderControlLastError = recorderControlLastError
+        self.recorderPermissionActor = recorderPermissionActor
+        self.recorderPermissionReleaseIdentity = recorderPermissionReleaseIdentity
         self.recorderFrameCaptureInFlight = recorderFrameCaptureInFlight
         self.recorderFrameCaptureLastError = recorderFrameCaptureLastError
         self.recorderLastFrameCapture = recorderLastFrameCapture
         self.recorderFrameDeleteInFlight = recorderFrameDeleteInFlight
         self.recorderFrameDeleteLastError = recorderFrameDeleteLastError
         self.recorderLastFrameDelete = recorderLastFrameDelete
+        self.recorderLastFrameRangeDelete = recorderLastFrameRangeDelete
         self.recorderFrameCaptures = recorderFrameCaptures
         self.recorderFrameCapturesRefreshing = recorderFrameCapturesRefreshing
         self.recorderFrameCapturesLastError = recorderFrameCapturesLastError
@@ -4859,12 +4926,32 @@ struct OpenDesignDayPageView: View {
         self.recorderAuditSource = recorderAuditSource
         self.recorderAuditRefreshing = recorderAuditRefreshing
         self.recorderAuditLastError = recorderAuditLastError
+        self.recorderSearchResult = recorderSearchResult
+        self.recorderSearchRunning = recorderSearchRunning
+        self.recorderSearchLastError = recorderSearchLastError
+        self.recorderSqlQueryResult = recorderSqlQueryResult
+        self.recorderSqlQueryRunning = recorderSqlQueryRunning
+        self.recorderSqlQueryLastError = recorderSqlQueryLastError
+        self.recorderMcpGrants = recorderMcpGrants
+        self.recorderMcpGrantsRefreshing = recorderMcpGrantsRefreshing
+        self.recorderMcpGrantActionInFlight = recorderMcpGrantActionInFlight
+        self.recorderMcpGrantLastError = recorderMcpGrantLastError
         self.recorderAutoCaptureRunning = recorderAutoCaptureRunning
         self.recorderAutoCaptureLastTrigger = recorderAutoCaptureLastTrigger
         self.recorderAutoCaptureLastError = recorderAutoCaptureLastError
+        self.recorderAudioCaptureRunning = recorderAudioCaptureRunning
+        self.recorderAudioCaptureLastError = recorderAudioCaptureLastError
+        self.recorderDayMemoryLoop = recorderDayMemoryLoop
+        self.recorderDayMemoryLoopRunning = recorderDayMemoryLoopRunning
+        self.recorderDayMemoryLoopLastError = recorderDayMemoryLoopLastError
+        self.recorderEvidenceCandidateReviewInFlight = recorderEvidenceCandidateReviewInFlight
+        self.recorderRetentionApplyRunning = recorderRetentionApplyRunning
+        self.recorderRetentionLastResult = recorderRetentionLastResult
+        self.recorderRetentionLastError = recorderRetentionLastError
         self.refreshRecorderControl = refreshRecorderControl
         self.prepareRecorderControl = prepareRecorderControl
         self.refreshRecorderPermissions = refreshRecorderPermissions
+        self.requestRecorderPermission = requestRecorderPermission
         self.grantRecorderConsent = grantRecorderConsent
         self.revokeRecorderConsent = revokeRecorderConsent
         self.pauseRecorderCapture = pauseRecorderCapture
@@ -4879,11 +4966,20 @@ struct OpenDesignDayPageView: View {
         self.loadRecorderFrameImage = loadRecorderFrameImage
         self.prepareRecorderFrameImage = prepareRecorderFrameImage
         self.refreshRecorderAuditEvents = refreshRecorderAuditEvents
+        self.runRecorderSearch = runRecorderSearch
+        self.runRecorderSqlQuery = runRecorderSqlQuery
+        self.refreshRecorderMcpGrants = refreshRecorderMcpGrants
+        self.prepareRecorderMcpGrants = prepareRecorderMcpGrants
+        self.grantRecorderRawSqlMcpAccess = grantRecorderRawSqlMcpAccess
+        self.revokeRecorderMcpGrant = revokeRecorderMcpGrant
         self.startRecorderAutoCapture = startRecorderAutoCapture
         self.stopRecorderAutoCapture = stopRecorderAutoCapture
         self.setRecorderClipboardMode = setRecorderClipboardMode
         self.setRecorderMicrophoneCapture = setRecorderMicrophoneCapture
         self.setRecorderSystemAudioCapture = setRecorderSystemAudioCapture
+        self.runRecorderDayMemoryLoop = runRecorderDayMemoryLoop
+        self.reviewRecorderEvidenceCandidate = reviewRecorderEvidenceCandidate
+        self.applyRecorderRetention = applyRecorderRetention
         self.recorderPipes = recorderPipes
         self.recorderPipeRuns = recorderPipeRuns
         self.recorderPipesRefreshing = recorderPipesRefreshing
@@ -4986,12 +5082,15 @@ struct OpenDesignDayPageView: View {
                     recorderControlRefreshing: recorderControlRefreshing,
                     recorderControlActionInFlight: recorderControlActionInFlight,
                     recorderControlLastError: recorderControlLastError,
+                    recorderPermissionActor: recorderPermissionActor,
+                    recorderPermissionReleaseIdentity: recorderPermissionReleaseIdentity,
                     recorderFrameCaptureInFlight: recorderFrameCaptureInFlight,
                     recorderFrameCaptureLastError: recorderFrameCaptureLastError,
                     recorderLastFrameCapture: recorderLastFrameCapture,
                     recorderFrameDeleteInFlight: recorderFrameDeleteInFlight,
                     recorderFrameDeleteLastError: recorderFrameDeleteLastError,
                     recorderLastFrameDelete: recorderLastFrameDelete,
+                    recorderLastFrameRangeDelete: recorderLastFrameRangeDelete,
                     recorderFrameCaptures: recorderFrameCaptures,
                     recorderFrameCapturesRefreshing: recorderFrameCapturesRefreshing,
                     recorderFrameCapturesLastError: recorderFrameCapturesLastError,
@@ -5001,12 +5100,32 @@ struct OpenDesignDayPageView: View {
                     recorderAuditSource: recorderAuditSource,
                     recorderAuditRefreshing: recorderAuditRefreshing,
                     recorderAuditLastError: recorderAuditLastError,
+                    recorderSearchResult: recorderSearchResult,
+                    recorderSearchRunning: recorderSearchRunning,
+                    recorderSearchLastError: recorderSearchLastError,
+                    recorderSqlQueryResult: recorderSqlQueryResult,
+                    recorderSqlQueryRunning: recorderSqlQueryRunning,
+                    recorderSqlQueryLastError: recorderSqlQueryLastError,
+                    recorderMcpGrants: recorderMcpGrants,
+                    recorderMcpGrantsRefreshing: recorderMcpGrantsRefreshing,
+                    recorderMcpGrantActionInFlight: recorderMcpGrantActionInFlight,
+                    recorderMcpGrantLastError: recorderMcpGrantLastError,
                     recorderAutoCaptureRunning: recorderAutoCaptureRunning,
                     recorderAutoCaptureLastTrigger: recorderAutoCaptureLastTrigger,
                     recorderAutoCaptureLastError: recorderAutoCaptureLastError,
+                    recorderAudioCaptureRunning: recorderAudioCaptureRunning,
+                    recorderAudioCaptureLastError: recorderAudioCaptureLastError,
+                    recorderDayMemoryLoop: recorderDayMemoryLoop,
+                    recorderDayMemoryLoopRunning: recorderDayMemoryLoopRunning,
+                    recorderDayMemoryLoopLastError: recorderDayMemoryLoopLastError,
+                    recorderEvidenceCandidateReviewInFlight: recorderEvidenceCandidateReviewInFlight,
+                    recorderRetentionApplyRunning: recorderRetentionApplyRunning,
+                    recorderRetentionLastResult: recorderRetentionLastResult,
+                    recorderRetentionLastError: recorderRetentionLastError,
                     refreshRecorderControl: refreshRecorderControl,
                     prepareRecorderControl: prepareRecorderControl,
                     refreshRecorderPermissions: refreshRecorderPermissions,
+                    requestRecorderPermission: requestRecorderPermission,
                     grantRecorderConsent: grantRecorderConsent,
                     revokeRecorderConsent: revokeRecorderConsent,
                     pauseRecorderCapture: pauseRecorderCapture,
@@ -5021,11 +5140,20 @@ struct OpenDesignDayPageView: View {
                     loadRecorderFrameImage: loadRecorderFrameImage,
                     prepareRecorderFrameImage: prepareRecorderFrameImage,
                     refreshRecorderAuditEvents: refreshRecorderAuditEvents,
+                    runRecorderSearch: runRecorderSearch,
+                    runRecorderSqlQuery: runRecorderSqlQuery,
+                    refreshRecorderMcpGrants: refreshRecorderMcpGrants,
+                    prepareRecorderMcpGrants: prepareRecorderMcpGrants,
+                    grantRecorderRawSqlMcpAccess: grantRecorderRawSqlMcpAccess,
+                    revokeRecorderMcpGrant: revokeRecorderMcpGrant,
                     startRecorderAutoCapture: startRecorderAutoCapture,
                     stopRecorderAutoCapture: stopRecorderAutoCapture,
                     setRecorderClipboardMode: setRecorderClipboardMode,
                     setRecorderMicrophoneCapture: setRecorderMicrophoneCapture,
                     setRecorderSystemAudioCapture: setRecorderSystemAudioCapture,
+                    runRecorderDayMemoryLoop: runRecorderDayMemoryLoop,
+                    reviewRecorderEvidenceCandidate: reviewRecorderEvidenceCandidate,
+                    applyRecorderRetention: applyRecorderRetention,
                     recorderPipes: recorderPipes,
                     recorderPipeRuns: recorderPipeRuns,
                     recorderPipesRefreshing: recorderPipesRefreshing,
@@ -5736,12 +5864,15 @@ struct OpenDesignDayShell: View {
     let recorderControlRefreshing: Bool
     let recorderControlActionInFlight: String?
     let recorderControlLastError: String?
+    let recorderPermissionActor: RecorderPermissionActorDiagnostic
+    let recorderPermissionReleaseIdentity: RecorderPermissionReleaseIdentityDiagnostic
     let recorderFrameCaptureInFlight: Bool
     let recorderFrameCaptureLastError: String?
     let recorderLastFrameCapture: RecorderFrameCaptureReceipt?
     let recorderFrameDeleteInFlight: Bool
     let recorderFrameDeleteLastError: String?
     let recorderLastFrameDelete: RecorderFrameDeleteReceipt?
+    let recorderLastFrameRangeDelete: RecorderFrameRangeDeleteReceipt?
     let recorderFrameCaptures: [RecorderFrameCaptureReceipt]
     let recorderFrameCapturesRefreshing: Bool
     let recorderFrameCapturesLastError: String?
@@ -5751,12 +5882,32 @@ struct OpenDesignDayShell: View {
     let recorderAuditSource: RecorderAuditSource?
     let recorderAuditRefreshing: Bool
     let recorderAuditLastError: String?
+    let recorderSearchResult: RecorderSearchResultSet?
+    let recorderSearchRunning: Bool
+    let recorderSearchLastError: String?
+    let recorderSqlQueryResult: RecorderSqlQueryResult?
+    let recorderSqlQueryRunning: Bool
+    let recorderSqlQueryLastError: String?
+    let recorderMcpGrants: [RecorderMcpGrant]
+    let recorderMcpGrantsRefreshing: Bool
+    let recorderMcpGrantActionInFlight: String?
+    let recorderMcpGrantLastError: String?
     let recorderAutoCaptureRunning: Bool
     let recorderAutoCaptureLastTrigger: String?
     let recorderAutoCaptureLastError: String?
+    let recorderAudioCaptureRunning: Bool
+    let recorderAudioCaptureLastError: String?
+    let recorderDayMemoryLoop: RecorderDayMemoryLoopResult?
+    let recorderDayMemoryLoopRunning: Bool
+    let recorderDayMemoryLoopLastError: String?
+    let recorderEvidenceCandidateReviewInFlight: Set<String>
+    let recorderRetentionApplyRunning: Bool
+    let recorderRetentionLastResult: RecorderRetentionApplyResult?
+    let recorderRetentionLastError: String?
     let refreshRecorderControl: () -> Void
     let prepareRecorderControl: () -> Void
     let refreshRecorderPermissions: () -> Void
+    let requestRecorderPermission: (String) -> Void
     let grantRecorderConsent: () -> Void
     let revokeRecorderConsent: () -> Void
     let pauseRecorderCapture: () -> Void
@@ -5771,11 +5922,20 @@ struct OpenDesignDayShell: View {
     let loadRecorderFrameImage: (String) -> Void
     let prepareRecorderFrameImage: (String?) -> Void
     let refreshRecorderAuditEvents: () -> Void
+    let runRecorderSearch: (String) -> Void
+    let runRecorderSqlQuery: (String) -> Void
+    let refreshRecorderMcpGrants: () -> Void
+    let prepareRecorderMcpGrants: () -> Void
+    let grantRecorderRawSqlMcpAccess: () -> Void
+    let revokeRecorderMcpGrant: (String) -> Void
     let startRecorderAutoCapture: () -> Void
     let stopRecorderAutoCapture: () -> Void
     let setRecorderClipboardMode: (String) -> Void
     let setRecorderMicrophoneCapture: (Bool) -> Void
     let setRecorderSystemAudioCapture: (Bool) -> Void
+    let runRecorderDayMemoryLoop: () -> Void
+    let reviewRecorderEvidenceCandidate: (String, String, String?, [String: Any]?) -> Void
+    let applyRecorderRetention: () -> Void
     let recorderPipes: [RecorderPipeDefinition]
     let recorderPipeRuns: [RecorderPipeRun]
     let recorderPipesRefreshing: Bool
@@ -5884,12 +6044,15 @@ struct OpenDesignDayShell: View {
         recorderControlRefreshing: Bool,
         recorderControlActionInFlight: String?,
         recorderControlLastError: String?,
+        recorderPermissionActor: RecorderPermissionActorDiagnostic,
+        recorderPermissionReleaseIdentity: RecorderPermissionReleaseIdentityDiagnostic,
         recorderFrameCaptureInFlight: Bool,
         recorderFrameCaptureLastError: String?,
         recorderLastFrameCapture: RecorderFrameCaptureReceipt?,
         recorderFrameDeleteInFlight: Bool,
         recorderFrameDeleteLastError: String?,
         recorderLastFrameDelete: RecorderFrameDeleteReceipt?,
+        recorderLastFrameRangeDelete: RecorderFrameRangeDeleteReceipt?,
         recorderFrameCaptures: [RecorderFrameCaptureReceipt],
         recorderFrameCapturesRefreshing: Bool,
         recorderFrameCapturesLastError: String?,
@@ -5899,12 +6062,32 @@ struct OpenDesignDayShell: View {
         recorderAuditSource: RecorderAuditSource?,
         recorderAuditRefreshing: Bool,
         recorderAuditLastError: String?,
+        recorderSearchResult: RecorderSearchResultSet?,
+        recorderSearchRunning: Bool,
+        recorderSearchLastError: String?,
+        recorderSqlQueryResult: RecorderSqlQueryResult?,
+        recorderSqlQueryRunning: Bool,
+        recorderSqlQueryLastError: String?,
+        recorderMcpGrants: [RecorderMcpGrant],
+        recorderMcpGrantsRefreshing: Bool,
+        recorderMcpGrantActionInFlight: String?,
+        recorderMcpGrantLastError: String?,
         recorderAutoCaptureRunning: Bool,
         recorderAutoCaptureLastTrigger: String?,
         recorderAutoCaptureLastError: String?,
+        recorderAudioCaptureRunning: Bool,
+        recorderAudioCaptureLastError: String?,
+        recorderDayMemoryLoop: RecorderDayMemoryLoopResult?,
+        recorderDayMemoryLoopRunning: Bool,
+        recorderDayMemoryLoopLastError: String?,
+        recorderEvidenceCandidateReviewInFlight: Set<String>,
+        recorderRetentionApplyRunning: Bool,
+        recorderRetentionLastResult: RecorderRetentionApplyResult?,
+        recorderRetentionLastError: String?,
         refreshRecorderControl: @escaping () -> Void,
         prepareRecorderControl: @escaping () -> Void,
         refreshRecorderPermissions: @escaping () -> Void,
+        requestRecorderPermission: @escaping (String) -> Void,
         grantRecorderConsent: @escaping () -> Void,
         revokeRecorderConsent: @escaping () -> Void,
         pauseRecorderCapture: @escaping () -> Void,
@@ -5919,11 +6102,20 @@ struct OpenDesignDayShell: View {
         loadRecorderFrameImage: @escaping (String) -> Void,
         prepareRecorderFrameImage: @escaping (String?) -> Void,
         refreshRecorderAuditEvents: @escaping () -> Void,
+        runRecorderSearch: @escaping (String) -> Void,
+        runRecorderSqlQuery: @escaping (String) -> Void,
+        refreshRecorderMcpGrants: @escaping () -> Void,
+        prepareRecorderMcpGrants: @escaping () -> Void,
+        grantRecorderRawSqlMcpAccess: @escaping () -> Void,
+        revokeRecorderMcpGrant: @escaping (String) -> Void,
         startRecorderAutoCapture: @escaping () -> Void,
         stopRecorderAutoCapture: @escaping () -> Void,
         setRecorderClipboardMode: @escaping (String) -> Void,
         setRecorderMicrophoneCapture: @escaping (Bool) -> Void,
         setRecorderSystemAudioCapture: @escaping (Bool) -> Void,
+        runRecorderDayMemoryLoop: @escaping () -> Void,
+        reviewRecorderEvidenceCandidate: @escaping (String, String, String?, [String: Any]?) -> Void,
+        applyRecorderRetention: @escaping () -> Void,
         recorderPipes: [RecorderPipeDefinition],
         recorderPipeRuns: [RecorderPipeRun],
         recorderPipesRefreshing: Bool,
@@ -6008,12 +6200,15 @@ struct OpenDesignDayShell: View {
         self.recorderControlRefreshing = recorderControlRefreshing
         self.recorderControlActionInFlight = recorderControlActionInFlight
         self.recorderControlLastError = recorderControlLastError
+        self.recorderPermissionActor = recorderPermissionActor
+        self.recorderPermissionReleaseIdentity = recorderPermissionReleaseIdentity
         self.recorderFrameCaptureInFlight = recorderFrameCaptureInFlight
         self.recorderFrameCaptureLastError = recorderFrameCaptureLastError
         self.recorderLastFrameCapture = recorderLastFrameCapture
         self.recorderFrameDeleteInFlight = recorderFrameDeleteInFlight
         self.recorderFrameDeleteLastError = recorderFrameDeleteLastError
         self.recorderLastFrameDelete = recorderLastFrameDelete
+        self.recorderLastFrameRangeDelete = recorderLastFrameRangeDelete
         self.recorderFrameCaptures = recorderFrameCaptures
         self.recorderFrameCapturesRefreshing = recorderFrameCapturesRefreshing
         self.recorderFrameCapturesLastError = recorderFrameCapturesLastError
@@ -6023,12 +6218,32 @@ struct OpenDesignDayShell: View {
         self.recorderAuditSource = recorderAuditSource
         self.recorderAuditRefreshing = recorderAuditRefreshing
         self.recorderAuditLastError = recorderAuditLastError
+        self.recorderSearchResult = recorderSearchResult
+        self.recorderSearchRunning = recorderSearchRunning
+        self.recorderSearchLastError = recorderSearchLastError
+        self.recorderSqlQueryResult = recorderSqlQueryResult
+        self.recorderSqlQueryRunning = recorderSqlQueryRunning
+        self.recorderSqlQueryLastError = recorderSqlQueryLastError
+        self.recorderMcpGrants = recorderMcpGrants
+        self.recorderMcpGrantsRefreshing = recorderMcpGrantsRefreshing
+        self.recorderMcpGrantActionInFlight = recorderMcpGrantActionInFlight
+        self.recorderMcpGrantLastError = recorderMcpGrantLastError
         self.recorderAutoCaptureRunning = recorderAutoCaptureRunning
         self.recorderAutoCaptureLastTrigger = recorderAutoCaptureLastTrigger
         self.recorderAutoCaptureLastError = recorderAutoCaptureLastError
+        self.recorderAudioCaptureRunning = recorderAudioCaptureRunning
+        self.recorderAudioCaptureLastError = recorderAudioCaptureLastError
+        self.recorderDayMemoryLoop = recorderDayMemoryLoop
+        self.recorderDayMemoryLoopRunning = recorderDayMemoryLoopRunning
+        self.recorderDayMemoryLoopLastError = recorderDayMemoryLoopLastError
+        self.recorderEvidenceCandidateReviewInFlight = recorderEvidenceCandidateReviewInFlight
+        self.recorderRetentionApplyRunning = recorderRetentionApplyRunning
+        self.recorderRetentionLastResult = recorderRetentionLastResult
+        self.recorderRetentionLastError = recorderRetentionLastError
         self.refreshRecorderControl = refreshRecorderControl
         self.prepareRecorderControl = prepareRecorderControl
         self.refreshRecorderPermissions = refreshRecorderPermissions
+        self.requestRecorderPermission = requestRecorderPermission
         self.grantRecorderConsent = grantRecorderConsent
         self.revokeRecorderConsent = revokeRecorderConsent
         self.pauseRecorderCapture = pauseRecorderCapture
@@ -6043,11 +6258,20 @@ struct OpenDesignDayShell: View {
         self.loadRecorderFrameImage = loadRecorderFrameImage
         self.prepareRecorderFrameImage = prepareRecorderFrameImage
         self.refreshRecorderAuditEvents = refreshRecorderAuditEvents
+        self.runRecorderSearch = runRecorderSearch
+        self.runRecorderSqlQuery = runRecorderSqlQuery
+        self.refreshRecorderMcpGrants = refreshRecorderMcpGrants
+        self.prepareRecorderMcpGrants = prepareRecorderMcpGrants
+        self.grantRecorderRawSqlMcpAccess = grantRecorderRawSqlMcpAccess
+        self.revokeRecorderMcpGrant = revokeRecorderMcpGrant
         self.startRecorderAutoCapture = startRecorderAutoCapture
         self.stopRecorderAutoCapture = stopRecorderAutoCapture
         self.setRecorderClipboardMode = setRecorderClipboardMode
         self.setRecorderMicrophoneCapture = setRecorderMicrophoneCapture
         self.setRecorderSystemAudioCapture = setRecorderSystemAudioCapture
+        self.runRecorderDayMemoryLoop = runRecorderDayMemoryLoop
+        self.reviewRecorderEvidenceCandidate = reviewRecorderEvidenceCandidate
+        self.applyRecorderRetention = applyRecorderRetention
         self.recorderPipes = recorderPipes
         self.recorderPipeRuns = recorderPipeRuns
         self.recorderPipesRefreshing = recorderPipesRefreshing
@@ -6291,12 +6515,15 @@ struct OpenDesignDayShell: View {
                         controlRefreshing: recorderControlRefreshing,
                         controlActionInFlight: recorderControlActionInFlight,
                         controlLastError: recorderControlLastError,
+                        permissionActor: recorderPermissionActor,
+                        permissionReleaseIdentity: recorderPermissionReleaseIdentity,
                         frameCaptureInFlight: recorderFrameCaptureInFlight,
                         frameCaptureLastError: recorderFrameCaptureLastError,
                         lastFrameCapture: recorderLastFrameCapture,
                         frameDeleteInFlight: recorderFrameDeleteInFlight,
                         frameDeleteLastError: recorderFrameDeleteLastError,
                         lastFrameDelete: recorderLastFrameDelete,
+                        lastFrameRangeDelete: recorderLastFrameRangeDelete,
                         frameCaptures: recorderFrameCaptures,
                         frameCapturesRefreshing: recorderFrameCapturesRefreshing,
                         frameCapturesLastError: recorderFrameCapturesLastError,
@@ -6306,12 +6533,32 @@ struct OpenDesignDayShell: View {
                         auditSource: recorderAuditSource,
                         auditRefreshing: recorderAuditRefreshing,
                         auditLastError: recorderAuditLastError,
+                        searchResult: recorderSearchResult,
+                        searchRunning: recorderSearchRunning,
+                        searchLastError: recorderSearchLastError,
+                        sqlQueryResult: recorderSqlQueryResult,
+                        sqlQueryRunning: recorderSqlQueryRunning,
+                        sqlQueryLastError: recorderSqlQueryLastError,
+                        mcpGrants: recorderMcpGrants,
+                        mcpGrantsRefreshing: recorderMcpGrantsRefreshing,
+                        mcpGrantActionInFlight: recorderMcpGrantActionInFlight,
+                        mcpGrantLastError: recorderMcpGrantLastError,
                         autoCaptureRunning: recorderAutoCaptureRunning,
                         autoCaptureLastTrigger: recorderAutoCaptureLastTrigger,
                         autoCaptureLastError: recorderAutoCaptureLastError,
+                        audioCaptureRunning: recorderAudioCaptureRunning,
+                        audioCaptureLastError: recorderAudioCaptureLastError,
+                        dayMemoryLoop: recorderDayMemoryLoop,
+                        dayMemoryLoopRunning: recorderDayMemoryLoopRunning,
+                        dayMemoryLoopLastError: recorderDayMemoryLoopLastError,
+                        evidenceCandidateReviewInFlight: recorderEvidenceCandidateReviewInFlight,
+                        retentionApplyRunning: recorderRetentionApplyRunning,
+                        retentionLastResult: recorderRetentionLastResult,
+                        retentionLastError: recorderRetentionLastError,
                         refreshControl: refreshRecorderControl,
                         prepareControl: prepareRecorderControl,
                         refreshPermissions: refreshRecorderPermissions,
+                        requestPermission: requestRecorderPermission,
                         grantConsent: grantRecorderConsent,
                         revokeConsent: revokeRecorderConsent,
                         pauseCapture: pauseRecorderCapture,
@@ -6326,11 +6573,20 @@ struct OpenDesignDayShell: View {
                         loadFrameImage: loadRecorderFrameImage,
                         prepareFrameImage: prepareRecorderFrameImage,
                         refreshAudit: refreshRecorderAuditEvents,
+                        runSearch: runRecorderSearch,
+                        runSqlQuery: runRecorderSqlQuery,
+                        refreshMcpGrants: refreshRecorderMcpGrants,
+                        prepareMcpGrants: prepareRecorderMcpGrants,
+                        grantRawSqlMcpAccess: grantRecorderRawSqlMcpAccess,
+                        revokeMcpGrant: revokeRecorderMcpGrant,
                         startAutoCapture: startRecorderAutoCapture,
                         stopAutoCapture: stopRecorderAutoCapture,
                         setClipboardMode: self.setRecorderClipboardMode,
                         setMicrophoneCapture: self.setRecorderMicrophoneCapture,
                         setSystemAudioCapture: self.setRecorderSystemAudioCapture,
+                        runDayMemoryLoop: runRecorderDayMemoryLoop,
+                        reviewEvidenceCandidate: reviewRecorderEvidenceCandidate,
+                        applyRetention: applyRecorderRetention,
                         pipes: recorderPipes,
                         runs: recorderPipeRuns,
                         isRefreshing: recorderPipesRefreshing,
@@ -7738,7 +7994,7 @@ private struct OpenDesignLockedMorningBriefingMockSurface: View {
     }
 
     private var syncBar: some View {
-        HStack(spacing: 8) {
+        return HStack(spacing: 8) {
             ForEach(sources) { source in
                 HStack(spacing: 7) {
                     Circle().fill(source.tone.color).frame(width: 6, height: 6)
@@ -8597,7 +8853,37 @@ private struct OpenDesignRecorderPermissionRow: Identifiable {
     let id: String
     let title: String
     let detail: String
+    let tccServiceName: String
+    let manualPath: String
+    let relaunchScope: String
+    let settingsAnchorStatus: String
+    let dragCapability: String
     let settingsURL: String?
+    let canRequest: Bool
+
+    init(
+        id: String,
+        title: String,
+        detail: String,
+        tccServiceName: String,
+        manualPath: String,
+        relaunchScope: String,
+        settingsAnchorStatus: String = "not_applicable",
+        dragCapability: String = "not_applicable",
+        settingsURL: String?,
+        canRequest: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.detail = detail
+        self.tccServiceName = tccServiceName
+        self.manualPath = manualPath
+        self.relaunchScope = relaunchScope
+        self.settingsAnchorStatus = settingsAnchorStatus
+        self.dragCapability = dragCapability
+        self.settingsURL = settingsURL
+        self.canRequest = canRequest
+    }
 }
 
 private struct OpenDesignClipboardPolicyOption: Identifiable {
@@ -8611,12 +8897,15 @@ private struct OpenDesignFounderReplayPageView: View {
     let controlRefreshing: Bool
     let controlActionInFlight: String?
     let controlLastError: String?
+    let permissionActor: RecorderPermissionActorDiagnostic
+    let permissionReleaseIdentity: RecorderPermissionReleaseIdentityDiagnostic
     let frameCaptureInFlight: Bool
     let frameCaptureLastError: String?
     let lastFrameCapture: RecorderFrameCaptureReceipt?
     let frameDeleteInFlight: Bool
     let frameDeleteLastError: String?
     let lastFrameDelete: RecorderFrameDeleteReceipt?
+    let lastFrameRangeDelete: RecorderFrameRangeDeleteReceipt?
     let frameCaptures: [RecorderFrameCaptureReceipt]
     let frameCapturesRefreshing: Bool
     let frameCapturesLastError: String?
@@ -8626,12 +8915,32 @@ private struct OpenDesignFounderReplayPageView: View {
     let auditSource: RecorderAuditSource?
     let auditRefreshing: Bool
     let auditLastError: String?
+    let searchResult: RecorderSearchResultSet?
+    let searchRunning: Bool
+    let searchLastError: String?
+    let sqlQueryResult: RecorderSqlQueryResult?
+    let sqlQueryRunning: Bool
+    let sqlQueryLastError: String?
+    let mcpGrants: [RecorderMcpGrant]
+    let mcpGrantsRefreshing: Bool
+    let mcpGrantActionInFlight: String?
+    let mcpGrantLastError: String?
     let autoCaptureRunning: Bool
     let autoCaptureLastTrigger: String?
     let autoCaptureLastError: String?
+    let audioCaptureRunning: Bool
+    let audioCaptureLastError: String?
+    let dayMemoryLoop: RecorderDayMemoryLoopResult?
+    let dayMemoryLoopRunning: Bool
+    let dayMemoryLoopLastError: String?
+    let evidenceCandidateReviewInFlight: Set<String>
+    let retentionApplyRunning: Bool
+    let retentionLastResult: RecorderRetentionApplyResult?
+    let retentionLastError: String?
     let refreshControl: () -> Void
     let prepareControl: () -> Void
     let refreshPermissions: () -> Void
+    let requestPermission: (String) -> Void
     let grantConsent: () -> Void
     let revokeConsent: () -> Void
     let pauseCapture: () -> Void
@@ -8646,11 +8955,20 @@ private struct OpenDesignFounderReplayPageView: View {
     let loadFrameImage: (String) -> Void
     let prepareFrameImage: (String?) -> Void
     let refreshAudit: () -> Void
+    let runSearch: (String) -> Void
+    let runSqlQuery: (String) -> Void
+    let refreshMcpGrants: () -> Void
+    let prepareMcpGrants: () -> Void
+    let grantRawSqlMcpAccess: () -> Void
+    let revokeMcpGrant: (String) -> Void
     let startAutoCapture: () -> Void
     let stopAutoCapture: () -> Void
     let setClipboardMode: (String) -> Void
     let setMicrophoneCapture: (Bool) -> Void
     let setSystemAudioCapture: (Bool) -> Void
+    let runDayMemoryLoop: () -> Void
+    let reviewEvidenceCandidate: (String, String, String?, [String: Any]?) -> Void
+    let applyRetention: () -> Void
     let pipes: [RecorderPipeDefinition]
     let runs: [RecorderPipeRun]
     let isRefreshing: Bool
@@ -8667,6 +8985,9 @@ private struct OpenDesignFounderReplayPageView: View {
     @State private var selectedMode: OpenDesignFounderReplayMode = .replay
     @State private var selectedFrameID: String?
     @State private var visibleRangeDeleteArmed = false
+    @State private var recorderSearchText = "activation"
+    @State private var sqlQueryText = "SELECT id, captured_at, app_name, window_title, browser_domain, redacted_text FROM recorder_sql_frames_redacted LIMIT 20"
+    @State private var evidenceArtifactLocations: [String: String] = [:]
 
     private let rows: [OpenDesignFounderReplaySummaryRow] = [
         .init(id: "permission", time: "권한", action: "Screen Recording · Accessibility", workState: "미확인", decision: "Swift permission UI 필요"),
@@ -8686,12 +9007,15 @@ private struct OpenDesignFounderReplayPageView: View {
         controlRefreshing: Bool = false,
         controlActionInFlight: String? = nil,
         controlLastError: String? = nil,
+        permissionActor: RecorderPermissionActorDiagnostic = .unknown,
+        permissionReleaseIdentity: RecorderPermissionReleaseIdentityDiagnostic = .unknown,
         frameCaptureInFlight: Bool = false,
         frameCaptureLastError: String? = nil,
         lastFrameCapture: RecorderFrameCaptureReceipt? = nil,
         frameDeleteInFlight: Bool = false,
         frameDeleteLastError: String? = nil,
         lastFrameDelete: RecorderFrameDeleteReceipt? = nil,
+        lastFrameRangeDelete: RecorderFrameRangeDeleteReceipt? = nil,
         frameCaptures: [RecorderFrameCaptureReceipt] = [],
         frameCapturesRefreshing: Bool = false,
         frameCapturesLastError: String? = nil,
@@ -8701,12 +9025,32 @@ private struct OpenDesignFounderReplayPageView: View {
         auditSource: RecorderAuditSource? = nil,
         auditRefreshing: Bool = false,
         auditLastError: String? = nil,
+        searchResult: RecorderSearchResultSet? = nil,
+        searchRunning: Bool = false,
+        searchLastError: String? = nil,
+        sqlQueryResult: RecorderSqlQueryResult? = nil,
+        sqlQueryRunning: Bool = false,
+        sqlQueryLastError: String? = nil,
+        mcpGrants: [RecorderMcpGrant] = [],
+        mcpGrantsRefreshing: Bool = false,
+        mcpGrantActionInFlight: String? = nil,
+        mcpGrantLastError: String? = nil,
         autoCaptureRunning: Bool = false,
         autoCaptureLastTrigger: String? = nil,
         autoCaptureLastError: String? = nil,
+        audioCaptureRunning: Bool = false,
+        audioCaptureLastError: String? = nil,
+        dayMemoryLoop: RecorderDayMemoryLoopResult? = nil,
+        dayMemoryLoopRunning: Bool = false,
+        dayMemoryLoopLastError: String? = nil,
+        evidenceCandidateReviewInFlight: Set<String> = [],
+        retentionApplyRunning: Bool = false,
+        retentionLastResult: RecorderRetentionApplyResult? = nil,
+        retentionLastError: String? = nil,
         refreshControl: @escaping () -> Void = {},
         prepareControl: @escaping () -> Void = {},
         refreshPermissions: @escaping () -> Void = {},
+        requestPermission: @escaping (String) -> Void = { _ in },
         grantConsent: @escaping () -> Void = {},
         revokeConsent: @escaping () -> Void = {},
         pauseCapture: @escaping () -> Void = {},
@@ -8721,11 +9065,20 @@ private struct OpenDesignFounderReplayPageView: View {
         loadFrameImage: @escaping (String) -> Void = { _ in },
         prepareFrameImage: @escaping (String?) -> Void = { _ in },
         refreshAudit: @escaping () -> Void = {},
+        runSearch: @escaping (String) -> Void = { _ in },
+        runSqlQuery: @escaping (String) -> Void = { _ in },
+        refreshMcpGrants: @escaping () -> Void = {},
+        prepareMcpGrants: @escaping () -> Void = {},
+        grantRawSqlMcpAccess: @escaping () -> Void = {},
+        revokeMcpGrant: @escaping (String) -> Void = { _ in },
         startAutoCapture: @escaping () -> Void = {},
         stopAutoCapture: @escaping () -> Void = {},
         setClipboardMode: @escaping (String) -> Void = { _ in },
         setMicrophoneCapture: @escaping (Bool) -> Void = { _ in },
         setSystemAudioCapture: @escaping (Bool) -> Void = { _ in },
+        runDayMemoryLoop: @escaping () -> Void = {},
+        reviewEvidenceCandidate: @escaping (String, String, String?, [String: Any]?) -> Void = { _, _, _, _ in },
+        applyRetention: @escaping () -> Void = {},
         pipes: [RecorderPipeDefinition] = [],
         runs: [RecorderPipeRun] = [],
         isRefreshing: Bool = false,
@@ -8744,12 +9097,15 @@ private struct OpenDesignFounderReplayPageView: View {
         self.controlRefreshing = controlRefreshing
         self.controlActionInFlight = controlActionInFlight
         self.controlLastError = controlLastError
+        self.permissionActor = permissionActor
+        self.permissionReleaseIdentity = permissionReleaseIdentity
         self.frameCaptureInFlight = frameCaptureInFlight
         self.frameCaptureLastError = frameCaptureLastError
         self.lastFrameCapture = lastFrameCapture
         self.frameDeleteInFlight = frameDeleteInFlight
         self.frameDeleteLastError = frameDeleteLastError
         self.lastFrameDelete = lastFrameDelete
+        self.lastFrameRangeDelete = lastFrameRangeDelete
         self.frameCaptures = frameCaptures
         self.frameCapturesRefreshing = frameCapturesRefreshing
         self.frameCapturesLastError = frameCapturesLastError
@@ -8759,12 +9115,32 @@ private struct OpenDesignFounderReplayPageView: View {
         self.auditSource = auditSource
         self.auditRefreshing = auditRefreshing
         self.auditLastError = auditLastError
+        self.searchResult = searchResult
+        self.searchRunning = searchRunning
+        self.searchLastError = searchLastError
+        self.sqlQueryResult = sqlQueryResult
+        self.sqlQueryRunning = sqlQueryRunning
+        self.sqlQueryLastError = sqlQueryLastError
+        self.mcpGrants = mcpGrants
+        self.mcpGrantsRefreshing = mcpGrantsRefreshing
+        self.mcpGrantActionInFlight = mcpGrantActionInFlight
+        self.mcpGrantLastError = mcpGrantLastError
         self.autoCaptureRunning = autoCaptureRunning
         self.autoCaptureLastTrigger = autoCaptureLastTrigger
         self.autoCaptureLastError = autoCaptureLastError
+        self.audioCaptureRunning = audioCaptureRunning
+        self.audioCaptureLastError = audioCaptureLastError
+        self.dayMemoryLoop = dayMemoryLoop
+        self.dayMemoryLoopRunning = dayMemoryLoopRunning
+        self.dayMemoryLoopLastError = dayMemoryLoopLastError
+        self.evidenceCandidateReviewInFlight = evidenceCandidateReviewInFlight
+        self.retentionApplyRunning = retentionApplyRunning
+        self.retentionLastResult = retentionLastResult
+        self.retentionLastError = retentionLastError
         self.refreshControl = refreshControl
         self.prepareControl = prepareControl
         self.refreshPermissions = refreshPermissions
+        self.requestPermission = requestPermission
         self.grantConsent = grantConsent
         self.revokeConsent = revokeConsent
         self.pauseCapture = pauseCapture
@@ -8779,11 +9155,20 @@ private struct OpenDesignFounderReplayPageView: View {
         self.loadFrameImage = loadFrameImage
         self.prepareFrameImage = prepareFrameImage
         self.refreshAudit = refreshAudit
+        self.runSearch = runSearch
+        self.runSqlQuery = runSqlQuery
+        self.refreshMcpGrants = refreshMcpGrants
+        self.prepareMcpGrants = prepareMcpGrants
+        self.grantRawSqlMcpAccess = grantRawSqlMcpAccess
+        self.revokeMcpGrant = revokeMcpGrant
         self.startAutoCapture = startAutoCapture
         self.stopAutoCapture = stopAutoCapture
         self.setClipboardMode = setClipboardMode
         self.setMicrophoneCapture = setMicrophoneCapture
         self.setSystemAudioCapture = setSystemAudioCapture
+        self.runDayMemoryLoop = runDayMemoryLoop
+        self.reviewEvidenceCandidate = reviewEvidenceCandidate
+        self.applyRetention = applyRetention
         self.pipes = pipes
         self.runs = runs
         self.isRefreshing = isRefreshing
@@ -8820,14 +9205,22 @@ private struct OpenDesignFounderReplayPageView: View {
             prepare()
             prepareControl()
             prepareFrameCaptures()
+            prepareMcpGrants()
             prepareSelectedReplayFrameImage()
         }
-        .onChange(of: recentFrameIDsSignature) { _ in
+        .onChange(of: recentFrameIDsSignature) { _, _ in
             visibleRangeDeleteArmed = false
             reconcileSelectedReplayFrame()
         }
         .background(OpenDesignOfficeHoursColor.bg)
-        .accessibilityIdentifier("opendesign.founderReplay.screen")
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Founder Replay Screen")
+                .accessibilityIdentifier("opendesign.founderReplay.screen")
+                .allowsHitTesting(false)
+        }
     }
 
     private var header: some View {
@@ -8891,8 +9284,10 @@ private struct OpenDesignFounderReplayPageView: View {
                                 )
                         )
                 }
-                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .accessibilityLabel(mode.title)
+                .accessibilityValue(selectedMode == mode ? "active" : "inactive")
                 .accessibilityIdentifier("opendesign.founderReplay.mode.\(mode.rawValue)")
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
             }
 
             Spacer(minLength: 0)
@@ -8915,8 +9310,8 @@ private struct OpenDesignFounderReplayPageView: View {
             if let frameImageLastError, !frameImageLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 pipesNotice(text: frameImageLastError, tone: .amber)
             }
-            replayViewport
             replayRail
+            replayViewport
         }
         .padding(28)
         .frame(maxWidth: 1180, alignment: .topLeading)
@@ -9100,6 +9495,16 @@ private struct OpenDesignFounderReplayPageView: View {
                 Text("\(recentFrameCaptures.count) frames")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .accessibilityLabel(frameCapturesStatusAccessibilityLabel)
+                    .accessibilityIdentifier("opendesign.founderReplay.frames.status")
+            }
+            if let lastFrameRangeDelete {
+                Text(frameRangeDeleteSummary(lastFrameRangeDelete))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                    .accessibilityLabel(frameRangeDeleteAccessibilityLabel(lastFrameRangeDelete))
+                    .accessibilityIdentifier("opendesign.founderReplay.frames.lastRangeDelete")
             }
 
             HStack(spacing: 4) {
@@ -9124,12 +9529,12 @@ private struct OpenDesignFounderReplayPageView: View {
                         }
                         .buttonStyle(.plain)
                         .help("\(compactIsoTimestamp(frame.capturedAt)) · \(frame.captureTrigger)")
+                        .accessibilityLabel(frameTimelineAccessibilityLabel(frame, index: index))
                         .accessibilityIdentifier("opendesign.founderReplay.timeline.frame.\(index)")
                     }
                 }
             }
             .frame(height: 20)
-            .accessibilityIdentifier("opendesign.founderReplay.timeline.frames")
 
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -9158,7 +9563,6 @@ private struct OpenDesignFounderReplayPageView: View {
                         .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
                 )
         )
-        .accessibilityIdentifier("opendesign.founderReplay.timeline")
     }
 
     private var tableSurface: some View {
@@ -9185,7 +9589,7 @@ private struct OpenDesignFounderReplayPageView: View {
             tableCell("시간", width: 92, isHeader: true)
             tableCell("액션", minWidth: 220, isHeader: true)
             tableCell("작업 상태", minWidth: 160, isHeader: true)
-            tableCell("의사결정 요약", minWidth: 240, isHeader: true)
+            tableCell("맥락 / 메타데이터", minWidth: 240, isHeader: true)
             tableIconCell(isHeader: true)
         }
         .background(OpenDesignOfficeHoursColor.surface2)
@@ -9212,8 +9616,8 @@ private struct OpenDesignFounderReplayPageView: View {
         HStack(spacing: 0) {
             tableCell(compactIsoTimestamp(frame.capturedAt), width: 92)
             tableCell(frame.captureTrigger, minWidth: 220)
-            tableCell(frame.safeForSearch ? "search safe" : frame.redactionStatus, minWidth: 160)
-            tableCell(frame.windowTitle?.isEmpty == false ? frame.windowTitle! : frame.id, minWidth: 240)
+            tableCell(founderReplayFrameTextStatus(frame), minWidth: 160)
+            tableCell(founderReplayFrameMetadata(frame), minWidth: 240)
             Button {
                 deleteFrameWithID(frame.id)
             } label: {
@@ -9234,6 +9638,37 @@ private struct OpenDesignFounderReplayPageView: View {
             selectReplayFrame(frame)
         }
         .accessibilityIdentifier("opendesign.founderReplay.table.frame.\(frame.id)")
+    }
+
+    private func founderReplayFrameTextStatus(_ frame: RecorderFrameCaptureReceipt) -> String {
+        if frame.textSource == "ocr_unavailable_named_root_cause",
+           let rootCause = frame.textProvenanceRootCause,
+           !rootCause.isEmpty {
+            return "\(frame.textSource)\n\(rootCause)"
+        }
+        return frame.textSource.isEmpty ? (frame.safeForSearch ? "search safe" : frame.redactionStatus) : frame.textSource
+    }
+
+    private func founderReplayFrameMetadata(_ frame: RecorderFrameCaptureReceipt) -> String {
+        let primary: String
+        if let windowTitle = frame.windowTitle, !windowTitle.isEmpty {
+            primary = windowTitle
+        } else if let appName = frame.appName, !appName.isEmpty {
+            primary = appName
+        } else {
+            primary = frame.id
+        }
+        var metadata: [String] = []
+        if let browserLabel = frame.browserUrlSearchLabel, !browserLabel.isEmpty {
+            metadata.append(browserLabel)
+        } else if let browserDomain = frame.browserDomain, !browserDomain.isEmpty {
+            metadata.append(browserDomain)
+        }
+        if let documentLabel = frame.documentPathSearchLabel, !documentLabel.isEmpty {
+            metadata.append(documentLabel)
+        }
+        guard !metadata.isEmpty else { return primary }
+        return "\(primary)\n\(metadata.joined(separator: " · "))"
     }
 
     private func tableCell(
@@ -9332,6 +9767,37 @@ private struct OpenDesignFounderReplayPageView: View {
         selectedReplayFrame?.id == frame.id
     }
 
+    private func frameTimelineAccessibilityLabel(_ frame: RecorderFrameCaptureReceipt, index: Int) -> String {
+        [
+            "frame index \(index)",
+            frame.id,
+            frame.capturedAt,
+            frame.captureTrigger,
+            frame.snapshotAssetId,
+            frame.redactionStatus,
+            frame.safeForSearch ? "search safe" : "search off",
+            frame.safeForMemory ? "memory safe" : "memory off",
+            "timeline frame non-proof",
+        ].joined(separator: " · ")
+    }
+
+    private var frameCapturesStatusAccessibilityLabel: String {
+        let frameIDs = recentFrameCaptures.map(\.id)
+        let assetIDs = recentFrameCaptures.map(\.snapshotAssetId).filter { !$0.isEmpty }
+        var parts = [
+            "frames count \(recentFrameCaptures.count)",
+            frameCapturesRefreshing ? "frames loading" : "frames idle",
+            frameIDs.isEmpty ? "no frame ids" : "frame ids \(frameIDs.joined(separator: ","))",
+            assetIDs.isEmpty ? "no asset ids" : "asset ids \(assetIDs.joined(separator: ","))",
+            "frame list non-proof",
+        ]
+        if let error = frameCapturesLastError?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !error.isEmpty {
+            parts.append("error \(error)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func requestVisibleRangeDelete() {
         guard !recentFrameCaptures.isEmpty else { return }
         guard visibleRangeDeleteArmed else {
@@ -9340,6 +9806,29 @@ private struct OpenDesignFounderReplayPageView: View {
         }
         visibleRangeDeleteArmed = false
         deleteFrameRange(recentFrameCaptures.map(\.id))
+    }
+
+    private func frameRangeDeleteSummary(_ receipt: RecorderFrameRangeDeleteReceipt) -> String {
+        [
+            "deleted range \(receipt.frameCount) frames",
+            "media \(receipt.mediaRemovedCount) removed",
+            "path exposed \(receipt.pathExposed ? "yes" : "no")",
+            "status \(receipt.status)",
+        ].joined(separator: " · ")
+    }
+
+    private func frameRangeDeleteAccessibilityLabel(_ receipt: RecorderFrameRangeDeleteReceipt) -> String {
+        let frameIds = receipt.frameIds.isEmpty ? "no frame ids" : "frame ids \(receipt.frameIds.joined(separator: ","))"
+        let mediaIds = receipt.mediaAssetIds.isEmpty ? "no media ids" : "media ids \(receipt.mediaAssetIds.joined(separator: ","))"
+        return [
+            frameRangeDeleteSummary(receipt),
+            frameIds,
+            mediaIds,
+            receipt.deletedAt.isEmpty ? "unknown deleted time" : "deleted at \(receipt.deletedAt)",
+            "recorder range delete receipt",
+            "range delete proof rejected",
+            "non-proof",
+        ].joined(separator: " · ")
     }
 
     private var modeStatusText: String {
@@ -9369,37 +9858,172 @@ private struct OpenDesignFounderReplayPageView: View {
         controlRefreshing || controlActionInFlight != nil
     }
 
+    private var permissionActorLabel: String {
+        "actor \(permissionActor.source) · \(permissionActor.bundleIdentifier) · \(permissionActor.buildChannel)"
+    }
+
+    private var permissionReleaseIdentityStatus: String {
+        permissionReleaseIdentity.externalPermissionOnboardingAllowed ? "release_ready" : "blocked"
+    }
+
+    private var permissionReleaseIdentityBlockerSummary: String {
+        permissionReleaseIdentity.blockers.isEmpty
+            ? "none"
+            : permissionReleaseIdentity.blockers.prefix(4).joined(separator: " ")
+    }
+
+    private var permissionActorAccessibilityLabel: String {
+        [
+            "Permission actor source \(permissionActor.source)",
+            "display \(permissionActor.displayName)",
+            "bundle \(permissionActor.bundleIdentifier)",
+            "path \(permissionActor.bundlePath)",
+            "executable \(permissionActor.executablePath)",
+            "team \(permissionActor.teamIdentifier)",
+            "signing \(permissionActor.signingRequirementSummary)",
+            "codeDirectoryHash \(permissionActor.codeDirectoryHashSummary)",
+            "translocation \(permissionActor.translocationState)",
+            "releaseGate \(permissionReleaseIdentityStatus)",
+            "releaseBlockers \(permissionReleaseIdentityBlockerSummary)",
+            "sparkleKeyPresent \(permissionReleaseIdentity.sparklePublicKeyPresent)",
+            "sparkleFeedURL \(permissionReleaseIdentity.sparkleFeedURL)",
+            "releasePolicyVerified \(permissionReleaseIdentity.releasePolicyVerified)",
+        ].joined(separator: " ")
+    }
+
+    private var permissionActorDiagnosticRow: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: permissionActor.isAppTranslocated ? "exclamationmark.triangle" : "checkmark.seal")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(permissionActor.isAppTranslocated ? OpenDesignOfficeHoursColor.amber : OpenDesignOfficeHoursColor.accent)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(permissionActorLabel)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(permissionActor.isAppTranslocated ? OpenDesignOfficeHoursColor.amber : OpenDesignOfficeHoursColor.fg)
+                    .lineLimit(1)
+                Text("\(permissionActor.teamIdentifier) · \(permissionActor.translocationState) · \(permissionActor.bundlePath)")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                Text("release \(permissionReleaseIdentityStatus) · blockers \(permissionReleaseIdentityBlockerSummary)")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(
+                        permissionReleaseIdentity.externalPermissionOnboardingAllowed
+                            ? OpenDesignOfficeHoursColor.muted
+                            : OpenDesignOfficeHoursColor.amber
+                    )
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 9)
+        .padding(.horizontal, 12)
+        .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(permissionActorAccessibilityLabel)
+        .accessibilityIdentifier("opendesign.founderReplay.control.permission.actor")
+    }
+
     private var permissionRows: [OpenDesignRecorderPermissionRow] {
         [
             .init(
                 id: "screenRecording",
                 title: "Screen Recording",
                 detail: "Core Memory frame capture",
-                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+                tccServiceName: "kTCCServiceScreenCapture",
+                manualPath: "System Settings -> Privacy & Security -> Screen & System Audio Recording",
+                relaunchScope: "app relaunch",
+                settingsAnchorStatus: "candidate_anchor_manual_fallback",
+                dragCapability: "disabled_api_registered",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                canRequest: true
             ),
             .init(
                 id: "accessibility",
                 title: "Accessibility",
                 detail: "window/app metadata extraction",
-                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                tccServiceName: "kTCCServiceAccessibility",
+                manualPath: "System Settings -> Privacy & Security -> Accessibility",
+                relaunchScope: "none",
+                settingsAnchorStatus: "candidate_anchor_manual_fallback",
+                dragCapability: "disabled_unverified_pane",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+                canRequest: true
             ),
             .init(
                 id: "inputMonitoring",
                 title: "Input Monitoring",
                 detail: "event-trigger timing",
-                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+                tccServiceName: "kTCCServiceListenEvent",
+                manualPath: "System Settings -> Privacy & Security -> Input Monitoring",
+                relaunchScope: "app relaunch",
+                settingsAnchorStatus: "candidate_anchor_manual_fallback",
+                dragCapability: "disabled_unverified_pane",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+                canRequest: true
             ),
-            .init(id: "visionOcr", title: "Vision OCR", detail: "local OCR fallback", settingsURL: nil),
-            .init(id: "browserMetadata", title: "Browser metadata", detail: "degraded when unavailable", settingsURL: nil),
-            .init(id: "documentMetadata", title: "Document metadata", detail: "degraded when unavailable", settingsURL: nil),
-            .init(id: "clipboard", title: "Clipboard", detail: "trigger-only policy", settingsURL: nil),
+            .init(
+                id: "visionOcr",
+                title: "Vision OCR",
+                detail: "local OCR fallback",
+                tccServiceName: "n/a",
+                manualPath: "local Vision runtime",
+                relaunchScope: "none",
+                settingsURL: nil
+            ),
+            .init(
+                id: "browserMetadata",
+                title: "Browser metadata",
+                detail: "degraded when unavailable",
+                tccServiceName: "n/a",
+                manualPath: "browser accessibility or automation metadata",
+                relaunchScope: "none",
+                settingsURL: nil
+            ),
+            .init(
+                id: "documentMetadata",
+                title: "Document metadata",
+                detail: "degraded when unavailable",
+                tccServiceName: "n/a",
+                manualPath: "document app metadata",
+                relaunchScope: "none",
+                settingsURL: nil
+            ),
+            .init(
+                id: "clipboard",
+                title: "Clipboard",
+                detail: "trigger-only policy",
+                tccServiceName: "n/a",
+                manualPath: "Agentic30 local consent",
+                relaunchScope: "none",
+                settingsURL: nil
+            ),
             .init(
                 id: "microphone",
                 title: "Microphone",
                 detail: "off until local opt-in",
-                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+                tccServiceName: "kTCCServiceMicrophone",
+                manualPath: "System Settings -> Privacy & Security -> Microphone",
+                relaunchScope: "none",
+                settingsAnchorStatus: "candidate_anchor_manual_fallback",
+                dragCapability: "disabled_native_prompt",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+                canRequest: true
             ),
-            .init(id: "systemAudio", title: "System Audio", detail: "off until local opt-in", settingsURL: nil),
+            .init(
+                id: "systemAudio",
+                title: "System Audio",
+                detail: "Screen Recording-gated opt-in",
+                tccServiceName: "kTCCServiceScreenCapture",
+                manualPath: "System Settings -> Privacy & Security -> Screen & System Audio Recording",
+                relaunchScope: "recorder restart",
+                settingsAnchorStatus: "candidate_anchor_manual_fallback",
+                dragCapability: "disabled_screen_capture_gate",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                canRequest: true
+            ),
         ]
     }
 
@@ -9419,17 +10043,41 @@ private struct OpenDesignFounderReplayPageView: View {
                 if let autoCaptureLastError, !autoCaptureLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     pipesNotice(text: autoCaptureLastError, tone: .amber)
                 }
+                if let audioCaptureLastError, !audioCaptureLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    ZStack(alignment: .topLeading) {
+                        pipesNotice(text: audioCaptureLastError, tone: .amber)
+                        Color.clear
+                            .frame(width: 1, height: 1)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(audioCaptureLastError)
+                            .accessibilityIdentifier("opendesign.founderReplay.control.audioError")
+                            .allowsHitTesting(false)
+                    }
+                }
                 controlConsentPanel
                 controlReadinessPanel
                 controlFrameCapturePanel
+                controlDayMemoryLoopPanel
+                controlRetentionPanel
+                controlRedactedSearchPanel
                 controlPermissionLadder
                 controlSensitivePolicy
                 controlAuditPanel
+                controlMcpGrantPanel
+                controlSqlInspectorPanel
             }
             .padding(28)
             .frame(maxWidth: 1180, alignment: .topLeading)
         }
-        .accessibilityIdentifier("opendesign.founderReplay.control")
+        .accessibilityIdentifier("opendesign.founderReplay.control.scroll")
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Founder Replay Control")
+                .accessibilityIdentifier("opendesign.founderReplay.control")
+                .allowsHitTesting(false)
+        }
     }
 
     private var controlToolbar: some View {
@@ -9499,11 +10147,13 @@ private struct OpenDesignFounderReplayPageView: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                         .lineLimit(1)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.lastFrameCapture")
                 } else {
                     Text(frameCaptureInFlight ? "ScreenCaptureKit frame ingest in progress" : "No frame has been ingested in this session")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                         .lineLimit(1)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.frameCapture.emptyState")
                 }
                 if let autoCaptureLastTrigger, !autoCaptureLastTrigger.isEmpty {
                     Text("trigger \(autoCaptureLastTrigger)")
@@ -9516,6 +10166,7 @@ private struct OpenDesignFounderReplayPageView: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                         .lineLimit(1)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.lastFrameDelete")
                 }
             }
             Spacer(minLength: 10)
@@ -9542,6 +10193,368 @@ private struct OpenDesignFounderReplayPageView: View {
                         .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
                 )
         )
+    }
+
+    private var controlDayMemoryLoopPanel: some View {
+        let reviewStatus = dayMemoryLoop?.review?.status
+        let inbox = dayMemoryLoop?.review?.evidenceInbox
+        let evidenceBuild = dayMemoryLoop?.evidenceBuildResult
+        let action = dayMemoryLoop?.nextAction?.action
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: dayMemoryLoop == nil ? "tray.and.arrow.down" : "checklist")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(dayMemoryLoop == nil ? OpenDesignOfficeHoursColor.muted : OpenDesignOfficeHoursColor.accent)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Day Memory Review")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    Text(dayMemoryLoopRunning ? "running recorder review" : (reviewStatus?.state ?? "not run"))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(dayMemoryLoopRunning ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                    if let reason = reviewStatus?.reason, !reason.isEmpty {
+                        Text("reason \(reason)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                            .lineLimit(1)
+                    }
+                    if let inbox {
+                        Text("Evidence Inbox total \(inbox.total) · unresolved \(inbox.unresolvedCount) · written \(inbox.writtenToLedgerCount)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                            .lineLimit(1)
+                    }
+                    if let evidenceBuild {
+                        Text("candidates created \(evidenceBuild.createdCount) · skipped \(evidenceBuild.skippedCount)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                            .lineLimit(1)
+                    }
+                    if let action {
+                        Text("next \(action.actionType) · \(action.title)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.nextAction")
+                    }
+                    if let snapshot = dayMemoryLoop?.snapshot {
+                        Text("snapshot \(snapshot.persisted ? "persisted" : "not persisted")\(snapshot.relativePath.map { " · \($0)" } ?? "")")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                            .lineLimit(1)
+                    }
+                    if let dayMemoryLoopLastError, !dayMemoryLoopLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(dayMemoryLoopLastError)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                            .lineLimit(2)
+                            .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.error")
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(dayMemoryLoopAccessibilityLabel)
+                .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.summary")
+                if let evidenceBuild, !evidenceBuild.created.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(evidenceBuild.created.prefix(3).enumerated()), id: \.element.id) { index, candidate in
+                            evidenceCandidateSummaryRow(candidate, index: index)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+            Spacer(minLength: 10)
+            founderReplayStatusPill(dayMemoryLoop?.proofAcceptedByDayLoop == true ? "proof?" : "non-proof", tone: .amber)
+            Button(action: runDayMemoryLoop) {
+                Label(dayMemoryLoopRunning ? "실행 중" : "Run Review", systemImage: "tray.and.arrow.down")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: 30)
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle())
+            .disabled(dayMemoryLoopRunning)
+            .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.run")
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+    }
+
+    private var controlRetentionPanel: some View {
+        let result = retentionLastResult
+        let status = retentionApplyRunning ? "running retention sweep" : (result?.status ?? "not run")
+        let deletedFrameCount = result?.deletedFrameCount ?? 0
+        let deletedAudioChunkCount = result?.deletedAudioChunkCount ?? 0
+        let deletedMediaCount = result?.deletedMediaCount ?? 0
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: result == nil ? "clock.arrow.circlepath" : "checkmark.circle")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(result == nil ? OpenDesignOfficeHoursColor.muted : OpenDesignOfficeHoursColor.accent)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Retention Sweep")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                Text(status)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(retentionApplyRunning ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                if let reason = result?.reason, !reason.isEmpty {
+                    Text("reason \(reason)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                }
+                Text("deleted frames \(deletedFrameCount) · audio \(deletedAudioChunkCount) · media \(deletedMediaCount)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.retention.counts")
+                if let retentionLastError,
+                   !retentionLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(retentionLastError)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.retention.error")
+                }
+            }
+            Spacer(minLength: 10)
+            founderReplayStatusPill(
+                result?.proofLedgerWriteAllowed == true ? "proof write" : "proof blocked",
+                tone: .amber
+            )
+            founderReplayStatusPill(
+                result?.proofAcceptedByRetention == true ? "proof accepted" : "non-proof",
+                tone: .amber
+            )
+            Button(action: applyRetention) {
+                Label(retentionApplyRunning ? "실행 중" : "Apply", systemImage: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: 30)
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: retentionApplyRunning))
+            .disabled(retentionApplyRunning)
+            .accessibilityIdentifier("opendesign.founderReplay.control.retention.apply")
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(retentionAccessibilityLabel)
+        .accessibilityIdentifier("opendesign.founderReplay.control.retention")
+    }
+
+    private var retentionAccessibilityLabel: String {
+        let result = retentionLastResult
+        return [
+            "Retention Sweep state \(retentionApplyRunning ? "running" : (result?.status ?? "not run"))",
+            "deleted frames \(result?.deletedFrameCount ?? 0)",
+            "deleted audio \(result?.deletedAudioChunkCount ?? 0)",
+            "deleted media \(result?.deletedMediaCount ?? 0)",
+            result?.proofLedgerWriteAllowed == true ? "proof ledger write allowed" : "proof ledger write blocked",
+            result?.proofAcceptedByRetention == true ? "proof accepted" : "non proof",
+        ].joined(separator: " | ")
+    }
+
+    private var dayMemoryLoopAccessibilityLabel: String {
+        let reviewState = dayMemoryLoop?.review?.status?.state ?? "not_run"
+        let inbox = dayMemoryLoop?.review?.evidenceInbox
+        let evidenceBuild = dayMemoryLoop?.evidenceBuildResult
+        let action = dayMemoryLoop?.nextAction?.action
+        return [
+            "Day Memory Review state \(reviewState)",
+            "Evidence Inbox total \(inbox?.total ?? 0)",
+            "unresolved \(inbox?.unresolvedCount ?? 0)",
+            "written \(inbox?.writtenToLedgerCount ?? 0)",
+            "candidates created \(evidenceBuild?.createdCount ?? 0)",
+            "candidate rows \(evidenceBuild?.created.count ?? 0)",
+            "next action \(action?.actionType ?? "none")",
+            dayMemoryLoop?.proofAcceptedByDayLoop == true ? "proof accepted" : "proof rejected",
+        ].joined(separator: " | ")
+    }
+
+    private func evidenceCandidateSummaryRow(_ candidate: RecorderEvidenceCandidateSummary, index: Int) -> some View {
+        let debt = candidate.evidenceDebt.first?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidateID = candidate.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artifactLocation = Binding<String>(
+            get: { evidenceArtifactLocations[candidateID] ?? "" },
+            set: { evidenceArtifactLocations[candidateID] = $0 }
+        )
+        let cleanArtifactLocation = artifactLocation.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isReviewable = isEvidenceCandidateReviewable(candidate)
+        let isReviewing = evidenceCandidateReviewInFlight.contains(candidateID)
+        let canApprove = isReviewable && !isReviewing && !candidateID.isEmpty && !cleanArtifactLocation.isEmpty
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Text(candidate.claim.isEmpty ? candidate.id : candidate.claim)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                founderReplayStatusPill(candidate.candidateStatus.isEmpty ? "candidate" : candidate.candidateStatus, tone: candidate.candidateStatus == "pending_review" ? .amber : .sky)
+                founderReplayStatusPill(candidate.proofKind.isEmpty ? "proof kind" : candidate.proofKind, tone: .sky)
+                founderReplayStatusPill("non-proof", tone: .amber)
+            }
+            HStack(spacing: 8) {
+                if let targetGate = candidate.targetGate, !targetGate.isEmpty {
+                    Text(targetGate)
+                }
+                Text(candidate.sourceState.isEmpty ? "source unknown" : candidate.sourceState)
+                Text("\(candidate.sourceIds.count) sources")
+                if !candidate.createdAt.isEmpty {
+                    Text(compactIsoTimestamp(candidate.createdAt))
+                }
+            }
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            .lineLimit(1)
+            if let debt, !debt.isEmpty {
+                Text(debt)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(2)
+            }
+            if isReviewable {
+                HStack(spacing: 8) {
+                    TextField("External URL or local path", text: artifactLocation)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                        .padding(.horizontal, 8)
+                        .frame(minWidth: 180, maxWidth: 280, minHeight: 30)
+                        .background(OpenDesignOfficeHoursColor.surface.opacity(0.86))
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                        )
+                        .disabled(isReviewing)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).artifactLocation")
+                    Button {
+                        approveEvidenceCandidate(candidate, artifactLocation: cleanArtifactLocation)
+                    } label: {
+                        Label(isReviewing ? "검토 중" : "Approve", systemImage: "checkmark.seal")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: !canApprove))
+                    .disabled(!canApprove)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).approve")
+                    Button {
+                        rejectEvidenceCandidate(candidate)
+                    } label: {
+                        Label("Reject", systemImage: "xmark.seal")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: isReviewing || candidateID.isEmpty))
+                    .disabled(isReviewing || candidateID.isEmpty)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index).reject")
+                }
+                .padding(.top, 2)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Evidence Inbox candidate review controls")
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.58))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(evidenceCandidateAccessibilityLabel(candidate))
+        .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.candidate.\(index)")
+    }
+
+    private func isEvidenceCandidateReviewable(_ candidate: RecorderEvidenceCandidateSummary) -> Bool {
+        ["pending_review", "degraded", "verifier_rejected"].contains(candidate.candidateStatus)
+    }
+
+    private func approveEvidenceCandidate(_ candidate: RecorderEvidenceCandidateSummary, artifactLocation: String) {
+        let cleanLocation = artifactLocation.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidateID = candidate.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidateID.isEmpty, !cleanLocation.isEmpty else { return }
+        var artifact: [String: Any] = [
+            "id": "\(candidateID)-manual-\(Int(Date().timeIntervalSince1970 * 1000))",
+            "kind": evidenceCandidateApprovalKind(candidate),
+            "status": "accepted",
+            "strength": "medium",
+        ]
+        if cleanLocation.lowercased().hasPrefix("http://") || cleanLocation.lowercased().hasPrefix("https://") {
+            artifact["url"] = cleanLocation
+        } else {
+            artifact["artifactPath"] = cleanLocation
+        }
+        reviewEvidenceCandidate(
+            candidateID,
+            "approve_bundle",
+            "local user approved an explicit external artifact from Founder Replay Evidence Inbox",
+            artifact
+        )
+    }
+
+    private func rejectEvidenceCandidate(_ candidate: RecorderEvidenceCandidateSummary) {
+        let candidateID = candidate.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidateID.isEmpty else { return }
+        reviewEvidenceCandidate(
+            candidateID,
+            "rejected",
+            "local user rejected the Evidence Inbox candidate from Founder Replay UI",
+            nil
+        )
+    }
+
+    private func evidenceCandidateApprovalKind(_ candidate: RecorderEvidenceCandidateSummary) -> String {
+        let kind = candidate.proofKind.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reviewableKinds: Set<String> = [
+            "dm_sent_screenshot",
+            "email_sent",
+            "call_logged",
+            "shared_url",
+            "message_log",
+            "customer_reply",
+            "refusal",
+            "no_response_deadline_passed",
+            "call_note",
+            "drop_off_step",
+            "activation_event",
+            "core_flow_completed",
+            "payment",
+            "contract",
+            "repeat_use",
+        ]
+        return reviewableKinds.contains(kind) ? kind : "external_evidence"
+    }
+
+    private func evidenceCandidateAccessibilityLabel(_ candidate: RecorderEvidenceCandidateSummary) -> String {
+        [
+            candidate.id.isEmpty ? "unknown candidate" : candidate.id,
+            candidate.candidateStatus.isEmpty ? "unknown status" : candidate.candidateStatus,
+            candidate.proofKind.isEmpty ? "unknown proof kind" : candidate.proofKind,
+            candidate.targetGate ?? "unknown target gate",
+            candidate.claim.isEmpty ? "empty claim" : candidate.claim,
+            "sources \(candidate.sourceIds.count)",
+            "debt \(candidate.evidenceDebt.count)",
+            "evidence inbox candidate",
+            "non-proof",
+        ].joined(separator: " | ")
     }
 
     private var controlConsentPanel: some View {
@@ -9625,6 +10638,9 @@ private struct OpenDesignFounderReplayPageView: View {
                 Spacer(minLength: 0)
                 founderReplayStatusPill("not proof", tone: .amber)
             }
+            if let modes = readiness?.modeReadiness?.orderedModes, !modes.isEmpty {
+                readinessModes(modes)
+            }
             readinessIssues("Blockers", issues: readiness?.blockers ?? [], empty: "Blocker 없음", tone: .amber)
             readinessIssues("Warnings", issues: readiness?.warnings ?? [], empty: "Warning 없음", tone: .sky)
         }
@@ -9637,6 +10653,85 @@ private struct OpenDesignFounderReplayPageView: View {
                         .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
                 )
         )
+    }
+
+    private func readinessModes(_ modes: [RecorderReadinessMode]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Modes")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            ForEach(modes) { mode in
+                HStack(spacing: 8) {
+                    Image(systemName: mode.ready ? "checkmark.circle" : "xmark.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(mode.ready ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.amber)
+                    Text(readinessModeLabel(mode.id))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if let blockerSummary = readinessModeIssueSummary(mode.blockers) {
+                        Text(blockerSummary)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                            .lineLimit(1)
+                    }
+                    founderReplayStatusPill(mode.ready ? "ready" : mode.state, tone: mode.ready ? .accent : .amber)
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityLabel(readinessModeAccessibilityLabel(mode))
+                .accessibilityIdentifier("opendesign.founderReplay.control.readiness.mode.\(mode.id)")
+            }
+        }
+    }
+
+    private func readinessModeLabel(_ id: String) -> String {
+        switch id {
+        case "core_frame_capture_ready":
+            return "Core frame"
+        case "event_driven_capture_ready":
+            return "Event driven"
+        case "ocr_text_completion_ready":
+            return "OCR text"
+        case "sensitive_capture_ready":
+            return "Sensitive capture"
+        default:
+            return id
+        }
+    }
+
+    private func readinessModeIssueSummary(_ issues: [RecorderCaptureIssue]) -> String? {
+        let ids = issues.map(\.id).filter { !$0.isEmpty }
+        guard !ids.isEmpty else { return nil }
+        let visible = ids.prefix(4).joined(separator: " ")
+        if ids.count > 4 {
+            return "\(visible) +\(ids.count - 4)"
+        }
+        return visible
+    }
+
+    private func readinessModeAccessibilityLabel(_ mode: RecorderReadinessMode) -> String {
+        var parts = [
+            "mode \(mode.id)",
+            readinessModeLabel(mode.id),
+            "state \(mode.state)",
+            mode.ready ? "ready true" : "ready false",
+            "proof rejected",
+        ]
+        if let blockerSummary = readinessModeIssueSummary(mode.blockers) {
+            parts.append("blockers \(blockerSummary)")
+        } else {
+            parts.append("blockers none")
+        }
+        if let warningSummary = readinessModeIssueSummary(mode.warnings) {
+            parts.append("warnings \(warningSummary)")
+        } else {
+            parts.append("warnings none")
+        }
+        return parts.joined(separator: " | ")
     }
 
     private func readinessIssues(
@@ -9672,6 +10767,7 @@ private struct OpenDesignFounderReplayPageView: View {
                     .padding(.horizontal, 10)
                     .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .accessibilityIdentifier("opendesign.founderReplay.control.readiness.\(title.lowercased()).\(issue.id)")
                 }
             }
         }
@@ -9693,6 +10789,7 @@ private struct OpenDesignFounderReplayPageView: View {
                 .disabled(controlBusy)
                 .accessibilityIdentifier("opendesign.founderReplay.control.permissions.check")
             }
+            permissionActorDiagnosticRow
             ForEach(permissionRows) { row in
                 permissionRow(row)
             }
@@ -9719,9 +10816,29 @@ private struct OpenDesignFounderReplayPageView: View {
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                     .lineLimit(1)
+                Text("\(row.tccServiceName) · \(row.relaunchScope)")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                Text("settings \(row.settingsAnchorStatus) · drag \(row.dragCapability)")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
             }
             Spacer(minLength: 10)
             founderReplayStatusPill(state, tone: permissionTone(state))
+            if row.canRequest {
+                Button {
+                    requestPermission(row.id)
+                } label: {
+                    Label(controlActionInFlight == "permission_request_\(row.id)" ? "요청 중" : "Request", systemImage: "hand.raised")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 28)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(controlBusy)
+                .accessibilityIdentifier("opendesign.founderReplay.control.permission.request.\(row.id)")
+            }
             if let settingsURL = row.settingsURL {
                 Button {
                     openSystemSettings(settingsURL)
@@ -9738,6 +10855,31 @@ private struct OpenDesignFounderReplayPageView: View {
         .padding(.horizontal, 12)
         .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(alignment: .leading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(permissionRowAccessibilityLabel(row, state: state))
+                .accessibilityIdentifier("opendesign.founderReplay.control.permission.row.\(row.id)")
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func permissionRowAccessibilityLabel(_ row: OpenDesignRecorderPermissionRow, state: String) -> String {
+        [
+            "\(row.title) state \(state)",
+            "service \(row.tccServiceName)",
+            "manualPath \(row.manualPath)",
+            "relaunchScope \(row.relaunchScope)",
+            "settingsAnchor \(row.settingsAnchorStatus)",
+            "drag \(row.dragCapability)",
+            "actorSource \(permissionActor.source)",
+            "actorBundle \(permissionActor.bundleIdentifier)",
+            "actorPath \(permissionActor.bundlePath)",
+            "signing \(permissionActor.signingRequirementSummary)",
+            "releaseGate \(permissionReleaseIdentityStatus)",
+            "releaseBlockers \(permissionReleaseIdentityBlockerSummary)",
+        ].joined(separator: " ")
     }
 
     private var controlSensitivePolicy: some View {
@@ -9756,6 +10898,8 @@ private struct OpenDesignFounderReplayPageView: View {
                 founderReplayStatusPill("clipboard \(sensitive.clipboardMode)", tone: clipboardModeTone(sensitive.clipboardMode))
                 founderReplayStatusPill("mic \(sensitive.microphone ? "on" : "off")", tone: sensitive.microphone ? .amber : .sky)
                 founderReplayStatusPill("system audio \(sensitive.systemAudio ? "on" : "off")", tone: sensitive.systemAudio ? .amber : .sky)
+                founderReplayStatusPill(audioCaptureRunning ? "audio running" : "audio idle", tone: audioCaptureRunning ? .accent : .sky)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.audioStatus")
                 Spacer(minLength: 0)
             }
             HStack(alignment: .center, spacing: 12) {
@@ -9838,6 +10982,11 @@ private struct OpenDesignFounderReplayPageView: View {
 
     private var controlAuditPanel: some View {
         let rows = auditSource.map { Array($0.audit.prefix(5)) } ?? []
+        let summaryLabel = [
+            "\(auditSource?.resultCount ?? 0) rows",
+            auditSource?.proofAcceptedByAuditSource == true ? "audit proof accepted" : "audit proof rejected",
+            "non-proof",
+        ].joined(separator: " · ")
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Raw API Audit")
@@ -9880,34 +11029,647 @@ private struct OpenDesignFounderReplayPageView: View {
                         .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
                 )
         )
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summaryLabel)
+                .accessibilityIdentifier("opendesign.founderReplay.control.audit.summary")
+                .allowsHitTesting(false)
+        }
     }
 
     private func auditEventRow(_ row: RecorderAuditEvent) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(row.endpoint.isEmpty ? "unknown endpoint" : row.endpoint)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                        .lineLimit(1)
-                    founderReplayStatusPill(row.accessLevel.isEmpty ? "unknown" : row.accessLevel, tone: .sky)
-                    founderReplayStatusPill(row.decision.isEmpty ? "unknown" : row.decision, tone: row.decision == "accepted" ? .accent : .amber)
+        let isAcceptedSqlAudit = row.endpoint == "/recorder/sql/query"
+            && row.accessLevel == "raw_sql"
+            && row.decision == "accepted"
+        let isAcceptedSearchAudit = row.endpoint == "/recorder/search"
+            && row.accessLevel == "search"
+            && row.decision == "accepted"
+        return ZStack(alignment: .topLeading) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(row.endpoint.isEmpty ? "unknown endpoint" : row.endpoint)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                            .lineLimit(1)
+                        founderReplayStatusPill(row.accessLevel.isEmpty ? "unknown" : row.accessLevel, tone: .sky)
+                        founderReplayStatusPill(row.decision.isEmpty ? "unknown" : row.decision, tone: row.decision == "accepted" ? .accent : .amber)
+                    }
+                    Text(row.reason.isEmpty ? row.requestId : row.reason)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(2)
                 }
-                Text(row.reason.isEmpty ? row.requestId : row.reason)
+                Spacer(minLength: 0)
+                Text(compactIsoTimestamp(row.createdAt))
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-                    .lineLimit(2)
+                    .lineLimit(1)
             }
-            Spacer(minLength: 0)
-            Text(compactIsoTimestamp(row.createdAt))
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-                .lineLimit(1)
+            if isAcceptedSqlAudit {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(auditEventAccessibilityLabel(row))
+                    .accessibilityIdentifier("opendesign.founderReplay.control.audit.sql.accepted")
+                    .allowsHitTesting(false)
+            }
+            if isAcceptedSearchAudit {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(auditEventAccessibilityLabel(row))
+                    .accessibilityIdentifier("opendesign.founderReplay.control.audit.search.accepted")
+                    .allowsHitTesting(false)
+            }
         }
         .padding(.vertical, 9)
         .padding(.horizontal, 12)
         .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func auditEventAccessibilityLabel(_ row: RecorderAuditEvent) -> String {
+        let sourceLabel = row.sourceIds.map { source in
+            "\(source.id):\(source.sourceType)"
+        }.joined(separator: ",")
+        return [
+            row.endpoint.isEmpty ? "unknown endpoint" : row.endpoint,
+            row.accessLevel.isEmpty ? "unknown access" : row.accessLevel,
+            row.decision.isEmpty ? "unknown decision" : row.decision,
+            row.reason.isEmpty ? "unknown reason" : row.reason,
+            row.requestId.isEmpty ? "unknown request" : row.requestId,
+            sourceLabel.isEmpty ? "no sources" : "sources \(sourceLabel)",
+            "audit source non-proof",
+            "audit proof rejected",
+        ].joined(separator: " · ")
+    }
+
+    private var controlRedactedSearchPanel: some View {
+        let trimmedQuery = recorderSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Redacted Search")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                founderReplayStatusPill("search", tone: .sky)
+                founderReplayStatusPill("redacted", tone: .accent)
+                founderReplayStatusPill("non-proof", tone: .amber)
+                Spacer(minLength: 0)
+                Button {
+                    runSearch(trimmedQuery)
+                } label: {
+                    Label(searchRunning ? "검색 중" : "Search", systemImage: "magnifyingglass")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 28)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(searchRunning || trimmedQuery.isEmpty)
+                .accessibilityIdentifier("opendesign.founderReplay.control.search.run")
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                TextField("Search redacted recorder text", text: $recorderSearchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.search.query")
+                    .onSubmit {
+                        let query = recorderSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !query.isEmpty, !searchRunning else { return }
+                        runSearch(query)
+                    }
+            }
+            .padding(10)
+            .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.76))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+            )
+
+            if let searchLastError, !searchLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ZStack(alignment: .topLeading) {
+                    Text(searchLastError)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                        .lineLimit(3)
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(searchLastError)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.search.error")
+                        .allowsHitTesting(false)
+                }
+            }
+
+            if let result = searchResult {
+                searchResultSummary(result)
+                if result.results.isEmpty {
+                    searchEmptyStates(result.emptyStates)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(result.results.prefix(8).enumerated()), id: \.offset) { index, row in
+                            searchResultRow(row, index: index)
+                        }
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.search.results")
+                }
+            } else {
+                Text(searchRunning ? "Redacted search waiting for raw API response" : "No redacted search result")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Recorder Redacted Search")
+                .accessibilityIdentifier("opendesign.founderReplay.control.search")
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func searchResultSummary(_ result: RecorderSearchResultSet) -> some View {
+        let proofRejected = !result.proofAcceptedBySearch
+        let summaryLabel = [
+            "\(result.resultCount) results",
+            result.query.isEmpty ? "empty query" : "query \(result.query)",
+            proofRejected ? "search proof rejected" : "search proof accepted",
+            result.proofBoundary?.message ?? "no proof boundary message",
+            "schema \(result.schema)",
+        ].joined(separator: " · ")
+        return ZStack(alignment: .topLeading) {
+            HStack(spacing: 8) {
+                founderReplayStatusPill("\(result.resultCount) results", tone: .sky)
+                founderReplayStatusPill(proofRejected ? "proof rejected" : "proof accepted", tone: proofRejected ? .amber : .accent)
+                founderReplayStatusPill(result.emptyStates.isEmpty ? "has rows" : "empty states", tone: result.emptyStates.isEmpty ? .accent : .amber)
+                Text(result.query.isEmpty ? "empty query" : result.query)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text(compactIsoTimestamp(result.generatedAt))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            }
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summaryLabel)
+                .accessibilityIdentifier("opendesign.founderReplay.control.search.summary")
+                .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
+    private func searchEmptyStates(_ states: [RecorderSearchEmptyState]) -> some View {
+        if states.isEmpty {
+            Text("Search returned no redacted rows")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(states) { state in
+                    HStack(spacing: 8) {
+                        founderReplayStatusPill(state.severity.isEmpty ? "empty" : state.severity, tone: .amber)
+                        Text(state.message.isEmpty ? state.id : state.message)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .lineLimit(2)
+                    }
+                }
+            }
+        }
+    }
+
+    private func searchResultRow(_ row: RecorderSearchResult, index: Int) -> some View {
+        let metadata = searchMetadataSummary(row.metadata)
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text(row.title?.isEmpty == false ? row.title! : row.sourceType)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                founderReplayStatusPill(row.sourceType.isEmpty ? "source" : row.sourceType, tone: .sky)
+                founderReplayStatusPill("redacted", tone: .accent)
+                founderReplayStatusPill("non-proof", tone: .amber)
+            }
+            Text(row.snippet.isEmpty ? "No redacted snippet" : row.snippet)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Text(compactIsoTimestamp(row.timestamp))
+                Text(row.sourceId.isEmpty ? row.id : row.sourceId)
+                if let metadata {
+                    Text(metadata)
+                }
+            }
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            .lineLimit(1)
+        }
+        .padding(12)
+        .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.62))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(searchResultAccessibilityLabel(row))
+        .accessibilityIdentifier("opendesign.founderReplay.control.search.result.\(index)")
+    }
+
+    private func searchResultAccessibilityLabel(_ row: RecorderSearchResult) -> String {
+        [
+            row.sourceType.isEmpty ? "unknown source" : row.sourceType,
+            row.sourceId.isEmpty ? row.id : row.sourceId,
+            row.timestamp.isEmpty ? "unknown time" : row.timestamp,
+            row.title?.isEmpty == false ? row.title! : "untitled",
+            row.snippet.isEmpty ? "no snippet" : row.snippet,
+            searchMetadataSummary(row.metadata) ?? "no metadata",
+            "redacted search result",
+            "search proof rejected",
+        ].joined(separator: " · ")
+    }
+
+    private func searchMetadataSummary(_ metadata: [String: String]) -> String? {
+        let pairs = metadata
+            .filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.key < $1.key }
+            .prefix(4)
+            .map { "\($0.key): \($0.value)" }
+        guard !pairs.isEmpty else { return nil }
+        return pairs.joined(separator: " · ")
+    }
+
+    private var activeRawSqlMcpGrant: RecorderMcpGrant? {
+        rawSqlMcpGrants.first { $0.active && $0.state == "active" }
+    }
+
+    private var rawSqlMcpGrants: [RecorderMcpGrant] {
+        mcpGrants.filter { grant in
+            grant.toolName == AgenticViewModel.recorderMcpRawSqlToolName
+                && grant.accessLevels.contains("raw_sql")
+        }
+    }
+
+    private var controlMcpGrantPanel: some View {
+        let activeGrant = activeRawSqlMcpGrant
+        let rows = Array(rawSqlMcpGrants.prefix(4))
+        let actionBusy = mcpGrantActionInFlight != nil
+        let summaryLabel = [
+            "Recorder MCP raw_sql",
+            activeGrant == nil ? "deny by default" : "active grant",
+            activeGrant?.id ?? "no grant",
+            "mcp grant non-proof",
+        ].joined(separator: " · ")
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("MCP Raw SQL Grant")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                founderReplayStatusPill("raw_sql", tone: .sky)
+                founderReplayStatusPill(activeGrant == nil ? "denied" : "active", tone: activeGrant == nil ? .amber : .accent)
+                founderReplayStatusPill("non-proof", tone: .amber)
+                Spacer(minLength: 0)
+                Button(action: refreshMcpGrants) {
+                    Label(mcpGrantsRefreshing ? "불러오는 중" : "Refresh", systemImage: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 28)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(mcpGrantsRefreshing || actionBusy)
+                .accessibilityIdentifier("opendesign.founderReplay.control.mcpGrant.refresh")
+                if let activeGrant {
+                    Button {
+                        revokeMcpGrant(activeGrant.id)
+                    } label: {
+                        Label(mcpGrantActionInFlight == activeGrant.id ? "해제 중" : "Revoke", systemImage: "xmark.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle())
+                    .disabled(actionBusy || mcpGrantsRefreshing)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.mcpGrant.revoke")
+                } else {
+                    Button(action: grantRawSqlMcpAccess) {
+                        Label(mcpGrantActionInFlight == "grant_raw_sql" ? "허용 중" : "Grant 5m", systemImage: "key.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle())
+                    .disabled(actionBusy || mcpGrantsRefreshing)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.mcpGrant.grant")
+                }
+            }
+
+            if let mcpGrantLastError, !mcpGrantLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ZStack(alignment: .topLeading) {
+                    Text(mcpGrantLastError)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                        .lineLimit(3)
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(mcpGrantLastError)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.mcpGrant.error")
+                        .allowsHitTesting(false)
+                }
+            }
+
+            if rows.isEmpty {
+                Text(mcpGrantsRefreshing ? "MCP grants loading" : "No recorder MCP raw_sql grant")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, grant in
+                        mcpGrantRow(grant, index: index)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summaryLabel)
+                .accessibilityIdentifier("opendesign.founderReplay.control.mcpGrant.summary")
+                .allowsHitTesting(false)
+        }
+        .accessibilityIdentifier("opendesign.founderReplay.control.mcpGrant")
+    }
+
+    private func mcpGrantRow(_ grant: RecorderMcpGrant, index: Int) -> some View {
+        let isActive = grant.active && grant.state == "active"
+        let label = [
+            grant.id,
+            grant.toolName,
+            grant.accessLevels.joined(separator: ","),
+            grant.state,
+            isActive ? "active" : "inactive",
+            "expires \(grant.expiresAt)",
+            "mcp grant proof rejected",
+        ].joined(separator: " · ")
+        return HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(grant.toolName.isEmpty ? "recorder mcp tool" : grant.toolName)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                        .lineLimit(1)
+                    founderReplayStatusPill(grant.state.isEmpty ? "unknown" : grant.state, tone: isActive ? .accent : .amber)
+                    founderReplayStatusPill(grant.accessLevels.joined(separator: ","), tone: .sky)
+                }
+                Text("expires \(compactIsoTimestamp(grant.expiresAt))")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if isActive {
+                Button {
+                    revokeMcpGrant(grant.id)
+                } label: {
+                    Label(mcpGrantActionInFlight == grant.id ? "해제 중" : "Revoke", systemImage: "xmark.circle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(height: 26)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(mcpGrantActionInFlight != nil || mcpGrantsRefreshing)
+                .accessibilityIdentifier("opendesign.founderReplay.control.mcpGrant.row.\(index).revoke")
+            }
+        }
+        .padding(.vertical, 9)
+        .padding(.horizontal, 12)
+        .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier("opendesign.founderReplay.control.mcpGrant.row.\(index)")
+    }
+
+    private var controlSqlInspectorPanel: some View {
+        let trimmedQuery = sqlQueryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Raw SQL Inspector")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                founderReplayStatusPill("raw_sql", tone: .sky)
+                founderReplayStatusPill("redacted", tone: .accent)
+                founderReplayStatusPill("non-proof", tone: .amber)
+                Spacer(minLength: 0)
+                Button {
+                    runSqlQuery(trimmedQuery)
+                } label: {
+                    Label(sqlQueryRunning ? "실행 중" : "Run", systemImage: "play.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 28)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(sqlQueryRunning || trimmedQuery.isEmpty)
+                .accessibilityIdentifier("opendesign.founderReplay.control.sql.run")
+            }
+
+            TextEditor(text: $sqlQueryText)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                .frame(minHeight: 86, maxHeight: 118)
+                .padding(8)
+                .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.76))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+                .accessibilityIdentifier("opendesign.founderReplay.control.sql.query")
+
+            if let sqlQueryLastError, !sqlQueryLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ZStack(alignment: .topLeading) {
+                    Text(sqlQueryLastError)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                        .lineLimit(3)
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(sqlQueryLastError)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.sql.error")
+                        .allowsHitTesting(false)
+                }
+            }
+
+            if let result = sqlQueryResult {
+                sqlResultSummary(result)
+                sqlResultTable(result)
+            } else {
+                Text(sqlQueryRunning ? "SQL inspector waiting for raw API response" : "No SQL inspector result")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Raw SQL Inspector")
+                .accessibilityIdentifier("opendesign.founderReplay.control.sql")
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func sqlResultSummary(_ result: RecorderSqlQueryResult) -> some View {
+        let downstreamBlocked = !result.safeForSearch
+            && !result.safeForMemory
+            && !result.safeForExport
+            && !result.providerPromptAllowed
+            && !result.pipeOutputAllowed
+            && !result.dayProgressWriteAllowed
+        let summaryLabel = [
+            "\(result.rowCount) rows",
+            result.truncated ? "truncated" : "complete",
+            "timeout \(result.timeoutMs)ms",
+            result.includeRawColumns ? "raw columns" : "redacted views",
+            result.pathExposed ? "path exposed" : "path hidden",
+            result.proofLedgerWriteAllowed ? "proof write on" : "proof write off",
+            result.proofAcceptedByRawSql ? "raw sql proof accepted" : "raw sql proof rejected",
+            result.proofAcceptedByRawApi ? "raw api proof accepted" : "raw api proof rejected",
+            downstreamBlocked ? "downstream off" : "downstream on",
+            "allowed \(result.allowedViews.joined(separator: ","))",
+        ].joined(separator: " · ")
+        return ZStack(alignment: .topLeading) {
+            HStack(spacing: 8) {
+                founderReplayStatusPill("\(result.rowCount) rows", tone: .sky)
+                founderReplayStatusPill(result.truncated ? "truncated" : "complete", tone: result.truncated ? .amber : .accent)
+                founderReplayStatusPill("timeout \(result.timeoutMs)ms", tone: .sky)
+                founderReplayStatusPill(result.includeRawColumns ? "raw columns" : "redacted views", tone: result.includeRawColumns ? .amber : .accent)
+                founderReplayStatusPill(result.pathExposed ? "path exposed" : "path hidden", tone: result.pathExposed ? .amber : .accent)
+                founderReplayStatusPill(result.proofLedgerWriteAllowed ? "proof write on" : "proof write off", tone: result.proofLedgerWriteAllowed ? .amber : .accent)
+                founderReplayStatusPill(downstreamBlocked ? "downstream off" : "downstream on", tone: downstreamBlocked ? .accent : .amber)
+                Spacer(minLength: 0)
+                Text(result.queryFingerprint)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+            }
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summaryLabel)
+                .accessibilityIdentifier("opendesign.founderReplay.control.sql.summary")
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func sqlResultTable(_ result: RecorderSqlQueryResult) -> some View {
+        let columns = sqlResultColumns(result)
+        return Group {
+            if result.rows.isEmpty || columns.isEmpty {
+                Text("Query returned no rows")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            } else {
+                ScrollView(.horizontal, showsIndicators: true) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: 0) {
+                            ForEach(columns, id: \.self) { column in
+                                sqlTableCell(column, isHeader: true)
+                            }
+                        }
+                        ForEach(Array(result.rows.prefix(20).enumerated()), id: \.offset) { _, row in
+                            HStack(spacing: 0) {
+                                ForEach(columns, id: \.self) { column in
+                                    sqlTableCell(sqlCellText(row[column]))
+                                }
+                            }
+                        }
+                    }
+                    .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                    )
+                }
+                .accessibilityIdentifier("opendesign.founderReplay.control.sql.results")
+            }
+        }
+    }
+
+    private func sqlResultColumns(_ result: RecorderSqlQueryResult) -> [String] {
+        let allColumns = Set(result.rows.flatMap { $0.keys })
+        let priority = [
+            "id",
+            "captured_at",
+            "app_name",
+            "window_title",
+            "browser_domain",
+            "redacted_text",
+            "source",
+            "path_exposed",
+        ]
+        let prioritized = priority.filter { allColumns.contains($0) }
+        let remaining = allColumns.subtracting(prioritized).sorted()
+        return Array((prioritized + remaining).prefix(8))
+    }
+
+    private func sqlCellText(_ value: RecorderSqlCell?) -> String {
+        guard let value else { return "" }
+        return value.isNull ? "NULL" : value.displayValue
+    }
+
+    private func sqlTableCell(_ text: String, isHeader: Bool = false) -> some View {
+        Text(text)
+            .font(.system(size: isHeader ? 10.5 : 11, weight: isHeader ? .semibold : .medium, design: .monospaced))
+            .foregroundStyle(isHeader ? OpenDesignOfficeHoursColor.muted : OpenDesignOfficeHoursColor.fgSecondary)
+            .lineLimit(2)
+            .frame(width: 154, alignment: .leading)
+            .frame(minHeight: isHeader ? 32 : 42, alignment: .leading)
+            .padding(.horizontal, 10)
+            .background(isHeader ? OpenDesignOfficeHoursColor.surface2 : Color.clear)
+            .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(width: 1), alignment: .trailing)
+            .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
     }
 
     private func permissionTone(_ state: String) -> OpenDesignRailBadgeTone {
@@ -9924,7 +11686,14 @@ private struct OpenDesignFounderReplayPageView: View {
     }
 
     private var pipesSurface: some View {
-        ScrollView {
+        let summaryLabel = [
+            "\(sortedPipes.count) pipes",
+            "\(sortedRuns.count) runs",
+            lastSchedulerResult.map { "scheduler queued \($0.queuedCount) executed \($0.executedCount) failed \($0.failedCount)" } ?? "scheduler idle",
+            "pipe definitions non-proof",
+            "pipe runs non-proof",
+        ].joined(separator: " · ")
+        return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 pipesToolbar
                 if let lastError, !lastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -9951,6 +11720,14 @@ private struct OpenDesignFounderReplayPageView: View {
             .frame(maxWidth: 1180, alignment: .topLeading)
         }
         .accessibilityIdentifier("opendesign.founderReplay.pipes")
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summaryLabel)
+                .accessibilityIdentifier("opendesign.founderReplay.pipes.summary")
+                .allowsHitTesting(false)
+        }
     }
 
     private var pipesToolbar: some View {
@@ -10017,38 +11794,46 @@ private struct OpenDesignFounderReplayPageView: View {
     private func pipeRow(_ pipe: RecorderPipeDefinition) -> some View {
         let latest = latestRun(for: pipe.id)
         let busy = actionInFlight.contains(pipe.id)
-        return HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text(pipe.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+        return ZStack(alignment: .topLeading) {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(pipe.name)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                            .lineLimit(1)
+                        founderReplayStatusPill(pipe.enabled ? "enabled" : "disabled", tone: pipe.enabled ? .accent : .sky)
+                        founderReplayStatusPill(pipe.proofAcceptedByPipeDefinition ? "proof?" : "non-proof", tone: .amber)
+                    }
+                    Text("\(pipe.id) · \(pipe.schedule)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                         .lineLimit(1)
-                    founderReplayStatusPill(pipe.enabled ? "enabled" : "disabled", tone: pipe.enabled ? .accent : .sky)
-                    founderReplayStatusPill(pipe.proofAcceptedByPipeDefinition ? "proof?" : "non-proof", tone: .amber)
+                    if let latest {
+                        Text("latest \(runStatusLabel(latest.status)) · \(compactIsoTimestamp(latest.startedAt))")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .lineLimit(1)
+                    }
                 }
-                Text("\(pipe.id) · \(pipe.schedule)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-                    .lineLimit(1)
-                if let latest {
-                    Text("latest \(runStatusLabel(latest.status)) · \(compactIsoTimestamp(latest.startedAt))")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
-                        .lineLimit(1)
+                Spacer(minLength: 12)
+                Button {
+                    runPipe(pipe.id)
+                } label: {
+                    Label(busy ? "실행 중" : "실행", systemImage: busy ? "hourglass" : "play.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 30)
                 }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(!pipe.enabled || busy)
+                .accessibilityIdentifier("opendesign.founderReplay.pipes.run.\(pipe.id)")
             }
-            Spacer(minLength: 12)
-            Button {
-                runPipe(pipe.id)
-            } label: {
-                Label(busy ? "실행 중" : "실행", systemImage: busy ? "hourglass" : "play.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(height: 30)
-            }
-            .buttonStyle(OpenDesignInteractiveButtonStyle())
-            .disabled(!pipe.enabled || busy)
-            .accessibilityIdentifier("opendesign.founderReplay.pipes.run.\(pipe.id)")
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(pipeDefinitionAccessibilityLabel(pipe))
+                .accessibilityIdentifier("opendesign.founderReplay.pipes.definition.\(pipe.id)")
+                .allowsHitTesting(false)
         }
         .padding(16)
         .background(
@@ -10099,42 +11884,83 @@ private struct OpenDesignFounderReplayPageView: View {
     private func runRow(_ run: RecorderPipeRun) -> some View {
         let canCancel = ["queued", "running"].contains(run.status)
         let busy = actionInFlight.contains(run.id)
-        return HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(run.pipeId)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                    .lineLimit(1)
-                Text("\(run.triggerReason) · \(compactIsoTimestamp(run.startedAt))")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-                    .lineLimit(1)
-                if let error = run.errorMessage, !error.isEmpty {
-                    Text(error)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(OpenDesignOfficeHoursColor.rose)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 10)
-            founderReplayStatusPill(runStatusLabel(run.status), tone: runTone(run.status))
-            if canCancel {
-                Button {
-                    cancelRun(run.id)
-                } label: {
-                    Label(busy ? "취소 중" : "취소", systemImage: "xmark.circle")
+        return ZStack(alignment: .topLeading) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(run.pipeId)
                         .font(.system(size: 12, weight: .semibold))
-                        .frame(height: 28)
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                        .lineLimit(1)
+                    Text("\(run.triggerReason) · \(compactIsoTimestamp(run.startedAt))")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                    if let outputKind = run.outputManifest?.outputKind, !outputKind.isEmpty {
+                        Text(outputKind)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .lineLimit(1)
+                    } else if let error = run.errorMessage, !error.isEmpty {
+                        Text(error)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                            .lineLimit(1)
+                    }
                 }
-                .buttonStyle(OpenDesignInteractiveButtonStyle())
-                .disabled(busy)
-                .accessibilityIdentifier("opendesign.founderReplay.pipes.cancel.\(run.id)")
+                Spacer(minLength: 10)
+                founderReplayStatusPill(runStatusLabel(run.status), tone: runTone(run.status))
+                if canCancel {
+                    Button {
+                        cancelRun(run.id)
+                    } label: {
+                        Label(busy ? "취소 중" : "취소", systemImage: "xmark.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle())
+                    .disabled(busy)
+                    .accessibilityIdentifier("opendesign.founderReplay.pipes.cancel.\(run.id)")
+                }
             }
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(pipeRunAccessibilityLabel(run))
+                .accessibilityIdentifier("opendesign.founderReplay.pipes.run.latest.\(run.pipeId)")
+                .allowsHitTesting(false)
         }
         .padding(.vertical, 9)
         .padding(.horizontal, 12)
         .background(OpenDesignOfficeHoursColor.bgDeep.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func pipeDefinitionAccessibilityLabel(_ pipe: RecorderPipeDefinition) -> String {
+        [
+            pipe.id,
+            pipe.name,
+            pipe.kind.isEmpty ? "unknown kind" : pipe.kind,
+            pipe.enabled ? "enabled" : "disabled",
+            pipe.proofAcceptedByPipeDefinition ? "definition proof accepted" : "definition proof rejected",
+            "definition non-proof",
+            pipe.schedule,
+        ].joined(separator: " · ")
+    }
+
+    private func pipeRunAccessibilityLabel(_ run: RecorderPipeRun) -> String {
+        let manifest = run.outputManifest
+        let proofBoundary = manifest?.proofBoundary
+        let outputKind = manifest?.outputKind.trimmingCharacters(in: .whitespacesAndNewlines)
+        let privacyState = manifest?.privacyState.trimmingCharacters(in: .whitespacesAndNewlines)
+        return [
+            run.pipeId,
+            run.status.isEmpty ? "unknown status" : run.status,
+            run.triggerReason.isEmpty ? "unknown trigger" : run.triggerReason,
+            outputKind?.isEmpty == false ? outputKind! : "no output manifest",
+            privacyState?.isEmpty == false ? privacyState! : "unknown privacy",
+            run.proofAcceptedByPipeRun ? "pipe proof accepted" : "pipe proof rejected",
+            proofBoundary?.proofLedgerWriteAllowed == true ? "proof write on" : "proof write off",
+        ].joined(separator: " · ")
     }
 
     private func latestRun(for pipeId: String) -> RecorderPipeRun? {
@@ -10283,6 +12109,7 @@ private struct OpenDesignStrategyPageView: View {
                     isPreparing: strategyReportPreparingForDisplay
                 ),
                 accessibilityIdentifier: "strategy.loading",
+                statusAccessibilityIdentifier: "strategy.research.progress",
                 spinnerAccessibilityLabel: "전략 리서치 진행 중"
             )
             .background(StrategyBackdropView().ignoresSafeArea())
@@ -10307,6 +12134,7 @@ private struct OpenDesignStrategyPageView: View {
                                     isPreparing: strategyReportPreparingForDisplay
                                 ),
                                 accessibilityIdentifier: "strategy.loading",
+                                statusAccessibilityIdentifier: "strategy.research.progress",
                                 spinnerAccessibilityLabel: "전략 리서치 진행 중",
                                 maxWidth: 1180,
                                 fillsAvailableHeight: false
@@ -10529,6 +12357,8 @@ private struct OpenDesignStrategyPageView: View {
     private var matrixSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             StrategySectionHeader(title: "2x2 경쟁 구도 Matrix", meta: displayContent.matrixMeta)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("strategy.matrix")
             VStack(spacing: 0) {
                 HStack {
                     Text("경쟁은 코딩 생산성 축이 아니라 PMF 증거 축에서 갈립니다.")
@@ -10560,11 +12390,11 @@ private struct OpenDesignStrategyPageView: View {
                 }
                 .accessibilityElement(children: .contain)
             }
+            .accessibilityElement(children: .contain)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .background(StrategyPanelBackground(cornerRadius: 14, fill: OpenDesignDayColor.surface))
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Strategy positioning matrix")
     }
 
     private var swotSection: some View {
@@ -10831,6 +12661,7 @@ struct OpenDesignColdLoadingStateView: View {
     let rows: [OpenDesignLoadingCardRow]
     var timingLabel: String? = nil
     let accessibilityIdentifier: String
+    var statusAccessibilityIdentifier: String? = nil
     let spinnerAccessibilityLabel: String
     var maxWidth: CGFloat = 780
     var fillsAvailableHeight: Bool = true
@@ -10866,6 +12697,10 @@ struct OpenDesignColdLoadingStateView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .layoutPriority(1)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilitySummary)
+                .accessibilityValue(accessibilitySummary)
+                .accessibilityIdentifier(statusAccessibilityIdentifier ?? "\(accessibilityIdentifier).status")
 
                 Spacer(minLength: 0)
 
@@ -11373,7 +13208,6 @@ private struct StrategyAccentCalloutBackground: View {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(OpenDesignDayColor.accentLine, lineWidth: 1)
             )
-            .shadow(color: OpenDesignDayColor.accentDim.opacity(0.44), radius: 20, x: 0, y: 10)
     }
 }
 
@@ -11732,7 +13566,7 @@ private struct StrategyPositioningMatrixView: View {
                 )
 
                 matrixAxisLabel("↑ PMF Evidence · 고객 행동 · 첫 매출", alignment: .center, frame: chrome.topAxisLabel, isAccent: true)
-                    .accessibilityIdentifier("strategy.matrix")
+                    .accessibilityIdentifier("strategy.matrix.axis.vertical")
                 matrixAxisLabel("Build Speed · 코드 생산 ↓", alignment: .center, frame: chrome.bottomAxisLabel, isAccent: false)
                 matrixAxisLabel("← 정적 커리큘럼 · 범용 조언", alignment: .leading, frame: chrome.leftAxisLabel, isAccent: true)
                 matrixAxisLabel("내 프로젝트 기록 기반 Adaptive →", alignment: .trailing, frame: chrome.rightAxisLabel, isAccent: true)
@@ -13577,7 +15411,6 @@ private struct OpenDesignMarketSourceTabs: View {
                     Circle()
                         .fill(OpenDesignDayColor.accent)
                         .frame(width: 5, height: 5)
-                        .shadow(color: OpenDesignDayColor.accentDim, radius: 3)
                     Text("실시간 · 다음 갱신 18분 후")
                 }
                 .font(.system(size: 10.5, weight: .medium, design: .monospaced))
@@ -15279,7 +17112,6 @@ private struct OpenDesignDayHeader: View {
                         Circle()
                             .fill(OpenDesignDayColor.accent)
                             .frame(width: 5, height: 5)
-                            .shadow(color: OpenDesignDayColor.accentDim, radius: 3)
                         Text("Day 1")
                         Text("·")
                             .foregroundStyle(OpenDesignDayColor.mutedDeep)
@@ -15580,7 +17412,6 @@ private struct OpenDesignInterviewStepView: View {
                         Circle()
                             .fill(OpenDesignDayColor.accent)
                             .frame(width: 6, height: 6)
-                            .shadow(color: OpenDesignDayColor.accentDim, radius: 4)
                         Text("STEP \(step.id) · \(step.progressLabel)")
                     }
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
@@ -16878,9 +18709,17 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 .overlay(Circle().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
                 .accessibilityHidden(true)
         } else {
-            Text(documentStepVisuallyWritten(step) ? "✅" : "•")
-                .font(.system(size: documentStepVisuallyWritten(step) ? 12 : 10.5, weight: .bold, design: .monospaced))
-                .foregroundStyle(documentStepVisuallyWritten(step) ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+            Group {
+                if documentStepVisuallyWritten(step) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(OpenDesignDayColor.accent)
+                } else {
+                    Text("•")
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                }
+            }
                 .frame(width: 22, height: 22)
                 .background(Circle().fill(OpenDesignDayColor.surface2))
                 .overlay(Circle().stroke(documentStepVisuallyWritten(step) ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
@@ -18168,7 +20007,6 @@ private struct OpenDesignSearchPulseModifier: ViewModifier {
                 if isActive {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .stroke(OpenDesignDayColor.accent.opacity(0.72), lineWidth: 2)
-                        .shadow(color: OpenDesignDayColor.accent.opacity(reduceMotion ? 0.18 : 0.36), radius: reduceMotion ? 4 : 10)
                         .padding(-4)
                         .transition(.opacity)
                 }

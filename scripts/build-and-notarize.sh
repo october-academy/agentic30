@@ -68,6 +68,7 @@ required_vars=(
   ASC_KEY_ID
   ASC_ISSUER_ID
   SPARKLE_PUBLIC_ED_KEY
+  AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED
 )
 AGENTIC30_BUILD_APPCAST="${AGENTIC30_BUILD_APPCAST:-1}"
 AGENTIC30_UPLOAD_APPCAST_R2="${AGENTIC30_UPLOAD_APPCAST_R2:-0}"
@@ -100,6 +101,11 @@ done
 # shellcheck disable=SC2016
 if [[ "${SPARKLE_PUBLIC_ED_KEY:-}" =~ ^[[:space:]]*$ ]] || [[ "${SPARKLE_PUBLIC_ED_KEY:-}" == *'$('* ]]; then
   echo "ERROR: \$SPARKLE_PUBLIC_ED_KEY must be a concrete Sparkle EdDSA public key, not empty or a build setting placeholder" >&2
+  exit 2
+fi
+
+if [ "${AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED:-}" != "1" ]; then
+  echo "ERROR: AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED must be 1 for signed external permission onboarding releases" >&2
   exit 2
 fi
 
@@ -333,6 +339,7 @@ xcodebuild archive \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
   SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY" \
   SPARKLE_FEED_URL="$SPARKLE_FEED_URL" \
+  AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED="$AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED" \
   POSTHOG_PROJECT_API_KEY="$POSTHOG_PROJECT_API_KEY" \
   POSTHOG_HOST="$POSTHOG_HOST"
 
@@ -360,6 +367,17 @@ fi
 embedded_feed_url="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
 if [ "$embedded_feed_url" != "$SPARKLE_FEED_URL" ]; then
   echo "ERROR: exported app SUFeedURL ($embedded_feed_url) does not match expected feed ($SPARKLE_FEED_URL)" >&2
+  exit 1
+fi
+embedded_permission_actor_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :Agentic30ExpectedPermissionActorBundleIdentifier' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
+embedded_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
+if [ "$embedded_permission_actor_bundle_id" != "$embedded_bundle_id" ] || [ -z "$embedded_permission_actor_bundle_id" ]; then
+  echo "ERROR: exported app permission actor bundle id ($embedded_permission_actor_bundle_id) does not match CFBundleIdentifier ($embedded_bundle_id)" >&2
+  exit 1
+fi
+embedded_permission_onboarding_allowed="$(/usr/libexec/PlistBuddy -c 'Print :Agentic30ExternalPermissionOnboardingAllowed' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
+if [ "$embedded_permission_onboarding_allowed" != "1" ]; then
+  echo "ERROR: exported app did not embed Agentic30ExternalPermissionOnboardingAllowed=1" >&2
   exit 1
 fi
 

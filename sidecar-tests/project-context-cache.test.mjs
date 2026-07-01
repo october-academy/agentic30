@@ -163,6 +163,46 @@ test("project context cache refresh replaces stale invalid goal with fresh scan 
   });
 });
 
+test("project context cache refresh replaces evidence-gap diagnostics with fresh fields", async () => {
+  await withTempWorkspace(async (root) => {
+    const cachePath = resolveProjectContextCachePath(root);
+    await fs.mkdir(path.dirname(cachePath), { recursive: true });
+    await fs.writeFile(
+      cachePath,
+      JSON.stringify({
+        schemaVersion: 1,
+        schema: PROJECT_CONTEXT_SCHEMA,
+        productName: "Agentic30",
+        targetUser: "고객 quote 근거 부족",
+        problem: "문제 quote 근거 부족",
+        purpose: "활성/검증 행동 quote 근거 부족",
+        evidenceRefs: [],
+        confidence: "high",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      }),
+    );
+
+    const cache = await refreshProjectContextCache({
+      workspaceRoot: root,
+      reason: "workspace_scan",
+      onboardingHypothesis: {
+        productName: "Agentic30",
+        targetUser: "전업 1인 개발자",
+        problem: "무엇을 팔아야 하는지 모른다",
+        purpose: "첫 외부 ICP 인터뷰에서 현재 대안을 확인한다",
+        evidence: ["docs/ICP.md", "docs/SPEC.md"],
+        confidence: "high",
+      },
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    assert.equal(cache.targetUser, "전업 1인 개발자");
+    assert.equal(cache.problem, "무엇을 팔아야 하는지 모른다");
+    assert.equal(cache.purpose, "첫 외부 ICP 인터뷰에서 현재 대안을 확인한다");
+    assert.doesNotMatch(JSON.stringify(cache), /quote 근거 부족/);
+  });
+});
+
 test("day completion refresh updates completed day and answer-log evidence", async () => {
   await withTempWorkspace(async (root) => {
     await refreshProjectContextCache({
