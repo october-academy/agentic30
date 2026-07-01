@@ -62,9 +62,85 @@ if [ ! -x "$trufflehog_bin" ]; then
   exit 1
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 is required to post-filter TruffleHog JSON results." >&2
+  exit 2
+fi
+
+scan_results="$tmpdir/trufflehog-results.jsonl"
+
 "$trufflehog_bin" --version
+set +e
 "$trufflehog_bin" git file://. \
   --results=verified,unknown \
-  --fail \
   --fail-on-scan-errors \
-  --no-update
+  --no-update \
+  --json >"$scan_results"
+scan_exit=$?
+set -e
+
+if [ "$scan_exit" -ne 0 ]; then
+  echo "ERROR: TruffleHog scan failed before result filtering." >&2
+  exit "$scan_exit"
+fi
+
+python3 - "$scan_results" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+
+allowed = {
+    (
+        "447430340a7f8eaa5999a99d8217e12d6fed8cf6",
+        "sidecar-tests/recorder-store.test.mjs",
+        599,
+        "URI",
+        "https://user:pass@agentic30.example",
+    )
+}
+
+findings = []
+allowed_count = 0
+with open(path, "r", encoding="utf-8") as handle:
+    for line in handle:
+        if not line.strip():
+            continue
+        result = json.loads(line)
+        git = result.get("SourceMetadata", {}).get("Data", {}).get("Git", {})
+        key = (
+            git.get("commit"),
+            git.get("file"),
+            git.get("line"),
+            result.get("DetectorName"),
+            result.get("Raw"),
+        )
+        if key in allowed:
+            allowed_count += 1
+            print(
+                "Allowed known TruffleHog false positive: "
+                f"{git.get('file')}:{git.get('line')} "
+                f"{result.get('DetectorName')} in {git.get('commit')}"
+            )
+            continue
+        findings.append(result)
+
+if findings:
+    print("ERROR: TruffleHog found unallowlisted secret candidates:", file=sys.stderr)
+    for result in findings:
+        git = result.get("SourceMetadata", {}).get("Data", {}).get("Git", {})
+        print(
+            "- "
+            f"{result.get('DetectorName')} "
+            f"{git.get('file')}:{git.get('line')} "
+            f"commit={git.get('commit')} "
+            f"verified={result.get('Verified')}",
+            file=sys.stderr,
+        )
+    sys.exit(183)
+
+if allowed_count:
+    print(f"TruffleHog full-history scan clean after {allowed_count} exact false-positive allowlist match.")
+else:
+    print("TruffleHog full-history scan clean.")
+PY
