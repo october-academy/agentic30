@@ -36,6 +36,10 @@
   MCP deny-by-default with real wired tool `recorder_raw_sql_query`, export
   manifest/archive (raw API only), hostile captured-text fixtures across all
   sinks. SQL inspector + audit have focused real-sidecar UI E2E acceptance.
+  Swift MCP grant/revoke UI is wired (Control-surface "MCP Raw SQL Grant"
+  panel: raw_sql-only one-click 5-minute grant, per-row revoke,
+  deny-by-default empty state, non-proof pill; raw_admin is never requested
+  from the UI) with envelope decode tests + ViewModel send unit tests.
 - Gate C: actual_collector — clipboard trigger/content policy, encrypted mic
   chunks + on-device-only Speech transcription (typed no-cloud terminal
   states), SCStream System Audio, Apple Events browser URL + AX document
@@ -47,11 +51,11 @@
 - **LIVE signed-app acceptance: NOT DONE — the single remaining e2e gate.**
   Zero live capture/search/delete/audio/retention evidence exists under
   granted TCC. See P0.
-- Tests: sidecar ~2398 pass / 0 real fails (must run with
+- Tests: sidecar 2429 pass / 0 fail / 3 skip (must run with
   `env -u AGENTIC30_TEST_STUB_PROVIDER -u AGENTIC30_APP_SUPPORT_PATH`); Swift
-  unit ~575+ pass; debug UI E2E 57/57.
-- Working tree: the entire Founder Memory OS slice is uncommitted on `main`
-  (see P1).
+  unit 599 pass; debug UI E2E 57/57.
+- Version: 1.0.30 (build 50) in `agentic30/Info.plist` + pbxproj — release
+  preflight version gate clears the live appcast build 49.
 
 ## P0 — Live signed-app recorder acceptance
 
@@ -144,44 +148,7 @@ blocking foreground UI E2E (CLAUDE.md rule).
 
 ## P1 — Next up
 
-1. **Commit the uncommitted Founder Memory OS worktree slice.** Swift
-   (AgenticViewModel/ContentView/OpenDesignDayPageView + tests), sidecar
-   (index.mjs, recorder-delete.mjs, recorder-pipes.mjs + tests), scripts
-   (run-live-signed-recorder-ui-e2e.sh, verify-live-recorder-acceptance.mjs,
-   untracked verify-live-recorder-acceptance.sh), package.json, and these
-   spec docs. Verify the branch first (other sessions switch branches); CI
-   does not run sidecar tests, so run
-   `env -u AGENTIC30_TEST_STUB_PROVIDER -u AGENTIC30_APP_SUPPORT_PATH npm run test:sidecar`
-   locally before claiming green.
-2. **Swift MCP grant/revoke UI** (the remaining half of the recorder MCP
-   feature; sidecar tool `recorder_raw_sql_query` is done). AgenticViewModel:
-   3 sends mirroring `sendRecorderRawApiTokenIssue` → WS types
-   `recorder_mcp_grant_create` {toolName, accessLevels, ttlMs, reason,
-   rawAdminConfirmed} / `recorder_mcp_grants_list` / `recorder_mcp_grant_revoke`
-   {grantId}; decoders for envelopes `recorder_mcp_grants` /
-   `recorder_mcp_grant_created` / `recorder_mcp_grant_revoked`
-   (`proofAcceptedByMcpGrant:false`). WS handlers already exist in
-   `sidecar/index.mjs` (dispatch ~:1419-1428, handlers
-   `handleRecorderMcpGrantsList/Create/Revoke` ~:4954-4998; line numbers
-   drift — grep the WS type names before editing) — reuse, do not rewrite.
-   New "Recorder MCP Access" pane: grant list (empty state = denied by
-   default), create form (tool picker uses the real name
-   `recorder_raw_sql_query`; per-tool scoping only; TTL default 5min / max
-   15min = `MAX_GRANT_TTL_MS`, surface
-   `ERR_RECORDER_MCP_GRANT_TTL_TOO_LONG`; raw_admin needs a second
-   confirmation toggle else
-   `ERR_RECORDER_MCP_RAW_ADMIN_CONFIRMATION_REQUIRED`), revoke per row.
-   Extend `agentic30Tests/SidecarEventDecodingTests.swift` with the 3
-   envelope decode tests, plus a ViewModel unit test that the 3 new sends
-   emit the correct WS type + payload keys (reuse the stub-WS harness used by
-   the `recorder_raw_api_token_issue` tests).
-3. **Bump CFBundleVersion past 49 before the next release.** Live Sparkle
-   appcast build is also 49, so release preflight fails at the version gate.
-   Version source of truth is `agentic30/Info.plist`
-   (GENERATE_INFOPLIST_FILE=NO) — bump Info.plist and pbxproj together. Local
-   preflight workaround:
-   `env SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml bash scripts/preflight-release.sh --skip-tests`.
-4. **insane-review large packs: retry or explicitly accept narrow coverage.**
+1. **insane-review large packs: retry or explicitly accept narrow coverage.**
    The narrow recorder pack PASSED
    (`.insane-review/response_prj_20260629_232802_72018_4ed024.md`); the full
    (~4.5M tokens) and focused (~1.03M tokens) packs are blocked by a ChatGPT
@@ -207,15 +174,6 @@ blocking foreground UI E2E (CLAUDE.md rule).
   leg** (wired + non-UI verified, no observed foreground acceptance), plus
   live/manual UI validation for the SQL inspector panel and Pipes tab.
   Blocking UI E2E needs user approval + `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`.
-- **Verify-then-fix, both possibly already done in the working tree:** (a)
-  pin `timeoutMs:5000` in `sidecar-tests/recorder-raw-api-server.test.mjs`
-  test #16 ("truncated when row count exceeds copy cap" flakes under
-  full-suite parallelism at the 2000ms default); (b) the non-hermetic
-  `workspace-memory.test.mjs` Day-30 retrieval test (a 2026-07-01 clock-sweep
-  fix may already cover it).
-- **`recorder-evidence-review.mjs`: confirm wired or delete.** It was
-  orphaned (0 non-test importers) as of 2026-07-01, superseded by
-  inbox-builder + candidates + adapter.
 - **SQLite authorizer/progress-handler enforcement — deferred.**
   better-sqlite3 12.8.0 exposes no hooks; the accepted defense-in-depth is
   string validator + read-only source DB + copied-view sandbox worker +

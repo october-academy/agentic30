@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>Agentic30ExternalPermissionOnboardingAllowed</key>
-	<string>$(AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED)</string>
 	<key>Agentic30ExpectedPermissionActorBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>Agentic30ExternalPermissionOnboardingAllowed</key>
+	<string>$(AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED)</string>
 	<key>Agentic30LiveSignedUIE2EAllowed</key>
 	<string>$(AGENTIC30_LIVE_SIGNED_UI_E2E_ALLOWED)</string>
 	<key>Agentic30PostHogHost</key>
@@ -31,7 +31,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.29</string>
+	<string>1.0.30</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -46,15 +46,15 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>49</string>
+	<string>50</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
-	<key>NSHumanReadableCopyright</key>
-	<string></string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Agentic30 reads the front browser tab URL locally only after Founder Replay context capture is enabled, so execution memories can include browser context without a browser extension.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Agentic30 records microphone audio only after explicit Founder Replay opt-in and stores it locally for encrypted execution memory.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
