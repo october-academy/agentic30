@@ -10980,15 +10980,21 @@ private struct OpenDesignFounderReplayPageView: View {
             Spacer(minLength: 10)
             founderReplayStatusPill(state, tone: permissionTone(state))
             if row.canRequest {
+                let permissionGranted = state == "granted"
                 Button {
                     requestPermission(row.id)
                 } label: {
-                    Label(controlActionInFlight == "permission_request_\(row.id)" ? "요청 중" : "Request", systemImage: "hand.raised")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(height: 28)
+                    Label(
+                        permissionGranted
+                            ? "허용됨"
+                            : (controlActionInFlight == "permission_request_\(row.id)" ? "요청 중" : "Request"),
+                        systemImage: permissionGranted ? "checkmark.circle.fill" : "hand.raised"
+                    )
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: 28)
                 }
                 .buttonStyle(OpenDesignInteractiveButtonStyle())
-                .disabled(controlBusy)
+                .disabled(controlBusy || permissionGranted)
                 .accessibilityIdentifier("opendesign.founderReplay.control.permission.request.\(row.id)")
             }
             if let settingsURL = row.settingsURL {
