@@ -1,0 +1,33 @@
+{
+  "name": "agentic30-ds",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agentic30 design-system mirror — React components built from STYLESEED.md + OpenDesignTokens.swift",
+  "type": "module",
+  "module": "./dist/index.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/ds.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "peerDependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "dependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  }
+}

@@ -7,20 +7,43 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: #080b10;
-      --panel: #111722;
-      --panel-2: #0c111a;
-      --line: rgba(194, 214, 255, 0.18);
-      --line-strong: rgba(232, 197, 116, 0.52);
-      --text: #eef3ff;
-      --muted: #93a0b7;
-      --faint: #5f6b7f;
-      --gold: #d9b86c;
-      --blue: #6aa6ff;
-      --blue-soft: rgba(106, 166, 255, 0.15);
-      --gold-soft: rgba(217, 184, 108, 0.14);
-      --danger: #ff8c7a;
-      --radius: 8px;
+
+      /* Single accent — green only */
+      --accent: #37D59F;
+      --accent-soft: rgba(55, 213, 159, 0.12);
+      --accent-border: rgba(55, 213, 159, 0.32);
+
+      /* Greyscale dark palette */
+      --page: #15171A;
+      --surface: #1E2228;
+      --surface-2: #252A31;
+      --hover: #2B3138;
+      --border: rgba(255, 255, 255, 0.07);
+      --border-soft: rgba(255, 255, 255, 0.05);
+      --border-strong: rgba(255, 255, 255, 0.12);
+      --fg: #E7E9EC;
+      --fg-secondary: #B9BEC4;
+      --muted: #8B9199;
+      --muted-deep: #6B7178;
+      --faint: #4F555C;
+
+      /* Status — severity only */
+      --danger: #E2897E;
+      --danger-soft: rgba(226, 137, 126, 0.10);
+      --danger-border: rgba(226, 137, 126, 0.28);
+      --warning: #E0B564;
+
+      /* Subtle layered shadow + scrim (black-based, low opacity) */
+      --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.07);
+      --scrim: rgba(21, 23, 26, 0.86);
+      --focus-ring: rgba(55, 213, 159, 0.55);
+
+      /* Radius soft scale */
+      --r-chip: 8px;
+      --r-control: 10px;
+      --r-card: 14px;
+      --r-pill: 999px;
+
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
@@ -32,28 +55,22 @@
       display: grid;
       place-items: center;
       padding: 28px;
-      background:
-        radial-gradient(circle at 18% 18%, rgba(106, 166, 255, 0.12), transparent 34%),
-        linear-gradient(135deg, #06080d 0%, #0b111b 52%, #07090f 100%);
-      color: var(--text);
+      background: var(--page);
+      color: var(--fg);
     }
 
     .card-shell {
       width: min(980px, 100%);
-      border: 1px solid var(--line-strong);
-      border-radius: 14px;
-      padding: 1px;
-      background:
-        linear-gradient(140deg, rgba(217, 184, 108, 0.75), rgba(106, 166, 255, 0.2) 38%, rgba(238, 243, 255, 0.12));
-      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.48);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--r-card);
+      background: var(--surface);
+      box-shadow: var(--shadow-card);
     }
 
     .card {
       overflow: hidden;
-      border-radius: 13px;
-      background:
-        linear-gradient(180deg, rgba(17, 23, 34, 0.96), rgba(9, 13, 20, 0.98)),
-        var(--panel);
+      border-radius: var(--r-card);
+      background: var(--surface);
     }
 
     .topline {
@@ -62,8 +79,8 @@
       gap: 16px;
       align-items: center;
       padding: 18px 20px;
-      border-bottom: 1px solid var(--line);
-      background: linear-gradient(90deg, rgba(217, 184, 108, 0.1), rgba(106, 166, 255, 0.08), transparent);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-2);
     }
 
     .title-block {
@@ -71,19 +88,26 @@
     }
 
     .card-number {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       margin: 0 0 7px;
-      color: var(--gold);
+      color: var(--accent);
       font-size: 11px;
       font-weight: 700;
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
 
+    .card-number svg { width: 14px; height: 14px; }
+
     h1 {
       margin: 0;
       font-size: clamp(23px, 3vw, 38px);
       line-height: 1.02;
       letter-spacing: 0;
+      font-weight: 700;
+      color: var(--fg);
     }
 
     .badges {
@@ -94,18 +118,19 @@
     }
 
     .badge {
-      border: 1px solid var(--line);
-      border-radius: 999px;
+      border: 1px solid var(--border);
+      border-radius: var(--r-chip);
       padding: 7px 10px;
       color: var(--muted);
-      background: rgba(255, 255, 255, 0.035);
+      background: var(--surface);
       font-size: 12px;
+      font-weight: 500;
       white-space: nowrap;
     }
 
     .badge strong {
-      color: var(--text);
-      font-weight: 700;
+      color: var(--fg);
+      font-weight: 600;
     }
 
     .body {
@@ -117,10 +142,8 @@
     .visual {
       min-height: 360px;
       padding: 20px;
-      border-right: 1px solid var(--line);
-      background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
-        var(--panel-2);
+      border-right: 1px solid var(--border);
+      background: var(--surface-2);
     }
 
     .visual-frame {
@@ -128,20 +151,9 @@
       height: 100%;
       min-height: 320px;
       overflow: hidden;
-      border: 1px solid rgba(232, 197, 116, 0.22);
-      border-radius: var(--radius);
-      background: #070b12;
-    }
-
-    .visual-frame::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      border: 1px solid rgba(238, 243, 255, 0.09);
-      border-radius: 6px;
-      box-shadow: inset 0 0 58px rgba(0, 0, 0, 0.42);
-      pointer-events: none;
-      z-index: 2;
+      border: 1px solid var(--border);
+      border-radius: var(--r-control);
+      background: var(--page);
     }
 
     .visual-image {
@@ -156,18 +168,19 @@
     .label {
       position: absolute;
       max-width: 180px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--r-control);
       padding: 10px 11px;
-      background: rgba(8, 11, 16, 0.72);
+      background: var(--scrim);
       backdrop-filter: blur(10px);
       z-index: 3;
     }
 
     .label h2 {
       margin: 0 0 4px;
-      color: var(--text);
+      color: var(--fg);
       font-size: 13px;
+      font-weight: 600;
       letter-spacing: 0;
     }
 
@@ -188,31 +201,38 @@
     }
 
     .section {
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      border-radius: var(--r-control);
       padding: 15px;
-      background: rgba(255, 255, 255, 0.026);
+      background: var(--surface-2);
     }
 
     .section-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       margin: 0 0 8px;
-      color: var(--gold);
+      color: var(--muted);
       font-size: 11px;
-      font-weight: 800;
+      font-weight: 600;
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
+
+    .section-label svg { width: 14px; height: 14px; }
 
     .question {
       margin: 0;
       font-size: clamp(18px, 2vw, 24px);
       line-height: 1.28;
       letter-spacing: 0;
+      font-weight: 700;
+      color: var(--fg);
     }
 
     .why, .source-list {
       margin: 0;
-      color: var(--muted);
+      color: var(--fg-secondary);
       font-size: 14px;
       line-height: 1.62;
     }
@@ -227,15 +247,32 @@
       grid-template-columns: auto 1fr;
       gap: 10px;
       align-items: start;
-      border: 1px solid rgba(106, 166, 255, 0.22);
-      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      border-radius: var(--r-control);
       padding: 12px;
-      background: var(--blue-soft);
+      background: var(--surface);
     }
 
+    /* Selected option carries the single green accent */
+    .choice.selected {
+      border-color: var(--accent-border);
+      background: var(--accent-soft);
+    }
+
+    .choice.selected .mark {
+      border-color: var(--accent-border);
+      color: var(--accent);
+    }
+
+    /* Warning option uses muted danger (severity) */
     .choice.warn {
-      border-color: rgba(255, 140, 122, 0.28);
-      background: rgba(255, 140, 122, 0.08);
+      border-color: var(--danger-border);
+      background: var(--danger-soft);
+    }
+
+    .choice.warn .mark {
+      border-color: var(--danger-border);
+      color: var(--danger);
     }
 
     .mark {
@@ -243,17 +280,18 @@
       place-items: center;
       width: 26px;
       height: 26px;
-      border: 1px solid var(--line-strong);
-      border-radius: 50%;
-      color: var(--gold);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--r-pill);
+      color: var(--muted);
       font-size: 12px;
-      font-weight: 800;
+      font-weight: 700;
     }
 
     .choice b {
       display: block;
-      color: var(--text);
+      color: var(--fg);
       font-size: 14px;
+      font-weight: 600;
       margin-bottom: 3px;
     }
 
@@ -264,13 +302,76 @@
     }
 
     code {
-      color: #cfe0ff;
-      background: rgba(106, 166, 255, 0.11);
-      border: 1px solid rgba(106, 166, 255, 0.16);
-      border-radius: 5px;
+      color: var(--fg-secondary);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-chip);
       padding: 1px 5px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 0.92em;
+    }
+
+    /* State demonstration blocks (empty / error) */
+    .state {
+      display: grid;
+      justify-items: center;
+      text-align: center;
+      gap: 8px;
+      padding: 22px 15px;
+      border: 1px dashed var(--border);
+      border-radius: var(--r-control);
+      background: var(--surface);
+    }
+
+    .state-icon {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: var(--r-pill);
+      background: var(--surface-2);
+      color: var(--muted);
+    }
+
+    .state.error .state-icon {
+      color: var(--danger);
+    }
+
+    .state-icon svg { width: 18px; height: 18px; }
+
+    .state-line {
+      margin: 0;
+      color: var(--fg-secondary);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .state-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 2px;
+      padding: 7px 12px;
+      border: 1px solid transparent;
+      border-radius: var(--r-control);
+      background: transparent;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .state.error .state-cta {
+      color: var(--fg);
+      border-color: var(--border-strong);
+    }
+
+    .state-cta svg { width: 14px; height: 14px; }
+
+    .state-cta:focus-visible {
+      outline: 2px solid var(--focus-ring);
+      outline-offset: 2px;
     }
 
     @media (max-width: 760px) {
@@ -280,7 +381,7 @@
       .body { grid-template-columns: 1fr; }
       .visual {
         border-right: 0;
-        border-bottom: 1px solid var(--line);
+        border-bottom: 1px solid var(--border);
         min-height: 260px;
       }
       .visual-frame { min-height: 230px; }
@@ -293,7 +394,10 @@
     <article class="card">
       <header class="topline">
         <div class="title-block">
-          <p class="card-number">CARD 01 · PRODUCT NORTH STAR</p>
+          <p class="card-number">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15 8.5 22 9.3 17 14 18.2 21 12 17.6 5.8 21 7 14 2 9.3 9 8.5 12 2"/></svg>
+            CARD 01 · PRODUCT NORTH STAR
+          </p>
           <h1>성과의 주체를 고정한다</h1>
         </div>
         <div class="badges" aria-label="question metadata">
@@ -306,7 +410,23 @@
       <div class="body">
         <section class="visual" aria-label="abstract decision frame">
           <div class="visual-frame">
-            <img class="visual-image" src="./agentic30-interview-card-q01-visual.png" alt="">
+            <svg class="visual-image" viewBox="0 0 420 360" preserveAspectRatio="xMidYMid slice" role="img" aria-label="제품 노스스타를 가리키는 추상 별 도형" style="display:block;width:100%;height:100%">
+              <line x1="210" y1="24" x2="210" y2="336" stroke="var(--border-strong)" stroke-width="1" opacity="0.45"/>
+              <line x1="36" y1="180" x2="384" y2="180" stroke="var(--border-strong)" stroke-width="1" opacity="0.45"/>
+              <circle cx="210" cy="180" r="62" fill="none" stroke="var(--muted)" stroke-width="1" opacity="0.18"/>
+              <circle cx="210" cy="180" r="104" fill="none" stroke="var(--muted)" stroke-width="1" opacity="0.12"/>
+              <circle cx="210" cy="180" r="146" fill="none" stroke="var(--muted)" stroke-width="1" opacity="0.08"/>
+              <circle cx="120" cy="96" r="1.6" fill="var(--muted)" opacity="0.5"/>
+              <circle cx="312" cy="120" r="1.6" fill="var(--muted)" opacity="0.45"/>
+              <circle cx="300" cy="262" r="1.6" fill="var(--muted)" opacity="0.4"/>
+              <circle cx="128" cy="250" r="1.6" fill="var(--muted)" opacity="0.45"/>
+              <line x1="210" y1="80" x2="210" y2="132" stroke="var(--accent)" stroke-width="1.5" opacity="0.5"/>
+              <line x1="210" y1="228" x2="210" y2="280" stroke="var(--accent)" stroke-width="1.5" opacity="0.5"/>
+              <line x1="110" y1="180" x2="162" y2="180" stroke="var(--accent)" stroke-width="1.5" opacity="0.5"/>
+              <line x1="258" y1="180" x2="310" y2="180" stroke="var(--accent)" stroke-width="1.5" opacity="0.5"/>
+              <path d="M210 144 L219 171 L246 180 L219 189 L210 216 L201 189 L174 180 L201 171 Z" fill="var(--accent)"/>
+              <circle cx="210" cy="180" r="4" fill="var(--page)" opacity="0.85"/>
+            </svg>
             <div class="label user">
               <h2>사용자 제품 성과</h2>
               <p>first_value 100명과 결제/입금 증거</p>
@@ -320,19 +440,28 @@
 
         <section class="content">
           <div class="section">
-            <p class="section-label">Core Question</p>
+            <p class="section-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.5 1.5c0 1.7-2.5 2-2.5 3.5"/><line x1="12" y1="17.5" x2="12" y2="17.6"/></svg>
+              Core Question
+            </p>
             <p class="question">이번 스펙의 “활성 사용자 100명”과 “첫 매출”은 누구의 성과인가?</p>
           </div>
 
           <div class="section">
-            <p class="section-label">Why It Matters</p>
+            <p class="section-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2V18h6v-1.3c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/><line x1="9.5" y1="21" x2="14.5" y2="21"/></svg>
+              Why It Matters
+            </p>
             <p class="why">코드와 adaptive spec은 사용자의 제품에서 <code>first_value</code>를 완료한 사람과 사용자의 결제/입금 증거를 중심으로 설계되어 있다. 반면 Agentic30 자체 결제, 구독, 페이월 구현은 코드에서 확인되지 않는다. 이 선택이 데이터 모델, UI, 운영 대시보드, BM 우선순위를 모두 바꾼다.</p>
           </div>
 
           <div class="section">
-            <p class="section-label">Answer Prompt</p>
+            <p class="section-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11.5 11 13.5 15 8.5"/><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/></svg>
+              Answer Prompt
+            </p>
             <div class="choices">
-              <div class="choice">
+              <div class="choice selected" aria-selected="true">
                 <div class="mark">A</div>
                 <div>
                   <b>사용자 제품의 성과만 본다</b>
@@ -357,8 +486,47 @@
           </div>
 
           <div class="section">
-            <p class="section-label">Linked Evidence</p>
+            <p class="section-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a4 4 0 0 0 5.6.4l2.7-2.6a4 4 0 0 0-5.6-5.7l-1.5 1.5"/><path d="M14 11a4 4 0 0 0-5.6-.4L5.7 13.2a4 4 0 0 0 5.6 5.7l1.5-1.5"/></svg>
+              Linked Evidence
+            </p>
             <p class="source-list"><code>docs/specs/agentic30-30day-adaptive-program.md</code> D1/D2, <code>sidecar/active-users-snapshot.mjs</code>, <code>sidecar/index.mjs</code> <code>submit_revenue_evidence</code>, <code>package.json</code> payment SDK 부재.</p>
+          </div>
+
+          <!-- Unanswered / empty state demonstration for the answer surface -->
+          <div class="section" aria-label="unanswered state example">
+            <p class="section-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11.5 11 13.5 15 8.5"/><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/></svg>
+              Answer Prompt · 미응답 상태
+            </p>
+            <div class="state" aria-label="no answer selected yet">
+              <div class="state-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 0 1 4.5 1.5c0 1.7-2.5 2-2.5 3.5"/><line x1="12" y1="17.5" x2="12" y2="17.6"/></svg>
+              </div>
+              <p class="state-line">아직 선택한 답이 없습니다. 위 A·B·C 중 하나를 골라 성과의 주체를 고정하세요.</p>
+              <button type="button" class="state-cta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+                답 선택하기
+              </button>
+            </div>
+          </div>
+
+          <!-- Error state demonstration for the linked-evidence surface -->
+          <div class="section" aria-label="evidence error state example">
+            <p class="section-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a4 4 0 0 0 5.6.4l2.7-2.6a4 4 0 0 0-5.6-5.7l-1.5 1.5"/><path d="M14 11a4 4 0 0 0-5.6-.4L5.7 13.2a4 4 0 0 0 5.6 5.7l1.5-1.5"/></svg>
+              Linked Evidence · 오류 상태
+            </p>
+            <div class="state error" aria-label="evidence failed to load">
+              <div class="state-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18.5a1.5 1.5 0 0 0 1.3 2.3h17.8a1.5 1.5 0 0 0 1.3-2.3L13.7 3.9a1.5 1.5 0 0 0-2.6 0Z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><line x1="12" y1="17" x2="12" y2="17.1"/></svg>
+              </div>
+              <p class="state-line">증거 링크를 불러오지 못했습니다. 워크스페이스 인덱스에 연결할 수 없습니다.</p>
+              <button type="button" class="state-cta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 0 1 14.5-6"/><path d="M18 3v3.5h-3.5"/><path d="M20.5 12a8.5 8.5 0 0 1-14.5 6"/><path d="M6 21v-3.5h3.5"/></svg>
+                다시 시도
+              </button>
+            </div>
           </div>
         </section>
       </div>

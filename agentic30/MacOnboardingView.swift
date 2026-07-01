@@ -11,9 +11,9 @@ enum MacOnboardingTheme {
     static var border: Color { OpenDesignDayColor.borderSoft }
     static var accent: Color { OpenDesignDayColor.accent }
     static var primaryFill: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.fg : Color.white }
-    static var primaryText: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.surface : Color.black.opacity(0.86) }
+    static var primaryText: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.surface : OpenDesignInk.onLightStrong }
     static var disabledFill: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.selected.opacity(0.74) : Color.white.opacity(0.34) }
-    static var disabledText: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.muted : Color.black.opacity(0.36) }
+    static var disabledText: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.muted : OpenDesignInk.onLightMuted }
     static var secondaryFill: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.surface2 : Color.white.opacity(0.08) }
     static var secondaryButtonText: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.fgSecondary : Color.white.opacity(0.78) }
     static var badgeFill: Color { Agentic30Theme.current == .white ? Color.white.opacity(0.78) : Color.black.opacity(0.32) }

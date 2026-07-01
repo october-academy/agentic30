@@ -60,3 +60,10 @@ _workspace/
 
 # insane-review GPT response cache (local only)
 .insane-review/
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+.design-sync/mirror/node_modules/
+.design-sync/mirror/dist/

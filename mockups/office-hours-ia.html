@@ -6,109 +6,132 @@
 <title>Office Hours · IA 반영 (디자인 보존)</title>
 <style>
   :root {
-    --bg: #141618; --bgDeep: #0a0b0d; --bgDarker: #060708;
-    --surface: #0e1011; --surface2: #121415; --hover: #242729; --selected: #2d3134;
-    --border: #26292c; --borderSoft: #1c2022;
-    --fg: #f0f2f4; --fgSecondary: #babec1; --muted: #7c8185; --mutedDeep: #53595d;
-    --accent: #37d5a0; --amber: #efb146; --rose: #f87770;
-    --accentDim: rgba(55,213,160,0.14); --accentLine: rgba(55,213,160,0.40);
-    --amberDim: rgba(239,177,70,0.14);
+    /* greyscale dark palette — single accent = green */
+    --page: #15171A; --surface: #1E2228; --surface2: #252A31; --hover: #2B3138;
+    --border: rgba(255,255,255,0.07); --borderSoft: rgba(255,255,255,0.05); --borderStrong: rgba(255,255,255,0.12);
+    --fg: #E7E9EC; --fgSecondary: #B9BEC4; --muted: #8B9199; --mutedDeep: #6B7178; --faint: #4F555C;
+    /* single accent hue */
+    --accent: #37D59F;
+    --accentDim: rgba(55,213,159,0.14); --accentLine: rgba(55,213,159,0.40);
+    /* severity only — never decoration */
+    --danger: #E2897E; --dangerDim: rgba(226,137,126,0.14); --dangerLine: rgba(226,137,126,0.40);
+    --warning: #E0B564; --warningDim: rgba(224,181,100,0.14); --warningLine: rgba(224,181,100,0.40);
+    /* radius soft scale: chip 8 · control 10 · card 14 · pill 999 */
+    --rChip: 8px; --rCtl: 10px; --rCard: 14px; --rPill: 999px;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
     --sans: -apple-system, "SF Pro Text", system-ui, "Pretendard", sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #000; color: var(--fg); font-family: var(--sans);
+    background: var(--page); color: var(--fg); font-family: var(--sans);
     -webkit-font-smoothing: antialiased; min-height: 100vh;
     display: flex; align-items: flex-start; justify-content: center; padding: 24px;
   }
+  svg.ic { display: block; flex-shrink: 0; }
   .frame {
-    width: 1180px; height: 860px; background: var(--bg);
-    border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; overflow: hidden;
-    display: flex; box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+    width: 1180px; height: 860px; background: var(--page);
+    border: 1px solid var(--borderStrong); border-radius: var(--rCard); overflow: hidden;
+    display: flex;
   }
 
   /* icon rail */
-  .rail { width: 52px; background: var(--bgDarker); border-right: 1px solid var(--borderSoft);
+  .rail { width: 52px; background: var(--page); border-right: 1px solid var(--borderSoft);
     display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 6px; }
-  .rail .item { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center;
-    justify-content: center; color: var(--muted); font-size: 15px; }
+  .rail .item { width: 34px; height: 34px; border-radius: var(--rCtl); display: flex; align-items: center;
+    justify-content: center; color: var(--muted); }
   .rail .item.on { background: var(--accentDim); color: var(--accent); }
   .rail .spacer { flex: 1; }
-  .rail .z { width: 26px; height: 26px; border-radius: 7px; background: var(--surface);
+  .rail .z { width: 26px; height: 26px; border-radius: var(--rChip); background: var(--surface);
     border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
     font-family: var(--mono); font-size: 11px; color: var(--mutedDeep); }
 
   /* ===== Day timeline sidebar (IA) ===== */
-  .sidebar { width: 236px; background: var(--bg); border-right: 1px solid var(--borderSoft);
+  .sidebar { width: 236px; background: var(--page); border-right: 1px solid var(--borderSoft);
     display: flex; flex-direction: column; }
   .sb-header { height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
     border-bottom: 1px solid var(--borderSoft); }
   .sb-header .proj { font-size: 12px; font-weight: 600; color: var(--fg); }
   .sb-header .daypill { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--accent);
     padding: 0 7px; height: 19px; display: flex; align-items: center; background: var(--accentDim);
-    border: 1px solid var(--accentLine); border-radius: 999px; }
-  .sb-header .prog { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+    border: 1px solid var(--accentLine); border-radius: var(--rPill); }
+  .sb-header .prog { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; }
   .sb-scroll { flex: 1; overflow-y: auto; padding: 2px 6px 14px; }
   .group-title { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--mutedDeep);
     letter-spacing: 1.1px; text-transform: uppercase; padding: 12px 8px 4px; }
-  .day { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 9px;
+  .day { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--rCtl);
     margin-bottom: 2px; border: 1px solid transparent; }
-  .day .mark { width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0; display: flex;
+  .day .mark { width: 26px; height: 26px; border-radius: var(--rChip); flex-shrink: 0; display: flex;
     align-items: center; justify-content: center; font-family: var(--mono); font-size: 10px; font-weight: 600;
-    background: var(--bgDeep); border: 1px solid var(--border); color: var(--fgSecondary); }
+    background: var(--surface); border: 1px solid var(--border); color: var(--fgSecondary); }
   .day .body { min-width: 0; flex: 1; }
   .day .goal { font-size: 12px; font-weight: 500; color: var(--fgSecondary);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .day .sub { font-size: 10px; color: var(--mutedDeep); margin-top: 1px; }
-  .day .badge { font-family: var(--mono); font-size: 10px; color: var(--mutedDeep); flex-shrink: 0; }
+  .day .badge { font-family: var(--mono); font-size: 10px; color: var(--mutedDeep); flex-shrink: 0; white-space: nowrap;
+    display: flex; align-items: center; }
   .day.today { background: var(--accentDim); border-color: var(--accentLine); }
   .day.today .mark { background: var(--accentDim); border-color: var(--accentLine); color: var(--accent); }
   .day.today .goal { color: var(--fg); font-weight: 600; }
+  .day.today .sub { color: var(--accent); }
   .day.today .badge { color: var(--accent); }
   .day.done .mark { color: var(--muted); }
-  .day.done .badge { color: var(--accent); }
-  .day.incomplete .mark { background: var(--amberDim); border-color: rgba(239,177,70,0.4); color: var(--amber); }
-  .day.incomplete .badge { color: var(--amber); }
-  .day.incomplete .sub { color: var(--amber); }
+  .day.done .badge { color: var(--muted); }
+  /* incomplete = OK-but-unfinished → neutral grey, not a colored alert */
+  .day.incomplete .mark { color: var(--muted); }
+  .day.incomplete .badge { color: var(--muted); }
+  .day.incomplete .sub { color: var(--muted); }
   .skip { display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin: 2px 0; }
-  .skip .dots { width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0; display: flex;
-    align-items: center; justify-content: center; color: var(--mutedDeep); font-size: 13px;
+  .skip .dots { width: 26px; height: 26px; border-radius: var(--rChip); flex-shrink: 0; display: flex;
+    align-items: center; justify-content: center; color: var(--mutedDeep);
     border: 1px dashed var(--border); }
   .skip .label { font-size: 11px; color: var(--mutedDeep); }
 
+  /* ===== empty + error demonstration blocks (Day timeline = primary data surface) ===== */
+  .state { display: flex; flex-direction: column; align-items: center; text-align: center;
+    gap: 8px; padding: 22px 14px; }
+  .state .circ { width: 38px; height: 38px; border-radius: var(--rPill); display: flex; align-items: center;
+    justify-content: center; background: var(--surface); border: 1px solid var(--border); color: var(--muted); }
+  .state.err .circ { color: var(--danger); border-color: var(--dangerLine); background: var(--dangerDim); }
+  .state .line1 { font-size: 12px; font-weight: 500; color: var(--fgSecondary); line-height: 1.5; }
+  .state .line2 { font-size: 10.5px; color: var(--mutedDeep); line-height: 1.5; }
+  .state .cta { font-size: 11px; font-weight: 600; color: var(--accent); display: inline-flex; align-items: center;
+    gap: 5px; margin-top: 2px; cursor: default; }
+  .state .retry { font-size: 11px; font-weight: 600; color: var(--fgSecondary); display: inline-flex; align-items: center;
+    gap: 5px; margin-top: 2px; padding: 5px 11px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--rCtl); cursor: default; }
+
   /* ===== main column (preserve OfficeHours design language) ===== */
-  .main { flex: 1; display: flex; flex-direction: column; background: var(--bg); min-width: 0; }
+  .main { flex: 1; display: flex; flex-direction: column; background: var(--page); min-width: 0; }
 
   /* header — OH icon + title + Day breadcrumb + status dot */
   .oh-header { height: 70px; display: flex; align-items: center; gap: 14px; padding: 0 28px;
     border-bottom: 1px solid var(--borderSoft); }
-  .oh-icon { width: 44px; height: 44px; border-radius: 11px; background: var(--accentDim);
+  .oh-icon { width: 44px; height: 44px; border-radius: var(--rCard); background: var(--accentDim);
     border: 1px solid var(--accentLine); display: flex; align-items: center; justify-content: center;
     font-family: var(--mono); font-size: 16px; font-weight: 700; color: var(--accent); }
   .oh-title-wrap { display: flex; flex-direction: column; gap: 3px; }
   .oh-title-row { display: flex; align-items: center; gap: 9px; }
   .oh-title { font-size: 17px; font-weight: 600; color: var(--fg); }
-  /* NEW: Day breadcrumb chip (IA) */
+  /* Day breadcrumb chip (IA) */
   .oh-bc { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--accent);
     padding: 0 8px; height: 20px; display: flex; align-items: center; gap: 5px;
-    background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: 999px; }
+    background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: var(--rPill); }
   .oh-bc .sep { color: var(--mutedDeep); }
   .oh-bc .stagenm { color: var(--fgSecondary); }
   .oh-sub { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px;
     font-weight: 500; color: var(--muted); }
-  .oh-dot { width: 5px; height: 5px; border-radius: 999px; background: var(--accent);
-    box-shadow: 0 0 6px var(--accentDim); }
+  .oh-dot { width: 5px; height: 5px; border-radius: var(--rPill); background: var(--accent); }
 
   /* stepper — REPURPOSED to Day loop macro stages, same pill component */
   .stepper { height: 56px; display: flex; align-items: center; padding: 0 28px; gap: 0;
     border-bottom: 1px solid var(--borderSoft); }
-  .step { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: 999px; }
-  .step .num { width: 18px; height: 18px; border-radius: 999px; display: flex; align-items: center;
+  .step { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: var(--rPill); }
+  .step .num { width: 18px; height: 18px; border-radius: var(--rPill); display: flex; align-items: center;
     justify-content: center; font-family: var(--mono); font-size: 10px; font-weight: 600;
     border: 1.5px solid var(--mutedDeep); color: var(--muted); }
+  .step .num svg.ic { width: 11px; height: 11px; }
   .step .lab { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--muted); }
-  .step.done .num { background: var(--accent); border-color: var(--accent); color: var(--bgDeep); }
+  .step.done .num { background: var(--accent); border-color: var(--accent); color: var(--page); }
   .step.done .lab { color: var(--fgSecondary); }
   .step.on { background: var(--accentDim); border: 1px solid var(--accentLine); }
   .step.on .num { border-color: var(--accent); color: var(--accent); }
@@ -131,15 +154,15 @@
 
   /* section header */
   .sh { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
-  .sh .bar { width: 4px; height: 12px; border-radius: 2px; background: var(--accent); }
+  .sh .bar { width: 4px; height: 12px; border-radius: var(--rChip); background: var(--accent); }
   .sh .t { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--muted);
     letter-spacing: 1.1px; text-transform: uppercase; }
-  .sh .m { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--mutedDeep); }
+  .sh .m { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--mutedDeep); white-space: nowrap; }
   .sh .line { flex: 1; height: 1px; background: var(--borderSoft); }
 
   /* signal table */
   .signals { display: flex; flex-direction: column; gap: 1px; background: var(--borderSoft);
-    border: 1px solid var(--borderSoft); border-radius: 12px; overflow: hidden; }
+    border: 1px solid var(--borderSoft); border-radius: var(--rCard); overflow: hidden; }
   .srow { display: flex; gap: 16px; padding: 12px 16px; background: var(--surface); align-items: baseline; }
   .srow .k { width: 132px; font-family: var(--mono); font-size: 10.5px; font-weight: 600;
     color: var(--fgSecondary); letter-spacing: 0.6px; text-transform: uppercase; }
@@ -147,23 +170,23 @@
 
   /* question card */
   .qcard { position: relative; background: linear-gradient(var(--surface), var(--surface2));
-    border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; overflow: hidden; }
+    border: 1px solid var(--border); border-radius: var(--rCard); padding: 18px 20px; overflow: hidden; }
   .qcard::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-    background: var(--accent); box-shadow: 0 0 14px rgba(55,213,160,0.55); }
+    background: var(--accent); }
   .qhead { display: flex; align-items: center; margin-bottom: 11px; }
   .qhead .ey { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--accent);
     letter-spacing: 1.2px; text-transform: uppercase; }
   .qhead .nm { margin-left: auto; font-family: var(--mono); font-size: 10.5px; font-weight: 600;
     color: var(--accent); padding: 0 8px; height: 20px; display: flex; align-items: center;
-    background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: 999px; }
+    background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: var(--rPill); white-space: nowrap; }
   .qtext { font-size: 17px; font-weight: 700; color: var(--fg); line-height: 1.45; }
 
   /* options */
   .opts-head { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
   .opt { display: flex; gap: 12px; padding: 14px 16px; background: var(--surface);
-    border: 1px solid var(--borderSoft); border-radius: 12px; align-items: flex-start; }
+    border: 1px solid var(--borderSoft); border-radius: var(--rCard); align-items: flex-start; }
   .opt.sel { border-color: var(--accentLine); background: var(--accentDim); }
-  .opt .num { width: 26px; height: 26px; flex-shrink: 0; border-radius: 999px; border: 1px solid var(--border);
+  .opt .num { width: 26px; height: 26px; flex-shrink: 0; border-radius: var(--rPill); border: 1px solid var(--border);
     display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 11px;
     color: var(--muted); }
   .opt.sel .num { border-color: var(--accent); color: var(--accent); }
@@ -171,8 +194,8 @@
   .opt .ot { display: flex; align-items: center; gap: 8px; }
   .opt .otitle { font-size: 14px; font-weight: 600; color: var(--fg); }
   .opt .rec { font-family: var(--mono); font-size: 9.5px; font-weight: 600; color: var(--accent);
-    padding: 1px 6px; background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: 5px; }
-  .opt .oid { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--mutedDeep); }
+    padding: 1px 6px; background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: var(--rChip); }
+  .opt .oid { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--mutedDeep); white-space: nowrap; }
   .opt .od { font-size: 12.5px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
   .opt .meta { font-size: 11.5px; color: var(--mutedDeep); margin-top: 4px; line-height: 1.5; }
 
@@ -180,23 +203,35 @@
   .micro { font-family: var(--mono); font-size: 10px; color: var(--mutedDeep); }
   .micro b { color: var(--accent); font-weight: 600; }
 
-  /* annotation badges */
-  .ann { position: absolute; font-family: var(--mono); font-size: 9px; font-weight: 700;
-    color: var(--amber); background: var(--amberDim); border: 1px solid rgba(239,177,70,0.4);
-    padding: 2px 6px; border-radius: 5px; pointer-events: none; white-space: nowrap; }
   .legend { max-width: 1180px; margin: 14px auto 0; font-family: var(--mono); font-size: 11px;
     color: var(--mutedDeep); line-height: 1.9; }
-  .legend b { color: var(--amber); }
+  .legend b { color: var(--fgSecondary); }
   .legend .g { color: var(--accent); }
+  .legend .lic { width: 13px; height: 13px; vertical-align: -2px; margin-right: 3px; }
+  .legend .lic.g { color: var(--accent); }
+  .legend .lic.m { color: var(--mutedDeep); }
+
+  /* state-demo strip below the frame */
+  .statedemo { max-width: 1180px; margin: 18px auto 0; display: flex; gap: 16px; }
+  .statedemo .panel { width: 236px; background: var(--page); border: 1px solid var(--border);
+    border-radius: var(--rCard); overflow: hidden; }
+  .statedemo .ph { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--mutedDeep);
+    letter-spacing: 1.1px; text-transform: uppercase; padding: 10px 12px; border-bottom: 1px solid var(--borderSoft); }
 </style>
 </head>
 <body>
 <div style="display:flex; flex-direction:column;">
   <div class="frame">
-    <!-- icon rail (boundary, unchanged) -->
+    <!-- icon rail (boundary, unchanged structure; emoji → inline SVG line icons) -->
     <div class="rail">
-      <div class="item on">📅</div>
-      <div class="item">⚙️</div>
+      <div class="item on" title="Day 타임라인">
+        <!-- calendar -->
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+      </div>
+      <div class="item" title="설정">
+        <!-- settings -->
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.07a1.7 1.7 0 0 0-1.11-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.07A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.07a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.07a1.7 1.7 0 0 0-1.53 1Z"/></svg>
+      </div>
       <div class="spacer"></div>
       <div class="z">Z</div>
     </div>
@@ -212,7 +247,7 @@
         <div class="group-title">Foundation</div>
         <div class="day today">
           <div class="mark">7</div>
-          <div class="body"><div class="goal">Go/No-Go 결정하기</div><div class="sub" style="color:var(--accent)">오늘 · 인터뷰</div></div>
+          <div class="body"><div class="goal">Go/No-Go 결정하기</div><div class="sub">오늘 · 인터뷰</div></div>
           <div class="badge">3/5</div>
         </div>
         <div class="day incomplete">
@@ -221,8 +256,16 @@
           <div class="badge">3/5</div>
         </div>
         <div class="skip"><div class="dots">···</div><div class="label">Day 3–5 · 건너뜀</div></div>
-        <div class="day done"><div class="mark">2</div><div class="body"><div class="goal">기준 시장 고르기</div></div><div class="badge">✓</div></div>
-        <div class="day done"><div class="mark">1</div><div class="body"><div class="goal">먼저 도울 사람 정하기</div></div><div class="badge">✓</div></div>
+        <div class="day done">
+          <div class="mark">2</div>
+          <div class="body"><div class="goal">기준 시장 고르기</div></div>
+          <div class="badge"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
+        </div>
+        <div class="day done">
+          <div class="mark">1</div>
+          <div class="body"><div class="goal">먼저 도울 사람 정하기</div></div>
+          <div class="badge"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
+        </div>
       </div>
     </div>
 
@@ -242,11 +285,11 @@
 
       <!-- stepper: REPURPOSED → Day loop macro stages (same pill design) -->
       <div class="stepper" id="macro-stepper">
-        <div class="step done"><div class="num">✓</div><div class="lab">scan</div></div>
+        <div class="step done"><div class="num"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div><div class="lab">scan</div></div>
         <div class="sep"></div>
-        <div class="step done"><div class="num">✓</div><div class="lab">회고</div></div>
+        <div class="step done"><div class="num"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div><div class="lab">회고</div></div>
         <div class="sep"></div>
-        <div class="step done"><div class="num">✓</div><div class="lab">목표</div></div>
+        <div class="step done"><div class="num"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div><div class="lab">목표</div></div>
         <div class="sep"></div>
         <div class="step on"><div class="num">4</div><div class="lab">인터뷰</div></div>
         <div class="sep"></div>
@@ -321,9 +364,43 @@
     </div>
   </div>
 
+  <!-- EMPTY + ERROR state demonstration for the Day timeline (primary data surface) -->
+  <div class="statedemo">
+    <div class="panel">
+      <div class="ph">Day 타임라인 · 빈 상태</div>
+      <div class="state">
+        <div class="circ">
+          <!-- calendar (muted) -->
+          <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+        </div>
+        <div class="line1">아직 진행한 Day가 없습니다.</div>
+        <div class="line2">첫 Day를 시작하면 타임라인이 여기에 쌓입니다.</div>
+        <span class="cta">
+          Day 1 시작하기
+          <svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="ph">Day 타임라인 · 오류 상태</div>
+      <div class="state err">
+        <div class="circ">
+          <!-- alert (danger) -->
+          <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+        </div>
+        <div class="line1">타임라인을 불러오지 못했습니다.</div>
+        <div class="line2">sidecar 연결이 끊겼습니다. 잠시 후 다시 시도하세요.</div>
+        <span class="retry">
+          <svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/></svg>
+          다시 시도
+        </span>
+      </div>
+    </div>
+  </div>
+
   <div class="legend">
-    <span class="g">●</span> 보존: OH 헤더 · 터미널 프롬프트 · step pill · 세션 컨텍스트 테이블 · 질문 카드 · 옵션 행 (색·박스·레이아웃 그대로)<br>
-    <b>◆</b> IA 반영: ① 사이드바 → Day 타임라인 &nbsp; ② 상단 stepper → <b>Day 루프 매크로 5단계</b>(scan·회고·목표·인터뷰·실행) &nbsp; ③ 헤더에 <b>Day 7 · 인터뷰</b> breadcrumb &nbsp; ④ 기존 마이크로 3-step(목표준비·질문대화·증거정리) → 섹션 헤더 meta(<b>질문 대화 2/3</b>)로 강등
+    <svg class="ic lic g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>보존: OH 헤더 · 터미널 프롬프트 · step pill · 세션 컨텍스트 테이블 · 질문 카드 · 옵션 행 (색·박스·레이아웃 그대로)<br>
+    <svg class="ic lic m" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7v6c0 4 3.5 7 8 8 4.5-1 8-4 8-8V7l-8-4Z"/></svg>IA 반영: ① 사이드바 → Day 타임라인 &nbsp; ② 상단 stepper → <b>Day 루프 매크로 5단계</b>(scan·회고·목표·인터뷰·실행) &nbsp; ③ 헤더에 <b>Day 7 · 인터뷰</b> breadcrumb &nbsp; ④ 기존 마이크로 3-step(목표준비·질문대화·증거정리) → 섹션 헤더 meta(<b>질문 대화 2/3</b>)로 강등
   </div>
 </div>
 </body>

@@ -6,29 +6,34 @@
 <title>약속 카드 v2 · Before / After (디자인 보존)</title>
 <style>
   :root {
-    --bg: #141618; --bgDeep: #0a0b0d; --bgDarker: #060708;
-    --surface: #0e1011; --surface2: #121415; --hover: #242729; --selected: #2d3134;
-    --border: #26292c; --borderSoft: #1c2022;
-    --fg: #f0f2f4; --fgSecondary: #babec1; --muted: #7c8185; --mutedDeep: #53595d;
-    --accent: #37d5a0; --amber: #efb146; --rose: #f87770;
-    --accentDim: rgba(55,213,160,0.14); --accentLine: rgba(55,213,160,0.40);
-    --amberDim: rgba(239,177,70,0.14); --amberLine: rgba(239,177,70,0.40);
-    --roseDim: rgba(248,119,112,0.13); --roseLine: rgba(248,119,112,0.42);
+    /* greyscale dark base — single accent = green */
+    --page: #15171A; --surface: #1E2228; --surface2: #252A31; --hover: #2B3138;
+    --border: rgba(255,255,255,0.07); --borderSoft: rgba(255,255,255,0.05); --borderStrong: rgba(255,255,255,0.12);
+    --fg: #E7E9EC; --fgSecondary: #B9BEC4; --muted: #8B9199; --mutedDeep: #6B7178; --faint: #4F555C;
+    --accent: #37D59F;
+    --accentDim: rgba(55,213,159,0.14); --accentLine: rgba(55,213,159,0.40);
+    /* severity only — never decoration */
+    --danger: #E2897E; --warning: #E0B564;
+    --dangerDim: rgba(226,137,126,0.13); --dangerLine: rgba(226,137,126,0.40);
+    --warningDim: rgba(224,181,100,0.13); --warningLine: rgba(224,181,100,0.40);
+    /* radius scale: chip 8 · control 10 · card 14 · pill 999 */
+    --rChip: 8px; --rControl: 10px; --rCard: 14px; --rPill: 999px;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
     --sans: -apple-system, "SF Pro Text", system-ui, "Pretendard", sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #000; color: var(--fg); font-family: var(--sans);
+    background: var(--page); color: var(--fg); font-family: var(--sans);
     -webkit-font-smoothing: antialiased; min-height: 100vh; padding: 32px 24px 64px;
     display: flex; flex-direction: column; align-items: center; gap: 6px;
   }
+  svg { display: block; }
   .page-h { font-size: 22px; font-weight: 700; color: var(--fg); }
   .page-sub { font-size: 13px; color: var(--muted); margin-bottom: 22px; text-align: center; line-height: 1.6; }
   .page-sub b { color: var(--accent); font-weight: 600; }
 
   .sh { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 1180px; margin: 26px 0 14px; }
-  .sh .bar { width: 4px; height: 13px; border-radius: 2px; background: var(--muted); }
+  .sh .bar { width: 4px; height: 13px; border-radius: var(--rPill); background: var(--muted); }
   .sh.after .bar { background: var(--accent); }
   .sh .t { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--fgSecondary);
     letter-spacing: 1.1px; text-transform: uppercase; }
@@ -40,22 +45,23 @@
   .label-tag { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--mutedDeep);
     margin-bottom: 9px; letter-spacing: 0.5px; }
   .label-tag.good { color: var(--accent); }
-  .label-tag.warn { color: var(--rose); }
-  .label-tag.amber { color: var(--amber); }
+  .label-tag.warn { color: var(--danger); }
+  .label-tag.amber { color: var(--muted); }
   .cardwrap { display: flex; flex-direction: column; }
 
   /* ===== shared commitment card shell (matches OH design language) ===== */
-  .pcard { position: relative; background: linear-gradient(var(--surface), var(--surface2));
-    border: 1px solid var(--border); border-radius: 14px; padding: 17px 19px 16px; overflow: hidden; }
+  .pcard { position: relative; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--rCard); padding: 17px 19px 16px; overflow: hidden; }
   .pcard::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-    background: var(--amber); box-shadow: 0 0 14px rgba(239,177,70,0.5); }
+    background: var(--muted); }
 
   .phead { display: flex; align-items: center; margin-bottom: 12px; }
-  .phead .ey { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--amber);
+  .phead .ey { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--muted);
     letter-spacing: 1.2px; text-transform: uppercase; }
-  .phead .nm { margin-left: auto; font-family: var(--mono); font-size: 10.5px; font-weight: 600;
-    color: var(--amber); padding: 0 9px; height: 21px; display: flex; align-items: center;
-    background: var(--amberDim); border: 1px solid var(--amberLine); border-radius: 999px; }
+  .phead .nm { margin-left: auto; display: flex; align-items: center; gap: 5px; font-family: var(--mono);
+    font-size: 10.5px; font-weight: 600; color: var(--fgSecondary); padding: 0 9px; height: 21px;
+    background: var(--surface2); border: 1px solid var(--borderStrong); border-radius: var(--rPill); }
+  .phead .nm svg { width: 12px; height: 12px; }
 
   .ptitle { font-size: 15.5px; font-weight: 700; color: var(--fg); line-height: 1.45; margin-bottom: 11px; }
 
@@ -66,35 +72,38 @@
 
   /* action options (3 suggested + custom) — reuses OH opt idiom */
   .acts { display: flex; flex-direction: column; gap: 7px; }
-  .actopt { display: flex; align-items: center; gap: 11px; padding: 11px 13px; background: var(--bgDeep);
-    border: 1px solid var(--borderSoft); border-radius: 10px; cursor: pointer; transition: border-color .12s, background .12s; }
+  .actopt { display: flex; align-items: center; gap: 11px; padding: 11px 13px; background: var(--page);
+    border: 1px solid var(--borderSoft); border-radius: var(--rControl); cursor: pointer; transition: border-color .12s, background .12s; }
   .actopt:hover { border-color: var(--border); }
   .actopt.sel { border-color: var(--accentLine); background: var(--accentDim); }
-  .actopt .rdo { width: 16px; height: 16px; flex-shrink: 0; border-radius: 999px; border: 1.5px solid var(--mutedDeep); position: relative; }
+  .actopt .rdo { width: 16px; height: 16px; flex-shrink: 0; border-radius: var(--rPill); border: 1.5px solid var(--mutedDeep); position: relative; }
   .actopt.sel .rdo { border-color: var(--accent); }
-  .actopt.sel .rdo::after { content: ""; position: absolute; inset: 3px; border-radius: 999px; background: var(--accent); }
+  .actopt.sel .rdo::after { content: ""; position: absolute; inset: 3px; border-radius: var(--rPill); background: var(--accent); }
   .actopt .atxt { flex: 1; min-width: 0; font-size: 13px; color: var(--fgSecondary); }
   .actopt.sel .atxt { color: var(--fg); font-weight: 500; }
   .actopt .rec { font-family: var(--mono); font-size: 9px; font-weight: 600; color: var(--accent);
-    padding: 1px 6px; background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: 5px; flex-shrink: 0; }
+    padding: 1px 6px; background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: var(--rChip); flex-shrink: 0; }
 
-  .actcustom { display: flex; align-items: center; gap: 11px; padding: 0 13px; background: var(--bgDeep);
-    border: 1px solid var(--borderSoft); border-radius: 10px; }
+  .actcustom { display: flex; align-items: center; gap: 11px; padding: 0 13px; background: var(--page);
+    border: 1px solid var(--borderSoft); border-radius: var(--rControl); }
   .actcustom.sel { border-color: var(--accentLine); }
-  .actcustom .pen { color: var(--mutedDeep); font-size: 13px; flex-shrink: 0; }
+  .actcustom .pen { color: var(--mutedDeep); flex-shrink: 0; display: flex; }
+  .actcustom .pen svg { width: 14px; height: 14px; }
   .actcustom input { flex: 1; background: none; border: none; outline: none; color: var(--fg);
     font-family: var(--sans); font-size: 13px; padding: 11px 0; }
   .actcustom input::placeholder { color: var(--mutedDeep); }
 
-  .draftnote { font-family: var(--mono); font-size: 10px; color: var(--mutedDeep); margin-top: 8px; letter-spacing: 0.3px; }
+  .draftnote { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10px;
+    color: var(--mutedDeep); margin-top: 8px; letter-spacing: 0.3px; }
+  .draftnote svg { width: 12px; height: 12px; flex-shrink: 0; }
 
   /* buttons */
-  .btn { border: none; border-radius: 9px; font-family: var(--sans); font-size: 13px; font-weight: 600;
+  .btn { border: none; border-radius: var(--rControl); font-family: var(--sans); font-size: 13px; font-weight: 600;
     padding: 11px 16px; cursor: pointer; }
-  .btn.primary { background: var(--accent); color: #04130d; }
-  .btn.primary:disabled { background: rgba(55,213,160,0.22); color: rgba(4,19,13,0.5); cursor: not-allowed; }
+  .btn.primary { background: var(--accent); color: var(--page); }
+  .btn.primary:disabled { background: var(--accentDim); color: var(--mutedDeep); cursor: not-allowed; }
   .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--fgSecondary); }
-  .btn.amber { background: var(--amber); color: #1a1303; }
+  .btn.amber { background: transparent; border: 1px solid var(--warningLine); color: var(--warning); }
   .btn-full { width: 100%; }
 
   .deferlink { display: block; width: 100%; text-align: center; background: none; border: none;
@@ -108,43 +117,74 @@
     transition: max-height .34s cubic-bezier(.4,0,.2,1) .06s, opacity .26s ease .1s; }
   .deferbox.show { max-height: 280px; opacity: 1; }
   .defer-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
-  .defer-head .dh-t { font-size: 13.5px; font-weight: 700; color: var(--amber); }
-  .defer-head .dh-c { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--amber);
-    padding: 1px 7px; background: var(--amberDim); border: 1px solid var(--amberLine); border-radius: 999px; }
-  .defer-back { display: inline-block; background: none; border: none; color: var(--muted);
+  .defer-head .dh-t { font-size: 13.5px; font-weight: 700; color: var(--fgSecondary); }
+  .defer-head .dh-c { margin-left: auto; display: flex; align-items: center; gap: 5px; font-family: var(--mono);
+    font-size: 10px; color: var(--warning); padding: 1px 7px 1px 6px; background: var(--warningDim);
+    border: 1px solid var(--warningLine); border-radius: var(--rPill); white-space: nowrap; }
+  .defer-head .dh-c svg { width: 11px; height: 11px; }
+  .defer-back { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; color: var(--muted);
     font-family: var(--sans); font-size: 11.5px; padding: 9px 0 1px; cursor: pointer; }
+  .defer-back svg { width: 13px; height: 13px; }
   .defer-back:hover { color: var(--accent); }
 
-  /* debt banner */
-  .debt { display: flex; align-items: flex-start; gap: 10px; background: var(--roseDim);
-    border: 1px solid var(--roseLine); border-radius: 10px; padding: 10px 12px; margin-bottom: 13px; }
-  .debt .ic { color: var(--rose); font-size: 13px; line-height: 1.3; flex-shrink: 0; }
+  /* legend marker icons */
+  .legend .mk { display: inline-flex; vertical-align: -2px; }
+  .legend .mk svg { width: 13px; height: 13px; }
+  .legend .mk.g { color: var(--accent); } .legend .mk.r { color: var(--danger); } .legend .mk.n { color: var(--fgSecondary); }
+
+  /* focus-visible — keyboard reachability */
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+  .actopt:focus-visible, .actcustom:focus-visible {
+    outline: 2px solid var(--accentLine); outline-offset: 2px; border-radius: var(--rControl); }
+
+  /* debt banner — severity (danger) */
+  .debt { display: flex; align-items: flex-start; gap: 10px; background: var(--dangerDim);
+    border: 1px solid var(--dangerLine); border-radius: var(--rControl); padding: 10px 12px; margin-bottom: 13px; }
+  .debt .ic { color: var(--danger); flex-shrink: 0; display: flex; margin-top: 1px; }
+  .debt .ic svg { width: 15px; height: 15px; }
   .debt .db { flex: 1; min-width: 0; }
   .debt .dt { font-size: 12.5px; color: var(--fgSecondary); line-height: 1.45; }
   .debt .dt b { color: var(--fg); font-weight: 600; }
-  .debt .dm { font-family: var(--mono); font-size: 10px; color: var(--rose); margin-top: 3px; }
+  .debt .dm { font-family: var(--mono); font-size: 10px; color: var(--danger); margin-top: 3px; white-space: nowrap; }
   .debt .dabandon { flex-shrink: 0; align-self: center; font-family: var(--sans); font-size: 11px;
     font-weight: 600; color: var(--muted); background: transparent; border: 1px solid var(--border);
-    border-radius: 7px; padding: 5px 9px; cursor: pointer; white-space: nowrap; }
-  .debt .dabandon:hover { color: var(--rose); border-color: var(--roseLine); }
+    border-radius: var(--rChip); padding: 5px 9px; cursor: pointer; white-space: nowrap; }
+  .debt .dabandon:hover { color: var(--danger); border-color: var(--dangerLine); }
 
-  /* annotation pins (Before) */
-  .pin { font-family: var(--mono); font-size: 9px; font-weight: 700; color: var(--rose);
-    background: var(--roseDim); border: 1px solid var(--roseLine); padding: 1.5px 6px; border-radius: 5px; white-space: nowrap; }
+  /* annotation pins (Before) — severity (danger) */
+  .pin { font-family: var(--mono); font-size: 9px; font-weight: 700; color: var(--danger);
+    background: var(--dangerDim); border: 1px solid var(--dangerLine); padding: 1.5px 6px; border-radius: var(--rChip); white-space: nowrap; }
   .pinrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .inp { width: 100%; background: var(--bgDeep); border: 1px solid var(--border); border-radius: 9px;
+  .inp { width: 100%; background: var(--page); border: 1px solid var(--border); border-radius: var(--rControl);
     color: var(--fg); font-family: var(--sans); font-size: 13px; padding: 10px 12px; outline: none; }
   .inp::placeholder { color: var(--mutedDeep); }
   .inp.green { border-color: var(--accentLine); }
-  .inp.amberline { border-color: var(--amberLine); }
+  .inp.amberline { border-color: var(--warningLine); }
   select.inp { -webkit-appearance: none; appearance: none; cursor: pointer; padding-right: 28px; }
+
+  /* ===== empty / error state demos (primary data surface = suggested-action list) ===== */
+  .statecard { display: flex; flex-direction: column; align-items: center; text-align: center;
+    gap: 9px; padding: 22px 16px; background: var(--page); border: 1px dashed var(--border);
+    border-radius: var(--rControl); }
+  .statecard .sic { width: 38px; height: 38px; border-radius: var(--rPill); display: flex;
+    align-items: center; justify-content: center; background: var(--surface2); border: 1px solid var(--border); }
+  .statecard .sic svg { width: 18px; height: 18px; color: var(--muted); }
+  .statecard.err .sic { background: var(--dangerDim); border-color: var(--dangerLine); }
+  .statecard.err .sic svg { color: var(--danger); }
+  .statecard .sttl { font-size: 12.5px; color: var(--fgSecondary); line-height: 1.45; }
+  .statecard .smeta { font-family: var(--mono); font-size: 10px; color: var(--mutedDeep); }
+  .statecard.err .smeta { color: var(--danger); }
+  .statecard .scta { background: none; border: none; cursor: pointer; font-family: var(--sans);
+    font-size: 12px; font-weight: 600; color: var(--accent); padding: 2px 0; display: inline-flex;
+    align-items: center; gap: 5px; }
+  .statecard .scta svg { width: 13px; height: 13px; }
 
   .note { font-size: 11px; color: var(--mutedDeep); margin-top: 12px; line-height: 1.55; }
   .note b { color: var(--accent); font-weight: 600; }
 
   .legend { width: 100%; max-width: 1180px; margin-top: 34px; font-family: var(--mono); font-size: 11.5px;
     color: var(--mutedDeep); line-height: 2.0; border-top: 1px solid var(--borderSoft); padding-top: 18px; }
-  .legend b { color: var(--amber); } .legend .g { color: var(--accent); } .legend .r { color: var(--rose); }
+  .legend b { color: var(--fgSecondary); } .legend .g { color: var(--accent); } .legend .r { color: var(--danger); }
   .legend .blk { margin-bottom: 8px; }
   .legend .h { color: var(--fgSecondary); font-weight: 700; letter-spacing: 0.6px; }
   .legend code { color: var(--fgSecondary); }
@@ -164,7 +204,8 @@
     <div class="cardwrap" style="width:720px;">
       <div class="label-tag warn">과밀 · commit과 confess가 한 폼에 · self-report로 닫힘</div>
       <div class="pcard">
-        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">약속</span></div>
+        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>약속</span></div>
         <div class="ptitle" style="margin-bottom:0;">이 인터뷰를 닫기 전에 — 다음 한 가지 고객 행동을 약속해줘.</div>
         <div class="draftnote">시스템 초안</div>
         <div style="font-size:12.5px;color:var(--muted);margin-top:3px;">고객 1명에게 미확인 가설을 확인하고, 스크린샷/URL/결제 같은 증거로 닫기</div>
@@ -197,16 +238,17 @@
     <div class="cardwrap" style="width:430px;">
       <div class="label-tag good">기본 상태 — 약속 모드</div>
       <div class="pcard">
-        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">약속</span></div>
+        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>약속</span></div>
         <div class="commitzone" id="czA">
           <div class="ptitle">다음 한 가지 고객 행동을 약속해줘.</div>
           <div class="acts" data-card="A">
             <div class="actopt sel" onclick="pick('A',this)"><span class="rdo"></span><span class="atxt">조은성에게 DM으로 가격 물어보기</span><span class="rec">추천</span></div>
             <div class="actopt" onclick="pick('A',this)"><span class="rdo"></span><span class="atxt">어제 인터뷰한 3명에게 결제 의향 재확인</span></div>
             <div class="actopt" onclick="pick('A',this)"><span class="rdo"></span><span class="atxt">@breachers_joe 답장에 짧은 데모 영상 보내기</span></div>
-            <div class="actcustom"><span class="pen">✎</span><input placeholder="직접 적기…" oninput="typed('A',this)" /></div>
+            <div class="actcustom"><span class="pen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span><input placeholder="직접 적기…" oninput="typed('A',this)" /></div>
           </div>
-          <div class="draftnote">✦ 후보는 직전 인터뷰에서 자동 제안 · 고르거나 고쳐 써도 됨 <span style="color:var(--mutedDeep)">(draftOrigin)</span></div>
+          <div class="draftnote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8L12 14.6 7 18.2l1.9-5.8L4 8.8h6.1z"/></svg>후보는 직전 인터뷰에서 자동 제안 · 고르거나 고쳐 써도 됨 <span style="color:var(--mutedDeep)">(draftOrigin)</span></div>
           <button class="btn primary btn-full" id="btnA" style="margin-top:13px;">약속하고 닫기</button>
         </div>
         <button class="deferlink" id="dlA" onclick="defer('A')">오늘은 약속 못 해 — 미룸으로 닫기</button>
@@ -214,7 +256,7 @@
           <div class="defer-head"><span class="dh-t">오늘은 미룸</span></div>
           <input class="inp amberline" placeholder="못 한 이유를 한 줄로 (정직하게)" />
           <button class="btn amber btn-full" style="margin-top:8px;">미룸으로 닫기</button>
-          <button class="defer-back" onclick="undefer('A')">← 다시 약속하기</button>
+          <button class="defer-back" onclick="undefer('A')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>다시 약속하기</button>
         </div>
         <div class="note">미룸을 누르면 선택지·약속 버튼이 <b>접히고</b> 사유 입력만 남음. 닫는 순간 증거는 강제 안 함.</div>
       </div>
@@ -224,9 +266,10 @@
     <div class="cardwrap" style="width:430px;">
       <div class="label-tag warn">이전 미증명 약속 있음 — 부채 배너</div>
       <div class="pcard">
-        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">약속</span></div>
+        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>약속</span></div>
         <div class="debt" id="debtB">
-          <span class="ic">⚠</span>
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>
           <div class="db">
             <div class="dt">어제 약속: <b>"조은성에게 DM으로 가격 물어보기"</b></div>
             <div class="dm">증거 0 · 2일째 미룸</div>
@@ -239,9 +282,9 @@
             <div class="actopt" onclick="pick('B',this)"><span class="rdo"></span><span class="atxt">@breachers_joe 답장에 데모 영상 보내기</span><span class="rec">추천</span></div>
             <div class="actopt" onclick="pick('B',this)"><span class="rdo"></span><span class="atxt">조은성에게 다시 DM — 가격 반응 확인</span></div>
             <div class="actopt" onclick="pick('B',this)"><span class="rdo"></span><span class="atxt">관심 보인 2명에게 베타 링크 보내기</span></div>
-            <div class="actcustom"><span class="pen">✎</span><input placeholder="직접 적기…" oninput="typed('B',this)" /></div>
+            <div class="actcustom"><span class="pen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span><input placeholder="직접 적기…" oninput="typed('B',this)" /></div>
           </div>
-          <div class="draftnote">✦ 후보는 직전 인터뷰에서 자동 제안 · 고르거나 고쳐 써도 됨</div>
+          <div class="draftnote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8L12 14.6 7 18.2l1.9-5.8L4 8.8h6.1z"/></svg>후보는 직전 인터뷰에서 자동 제안 · 고르거나 고쳐 써도 됨</div>
           <button class="btn primary btn-full" id="btnB" style="margin-top:13px;" disabled>약속하고 닫기</button>
         </div>
         <button class="deferlink" id="dlB" onclick="defer('B')">오늘은 약속 못 해 — 미룸으로 닫기</button>
@@ -249,7 +292,7 @@
           <div class="defer-head"><span class="dh-t">오늘은 미룸</span></div>
           <input class="inp amberline" placeholder="못 한 이유를 한 줄로 (정직하게)" />
           <button class="btn amber btn-full" style="margin-top:8px;">미룸으로 닫기</button>
-          <button class="defer-back" onclick="undefer('B')">← 다시 약속하기</button>
+          <button class="defer-back" onclick="undefer('B')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>다시 약속하기</button>
         </div>
         <div class="note">증거 닫기는 <b>다음 인터뷰 대화</b>에서 추궁(넛지). 부채 배너는 미룸 모드에서도 유지.</div>
       </div>
@@ -259,33 +302,78 @@
     <div class="cardwrap" style="width:430px;">
       <div class="label-tag amber">미룸 모드 — 선택지 접힌 결과</div>
       <div class="pcard">
-        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">약속</span></div>
+        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>약속</span></div>
         <div class="commitzone collapsed" id="czC">
           <div class="ptitle">다음 한 가지 고객 행동을 약속해줘.</div>
           <div class="acts" data-card="C">
             <div class="actopt sel"><span class="rdo"></span><span class="atxt">조은성에게 DM으로 가격 물어보기</span><span class="rec">추천</span></div>
             <div class="actopt"><span class="rdo"></span><span class="atxt">어제 인터뷰한 3명에게 결제 의향 재확인</span></div>
-            <div class="actcustom"><span class="pen">✎</span><input placeholder="직접 적기…" /></div>
+            <div class="actcustom"><span class="pen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span><input placeholder="직접 적기…" /></div>
           </div>
           <button class="btn primary btn-full" id="btnC" style="margin-top:13px;">약속하고 닫기</button>
         </div>
         <button class="deferlink gone" id="dlC" onclick="defer('C')">오늘은 약속 못 해 — 미룸으로 닫기</button>
         <div class="deferbox show" id="defC">
-          <div class="defer-head"><span class="dh-t">오늘은 미룸</span><span class="dh-c">⏱ 2일째 미룸</span></div>
+          <div class="defer-head"><span class="dh-t">오늘은 미룸</span><span class="dh-c">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>2일째 미룸</span></div>
           <input class="inp amberline" value="DM 답장이 아직 안 와서 다음 행동을 못 정함" />
           <button class="btn amber btn-full" style="margin-top:8px;">미룸으로 닫기</button>
-          <button class="defer-back" onclick="undefer('C')">← 다시 약속하기</button>
+          <button class="defer-back" onclick="undefer('C')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>다시 약속하기</button>
         </div>
         <div class="note">사유는 <b>cycle note</b>로 기록 + day memory <b>consecutiveDeferrals</b> 증가. outcome="deferred"(승리 아님), 연속 카운트 배지로 노출.</div>
       </div>
     </div>
   </div>
 
+  <!-- ============ STATES: 후보 리스트 데이터 표면 (empty / error) ============ -->
+  <div class="sh"><span class="bar"></span><span class="t">States · 후보 리스트 데이터 표면</span>
+    <span class="m">자동 제안 후보가 비었을 때 · 불러오기 실패했을 때</span><span class="line"></span></div>
+  <div class="row">
+
+    <!-- Empty: 후보 없음 -->
+    <div class="cardwrap" style="width:430px;">
+      <div class="label-tag amber">빈 상태 — 제안할 후보 없음</div>
+      <div class="pcard">
+        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>약속</span></div>
+        <div class="ptitle">다음 한 가지 고객 행동을 약속해줘.</div>
+        <div class="statecard">
+          <div class="sic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+          <div class="sttl">직전 인터뷰가 없어 제안할 행동 후보가 아직 없어요.</div>
+          <div class="smeta">suggestedActions: []</div>
+          <button class="scta" onclick="document.querySelector('#emptyCustom').focus()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>직접 행동 적기</button>
+        </div>
+        <div class="actcustom" style="margin-top:9px;"><span class="pen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span><input id="emptyCustom" placeholder="직접 적기…" /></div>
+        <div class="note">후보 0개여도 <b>직접 적기</b>로 약속 가능 · draftOrigin="typed".</div>
+      </div>
+    </div>
+
+    <!-- Error: 불러오기 실패 -->
+    <div class="cardwrap" style="width:430px;">
+      <div class="label-tag warn">오류 상태 — 후보 불러오기 실패</div>
+      <div class="pcard">
+        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>약속</span></div>
+        <div class="ptitle">다음 한 가지 고객 행동을 약속해줘.</div>
+        <div class="statecard err">
+          <div class="sic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></div>
+          <div class="sttl">행동 후보를 불러오지 못했어요. 직전 인터뷰 메모리를 읽는 중 연결이 끊겼습니다.</div>
+          <div class="smeta">suggestedActions: timeout</div>
+          <button class="scta" onclick="this.textContent='다시 불러오는 중…'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>다시 불러오기</button>
+        </div>
+        <div class="note">불러오기 실패해도 <b>직접 적기</b>는 항상 사용 가능 · 약속이 막히지 않음.</div>
+      </div>
+    </div>
+  </div>
+
   <!-- legend -->
   <div class="legend">
-    <div class="blk"><span class="h">제거</span> &nbsp; <span class="r">✕</span> 고객명·채널 TextField · 증거종류 Picker · 예측 칸 · 지난 예측 채점 3버튼 · 편집 불가 '시스템 초안' 정적줄 · 제출 버튼 2개 중 1개</div>
-    <div class="blk"><span class="h">유지</span> &nbsp; <span class="g">●</span> "마지막 단계" 헤더 + amber "약속" 배지 · 카드 색·박스 · green 메인 버튼 · <b>옵션 행 idiom</b>(office-hours 질문 카드와 동일)</div>
-    <div class="blk"><span class="h">신규</span> &nbsp; <b>◆</b> ① <b>행동 후보 3개(선택) + 직접 적기</b>(draftOrigin=selected|typed) &nbsp; ② <b>미룸 모드 전환</b> — 선택지·약속버튼 접힘(애니메이션) → 사유 입력+버튼만 &nbsp; ③ <span class="r">부채 배너</span>(증거0 + N일째 미룸 + 포기로 기록, 미룸 모드에도 유지) &nbsp; ④ 미룸 <b>연속 카운트 배지</b> &nbsp; ⑤ 증거는 <b>다음 인터뷰 대화로</b> 추궁해 met 채점</div>
+    <div class="blk"><span class="h">제거</span> &nbsp; <span class="mk r"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6"/><path d="M9 9l6 6"/></svg></span> 고객명·채널 TextField · 증거종류 Picker · 예측 칸 · 지난 예측 채점 3버튼 · 편집 불가 '시스템 초안' 정적줄 · 제출 버튼 2개 중 1개</div>
+    <div class="blk"><span class="h">유지</span> &nbsp; <span class="mk g"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12.5l2 2 4-4.5"/></svg></span> "마지막 단계" 헤더 + "약속" 배지 · 카드 색·박스 · green 메인 버튼 · <b>옵션 행 idiom</b>(office-hours 질문 카드와 동일)</div>
+    <div class="blk"><span class="h">신규</span> &nbsp; <span class="mk n"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 9-9 9-9-9z"/></svg></span> ① <b>행동 후보 3개(선택) + 직접 적기</b>(draftOrigin=selected|typed) &nbsp; ② <b>미룸 모드 전환</b> — 선택지·약속버튼 접힘(애니메이션) → 사유 입력+버튼만 &nbsp; ③ <span class="r">부채 배너</span>(증거0 + N일째 미룸 + 포기로 기록, 미룸 모드에도 유지) &nbsp; ④ 미룸 <b>연속 카운트 배지</b> &nbsp; ⑤ 증거는 <b>다음 인터뷰 대화로</b> 추궁해 met 채점</div>
     <div class="blk"><span class="h">데이터</span> &nbsp; 이벤트 → <code>{suggestedActions:[3], openDebt}</code> · commit → ledger <code>{text, origin:"user", evidence:null, draftOrigin}</code> · defer → cycle <code>outcome="deferred"</code> + <code>consecutiveDeferrals++</code></div>
   </div>
 
@@ -327,7 +415,7 @@
     var b = document.getElementById('debt'+card);
     b.style.transition = 'opacity .3s'; b.style.opacity = '0.35';
     b.querySelector('.dm').textContent = '포기로 기록됨 · status="abandoned"';
-    b.querySelector('.dabandon').textContent = '기록됨 ✓'; b.querySelector('.dabandon').disabled = true;
+    b.querySelector('.dabandon').textContent = '기록됨'; b.querySelector('.dabandon').disabled = true;
   }
   setBtn('A'); setBtn('B');
 </script>

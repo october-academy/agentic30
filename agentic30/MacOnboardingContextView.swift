@@ -40,7 +40,7 @@ struct MacOnboardingContextView: View {
                 if case .failed(let message) = viewModel.onboardingContextStatus {
                     Text(message)
                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(Color(red: 1.0, green: 0.38, blue: 0.38))
+                        .foregroundStyle(OpenDesignDayColor.rose)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 

@@ -6,45 +6,58 @@
 <title>Agentic30 · Day 타임라인 사이드바 IA 목업</title>
 <style>
   :root {
-    --bg: #141618;
-    --bgDeep: #0a0b0d;
-    --bgDarker: #060708;
-    --surface: #0e1011;
-    --surface2: #121415;
-    --hover: #242729;
-    --selected: #2d3134;
-    --border: #26292c;
-    --borderSoft: #1c2022;
-    --fg: #f0f2f4;
-    --fgSecondary: #babec1;
-    --muted: #7c8185;
-    --mutedDeep: #53595d;
-    --accent: #37d5a0;
-    --amber: #efb146;
-    --rose: #f87770;
-    --accentDim: rgba(55,213,160,0.14);
-    --accentLine: rgba(55,213,160,0.40);
-    --amberDim: rgba(239,177,70,0.14);
+    /* greyscale dark palette */
+    --page: #15171A;
+    --surface: #1E2228;
+    --surface2: #252A31;
+    --hover: #2B3138;
+    --border: rgba(255,255,255,0.07);
+    --borderSoft: rgba(255,255,255,0.05);
+    --borderStrong: rgba(255,255,255,0.12);
+    --fg: #E7E9EC;
+    --fgSecondary: #B9BEC4;
+    --muted: #8B9199;
+    --mutedDeep: #6B7178;
+    --faint: #4F555C;
+
+    /* single accent */
+    --accent: #37D59F;
+    --accentDim: rgba(55,213,159,0.14);
+    --accentLine: rgba(55,213,159,0.40);
+
+    /* severity only */
+    --danger: #E2897E;
+    --warning: #E0B564;
+
+    /* radius soft scale */
+    --r-chip: 8px;
+    --r-control: 10px;
+    --r-card: 14px;
+    --r-pill: 999px;
+
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
     --sans: -apple-system, "SF Pro Text", system-ui, "Pretendard", sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-chip); }
+  button:focus:not(:focus-visible) { outline: none; }
   html, body {
-    background: #000; color: var(--fg); font-family: var(--sans);
+    background: var(--page); color: var(--fg); font-family: var(--sans);
     -webkit-font-smoothing: antialiased; height: 100%;
     display: flex; align-items: center; justify-content: center;
     padding: 28px; gap: 28px; flex-wrap: wrap;
   }
+  svg.ic { display: block; }
 
   /* ---- toggle ---- */
   .controls {
     position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
     display: flex; gap: 6px; background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 4px; z-index: 10;
+    border-radius: var(--r-control); padding: 4px; z-index: 10;
   }
   .controls button {
     font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--muted);
-    background: transparent; border: none; border-radius: 7px; padding: 7px 14px; cursor: pointer;
+    background: transparent; border: none; border-radius: var(--r-chip); padding: 7px 14px; cursor: pointer;
   }
   .controls button.on { background: var(--accentDim); color: var(--accent); }
   .legend {
@@ -56,31 +69,31 @@
 
   /* ---- app frame ---- */
   .frame {
-    width: 1080px; height: 712px; background: var(--bg);
-    border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; overflow: hidden;
-    display: flex; box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+    width: 1080px; height: 712px; background: var(--page);
+    border: 1px solid var(--borderStrong); border-radius: var(--r-card); overflow: hidden;
+    display: flex;
   }
 
   /* icon rail */
   .rail {
-    width: 56px; background: var(--bgDarker); border-right: 1px solid var(--borderSoft);
+    width: 56px; background: var(--surface); border-right: 1px solid var(--borderSoft);
     display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 6px;
   }
   .rail .item {
-    width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center; justify-content: center;
-    color: var(--muted); font-size: 16px; cursor: default;
+    width: 36px; height: 36px; border-radius: var(--r-control); display: flex; align-items: center; justify-content: center;
+    color: var(--muted); cursor: default;
   }
   .rail .item.on { background: var(--accentDim); color: var(--accent); }
   .rail .spacer { flex: 1; }
   .rail .z {
-    width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border);
+    width: 26px; height: 26px; border-radius: var(--r-chip); background: var(--surface2); border: 1px solid var(--border);
     display: flex; align-items: center; justify-content: center; font-family: var(--mono);
     font-size: 11px; color: var(--mutedDeep);
   }
 
   /* ---- Day timeline sidebar (the redesigned piece) ---- */
   .sidebar {
-    width: 240px; background: var(--bg); border-right: 1px solid var(--borderSoft);
+    width: 240px; background: var(--page); border-right: 1px solid var(--borderSoft);
     display: flex; flex-direction: column;
   }
   .sb-header {
@@ -91,10 +104,11 @@
   .sb-header .daypill {
     font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--accent);
     padding: 0 7px; height: 19px; display: flex; align-items: center;
-    background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: 999px;
+    background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: var(--r-pill);
   }
   .sb-header .prog {
     margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--muted);
+    white-space: nowrap;
   }
 
   .sb-scroll { flex: 1; overflow-y: auto; padding: 2px 6px 14px; }
@@ -105,14 +119,14 @@
 
   /* day row */
   .day {
-    display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 9px;
+    display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--r-control);
     cursor: default; margin-bottom: 2px; border: 1px solid transparent;
   }
   .day .mark {
-    width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0;
+    width: 26px; height: 26px; border-radius: var(--r-chip); flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     font-family: var(--mono); font-size: 10px; font-weight: 600;
-    background: var(--bgDeep); border: 1px solid var(--border); color: var(--fgSecondary);
+    background: var(--surface); border: 1px solid var(--border); color: var(--fgSecondary);
   }
   .day .body { min-width: 0; flex: 1; }
   .day .goal {
@@ -122,7 +136,9 @@
   .day .sub { font-size: 10px; color: var(--mutedDeep); margin-top: 1px; }
   .day .badge {
     font-family: var(--mono); font-size: 10px; color: var(--mutedDeep); flex-shrink: 0;
+    display: flex; align-items: center; white-space: nowrap;
   }
+  .day .badge .ic { width: 14px; height: 14px; }
 
   /* states */
   .day.today {
@@ -130,29 +146,51 @@
   }
   .day.today .mark { background: var(--accentDim); border-color: var(--accentLine); color: var(--accent); }
   .day.today .goal { color: var(--fg); font-weight: 600; }
+  .day.today .sub { color: var(--accent); }
   .day.today .badge { color: var(--accent); }
 
   .day.done .mark { color: var(--muted); }
   .day.done .badge { color: var(--accent); }
 
-  .day.incomplete .mark { background: var(--amberDim); border-color: rgba(239,177,70,0.4); color: var(--amber); }
-  .day.incomplete .badge { color: var(--amber); }
-  .day.incomplete .sub { color: var(--amber); }
+  /* incomplete = neutral, unfinished → grey (not a severity alert) */
+  .day.incomplete .mark { background: var(--surface2); border-color: var(--border); color: var(--muted); }
+  .day.incomplete .badge { color: var(--muted); }
+  .day.incomplete .sub { color: var(--muted); }
 
   /* skipped chip */
   .skip {
     display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin: 2px 0;
-    border-radius: 8px;
+    border-radius: var(--r-chip);
   }
   .skip .dots {
-    width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0; display: flex;
-    align-items: center; justify-content: center; color: var(--mutedDeep); font-size: 13px;
-    border: 1px dashed var(--border);
+    width: 26px; height: 26px; border-radius: var(--r-chip); flex-shrink: 0; display: flex;
+    align-items: center; justify-content: center; color: var(--mutedDeep);
+    border: 1px dashed var(--borderStrong);
   }
   .skip .label { font-size: 11px; color: var(--mutedDeep); }
 
+  /* empty + error states (same visual language) */
+  .sb-state {
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+    padding: 26px 16px; gap: 10px;
+  }
+  .sb-state .orb {
+    width: 40px; height: 40px; border-radius: var(--r-pill); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+  }
+  .sb-state.error .orb { color: var(--danger); }
+  .sb-state .line { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .sb-state .what { font-size: 11px; color: var(--mutedDeep); line-height: 1.5; }
+  .sb-state .cta {
+    font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--accent);
+    background: transparent; border: none; padding: 2px 4px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .sb-state .cta .ic { width: 14px; height: 14px; }
+
   /* ---- main column ---- */
-  .main { flex: 1; display: flex; flex-direction: column; background: var(--bg); }
+  .main { flex: 1; display: flex; flex-direction: column; background: var(--page); }
   .titlebar {
     height: 48px; border-bottom: 1px solid var(--borderSoft); display: flex; align-items: center;
     padding: 0 20px; gap: 10px;
@@ -172,22 +210,23 @@
   .step:first-child .line { display: none; }
   .step.done .line, .step.active .line { background: var(--accentLine); }
   .step .node {
-    width: 28px; height: 28px; border-radius: 999px; z-index: 1; display: flex; align-items: center;
+    width: 28px; height: 28px; border-radius: var(--r-pill); z-index: 1; display: flex; align-items: center;
     justify-content: center; font-family: var(--mono); font-size: 11px; font-weight: 600;
-    background: var(--bgDeep); border: 1.5px solid var(--border); color: var(--mutedDeep);
+    background: var(--surface); border: 1.5px solid var(--border); color: var(--mutedDeep);
   }
+  .step .node .ic { width: 14px; height: 14px; }
   .step.done .node { background: var(--accentDim); border-color: var(--accent); color: var(--accent); }
-  .step.active .node { background: var(--accent); border-color: var(--accent); color: #06231a; box-shadow: 0 0 0 4px var(--accentDim); }
+  .step.active .node { background: var(--accent); border-color: var(--accent); color: var(--page); }
   .step .name { font-size: 11px; margin-top: 8px; color: var(--muted); }
   .step.active .name { color: var(--fg); font-weight: 600; }
   .step.done .name { color: var(--fgSecondary); }
   .step.locked .name { color: var(--mutedDeep); }
-  .step.locked .node { opacity: 0.55; }
+  .step.locked .node { color: var(--faint); }
 
   /* content placeholder */
   .canvas { flex: 1; padding: 30px 28px; }
   .card {
-    background: var(--surface); border: 1px solid var(--borderSoft); border-radius: 14px;
+    background: var(--surface); border: 1px solid var(--borderSoft); border-radius: var(--r-card);
     padding: 22px 24px;
   }
   .card .eyebrow { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--accent); }
@@ -195,8 +234,8 @@
   .card p { font-size: 13px; line-height: 1.6; color: var(--muted); margin-top: 10px; max-width: 520px; }
   .card .actions { margin-top: 18px; display: flex; gap: 10px; }
   .card .btn {
-    font-size: 12px; font-weight: 600; padding: 9px 16px; border-radius: 9px; cursor: default;
-    background: var(--accent); color: #06231a; border: none;
+    font-size: 12px; font-weight: 600; padding: 9px 16px; border-radius: var(--r-control); cursor: default;
+    background: var(--accent); color: var(--page); border: none;
   }
   .card .btn.ghost { background: var(--surface2); color: var(--fgSecondary); border: 1px solid var(--border); }
 
@@ -212,14 +251,20 @@
   <div class="controls">
     <button id="btn7" class="on" onclick="setView(7)">Day 7 (성숙)</button>
     <button id="btn1" onclick="setView(1)">Day 1 (시작)</button>
+    <button id="btnEmpty" onclick="setView('empty')">빈 상태</button>
+    <button id="btnError" onclick="setView('error')">오류 상태</button>
   </div>
 
   <!-- ================= DAY 7 VIEW ================= -->
   <div class="frame" id="view7">
     <!-- icon rail (unchanged, boundaries) -->
     <div class="rail">
-      <div class="item on" title="오늘">📅</div>
-      <div class="item" title="설정">⚙️</div>
+      <div class="item on" title="오늘">
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+      </div>
+      <div class="item" title="설정">
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </div>
       <div class="spacer"></div>
       <div class="z">Z</div>
     </div>
@@ -239,7 +284,7 @@
           <div class="mark">7</div>
           <div class="body">
             <div class="goal">Go/No-Go 결정하기</div>
-            <div class="sub" style="color:var(--accent)">오늘 · 진행 중</div>
+            <div class="sub">오늘 · 진행 중</div>
           </div>
           <div class="badge">2/5</div>
         </div>
@@ -256,7 +301,9 @@
 
         <!-- skipped chip -->
         <div class="skip">
-          <div class="dots">···</div>
+          <div class="dots">
+            <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+          </div>
           <div class="label">Day 3–5 · 건너뜀</div>
         </div>
 
@@ -264,12 +311,12 @@
         <div class="day done">
           <div class="mark">2</div>
           <div class="body"><div class="goal">기준 시장 고르기</div></div>
-          <div class="badge">✓</div>
+          <div class="badge"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
         </div>
         <div class="day done">
           <div class="mark">1</div>
           <div class="body"><div class="goal">먼저 도울 사람 정하기</div></div>
-          <div class="badge">✓</div>
+          <div class="badge"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
         </div>
       </div>
       <!-- bottom button removed -->
@@ -283,8 +330,8 @@
       </div>
       <div class="stepper-wrap">
         <div class="stepper">
-          <div class="step done"><div class="line"></div><div class="node">✓</div><div class="name">scan</div></div>
-          <div class="step done"><div class="line"></div><div class="node">✓</div><div class="name">회고</div></div>
+          <div class="step done"><div class="line"></div><div class="node"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div><div class="name">scan</div></div>
+          <div class="step done"><div class="line"></div><div class="node"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div><div class="name">회고</div></div>
           <div class="step active"><div class="line"></div><div class="node">3</div><div class="name">목표</div></div>
           <div class="step locked"><div class="line"></div><div class="node">4</div><div class="name">인터뷰</div></div>
           <div class="step locked"><div class="line"></div><div class="node">5</div><div class="name">실행</div></div>
@@ -307,8 +354,12 @@
   <!-- ================= DAY 1 VIEW ================= -->
   <div class="frame hide" id="view1">
     <div class="rail">
-      <div class="item on" title="오늘">📅</div>
-      <div class="item" title="설정">⚙️</div>
+      <div class="item on" title="오늘">
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+      </div>
+      <div class="item" title="설정">
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </div>
       <div class="spacer"></div>
       <div class="z">Z</div>
     </div>
@@ -325,7 +376,7 @@
           <div class="mark">1</div>
           <div class="body">
             <div class="goal">먼저 도울 사람 정하기</div>
-            <div class="sub" style="color:var(--accent)">오늘 · 진행 중</div>
+            <div class="sub">오늘 · 진행 중</div>
           </div>
           <div class="badge">3/4</div>
         </div>
@@ -340,8 +391,8 @@
       </div>
       <div class="stepper-wrap">
         <div class="stepper">
-          <div class="step done"><div class="line"></div><div class="node">✓</div><div class="name">온보딩</div></div>
-          <div class="step done"><div class="line"></div><div class="node">✓</div><div class="name">scan</div></div>
+          <div class="step done"><div class="line"></div><div class="node"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div><div class="name">온보딩</div></div>
+          <div class="step done"><div class="line"></div><div class="node"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div><div class="name">scan</div></div>
           <div class="step active"><div class="line"></div><div class="node">3</div><div class="name">목표</div></div>
           <div class="step locked"><div class="line"></div><div class="node">4</div><div class="name">첫 인터뷰</div></div>
         </div>
@@ -360,11 +411,120 @@
     </div>
   </div>
 
+  <!-- ================= EMPTY STATE VIEW ================= -->
+  <div class="frame hide" id="viewEmpty">
+    <div class="rail">
+      <div class="item on" title="오늘">
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+      </div>
+      <div class="item" title="설정">
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </div>
+      <div class="spacer"></div>
+      <div class="z">Z</div>
+    </div>
+
+    <div class="sidebar">
+      <div class="sb-header">
+        <span class="proj">agentic30</span>
+        <span class="daypill">Day 0</span>
+        <span class="prog">0/0</span>
+      </div>
+      <div class="sb-scroll">
+        <div class="group-title">Foundation</div>
+        <!-- EMPTY state: no day rows yet -->
+        <div class="sb-state empty">
+          <div class="orb">
+            <svg class="ic" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+          </div>
+          <div class="line">아직 Day가 없습니다.<br />첫 목표를 정하면 타임라인이 시작됩니다.</div>
+          <button class="cta">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+            Day 1 시작하기
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="titlebar">
+        <span class="t">Day 타임라인</span>
+        <span class="day-of">시작 전 · Foundation</span>
+      </div>
+      <div class="canvas">
+        <div class="card">
+          <div class="eyebrow">시작 · 온보딩</div>
+          <h2>첫 목표를 정하면 타임라인이 채워집니다</h2>
+          <p>아직 기록된 Day가 없습니다. 온보딩에서 누구의 어떤 문제부터 도울지 한 문장으로 고정하면, 사이드바에 Day 1이 오늘로 나타납니다.</p>
+          <div class="actions">
+            <button class="btn">Day 1 시작하기</button>
+            <button class="btn ghost">온보딩 다시 보기</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= ERROR STATE VIEW ================= -->
+  <div class="frame hide" id="viewError">
+    <div class="rail">
+      <div class="item on" title="오늘">
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+      </div>
+      <div class="item" title="설정">
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </div>
+      <div class="spacer"></div>
+      <div class="z">Z</div>
+    </div>
+
+    <div class="sidebar">
+      <div class="sb-header">
+        <span class="proj">agentic30</span>
+        <span class="daypill">Day —</span>
+        <span class="prog">—/—</span>
+      </div>
+      <div class="sb-scroll">
+        <div class="group-title">Foundation</div>
+        <!-- ERROR state: day list failed to load -->
+        <div class="sb-state error">
+          <div class="orb">
+            <svg class="ic" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+          </div>
+          <div class="line">Day 타임라인을 불러오지 못했습니다.</div>
+          <div class="what">로컬 세션 저장소에 연결할 수 없습니다.</div>
+          <button class="cta">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+            다시 시도
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="titlebar">
+        <span class="t">Day 타임라인</span>
+        <span class="day-of">연결 끊김 · Foundation</span>
+      </div>
+      <div class="canvas">
+        <div class="card">
+          <div class="eyebrow">오류 · 세션 저장소</div>
+          <h2>타임라인을 불러오지 못했습니다</h2>
+          <p>로컬 세션 저장소에 연결할 수 없어 오늘과 지난 Day를 표시할 수 없습니다. 사이드카가 실행 중인지 확인한 뒤 다시 시도하세요. 기록은 로컬에 안전하게 남아 있습니다.</p>
+          <div class="actions">
+            <button class="btn">다시 시도</button>
+            <button class="btn ghost">사이드카 상태 보기</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="legend">
     <span><b>오늘</b> accent 강조 · 맨 위</span>
-    <span><b>미완</b> amber · 3/5 고정</span>
+    <span><b>미완</b> 중립 회색 · 3/5 고정</span>
     <span><b>건너뜀</b> 칩 압축</span>
-    <span><b>과거</b> 읽기전용 ✓</span>
+    <span><b>과거</b> 읽기전용 완료</span>
     <span><b>미래</b> 숨김</span>
     <span><b>버튼</b> 제거</span>
   </div>
@@ -373,8 +533,12 @@
   function setView(n) {
     document.getElementById('view7').classList.toggle('hide', n !== 7);
     document.getElementById('view1').classList.toggle('hide', n !== 1);
+    document.getElementById('viewEmpty').classList.toggle('hide', n !== 'empty');
+    document.getElementById('viewError').classList.toggle('hide', n !== 'error');
     document.getElementById('btn7').classList.toggle('on', n === 7);
     document.getElementById('btn1').classList.toggle('on', n === 1);
+    document.getElementById('btnEmpty').classList.toggle('on', n === 'empty');
+    document.getElementById('btnError').classList.toggle('on', n === 'error');
   }
 </script>
 </body>
