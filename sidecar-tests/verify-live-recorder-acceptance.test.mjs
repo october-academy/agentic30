@@ -12,6 +12,9 @@ import { RecorderStore } from "../sidecar/recorder-store.mjs";
 
 const execFileAsync = promisify(execFile);
 
+const LIVE_FRAME_ID = "frame-11111111-2222-3333-4444-555555555555";
+const LIVE_FRAME_ASSET_ID = "asset-aaaaaaaa-bbbb-cccc-dddd-ffffffffffff";
+
 async function makeFixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-live-recorder-verifier-"));
   const appSupportRoot = path.join(root, "app-support");
@@ -27,8 +30,8 @@ async function writeRecorderMedia(appSupportRoot, relativePath, content) {
 }
 
 async function insertLiveFrameFixture(store, appSupportRoot, {
-  id = "frame-live-fixture",
-  assetId = "asset-live-fixture",
+  id = LIVE_FRAME_ID,
+  assetId = LIVE_FRAME_ASSET_ID,
   trigger = "auto_swift_event_tap_mouse_down",
   redactedText = "Agentic30 founder replay captured activation evidence",
 } = {}) {
@@ -209,6 +212,34 @@ test("verify-live-recorder-acceptance rejects accepted non-raw-frame audit rows"
   }
 });
 
+test("verify-live-recorder-acceptance rejects raw-frame audits for a different endpoint frame id", async () => {
+  const { root, appSupportRoot, store } = await makeFixture();
+  try {
+    const liveFrame = await insertLiveFrameFixture(store, appSupportRoot);
+    await insertLiveAudioFixture(store, appSupportRoot);
+    insertAcceptedAuditFixture(store, liveFrame.id, {
+      id: "audit-different-endpoint-frame",
+      endpoint: "/recorder/frames/frame-99999999-8888-7777-6666-555555555555/text",
+    });
+    store.close();
+
+    await assert.rejects(
+      runVerifier([
+        "--app-support", appSupportRoot,
+        "--search-query", "Agentic30",
+        "--frame-id", liveFrame.id,
+      ]),
+      (error) => {
+        assert.match(String(error.stderr || error.message), /No accepted raw-read audit row references live frame/);
+        return true;
+      },
+    );
+  } finally {
+    store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("verify-live-recorder-acceptance rejects seeded UI frame fixtures", async () => {
   const { root, appSupportRoot, store } = await makeFixture();
   try {
@@ -224,6 +255,34 @@ test("verify-live-recorder-acceptance rejects seeded UI frame fixtures", async (
         "--app-support", appSupportRoot,
         "--search-query", "Agentic30",
         "--frame-id", "ui-frame-1",
+        "--allow-missing-audio",
+        "--allow-missing-audit",
+      ]),
+      (error) => {
+        assert.match(String(error.stderr || error.message), /ERR_RECORDER_LIVE_VERIFY_FRAME_IS_SEED_FIXTURE/);
+        return true;
+      },
+    );
+  } finally {
+    store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("verify-live-recorder-acceptance rejects synthetic non-UUID frame fixtures", async () => {
+  const { root, appSupportRoot, store } = await makeFixture();
+  try {
+    await insertLiveFrameFixture(store, appSupportRoot, {
+      id: "frame-live-fixture",
+      assetId: "asset-live-fixture",
+    });
+    store.close();
+
+    await assert.rejects(
+      runVerifier([
+        "--app-support", appSupportRoot,
+        "--search-query", "Agentic30",
+        "--frame-id", "frame-live-fixture",
         "--allow-missing-audio",
         "--allow-missing-audit",
       ]),
@@ -318,7 +377,7 @@ test("verify-live-recorder-acceptance rejects deleted-frame checks before delete
         "--deleted-frame-id", liveFrame.id,
       ]),
       (error) => {
-        assert.match(String(error.stderr || error.message), /Frame frame-live-fixture is not deleted/);
+        assert.match(String(error.stderr || error.message), /Frame frame-11111111-2222-3333-4444-555555555555 is not deleted/);
         return true;
       },
     );

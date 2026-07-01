@@ -30,6 +30,31 @@ SPEC Section 17 unless this file is insufficient.
 
 ## Latest Implementation Pending Live Acceptance
 
+- Gate A live-recorder frame acceptance verifier now rejects synthetic frame
+  fixtures instead of accepting any `frame-` row with a collector-looking
+  trigger:
+  - `sidecar/recorder-live-verify.mjs` now requires frame rows to match the
+    actual Swift collector output shape: non-deleted, non-fixture,
+    `frame-<uuid>`, `asset-<uuid>`, and a live macOS collector trigger
+    containing `screencapturekit`, `event_tap`, or `input_monitor`.
+  - `isSeedFixtureFrameRow` also treats `fixture`-marked frame/media ids as
+    seeded, so the old synthetic `frame-live-fixture` /
+    `asset-live-fixture` pair fails closed before it can certify a live signed
+    recorder run.
+  - The subprocess acceptance fixture now uses UUID-shaped frame/media ids, and
+    a negative subprocess case proves a synthetic non-UUID frame fixture is
+    rejected even when missing audio/audit are allowed for triage.
+  - Focused verification passed: syntax checks for
+    `sidecar/recorder-live-verify.mjs`,
+    `scripts/verify-live-recorder-acceptance.mjs`,
+    `sidecar-tests/recorder-live-verify.test.mjs`, and
+    `sidecar-tests/verify-live-recorder-acceptance.test.mjs`; targeted
+    `git diff --check`; and `node --test
+    sidecar-tests/recorder-live-verify.test.mjs
+    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`13/13`).
+  - This tightens the next live signed frame/search/delete acceptance gate. It
+    is still not live signed-app recorder acceptance, foreground UI E2E
+    acceptance, granted TCC proof, or proof-ledger acceptance.
 - Gate A/B live-recorder raw-read audit verifier now requires a real raw-frame
   read audit, not any accepted audit row that mentions the frame id:
   - `scripts/verify-live-recorder-acceptance.mjs` now accepts audit evidence only
@@ -47,7 +72,7 @@ SPEC Section 17 unless this file is insufficient.
     scripts/verify-live-recorder-acceptance.mjs
     sidecar-tests/verify-live-recorder-acceptance.test.mjs`, targeted
     `git diff --check`, and `node --test
-    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`6/6`).
+    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`7/7`).
   - This tightens the next live signed capture/search/audit acceptance gate. It
     is still not live signed-app recorder acceptance, foreground UI E2E
     acceptance, granted TCC proof, or proof-ledger acceptance.
@@ -75,7 +100,7 @@ SPEC Section 17 unless this file is insufficient.
     `sidecar-tests/verify-live-recorder-acceptance.test.mjs`; targeted
     `git diff --check`; and `node --test
     sidecar-tests/recorder-live-verify.test.mjs
-    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`11/11`).
+    sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`13/13`).
   - This tightens the next live signed audio acceptance gate. It is still not
     live signed-app recorder acceptance, foreground UI E2E acceptance, granted
     microphone/System Audio TCC proof, or proof-ledger acceptance.
@@ -679,13 +704,13 @@ SPEC Section 17 unless this file is insufficient.
     `deletedAudioChunkCount >= 1` when audio is present, and
     `deletedMediaCount >= 1`.
   - Verification passed: `node --check
-    scripts/verify-live-recorder-acceptance.mjs`, `node
-    scripts/verify-live-recorder-acceptance.mjs --help`, and a temporary
-    live-like fixture smoke that produced schema
-    `agentic30.live_recorder_acceptance.v1`, a live `frame-live-fixture`
-    search hit, UUID-shaped live audio fixture, accepted raw-read audit, and
-    retention result `{status:"applied", deletedFrameCount:1,
-    deletedAudioChunkCount:1, deletedMediaCount:2}`.
+  scripts/verify-live-recorder-acceptance.mjs`, `node
+  scripts/verify-live-recorder-acceptance.mjs --help`, and a temporary
+  live-like fixture smoke that produced schema
+  `agentic30.live_recorder_acceptance.v1`, a UUID-shaped live frame search hit,
+  UUID-shaped live audio fixture, accepted raw-read audit, and retention result
+  `{status:"applied", deletedFrameCount:1,
+  deletedAudioChunkCount:1, deletedMediaCount:2}`.
   - This is an operator acceptance harness, not a live signed-app PASS. It must
     be run on the actual app-support root after the unlocked signed-app TCC run
     creates real live rows.

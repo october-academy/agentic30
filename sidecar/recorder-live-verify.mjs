@@ -20,6 +20,8 @@ const LIVE_CAPTURE_TRIGGER_PATTERN = /screencapturekit|event_tap|input_monitor/i
 const SEED_ID_PREFIX = "ui-";
 const SEED_CAPTURE_TRIGGER = "ui_test_seed";
 const SEED_FIXTURE_PATTERN = /fixture|ui_test_seed/i;
+const LIVE_FRAME_ID_PATTERN = /^frame-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LIVE_FRAME_ASSET_ID_PATTERN = /^asset-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIVE_AUDIO_ID_PATTERN = /^audio-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIVE_AUDIO_ASSET_ID_PATTERN = /^asset-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIVE_AUDIO_SOURCES = new Set(["microphone", "system_audio"]);
@@ -36,7 +38,9 @@ export function isSeedFixtureFrameRow(row = {}) {
   return (
     id.startsWith(SEED_ID_PREFIX) ||
     assetId.startsWith(SEED_ID_PREFIX) ||
-    trigger === SEED_CAPTURE_TRIGGER
+    trigger === SEED_CAPTURE_TRIGGER ||
+    SEED_FIXTURE_PATTERN.test(id) ||
+    SEED_FIXTURE_PATTERN.test(assetId)
   );
 }
 
@@ -55,18 +59,20 @@ export function isSeedFixtureAudioChunkRow(row = {}) {
   );
 }
 
-// A frame row is "live" only when it is NOT the seed fixture, carries a real
-// macOS-collector capture trigger, has a non-seed media asset id, and is not
-// soft-deleted. Callers use this to prove a live-capture acceptance run
-// produced a genuine row rather than reusing a fixture.
+// A frame row is "live" only when it is NOT the seed fixture, carries the Swift
+// collector's frame-/asset- UUID shape, has a real macOS-collector capture
+// trigger, and is not soft-deleted. Callers use this to prove a live-capture
+// acceptance run produced a genuine row rather than reusing a fixture.
 export function isLiveCapturedFrameRow(row = {}) {
   if (!row || typeof row !== "object") return false;
   if (isSeedFixtureFrameRow(row)) return false;
   if (text(row.deleted_at ?? row.deletedAt)) return false;
+  const id = text(row.id);
+  if (!LIVE_FRAME_ID_PATTERN.test(id)) return false;
   const trigger = text(row.capture_trigger ?? row.captureTrigger);
   if (!LIVE_CAPTURE_TRIGGER_PATTERN.test(trigger)) return false;
   const assetId = text(row.snapshot_asset_id ?? row.snapshotAssetId);
-  if (!assetId || assetId.startsWith(SEED_ID_PREFIX)) return false;
+  if (!LIVE_FRAME_ASSET_ID_PATTERN.test(assetId)) return false;
   return true;
 }
 
@@ -128,7 +134,7 @@ export function assertLiveRecorderFrameRow(store, frameId) {
   if (!isLiveCapturedFrameRow(row)) {
     throw new RecorderLiveVerifyError(
       "ERR_RECORDER_LIVE_VERIFY_FRAME_NOT_LIVE",
-      `frame ${id} is not a live-captured row (trigger, asset, or deleted state)`,
+      `frame ${id} is not a live-captured row (id, trigger, asset, or deleted state)`,
       { frameId: id, captureTrigger: text(row.capture_trigger) },
     );
   }

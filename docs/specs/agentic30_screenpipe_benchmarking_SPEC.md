@@ -2906,8 +2906,8 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
   scripts/verify-live-recorder-acceptance.mjs`, `node
   scripts/verify-live-recorder-acceptance.mjs --help`, and a temporary
   live-like recorder fixture smoke that produced schema
-  `agentic30.live_recorder_acceptance.v1`, a live `frame-live-fixture` search
-  hit, live `audio-live-fixture`, accepted raw-read audit, and retention result
+  `agentic30.live_recorder_acceptance.v1`, a UUID-shaped live frame search hit,
+  UUID-shaped live audio, accepted raw-read audit, and retention result
   `{status:"applied", deletedFrameCount:1, deletedAudioChunkCount:1,
   deletedMediaCount:2}`.
 - This is not live signed-app acceptance. It makes the post-run evidence check
@@ -3138,6 +3138,33 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
   scripts/verify-live-recorder-acceptance.mjs --help`.
 - This covers the operator verifier's live-vs-seed guard only. It is not live
   signed-app recorder acceptance, foreground UI E2E acceptance, granted TCC
+  proof, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate A live-recorder verifier Swift frame-shape binding
+
+- Tightened the live-recorder frame discriminator so fixture-looking frame rows
+  cannot satisfy the signed-app acceptance verifier just by using a live-looking
+  collector trigger.
+- `sidecar/recorder-live-verify.mjs` now requires frame rows to match the actual
+  Swift collector shape: non-deleted, non-fixture, `frame-<uuid>`,
+  `asset-<uuid>`, and a live macOS collector trigger containing
+  `screencapturekit`, `event_tap`, or `input_monitor`.
+- `isSeedFixtureFrameRow` now also treats `fixture`-marked frame/media ids as
+  seeded, so the old synthetic `frame-live-fixture` / `asset-live-fixture`
+  pair fails closed before it can certify a live capture run.
+- `sidecar-tests/verify-live-recorder-acceptance.test.mjs` now uses
+  UUID-shaped frame/media ids for the positive subprocess fixture and adds a
+  negative subprocess case proving a synthetic non-UUID frame fixture is
+  rejected even when missing audio/audit are allowed for triage.
+- Verification passed: syntax checks for `sidecar/recorder-live-verify.mjs`,
+  `scripts/verify-live-recorder-acceptance.mjs`,
+  `sidecar-tests/recorder-live-verify.test.mjs`, and
+  `sidecar-tests/verify-live-recorder-acceptance.test.mjs`; targeted
+  `git diff --check`; and `node --test
+  sidecar-tests/recorder-live-verify.test.mjs
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (13/13).
+- This is verifier hardening for the next unblocked live signed run. It is not
+  live signed-app recorder acceptance, foreground UI E2E acceptance, granted TCC
   proof, or proof-ledger acceptance.
 
 ### 2026-07-01 KST — Gate A/C live-recorder verifier permanent subprocess fixture
@@ -3487,7 +3514,7 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
 - Verification passed: `node --check` for the verifier module, operator script,
   and focused tests; targeted `git diff --check`; and `node --test
   sidecar-tests/recorder-live-verify.test.mjs
-  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`11/11`).
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`13/13`).
 - This tightens the acceptance harness only. It is not live signed-app recorder
   acceptance, foreground UI E2E acceptance, or granted microphone/System Audio
   TCC proof.
@@ -3506,7 +3533,7 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
   `/recorder/frames/<id>`) does not satisfy full live acceptance.
 - Verification passed: `node --check` for the operator script and subprocess
   test, targeted `git diff --check`, and `node --test
-  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`6/6`).
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`7/7`).
 - This tightens the capture/search/audit acceptance harness only. It is not live
   signed-app recorder acceptance, foreground UI E2E acceptance, or granted TCC
   proof.
