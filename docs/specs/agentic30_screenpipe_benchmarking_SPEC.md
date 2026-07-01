@@ -3466,3 +3466,28 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
 - This is focused sidecar runtime verification for the Office Hours auto-fire
   path plus adjacent MCP raw SQL boundaries. It is not foreground UI E2E
   acceptance and not live signed-app recorder acceptance under granted TCC.
+
+### 2026-07-01 KST — Gate C live audio verifier seed rejection
+
+- `sidecar/recorder-live-verify.mjs` now treats audio acceptance like frame
+  acceptance: fixture rows are rejected before they can satisfy a live signed-app
+  gate.
+- Full live audio acceptance now requires an undeleted, non-fixture
+  `audio-<uuid>` row backed by an `asset-<uuid>` media asset, a live source
+  (`microphone` or `system_audio`), a `recorder-consent-*` consent grant, and
+  `raw_audio_indicator_state=visible_indicator_active`.
+- `scripts/verify-live-recorder-acceptance.mjs` uses
+  `assertLiveRecorderAudioChunkRow()` for full audio acceptance. The
+  `--allow-missing-audio` option remains only for frame-only triage; without it,
+  a seeded row such as `audio-live-fixture` fails closed with
+  `ERR_RECORDER_LIVE_VERIFY_AUDIO_IS_SEED_FIXTURE`.
+- The verifier subprocess test now uses UUID-shaped audio ids for the positive
+  path and adds a negative seeded-audio fixture path, so future live signed audio
+  evidence cannot be certified by the old synthetic fixture naming.
+- Verification passed: `node --check` for the verifier module, operator script,
+  and focused tests; targeted `git diff --check`; and `node --test
+  sidecar-tests/recorder-live-verify.test.mjs
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (`11/11`).
+- This tightens the acceptance harness only. It is not live signed-app recorder
+  acceptance, foreground UI E2E acceptance, or granted microphone/System Audio
+  TCC proof.
