@@ -747,6 +747,20 @@ function createPipeRunRecord({
     permission_manifest: pipe.permissions,
     rawAccess: false,
     raw_access: false,
+    proofAcceptedByPipeInput: false,
+    proof_accepted_by_pipe_input: false,
+    proofBoundary: {
+      proofAcceptedByPipeInput: false,
+      proof_accepted_by_pipe_input: false,
+      proofLedgerWriteAllowed: false,
+      proof_ledger_write_allowed: false,
+      message: "Pipe input manifests are local automation metadata and never accepted proof.",
+    },
+    proof_boundary: {
+      proof_accepted_by_pipe_input: false,
+      proof_ledger_write_allowed: false,
+      message: "Pipe input manifests are local automation metadata and never accepted proof.",
+    },
     timeoutSeconds: pipe.timeoutSeconds,
     timeout_seconds: pipe.timeoutSeconds,
     limit: normalizePositiveInteger(limit, 2000, {
@@ -1085,6 +1099,8 @@ function assertOutputStringSafe(value, pathSegments) {
 
 function pipeDefinitionDto(row) {
   const permissionManifest = parseJsonObject(row.permission_manifest_json);
+  const pipe = pipeDefinitionFromPersistedRow(row, permissionManifest);
+  const pipeDslPlan = interpretRecorderPipeDsl(pipe);
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -1100,12 +1116,38 @@ function pipeDefinitionDto(row) {
     pipe_kind: row.pipe_kind,
     permissionManifest,
     permission_manifest: permissionManifest,
+    dslPlan: pipeDslPlan,
+    dsl_plan: pipeDslPlan,
+    pipeDslPlan,
+    pipe_dsl_plan: pipeDslPlan,
+    timeoutSeconds: pipe.timeoutSeconds,
+    timeout_seconds: pipe.timeoutSeconds,
+    concurrency: pipe.concurrency,
+    retentionDays: pipe.retentionDays,
+    retention_days: pipe.retentionDays,
     createdAt: row.created_at,
     created_at: row.created_at,
     updatedAt: row.updated_at,
     updated_at: row.updated_at,
     proofAcceptedByPipeDefinition: false,
     proof_accepted_by_pipe_definition: false,
+  };
+}
+
+function pipeDefinitionFromPersistedRow(row, permissionManifest) {
+  const builtIn = BUILT_IN_RECORDER_PIPES.find((pipe) => pipe.id === row.id);
+  if (!builtIn) {
+    fail("ERR_RECORDER_PIPE_UNKNOWN_BUILTIN", `unknown built-in recorder pipe: ${row.id}`, { id: row.id });
+  }
+  return {
+    ...builtIn,
+    id: row.id,
+    name: row.name,
+    schedule: row.schedule,
+    enabled: Boolean(Number(row.enabled)),
+    kind: row.pipe_kind,
+    path: row.path,
+    permissions: permissionManifest,
   };
 }
 

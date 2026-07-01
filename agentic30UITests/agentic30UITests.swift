@@ -2043,6 +2043,69 @@ final class agentic30UITests: XCTestCase {
         }
         let liveFrameId = try extractLiveFrameId(from: liveFrameReceiptLabel)
 
+        let replayMode = elementWithIdentifier(in: app, "opendesign.founderReplay.mode.replay")
+        tapRequired(replayMode, in: app, named: "Founder Replay live signed app Replay mode")
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.founderReplay.mode.replay", containing: "active", timeout: 5))
+        let frameRefresh = elementWithIdentifier(in: app, "opendesign.founderReplay.frames.refresh")
+        if frameRefresh.waitForExistence(timeout: 2), waitUntilEnabled(frameRefresh, timeout: 3) {
+            clickCenter(of: frameRefresh)
+        }
+        let liveTimelineFrameRows = (0..<6).map { index in
+            elementWithIdentifier(in: app, "opendesign.founderReplay.timeline.frame.\(index)")
+        }
+        let liveTimelineDeadline = Date().addingTimeInterval(20)
+        var liveTimelineFrame: XCUIElement?
+        repeat {
+            if let row = liveTimelineFrameRows.first(where: { row in
+                row.exists
+                    && element(row, contains: liveFrameId)
+                    && element(row, contains: "asset-")
+                    && element(row, contains: "timeline frame non-proof")
+            }) {
+                liveTimelineFrame = row
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < liveTimelineDeadline
+        guard let liveTimelineFrame else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Timeline Missing")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Timeline Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Timeline Diagnostics")
+            XCTFail("Live signed-app replay timeline did not expose the UI-observed live frame \(liveFrameId).")
+            return
+        }
+        attachText(elementDiagnostics(liveTimelineFrame), named: "Founder Replay Live Signed App Timeline Frame")
+        clickCenter(of: liveTimelineFrame)
+        let frameImagePanel = elementWithIdentifier(in: app, "opendesign.founderReplay.frameImage")
+        let frameImageDeadline = Date().addingTimeInterval(30)
+        repeat {
+            if frameImagePanel.exists
+                && element(frameImagePanel, contains: liveFrameId)
+                && element(frameImagePanel, contains: "image preview audited")
+                && element(frameImagePanel, contains: "path hidden")
+                && element(frameImagePanel, contains: "raw frame image non-proof")
+            {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < frameImageDeadline
+        guard frameImagePanel.exists,
+              element(frameImagePanel, contains: liveFrameId),
+              element(frameImagePanel, contains: "image preview audited"),
+              element(frameImagePanel, contains: "path hidden"),
+              element(frameImagePanel, contains: "raw frame image non-proof")
+        else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Frame Image Preview Missing")
+            attachText(elementDiagnostics(frameImagePanel), named: "Founder Replay Live Signed App Frame Image Preview")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Frame Image Missing Tree")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Frame Image Diagnostics")
+            XCTFail("Live signed-app replay image preview did not expose an audited path-hidden raw frame image for \(liveFrameId).")
+            return
+        }
+        attachText(elementDiagnostics(frameImagePanel), named: "Founder Replay Live Signed App Frame Image Preview")
+        tapRequired(controlMode, in: app, named: "Founder Replay live signed app Control mode after timeline")
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.founderReplay.control").waitForExistence(timeout: 10))
+
         let controlScrollIdentifier = "opendesign.founderReplay.control.scroll"
         let searchQuery = elementWithIdentifier(in: app, "opendesign.founderReplay.control.search.query")
         XCTAssertTrue(scrollElementToHittable(
@@ -2142,8 +2205,7 @@ final class agentic30UITests: XCTestCase {
                 .appendingPathComponent("live-recorder-frame-search-verifier.json", isDirectory: false)
                 .path,
             frameId: liveFrameId,
-            allowMissingAudio: true,
-            allowMissingAudit: true
+            allowMissingAudio: true
         )
 
         clickCenter(of: deleteButton)
@@ -2166,6 +2228,54 @@ final class agentic30UITests: XCTestCase {
                 .appendingPathComponent("live-recorder-frame-delete-verifier.json", isDirectory: false)
                 .path,
             deletedFrameId: liveFrameId
+        )
+        XCTAssertTrue(scrollElementToHittable(
+            captureButton,
+            in: app,
+            timeout: 8,
+            scrollViewIdentifier: controlScrollIdentifier
+        ))
+        guard waitUntilEnabled(captureButton, timeout: 10) else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Retention Capture Disabled")
+            attachText(app.debugDescription, named: "Founder Replay Live Signed App Retention Capture Disabled Tree")
+            XCTFail("Live signed-app retention acceptance requires a second live capture after delete.")
+            return
+        }
+        clickCenter(of: captureButton)
+        let retentionCaptureDeadline = Date().addingTimeInterval(45)
+        var retentionFrameReceiptLabel = ""
+        repeat {
+            if lastFrameCapture.exists {
+                let candidate = lastFrameCapture.label
+                if candidate != liveFrameReceiptLabel,
+                   candidate.hasPrefix("frame-"),
+                   candidate.contains("asset-"),
+                   !candidate.contains("ui-frame-"),
+                   !candidate.contains("ui-asset") {
+                    retentionFrameReceiptLabel = candidate
+                    break
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < retentionCaptureDeadline
+        guard !retentionFrameReceiptLabel.isEmpty else {
+            attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Retention Capture Missing")
+            attachText(elementDiagnostics(lastFrameCapture), named: "Founder Replay Live Signed App Retention Frame Receipt")
+            attachLatestUITestingLaunchDiagnostics(named: "Founder Replay Live Signed App Retention Capture Diagnostics")
+            XCTFail("Live signed-app retention verifier could not obtain a fresh live frame after delete.")
+            return
+        }
+        let retentionFrameId = try extractLiveFrameId(from: retentionFrameReceiptLabel)
+        XCTAssertNotEqual(retentionFrameId, liveFrameId)
+        try verifyLiveRecorderAcceptance(
+            appSupportPath: appSupportPath,
+            outputPath: testRoot
+                .appendingPathComponent("live-recorder-retention-verifier.json", isDirectory: false)
+                .path,
+            frameId: retentionFrameId,
+            allowMissingAudio: true,
+            allowMissingAudit: true,
+            applyRetention: true
         )
         attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Capture Delete Accepted")
     }
@@ -2389,6 +2499,14 @@ final class agentic30UITests: XCTestCase {
             return
         }
         attachText(elementDiagnostics(audioStatus), named: "Founder Replay Live Signed App Audio Status")
+        try verifyLiveRecorderAcceptance(
+            appSupportPath: appSupportPath,
+            outputPath: testRoot
+                .appendingPathComponent("live-recorder-audio-verifier.json", isDirectory: false)
+                .path,
+            applyRetention: true,
+            audioOnly: true
+        )
         attachWindowScreenshot(from: app, named: "Founder Replay Live Signed App Audio Accepted")
     }
 
@@ -7813,21 +7931,25 @@ final class agentic30UITests: XCTestCase {
         frameId: String? = nil,
         deletedFrameId: String? = nil,
         allowMissingAudio: Bool = false,
-        allowMissingAudit: Bool = false
+        allowMissingAudit: Bool = false,
+        applyRetention: Bool = false,
+        audioOnly: Bool = false
     ) throws {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let nodeExecutableURL = try resolveUITestNodeExecutableURL(repositoryRoot: repositoryRoot)
         let process = Process()
-        process.executableURL = nodeExecutableURL
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
         var arguments = [
-            "scripts/verify-live-recorder-acceptance.mjs",
+            "scripts/verify-live-recorder-acceptance.sh",
             "--app-support", appSupportPath,
             "--search-query", "Agentic30",
             "--json-output", outputPath,
             "--skip-wal-checkpoint",
         ]
+        if audioOnly {
+            arguments.append("--audio-only")
+        }
         if let frameId, !frameId.isEmpty {
             arguments.append(contentsOf: ["--frame-id", frameId])
         }
@@ -7840,12 +7962,12 @@ final class agentic30UITests: XCTestCase {
         if allowMissingAudit {
             arguments.append("--allow-missing-audit")
         }
+        if applyRetention {
+            arguments.append("--apply-retention")
+        }
         process.arguments = arguments
         process.currentDirectoryURL = repositoryRoot
         var environment = ProcessInfo.processInfo.environment
-        let nodeDirectory = nodeExecutableURL.deletingLastPathComponent().path
-        let existingPath = environment["PATH"].map { ":\($0)" } ?? ""
-        environment["PATH"] = "\(nodeDirectory)\(existingPath)"
         process.environment = environment
         let stdout = Pipe()
         let stderr = Pipe()

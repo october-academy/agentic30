@@ -633,6 +633,25 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     ]);
     assert.equal(pipesState.proofAcceptedByPipeDefinition, false);
     assert.equal(pipesState.proofAcceptedByPipeRun, false);
+    const dailyPipeState = pipesState.pipes.find((pipe) => pipe.id === "daily-founder-memory");
+    assert.equal(dailyPipeState.pipeDslPlan.schema, "agentic30.recorder.pipe_dsl_plan.v1");
+    assert.deepEqual(dailyPipeState.pipeDslPlan.actions, [
+      "recorder.search",
+      "recorder.memory.read",
+      "memory.write_daily_summary",
+      "notify.local",
+    ]);
+    assert.deepEqual(dailyPipeState.pipeDslPlan.endpoints.sort(), [
+      "GET /recorder/memory",
+      "GET /recorder/search",
+    ]);
+    assert.equal(dailyPipeState.pipeDslPlan.rawAccess, false);
+    assert.equal(dailyPipeState.pipeDslPlan.proofBoundary.proofLedgerWriteAllowed, false);
+    assert.equal(dailyPipeState.timeoutSeconds, 120);
+    assert.equal(dailyPipeState.timeout_seconds, 120);
+    assert.equal(dailyPipeState.concurrency, "skip_if_running");
+    assert.equal(dailyPipeState.retentionDays, 30);
+    assert.equal(dailyPipeState.retention_days, 30);
     assert.equal(JSON.stringify(pipesState).includes("token_hash"), false);
 
     const now = new Date("2026-06-28T09:00:00.000Z");
@@ -651,10 +670,42 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     );
     assert.equal(pipeRun.pipeRun.pipeId, "daily-founder-memory");
     assert.equal(pipeRun.pipeRun.status, "succeeded");
+    assert.equal(pipeRun.pipeRun.inputManifest.pipe_id, "daily-founder-memory");
+    assert.equal(pipeRun.pipeRun.inputManifest.limit, 10);
+    assert.equal(pipeRun.pipeRun.inputManifest.raw_access, false);
+    assert.equal(pipeRun.pipeRun.inputManifest.proof_accepted_by_pipe_input, false);
+    assert.equal(pipeRun.pipeRun.inputManifest.proof_boundary.proof_ledger_write_allowed, false);
+    assert.equal(pipeRun.pipeRun.auditLog.some((event) => event.type === "pipe_started"), true);
+    assert.equal(pipeRun.pipeRun.auditLog.some((event) => event.type === "pipe_succeeded"), true);
+    assert.equal(pipeRun.pipeRun.auditLog.some((event) => event.code === "succeeded"), true);
+    assert.equal(pipeRun.pipeRun.deletedAt, null);
+    assert.equal(pipeRun.pipeRun.deleted_at, null);
     assert.equal(pipeRun.proofAcceptedByPipeRun, false);
     assert.equal(pipeRun.runs.some((run) => run.id === pipeRun.pipeRun.id), true);
     const pipeRunJson = JSON.stringify(pipeRun);
     assert.doesNotMatch(pipeRunJson, /token_hash|a30_recorder_|rawText|raw_text|media\/frames|media\/audio/);
+
+    const pipeOutputDeleteMarker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "recorder_pipe_output_delete",
+      runId: pipeRun.pipeRun.id,
+      confirm: true,
+      runLimit: 10,
+    }));
+    const pipeOutputDelete = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= pipeOutputDeleteMarker && event.type === "recorder_pipe_output_deleted"
+    );
+    assert.equal(pipeOutputDelete.pipeOutputDeletion.pipeRunCount, 1);
+    assert.equal(pipeOutputDelete.pipeOutputDeletion.outputPurgedCount, 1);
+    assert.deepEqual(pipeOutputDelete.pipeOutputDeletion.pipeRunIds, [pipeRun.pipeRun.id]);
+    assert.equal(pipeOutputDelete.pipeOutputDeletion.proofAcceptedByRecorderDelete, false);
+    assert.equal(pipeOutputDelete.pipeOutputDeletion.proofLedgerWriteAllowed, false);
+    const purgedRun = pipeOutputDelete.runs.find((run) => run.id === pipeRun.pipeRun.id);
+    assert.equal(purgedRun.outputManifest, null);
+    assert.equal(typeof purgedRun.deletedAt, "string");
+    assert.equal(typeof purgedRun.deleted_at, "string");
+    const pipeOutputDeleteJson = JSON.stringify(pipeOutputDelete);
+    assert.doesNotMatch(pipeOutputDeleteJson, /token_hash|a30_recorder_|rawText|raw_text|media\/frames|media\/audio/);
 
     const pipeCancelStore = new RecorderStore({ appSupportRoot: appSupportPath }).open();
     try {
@@ -752,6 +803,13 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     assert.equal(refreshedPipesState.scheduler.skippedCount, scheduler.scheduler.skippedCount);
     assert.equal(refreshedPipesState.scheduler.executedCount, scheduler.scheduler.executedCount);
     assert.equal(refreshedPipesState.scheduler.failedCount, scheduler.scheduler.failedCount);
+    const refreshedDailyPipeState = refreshedPipesState.pipes.find((pipe) => pipe.id === "daily-founder-memory");
+    assert.equal(refreshedDailyPipeState.pipe_dsl_plan.raw_access, false);
+    assert.equal(refreshedDailyPipeState.pipe_dsl_plan.proof_boundary.proof_ledger_write_allowed, false);
+    assert.equal(refreshedDailyPipeState.pipe_dsl_plan.steps.length > 0, true);
+    assert.equal(refreshedDailyPipeState.timeout_seconds, 120);
+    assert.equal(refreshedDailyPipeState.concurrency, "skip_if_running");
+    assert.equal(refreshedDailyPipeState.retention_days, 30);
     assert.equal(JSON.stringify(refreshedPipesState).includes("token_hash"), false);
 
     const rangeDeleteMarker = ws.events.length;
@@ -858,6 +916,31 @@ test("sidecar starts recorder raw API and issues scoped tokens through the authe
     const grantsJson = await fs.readFile(path.join(appSupportPath, "recorder-mcp-grants.json"), "utf8");
     assert.doesNotMatch(grantsJson, /a30_recorder_/);
     assert.doesNotMatch(grantsJson, /token_hash/);
+
+    const retentionMarker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "recorder_retention_apply",
+      now: "2026-07-01T00:00:00.000Z",
+    }));
+    const retention = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= retentionMarker
+        && event.type === "recorder_retention_result"
+        && event.scheduler?.reason === "manual"
+    );
+    assert.equal(retention.proofAcceptedByRetention, false);
+    assert.equal(retention.proofLedgerWriteAllowed, false);
+    assert.equal(typeof retention.deletedAudioChunkCount, "number");
+    assert.equal(typeof retention.deletedPipeRunCount, "number");
+
+    const controlWithRetention = await sendBridgeRequest(
+      ws,
+      { type: "recorder_control_state_get" },
+      "recorder_control_state",
+    );
+    assert.equal(controlWithRetention.retentionResult.type, "recorder_retention_result");
+    assert.equal(controlWithRetention.retentionResult.scheduler.reason, "manual");
+    assert.equal(controlWithRetention.retentionResult.proofAcceptedByRetention, false);
+    assert.equal(controlWithRetention.retentionResult.proofLedgerWriteAllowed, false);
   } finally {
     ws?.close();
     child.kill("SIGTERM");

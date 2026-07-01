@@ -556,6 +556,7 @@ import { recordAudioChunk } from "./recorder-audio.mjs";
 import {
   deleteRecorderFrameCapture,
   deleteRecorderFrameCapturesInRange,
+  deleteRecorderPipeRunOutput,
 } from "./recorder-delete.mjs";
 import {
   recorderDayMemoryLoopLocalDayRange,
@@ -1397,6 +1398,10 @@ async function handleClientMessage(socket, payload) {
     }
     case "recorder_pipe_cancel": {
       handleRecorderPipeCancel(socket, payload);
+      return;
+    }
+    case "recorder_pipe_output_delete": {
+      handleRecorderPipeOutputDelete(socket, payload);
       return;
     }
     case "recorder_pipe_scheduler_tick": {
@@ -3816,10 +3821,22 @@ function startRecorderPipeScheduler() {
 
 function startRecorderRetentionSweepScheduler() {
   const timer = setInterval(() => {
-    fireAndForget("recorderRetentionSweepTick", runRecorderRetentionSweep({ reason: "interval" }));
+    fireAndForget(
+      "recorderRetentionSweepTick",
+      runRecorderRetentionSweep({ reason: "interval" }).then((result) => {
+        broadcast(buildRecorderRetentionResultPayload(result));
+        return result;
+      }),
+    );
   }, RECORDER_RETENTION_SWEEP_INTERVAL_MS);
   timer.unref?.();
-  fireAndForget("recorderRetentionSweepBootTick", runRecorderRetentionSweep({ reason: "boot" }));
+  fireAndForget(
+    "recorderRetentionSweepBootTick",
+    runRecorderRetentionSweep({ reason: "boot" }).then((result) => {
+      broadcast(buildRecorderRetentionResultPayload(result));
+      return result;
+    }),
+  );
   return timer;
 }
 
@@ -3876,6 +3893,54 @@ async function runRecorderRetentionSweep({ reason = "manual", policy = null, now
       state.recorderRetentionSweepPromise = null;
     }
   }
+}
+
+function recorderRetentionCount(result, camelKey, snakeKey) {
+  return result?.[camelKey]
+    ?? result?.[snakeKey]
+    ?? result?.retention?.[camelKey]
+    ?? result?.retention?.[snakeKey]
+    ?? 0;
+}
+
+function buildRecorderRetentionResultPayload(result) {
+  return {
+    type: "recorder_retention_result",
+    retention: result?.retention ?? null,
+    scheduler: result ?? null,
+    deletedFrameCount: recorderRetentionCount(result, "deletedFrameCount", "deleted_frame_count"),
+    deleted_frame_count: recorderRetentionCount(result, "deletedFrameCount", "deleted_frame_count"),
+    deletedAudioChunkCount: recorderRetentionCount(result, "deletedAudioChunkCount", "deleted_audio_chunk_count"),
+    deleted_audio_chunk_count: recorderRetentionCount(result, "deletedAudioChunkCount", "deleted_audio_chunk_count"),
+    deletedTranscriptSegmentCount: recorderRetentionCount(result, "deletedTranscriptSegmentCount", "deleted_transcript_segment_count"),
+    deleted_transcript_segment_count: recorderRetentionCount(result, "deletedTranscriptSegmentCount", "deleted_transcript_segment_count"),
+    deletedClipboardEventCount: recorderRetentionCount(result, "deletedClipboardEventCount", "deleted_clipboard_event_count"),
+    deleted_clipboard_event_count: recorderRetentionCount(result, "deletedClipboardEventCount", "deleted_clipboard_event_count"),
+    purgedClipboardContentCount: recorderRetentionCount(result, "purgedClipboardContentCount", "purged_clipboard_content_count"),
+    purged_clipboard_content_count: recorderRetentionCount(result, "purgedClipboardContentCount", "purged_clipboard_content_count"),
+    deletedMemoryItemCount: recorderRetentionCount(result, "deletedMemoryItemCount", "deleted_memory_item_count"),
+    deleted_memory_item_count: recorderRetentionCount(result, "deletedMemoryItemCount", "deleted_memory_item_count"),
+    deletedProductEventCount: recorderRetentionCount(result, "deletedProductEventCount", "deleted_product_event_count"),
+    deleted_product_event_count: recorderRetentionCount(result, "deletedProductEventCount", "deleted_product_event_count"),
+    deletedEvidenceCandidateCount: recorderRetentionCount(result, "deletedEvidenceCandidateCount", "deleted_evidence_candidate_count"),
+    deleted_evidence_candidate_count: recorderRetentionCount(result, "deletedEvidenceCandidateCount", "deleted_evidence_candidate_count"),
+    rejectedEvidenceCandidateCount: recorderRetentionCount(result, "rejectedEvidenceCandidateCount", "rejected_evidence_candidate_count"),
+    rejected_evidence_candidate_count: recorderRetentionCount(result, "rejectedEvidenceCandidateCount", "rejected_evidence_candidate_count"),
+    deletedPipeRunCount: recorderRetentionCount(result, "deletedPipeRunCount", "deleted_pipe_run_count"),
+    deleted_pipe_run_count: recorderRetentionCount(result, "deletedPipeRunCount", "deleted_pipe_run_count"),
+    purgedPipeOutputCount: recorderRetentionCount(result, "purgedPipeOutputCount", "purged_pipe_output_count"),
+    purged_pipe_output_count: recorderRetentionCount(result, "purgedPipeOutputCount", "purged_pipe_output_count"),
+    tombstonedAuditRowCount: recorderRetentionCount(result, "tombstonedAuditRowCount", "tombstoned_audit_row_count"),
+    tombstoned_audit_row_count: recorderRetentionCount(result, "tombstonedAuditRowCount", "tombstoned_audit_row_count"),
+    deletedExportArchiveCount: recorderRetentionCount(result, "deletedExportArchiveCount", "deleted_export_archive_count"),
+    deleted_export_archive_count: recorderRetentionCount(result, "deletedExportArchiveCount", "deleted_export_archive_count"),
+    deletedMediaCount: recorderRetentionCount(result, "deletedMediaCount", "deleted_media_count"),
+    deleted_media_count: recorderRetentionCount(result, "deletedMediaCount", "deleted_media_count"),
+    proofAcceptedByRetention: false,
+    proof_accepted_by_retention: false,
+    proofLedgerWriteAllowed: false,
+    proof_ledger_write_allowed: false,
+  };
 }
 
 function recorderPipeSchedulerArray(result, key) {
@@ -4122,11 +4187,16 @@ async function handleRecorderControlAction(socket, payload = {}) {
 }
 
 function recorderControlStateEvent(controlState, readiness) {
+  const retentionResult = state.recorderRetentionLastResult
+    ? buildRecorderRetentionResultPayload(state.recorderRetentionLastResult)
+    : null;
   return {
     type: "recorder_control_state",
     controlState,
     control_state: controlState,
     readiness,
+    retentionResult,
+    retention_result: retentionResult,
     proofAcceptedByRecorderControl: false,
     proof_accepted_by_recorder_control: false,
     proofAcceptedByCaptureReadiness: false,
@@ -4776,6 +4846,41 @@ function handleRecorderPipeCancel(socket, payload = {}) {
   });
 }
 
+function handleRecorderPipeOutputDelete(socket, payload = {}) {
+  if (payload.confirm !== true) {
+    const error = new Error("ERR_RECORDER_DELETE_CONFIRMATION_REQUIRED: Pipe output delete requires confirm=true");
+    error.code = "ERR_RECORDER_DELETE_CONFIRMATION_REQUIRED";
+    throw error;
+  }
+  const store = requireRecorderStore();
+  const result = deleteRecorderPipeRunOutput(
+    store,
+    payload.runId ?? payload.run_id ?? payload.id,
+    { now: new Date() },
+  );
+  const deletion = {
+    ...result,
+    proofAcceptedByRecorderDelete: false,
+    proof_accepted_by_recorder_delete: false,
+    proofLedgerWriteAllowed: false,
+    proof_ledger_write_allowed: false,
+  };
+  const runs = listRecorderPipeRuns({
+    store,
+    limit: payload.runLimit ?? payload.run_limit ?? 50,
+  });
+  send(socket, {
+    type: "recorder_pipe_output_deleted",
+    pipeOutputDeletion: deletion,
+    pipe_output_deletion: deletion,
+    runs,
+    proofAcceptedByRecorderDelete: false,
+    proof_accepted_by_recorder_delete: false,
+    proofLedgerWriteAllowed: false,
+    proof_ledger_write_allowed: false,
+  });
+}
+
 async function handleRecorderPipeSchedulerTick(socket, payload = {}) {
   const store = requireRecorderStore();
   const now = new Date();
@@ -4843,21 +4948,7 @@ async function handleRecorderRetentionApply(socket, payload = {}) {
     policy: payload.policy,
     now,
   });
-  send(socket, {
-    type: "recorder_retention_result",
-    retention: result.retention ?? null,
-    scheduler: result,
-    deletedFrameCount: result.deletedFrameCount ?? 0,
-    deleted_frame_count: result.deleted_frame_count ?? 0,
-    deletedAudioChunkCount: result.deletedAudioChunkCount ?? 0,
-    deleted_audio_chunk_count: result.deleted_audio_chunk_count ?? 0,
-    deletedMediaCount: result.deletedMediaCount ?? 0,
-    deleted_media_count: result.deleted_media_count ?? 0,
-    proofAcceptedByRetention: false,
-    proof_accepted_by_retention: false,
-    proofLedgerWriteAllowed: false,
-    proof_ledger_write_allowed: false,
-  });
+  send(socket, buildRecorderRetentionResultPayload(result));
 }
 
 async function handleRecorderMcpGrantsList(socket) {

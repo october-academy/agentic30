@@ -629,6 +629,28 @@ export function deleteRecorderPipeRunsInRange(store, {
     projectId,
     limit,
   }).filter((run) => TERMINAL_PIPE_RUN_STATUSES.has(run.status) && textOrNull(run.output_manifest_json));
+  return deleteRecorderPipeRunTargets(store, targets, { now });
+}
+
+export function deleteRecorderPipeRunOutput(store, runId, { now = new Date() } = {}) {
+  if (!store) {
+    fail("ERR_RECORDER_DELETE_STORE_REQUIRED", "deleteRecorderPipeRunOutput requires store");
+  }
+  const cleanRunId = requiredText(runId, "runId");
+  const run = store.getRecord("pipe_runs", cleanRunId);
+  if (!run) {
+    fail("ERR_RECORDER_DELETE_PIPE_RUN_NOT_FOUND", `recorder Pipe run not found: ${cleanRunId}`);
+  }
+  if (!TERMINAL_PIPE_RUN_STATUSES.has(run.status)) {
+    fail("ERR_RECORDER_DELETE_PIPE_RUN_NOT_TERMINAL", `recorder Pipe run must be terminal before deleting output: ${cleanRunId}`);
+  }
+  if (!textOrNull(run.output_manifest_json)) {
+    fail("ERR_RECORDER_DELETE_PIPE_RUN_OUTPUT_MISSING", `recorder Pipe run output already purged or missing: ${cleanRunId}`);
+  }
+  return deleteRecorderPipeRunTargets(store, [run], { now });
+}
+
+function deleteRecorderPipeRunTargets(store, targets, { now = new Date() } = {}) {
   const sourceRefs = targets.flatMap((run) => sourceRefsForPipeRun(run));
   const invalidation = prepareRecorderInvalidation(store, sourceRefs);
   const exportArchiveTargets = invalidation.exportArchiveTargets;

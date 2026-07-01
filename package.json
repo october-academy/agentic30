@@ -25,7 +25,7 @@
     "track:release-funnel": "node scripts/posthog-release-funnel.mjs",
     "sync:gstack": "node scripts/sync-gstack.mjs",
     "sync:alignment": "node scripts/sync-alignment-sources.mjs",
-    "verify:live-recorder": "node scripts/verify-live-recorder-acceptance.mjs",
+    "verify:live-recorder": "bash scripts/verify-live-recorder-acceptance.sh",
     "check:public-safety": "node scripts/check-public-safety.mjs",
     "check:alignment-leak": "node scripts/check-alignment-leak.mjs",
     "scan:secrets:gh": "bash scripts/scan-secrets-gh.sh",

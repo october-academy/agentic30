@@ -4680,11 +4680,13 @@ struct OpenDesignDayPageView: View {
     let recorderPipeActionInFlight: Set<String>
     let recorderPipeSchedulerRunning: Bool
     let recorderPipeLastSchedulerResult: RecorderPipeSchedulerResult?
+    let recorderLastPipeOutputDelete: RecorderPipeOutputDeleteReceipt?
     let recorderPipeLastError: String?
     let refreshRecorderPipes: () -> Void
     let prepareRecorderPipes: () -> Void
     let runRecorderPipe: (String) -> Void
     let cancelRecorderPipeRun: (String) -> Void
+    let deleteRecorderPipeOutput: (String) -> Void
     let tickRecorderPipeScheduler: () -> Void
     let day1SurfaceReview: Day1SurfaceReview?
     let day1SurfaceReviewGenerating: Bool
@@ -4842,11 +4844,13 @@ struct OpenDesignDayPageView: View {
         recorderPipeActionInFlight: Set<String> = [],
         recorderPipeSchedulerRunning: Bool = false,
         recorderPipeLastSchedulerResult: RecorderPipeSchedulerResult? = nil,
+        recorderLastPipeOutputDelete: RecorderPipeOutputDeleteReceipt? = nil,
         recorderPipeLastError: String? = nil,
         refreshRecorderPipes: @escaping () -> Void = {},
         prepareRecorderPipes: @escaping () -> Void = {},
         runRecorderPipe: @escaping (String) -> Void = { _ in },
         cancelRecorderPipeRun: @escaping (String) -> Void = { _ in },
+        deleteRecorderPipeOutput: @escaping (String) -> Void = { _ in },
         tickRecorderPipeScheduler: @escaping () -> Void = {},
         day1SurfaceReview: Day1SurfaceReview? = nil,
         day1SurfaceReviewGenerating: Bool = false,
@@ -4989,11 +4993,13 @@ struct OpenDesignDayPageView: View {
         self.recorderPipeActionInFlight = recorderPipeActionInFlight
         self.recorderPipeSchedulerRunning = recorderPipeSchedulerRunning
         self.recorderPipeLastSchedulerResult = recorderPipeLastSchedulerResult
+        self.recorderLastPipeOutputDelete = recorderLastPipeOutputDelete
         self.recorderPipeLastError = recorderPipeLastError
         self.refreshRecorderPipes = refreshRecorderPipes
         self.prepareRecorderPipes = prepareRecorderPipes
         self.runRecorderPipe = runRecorderPipe
         self.cancelRecorderPipeRun = cancelRecorderPipeRun
+        self.deleteRecorderPipeOutput = deleteRecorderPipeOutput
         self.tickRecorderPipeScheduler = tickRecorderPipeScheduler
         self.day1SurfaceReview = day1SurfaceReview
         self.day1SurfaceReviewGenerating = day1SurfaceReviewGenerating
@@ -5164,11 +5170,13 @@ struct OpenDesignDayPageView: View {
                     recorderPipeActionInFlight: recorderPipeActionInFlight,
                     recorderPipeSchedulerRunning: recorderPipeSchedulerRunning,
                     recorderPipeLastSchedulerResult: recorderPipeLastSchedulerResult,
+                    recorderLastPipeOutputDelete: recorderLastPipeOutputDelete,
                     recorderPipeLastError: recorderPipeLastError,
                     refreshRecorderPipes: refreshRecorderPipes,
                     prepareRecorderPipes: prepareRecorderPipes,
                     runRecorderPipe: runRecorderPipe,
                     cancelRecorderPipeRun: cancelRecorderPipeRun,
+                    deleteRecorderPipeOutput: deleteRecorderPipeOutput,
                     tickRecorderPipeScheduler: tickRecorderPipeScheduler,
                     day1SurfaceReview: day1SurfaceReview,
                     day1SurfaceReviewGenerating: day1SurfaceReviewGenerating,
@@ -5947,11 +5955,13 @@ struct OpenDesignDayShell: View {
     let recorderPipeActionInFlight: Set<String>
     let recorderPipeSchedulerRunning: Bool
     let recorderPipeLastSchedulerResult: RecorderPipeSchedulerResult?
+    let recorderLastPipeOutputDelete: RecorderPipeOutputDeleteReceipt?
     let recorderPipeLastError: String?
     let refreshRecorderPipes: () -> Void
     let prepareRecorderPipes: () -> Void
     let runRecorderPipe: (String) -> Void
     let cancelRecorderPipeRun: (String) -> Void
+    let deleteRecorderPipeOutput: (String) -> Void
     let tickRecorderPipeScheduler: () -> Void
     let day1SurfaceReview: Day1SurfaceReview?
     let day1SurfaceReviewGenerating: Bool
@@ -6128,11 +6138,13 @@ struct OpenDesignDayShell: View {
         recorderPipeActionInFlight: Set<String>,
         recorderPipeSchedulerRunning: Bool,
         recorderPipeLastSchedulerResult: RecorderPipeSchedulerResult?,
+        recorderLastPipeOutputDelete: RecorderPipeOutputDeleteReceipt?,
         recorderPipeLastError: String?,
         refreshRecorderPipes: @escaping () -> Void,
         prepareRecorderPipes: @escaping () -> Void,
         runRecorderPipe: @escaping (String) -> Void,
         cancelRecorderPipeRun: @escaping (String) -> Void,
+        deleteRecorderPipeOutput: @escaping (String) -> Void,
         tickRecorderPipeScheduler: @escaping () -> Void,
         day1SurfaceReview: Day1SurfaceReview?,
         day1SurfaceReviewGenerating: Bool,
@@ -6285,11 +6297,13 @@ struct OpenDesignDayShell: View {
         self.recorderPipeActionInFlight = recorderPipeActionInFlight
         self.recorderPipeSchedulerRunning = recorderPipeSchedulerRunning
         self.recorderPipeLastSchedulerResult = recorderPipeLastSchedulerResult
+        self.recorderLastPipeOutputDelete = recorderLastPipeOutputDelete
         self.recorderPipeLastError = recorderPipeLastError
         self.refreshRecorderPipes = refreshRecorderPipes
         self.prepareRecorderPipes = prepareRecorderPipes
         self.runRecorderPipe = runRecorderPipe
         self.cancelRecorderPipeRun = cancelRecorderPipeRun
+        self.deleteRecorderPipeOutput = deleteRecorderPipeOutput
         self.tickRecorderPipeScheduler = tickRecorderPipeScheduler
         self.day1SurfaceReview = day1SurfaceReview
         self.day1SurfaceReviewGenerating = day1SurfaceReviewGenerating
@@ -6601,11 +6615,13 @@ struct OpenDesignDayShell: View {
                         actionInFlight: recorderPipeActionInFlight,
                         schedulerRunning: recorderPipeSchedulerRunning,
                         lastSchedulerResult: recorderPipeLastSchedulerResult,
+                        lastPipeOutputDelete: recorderLastPipeOutputDelete,
                         lastError: recorderPipeLastError,
                         refresh: refreshRecorderPipes,
                         prepare: prepareRecorderPipes,
                         runPipe: runRecorderPipe,
                         cancelRun: cancelRecorderPipeRun,
+                        deletePipeOutput: deleteRecorderPipeOutput,
                         tickScheduler: tickRecorderPipeScheduler
                     )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -8984,11 +9000,13 @@ private struct OpenDesignFounderReplayPageView: View {
     let actionInFlight: Set<String>
     let schedulerRunning: Bool
     let lastSchedulerResult: RecorderPipeSchedulerResult?
+    let lastPipeOutputDelete: RecorderPipeOutputDeleteReceipt?
     let lastError: String?
     let refresh: () -> Void
     let prepare: () -> Void
     let runPipe: (String) -> Void
     let cancelRun: (String) -> Void
+    let deletePipeOutput: (String) -> Void
     let tickScheduler: () -> Void
 
     @State private var selectedMode: OpenDesignFounderReplayMode = .replay
@@ -9096,11 +9114,13 @@ private struct OpenDesignFounderReplayPageView: View {
         actionInFlight: Set<String> = [],
         schedulerRunning: Bool = false,
         lastSchedulerResult: RecorderPipeSchedulerResult? = nil,
+        lastPipeOutputDelete: RecorderPipeOutputDeleteReceipt? = nil,
         lastError: String? = nil,
         refresh: @escaping () -> Void = {},
         prepare: @escaping () -> Void = {},
         runPipe: @escaping (String) -> Void = { _ in },
         cancelRun: @escaping (String) -> Void = { _ in },
+        deletePipeOutput: @escaping (String) -> Void = { _ in },
         tickScheduler: @escaping () -> Void = {}
     ) {
         self.controlState = controlState
@@ -9187,11 +9207,13 @@ private struct OpenDesignFounderReplayPageView: View {
         self.actionInFlight = actionInFlight
         self.schedulerRunning = schedulerRunning
         self.lastSchedulerResult = lastSchedulerResult
+        self.lastPipeOutputDelete = lastPipeOutputDelete
         self.lastError = lastError
         self.refresh = refresh
         self.prepare = prepare
         self.runPipe = runPipe
         self.cancelRun = cancelRun
+        self.deletePipeOutput = deletePipeOutput
         self.tickScheduler = tickScheduler
     }
 
@@ -9464,7 +9486,29 @@ private struct OpenDesignFounderReplayPageView: View {
             }
         }
         .frame(width: 420, height: 312)
+        .accessibilityLabel(frameImageAccessibilityLabel(for: frame))
         .accessibilityIdentifier("opendesign.founderReplay.frameImage")
+    }
+
+    private func frameImageAccessibilityLabel(for frame: RecorderFrameCaptureReceipt) -> String {
+        var parts = [
+            "frame image",
+            frame.id,
+        ]
+        if frameImageLoadingID == frame.id {
+            parts.append("image loading")
+        }
+        if let preview = frameImagePreview, preview.frameId == frame.id {
+            parts.append("image preview audited")
+            parts.append(preview.auditId)
+            parts.append(preview.pathExposed ? "path exposed" : "path hidden")
+            parts.append("raw frame image non-proof")
+        } else if let frameImageLastError, !frameImageLastError.isEmpty {
+            parts.append("image error \(frameImageLastError)")
+        } else {
+            parts.append("image pending")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func replayMetadataRow(_ label: String, _ value: String) -> some View {
@@ -10244,8 +10288,9 @@ private struct OpenDesignFounderReplayPageView: View {
                             .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                             .lineLimit(1)
                     }
-                    if let action {
-                        dayMemoryNextActionRows(action)
+                    if let nextAction = dayMemoryLoop?.nextAction,
+                       let action = nextAction.action {
+                        dayMemoryNextActionRows(nextAction, action: action)
                             .accessibilityIdentifier("opendesign.founderReplay.control.dayMemory.nextAction")
                     }
                     if let snapshot = dayMemoryLoop?.snapshot {
@@ -10304,6 +10349,17 @@ private struct OpenDesignFounderReplayPageView: View {
         let status = retentionApplyRunning ? "running retention sweep" : (result?.status ?? "not run")
         let deletedFrameCount = result?.deletedFrameCount ?? 0
         let deletedAudioChunkCount = result?.deletedAudioChunkCount ?? 0
+        let deletedTranscriptSegmentCount = result?.deletedTranscriptSegmentCount ?? 0
+        let deletedClipboardEventCount = result?.deletedClipboardEventCount ?? 0
+        let purgedClipboardContentCount = result?.purgedClipboardContentCount ?? 0
+        let deletedMemoryItemCount = result?.deletedMemoryItemCount ?? 0
+        let deletedProductEventCount = result?.deletedProductEventCount ?? 0
+        let deletedEvidenceCandidateCount = result?.deletedEvidenceCandidateCount ?? 0
+        let rejectedEvidenceCandidateCount = result?.rejectedEvidenceCandidateCount ?? 0
+        let deletedPipeRunCount = result?.deletedPipeRunCount ?? 0
+        let purgedPipeOutputCount = result?.purgedPipeOutputCount ?? 0
+        let tombstonedAuditRowCount = result?.tombstonedAuditRowCount ?? 0
+        let deletedExportArchiveCount = result?.deletedExportArchiveCount ?? 0
         let deletedMediaCount = result?.deletedMediaCount ?? 0
         return HStack(alignment: .top, spacing: 12) {
             Image(systemName: result == nil ? "clock.arrow.circlepath" : "checkmark.circle")
@@ -10329,6 +10385,16 @@ private struct OpenDesignFounderReplayPageView: View {
                     .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                     .lineLimit(1)
                     .accessibilityIdentifier("opendesign.founderReplay.control.retention.counts")
+                Text("transcripts \(deletedTranscriptSegmentCount) · clipboard \(deletedClipboardEventCount)/\(purgedClipboardContentCount) · memory \(deletedMemoryItemCount) · product \(deletedProductEventCount)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.retention.contentCounts")
+                Text("evidence \(deletedEvidenceCandidateCount) rejected \(rejectedEvidenceCandidateCount) · pipe \(deletedPipeRunCount)/\(purgedPipeOutputCount) · audit \(tombstonedAuditRowCount) · exports \(deletedExportArchiveCount)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.retention.lifecycleCounts")
                 if let retentionLastError,
                    !retentionLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(retentionLastError)
@@ -10376,6 +10442,17 @@ private struct OpenDesignFounderReplayPageView: View {
             "Retention Sweep state \(retentionApplyRunning ? "running" : (result?.status ?? "not run"))",
             "deleted frames \(result?.deletedFrameCount ?? 0)",
             "deleted audio \(result?.deletedAudioChunkCount ?? 0)",
+            "deleted transcripts \(result?.deletedTranscriptSegmentCount ?? 0)",
+            "deleted clipboard events \(result?.deletedClipboardEventCount ?? 0)",
+            "purged clipboard content \(result?.purgedClipboardContentCount ?? 0)",
+            "deleted memory items \(result?.deletedMemoryItemCount ?? 0)",
+            "deleted product events \(result?.deletedProductEventCount ?? 0)",
+            "deleted evidence candidates \(result?.deletedEvidenceCandidateCount ?? 0)",
+            "rejected evidence candidates \(result?.rejectedEvidenceCandidateCount ?? 0)",
+            "deleted pipe runs \(result?.deletedPipeRunCount ?? 0)",
+            "purged pipe outputs \(result?.purgedPipeOutputCount ?? 0)",
+            "tombstoned audit rows \(result?.tombstonedAuditRowCount ?? 0)",
+            "deleted export archives \(result?.deletedExportArchiveCount ?? 0)",
             "deleted media \(result?.deletedMediaCount ?? 0)",
             result?.proofLedgerWriteAllowed == true ? "proof ledger write allowed" : "proof ledger write blocked",
             result?.proofAcceptedByRetention == true ? "proof accepted" : "non proof",
@@ -10398,18 +10475,27 @@ private struct OpenDesignFounderReplayPageView: View {
             "next action \(action?.actionType ?? "none")",
             "next instruction \(action?.instruction ?? "none")",
             "next reason \(action?.reason ?? "none")",
+            "next preferred by \(action?.preferredBy ?? "none")",
+            "next source count \(action?.sourceIds.count ?? 0)",
+            "next proof effect \(action?.proofEffect ?? "none")",
+            dayMemoryLoop?.nextAction?.proofAcceptedByNextAction == true ? "next action proof accepted" : "next action non proof",
+            "next proof boundary \(dayMemoryProofBoundaryText(dayMemoryLoop?.nextAction?.proofBoundaryMessage))",
             "last review \(lastReview?.candidateId ?? "none")",
-            dayMemoryLoop?.proofAcceptedByDayLoop == true ? "proof accepted" : "proof rejected",
+            dayMemoryLoop?.proofAcceptedByDayLoop == true ? "day loop proof accepted" : "day loop non proof",
         ].joined(separator: " | ")
     }
 
-    private func dayMemoryNextActionRows(_ action: RecorderNextActionResult.Action) -> some View {
+    private func dayMemoryNextActionRows(
+        _ nextAction: RecorderNextActionResult,
+        action: RecorderNextActionResult.Action
+    ) -> some View {
         let priorityPrefix = action.priority.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? ""
             : "\(action.priority) "
         let sourceSummary = action.sourceIds.isEmpty
             ? ""
             : "sources \(action.sourceIds.prefix(2).joined(separator: ", "))"
+        let proofMessage = nextAction.proofBoundaryMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         return VStack(alignment: .leading, spacing: 3) {
             Text("next \(priorityPrefix)\(action.actionType) · \(action.title)")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -10427,6 +10513,16 @@ private struct OpenDesignFounderReplayPageView: View {
                     .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                     .lineLimit(2)
             }
+            Text("proof \(action.proofEffect.isEmpty ? "none" : action.proofEffect) · source count \(action.sourceIds.count) · non-proof planning")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                .lineLimit(1)
+            if !proofMessage.isEmpty {
+                Text("boundary \(proofMessage)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                    .lineLimit(2)
+            }
             if let candidate = action.targetCandidate, !candidate.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text("target \(compactIdentifier(candidate.id)) · \(candidate.candidateStatus)")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -10441,10 +10537,13 @@ private struct OpenDesignFounderReplayPageView: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(dayMemoryNextActionAccessibilityLabel(action))
+        .accessibilityLabel(dayMemoryNextActionAccessibilityLabel(nextAction, action: action))
     }
 
-    private func dayMemoryNextActionAccessibilityLabel(_ action: RecorderNextActionResult.Action) -> String {
+    private func dayMemoryNextActionAccessibilityLabel(
+        _ nextAction: RecorderNextActionResult,
+        action: RecorderNextActionResult.Action
+    ) -> String {
         [
             "next action \(action.actionType)",
             "priority \(action.priority.isEmpty ? "none" : action.priority)",
@@ -10455,7 +10554,13 @@ private struct OpenDesignFounderReplayPageView: View {
             "target candidate \(action.targetCandidate?.id ?? "none")",
             "source count \(action.sourceIds.count)",
             "proof effect \(action.proofEffect)",
+            "proof boundary \(dayMemoryProofBoundaryText(nextAction.proofBoundaryMessage))",
         ].joined(separator: " | ")
+    }
+
+    private func dayMemoryProofBoundaryText(_ value: String?) -> String {
+        let text = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? "none" : text
     }
 
     private func evidenceCandidateReviewReceiptRow(_ result: RecorderEvidenceCandidateReviewResult) -> some View {
@@ -11857,6 +11962,10 @@ private struct OpenDesignFounderReplayPageView: View {
                 if let lastError, !lastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     pipesNotice(text: lastError, tone: .amber)
                 }
+                if let lastPipeOutputDelete {
+                    pipesNotice(text: pipeOutputDeleteNoticeText(lastPipeOutputDelete), tone: .accent)
+                        .accessibilityIdentifier("opendesign.founderReplay.pipes.delete.result")
+                }
                 if let lastSchedulerResult {
                     pipesNotice(
                         text: schedulerNoticeText(lastSchedulerResult),
@@ -11975,6 +12084,27 @@ private struct OpenDesignFounderReplayPageView: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                         .lineLimit(1)
+                    if let policySummary = pipeExecutionPolicySummaryLine(pipe) {
+                        Text(policySummary)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("opendesign.founderReplay.pipes.policy.\(pipe.id)")
+                    }
+                    if let permissionSummary = pipePermissionSummaryLine(pipe.permissionManifest) {
+                        Text(permissionSummary)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .lineLimit(2)
+                            .accessibilityIdentifier("opendesign.founderReplay.pipes.permissions.\(pipe.id)")
+                    }
+                    if let dslSummary = pipeDslPlanSummaryLine(pipe.dslPlan) {
+                        Text(dslSummary)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .lineLimit(2)
+                            .accessibilityIdentifier("opendesign.founderReplay.pipes.dsl.\(pipe.id)")
+                    }
                     if let latest {
                         Text("latest \(runStatusLabel(latest.status)) · \(compactIsoTimestamp(latest.startedAt))")
                             .font(.system(size: 11, weight: .medium))
@@ -12049,6 +12179,7 @@ private struct OpenDesignFounderReplayPageView: View {
 
     private func runRow(_ run: RecorderPipeRun) -> some View {
         let canCancel = ["queued", "running"].contains(run.status)
+        let canDeleteOutput = canDeletePipeOutput(run)
         let busy = actionInFlight.contains(run.id)
         return ZStack(alignment: .topLeading) {
             HStack(spacing: 10) {
@@ -12061,16 +12192,44 @@ private struct OpenDesignFounderReplayPageView: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignOfficeHoursColor.muted)
                         .lineLimit(1)
-                    if let outputKind = run.outputManifest?.outputKind, !outputKind.isEmpty {
-                        Text(outputKind)
+                    if let inputSummary = pipeRunInputSummaryLine(run.inputManifest) {
+                        Text(inputSummary)
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
-                            .lineLimit(1)
+                            .lineLimit(2)
+                            .accessibilityIdentifier("opendesign.founderReplay.pipes.run.input.\(run.id)")
+                    }
+                    if let manifest = run.outputManifest {
+                        Text(pipeOutputManifestSummaryLine(manifest))
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .lineLimit(2)
+                            .accessibilityIdentifier("opendesign.founderReplay.pipes.run.manifest.\(run.id)")
+                        if let actionSummary = pipeOutputActionSummaryLine(manifest) {
+                            Text(actionSummary)
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                                .lineLimit(1)
+                        }
                     } else if let error = run.errorMessage, !error.isEmpty {
                         Text(error)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(OpenDesignOfficeHoursColor.rose)
                             .lineLimit(1)
+                    }
+                    if let tombstoneSummary = pipeRunTombstoneSummaryLine(run.deletedAt) {
+                        Text(tombstoneSummary)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("opendesign.founderReplay.pipes.run.deleted.\(run.id)")
+                    }
+                    if let auditSummary = pipeRunAuditSummaryLine(run.auditLog) {
+                        Text(auditSummary)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("opendesign.founderReplay.pipes.run.audit.\(run.id)")
                     }
                 }
                 Spacer(minLength: 10)
@@ -12087,6 +12246,18 @@ private struct OpenDesignFounderReplayPageView: View {
                     .disabled(busy)
                     .accessibilityIdentifier("opendesign.founderReplay.pipes.cancel.\(run.id)")
                 }
+                if canDeleteOutput {
+                    Button {
+                        deletePipeOutput(run.id)
+                    } label: {
+                        Label(busy ? "삭제 중" : "출력 삭제", systemImage: busy ? "hourglass" : "trash")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle())
+                    .disabled(busy)
+                    .accessibilityIdentifier("opendesign.founderReplay.pipes.deleteOutput.\(run.id)")
+                }
             }
             Color.clear
                 .frame(width: 1, height: 1)
@@ -12101,16 +12272,104 @@ private struct OpenDesignFounderReplayPageView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
+    private func canDeletePipeOutput(_ run: RecorderPipeRun) -> Bool {
+        guard run.outputManifest != nil else { return false }
+        if let deletedAt = run.deletedAt?.trimmingCharacters(in: .whitespacesAndNewlines), !deletedAt.isEmpty {
+            return false
+        }
+        return ["succeeded", "failed", "timed_out", "cancelled"].contains(run.status)
+    }
+
     private func pipeDefinitionAccessibilityLabel(_ pipe: RecorderPipeDefinition) -> String {
-        [
+        let permission = pipe.permissionManifest
+        let dslPlan = pipe.dslPlan
+        return [
             pipe.id,
             pipe.name,
             pipe.kind.isEmpty ? "unknown kind" : pipe.kind,
             pipe.enabled ? "enabled" : "disabled",
+            pipe.timeoutSeconds > 0 ? "timeout \(pipe.timeoutSeconds) seconds" : "timeout unknown",
+            pipe.concurrency.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "concurrency unknown" : "concurrency \(pipe.concurrency)",
+            pipe.retentionDays > 0 ? "retention \(pipe.retentionDays) days" : "retention unknown",
+            permission.map { "read classes \($0.read.dataClasses.count)" } ?? "read classes unknown",
+            permission.map { "endpoints \($0.endpoints.count)" } ?? "endpoints unknown",
+            permission?.read.rawAccess == true ? "raw access on" : "raw access off",
+            pipeWritePermissionAccessibilityText(permission?.write),
+            dslPlan.map { "dsl actions \($0.actions.count)" } ?? "dsl actions unknown",
+            dslPlan.map { "dsl steps \($0.steps.count)" } ?? "dsl steps unknown",
+            dslPlan.map { "dsl endpoints \($0.endpoints.count)" } ?? "dsl endpoints unknown",
+            dslPlan.map { "dsl writes \($0.writes.count)" } ?? "dsl writes unknown",
+            dslPlan?.rawAccess == true ? "dsl raw access on" : "dsl raw access off",
+            dslPlan?.proofLedgerWriteAllowed == true ? "dsl proof write on" : "dsl proof write off",
             pipe.proofAcceptedByPipeDefinition ? "definition proof accepted" : "definition proof rejected",
             "definition non-proof",
             pipe.schedule,
         ].joined(separator: " · ")
+    }
+
+    private func pipeExecutionPolicySummaryLine(_ pipe: RecorderPipeDefinition) -> String? {
+        var parts: [String] = []
+        if pipe.timeoutSeconds > 0 {
+            parts.append("timeout \(pipe.timeoutSeconds)s")
+        }
+        let concurrency = pipe.concurrency.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !concurrency.isEmpty {
+            parts.append("concurrency \(concurrency)")
+        }
+        if pipe.retentionDays > 0 {
+            parts.append("retention \(pipe.retentionDays)d")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func pipePermissionSummaryLine(_ manifest: RecorderPipePermissionManifest?) -> String? {
+        guard let manifest else { return nil }
+        let readClasses = manifest.read.dataClasses
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let endpointCount = manifest.endpoints.count
+        var parts = [
+            readClasses.isEmpty ? "read none" : "read \(readClasses.prefix(3).joined(separator: " "))",
+            "endpoints \(endpointCount)",
+            manifest.read.rawAccess ? "raw on" : "raw off",
+        ]
+        let writes = pipeWritePermissionTokens(manifest.write)
+        parts.append(writes.isEmpty ? "writes none" : "writes \(writes.joined(separator: " "))")
+        return parts.joined(separator: " · ")
+    }
+
+    private func pipeDslPlanSummaryLine(_ plan: RecorderPipeDslPlan?) -> String? {
+        guard let plan else { return nil }
+        let actions = plan.actions
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let actionPreview = actions.prefix(2).joined(separator: " ")
+        let actionText = actionPreview.isEmpty ? "actions \(actions.count)" : "actions \(actions.count) \(actionPreview)"
+        return [
+            actionText,
+            "endpoints \(plan.endpoints.count)",
+            "writes \(plan.writes.count)",
+            plan.rawAccess ? "raw on" : "raw off",
+            plan.proofLedgerWriteAllowed ? "proof write on" : "proof write off",
+        ].joined(separator: " · ")
+    }
+
+    private func pipeWritePermissionTokens(_ write: RecorderPipePermissionManifest.WritePermission) -> [String] {
+        var tokens: [String] = []
+        if write.memoryItems {
+            tokens.append("memory")
+        }
+        if write.evidenceCandidates {
+            tokens.append("evidence")
+        }
+        if !write.filesUnder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            tokens.append("files")
+        }
+        return tokens
+    }
+
+    private func pipeWritePermissionAccessibilityText(_ write: RecorderPipePermissionManifest.WritePermission?) -> String {
+        guard let write else { return "writes unknown" }
+        let tokens = pipeWritePermissionTokens(write)
+        return tokens.isEmpty ? "writes none" : "writes \(tokens.joined(separator: " "))"
     }
 
     private func pipeRunAccessibilityLabel(_ run: RecorderPipeRun) -> String {
@@ -12118,14 +12377,197 @@ private struct OpenDesignFounderReplayPageView: View {
         let proofBoundary = manifest?.proofBoundary
         let outputKind = manifest?.outputKind.trimmingCharacters(in: .whitespacesAndNewlines)
         let privacyState = manifest?.privacyState.trimmingCharacters(in: .whitespacesAndNewlines)
-        return [
+        let outputKindText = outputKind?.isEmpty == false ? outputKind! : "no output manifest"
+        let privacyText = privacyState?.isEmpty == false ? privacyState! : "unknown privacy"
+        let sourceCountText: String
+        let actionCountText: String
+        let artifactCountText: String
+        if let manifest {
+            sourceCountText = "sources \(manifest.sourceIds.count)"
+            actionCountText = "actions \(manifest.actionResults.count)"
+            artifactCountText = "artifacts \(manifest.artifacts.count)"
+        } else {
+            sourceCountText = "sources 0"
+            actionCountText = "actions 0"
+            artifactCountText = "artifacts 0"
+        }
+        var parts = [
             run.pipeId,
             run.status.isEmpty ? "unknown status" : run.status,
             run.triggerReason.isEmpty ? "unknown trigger" : run.triggerReason,
-            outputKind?.isEmpty == false ? outputKind! : "no output manifest",
-            privacyState?.isEmpty == false ? privacyState! : "unknown privacy",
+        ]
+        parts.append(contentsOf: pipeRunInputAccessibilityTokens(run.inputManifest))
+        parts.append(contentsOf: pipeRunTombstoneAccessibilityTokens(run.deletedAt))
+        parts.append(contentsOf: pipeRunAuditAccessibilityTokens(run.auditLog))
+        parts.append(contentsOf: [
+            outputKindText,
+            privacyText,
+            sourceCountText,
+            actionCountText,
+            artifactCountText,
             run.proofAcceptedByPipeRun ? "pipe proof accepted" : "pipe proof rejected",
             proofBoundary?.proofLedgerWriteAllowed == true ? "proof write on" : "proof write off",
+        ])
+        return parts.joined(separator: " · ")
+    }
+
+    private func pipeRunTombstoneSummaryLine(_ deletedAt: String?) -> String? {
+        guard let deletedAt = deletedAt?.trimmingCharacters(in: .whitespacesAndNewlines), !deletedAt.isEmpty else {
+            return nil
+        }
+        return "output purged \(compactIsoTimestamp(deletedAt))"
+    }
+
+    private func pipeRunTombstoneAccessibilityTokens(_ deletedAt: String?) -> [String] {
+        guard let deletedAt = deletedAt?.trimmingCharacters(in: .whitespacesAndNewlines), !deletedAt.isEmpty else {
+            return ["pipe output retained"]
+        }
+        return [
+            "pipe output purged",
+            "pipe output purged at \(compactIsoTimestamp(deletedAt))",
+        ]
+    }
+
+    private func pipeRunAuditSummaryLine(_ auditLog: [RecorderPipeAuditLogEvent]) -> String? {
+        guard !auditLog.isEmpty else { return nil }
+        let types = auditLog
+            .map { $0.type.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let last = auditLog.last
+        var parts = ["audit \(auditLog.count)"]
+        if !types.isEmpty {
+            parts.append(types.prefix(3).joined(separator: " -> "))
+        }
+        if let code = last?.code.trimmingCharacters(in: .whitespacesAndNewlines), !code.isEmpty {
+            parts.append("code \(code)")
+        } else if let reason = last?.reason.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
+            parts.append("reason \(reason)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func pipeRunAuditAccessibilityTokens(_ auditLog: [RecorderPipeAuditLogEvent]) -> [String] {
+        guard let last = auditLog.last else {
+            return [
+                "audit events 0",
+                "last audit missing",
+            ]
+        }
+        var parts = [
+            "audit events \(auditLog.count)",
+            last.type.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "last audit unknown" : "last audit \(last.type)",
+        ]
+        let code = last.code.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !code.isEmpty {
+            parts.append("last audit code \(code)")
+        }
+        let reason = last.reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !reason.isEmpty {
+            parts.append("last audit reason \(reason)")
+        }
+        return parts
+    }
+
+    private func pipeRunInputSummaryLine(_ input: RecorderPipeInputManifest?) -> String? {
+        guard let input else { return nil }
+        var parts: [String] = []
+        if input.limit > 0 {
+            parts.append("limit \(input.limit)")
+        }
+        if let range = input.timeRange {
+            let started = compactIsoTimestamp(range.startedAt)
+            let ended = compactIsoTimestamp(range.endedAt)
+            if !started.isEmpty || !ended.isEmpty {
+                parts.append("range \(started)-\(ended)")
+            }
+        }
+        if let scheduler = input.schedulerState {
+            let scheduleKey = scheduler.scheduleKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !scheduleKey.isEmpty {
+                parts.append("schedule \(scheduleKey)")
+            } else if !scheduler.scheduledAt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parts.append("scheduled \(compactIsoTimestamp(scheduler.scheduledAt))")
+            }
+            parts.append(scheduler.due ? "due" : "not due")
+        }
+        parts.append(input.rawAccess ? "raw on" : "raw off")
+        parts.append(input.proofAcceptedByPipeInput ? "input proof on" : "input proof off")
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func pipeRunInputAccessibilityTokens(_ input: RecorderPipeInputManifest?) -> [String] {
+        guard let input else {
+            return [
+                "input manifest missing",
+                "input proof rejected",
+                "input proof write off",
+            ]
+        }
+        var parts = [
+            input.limit > 0 ? "input limit \(input.limit)" : "input limit unknown",
+            input.rawAccess ? "input raw access on" : "input raw access off",
+            input.proofAcceptedByPipeInput ? "input proof accepted" : "input proof rejected",
+            input.proofBoundary?.proofLedgerWriteAllowed == true ? "input proof write on" : "input proof write off",
+        ]
+        if let range = input.timeRange {
+            let started = compactIsoTimestamp(range.startedAt)
+            let ended = compactIsoTimestamp(range.endedAt)
+            parts.append("input range \(started)-\(ended)")
+        } else {
+            parts.append("input range unknown")
+        }
+        if let scheduler = input.schedulerState {
+            let scheduleKey = scheduler.scheduleKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !scheduleKey.isEmpty {
+                parts.append("input schedule \(scheduleKey)")
+            }
+            parts.append(scheduler.due ? "input schedule due" : "input schedule not due")
+        } else {
+            parts.append("input schedule manual")
+        }
+        return parts
+    }
+
+    private func pipeOutputManifestSummaryLine(_ manifest: RecorderPipeOutputManifest) -> String {
+        let kind = manifest.outputKind.trimmingCharacters(in: .whitespacesAndNewlines)
+        let privacy = manifest.privacyState.trimmingCharacters(in: .whitespacesAndNewlines)
+        var parts = [
+            kind.isEmpty ? "unknown output" : kind,
+            privacy.isEmpty ? "privacy unknown" : privacy,
+            "sources \(manifest.sourceIds.count)",
+            "artifacts \(manifest.artifacts.count)",
+            manifest.proofBoundary?.proofLedgerWriteAllowed == true ? "proof write on" : "proof write off",
+        ]
+        if !manifest.generatedAt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append("generated \(compactIsoTimestamp(manifest.generatedAt))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func pipeOutputActionSummaryLine(_ manifest: RecorderPipeOutputManifest) -> String? {
+        guard !manifest.actionResults.isEmpty else { return nil }
+        let succeeded = manifest.actionResults.filter { $0.status == "succeeded" }.count
+        let incomplete = manifest.actionResults.filter { ["failed", "timed_out", "incomplete"].contains($0.status) }.count
+        let skipped = manifest.actionResults.filter { $0.status == "skipped" }.count
+        var parts = [
+            "actions \(succeeded)/\(manifest.actionResults.count) succeeded",
+        ]
+        if skipped > 0 {
+            parts.append("skipped \(skipped)")
+        }
+        if incomplete > 0 {
+            parts.append("blocked \(incomplete)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func pipeOutputDeleteNoticeText(_ receipt: RecorderPipeOutputDeleteReceipt) -> String {
+        [
+            "outputs purged \(receipt.outputPurgedCount)",
+            "runs \(receipt.pipeRunCount)",
+            "exports invalidated \(receipt.invalidatedExportArchiveCount)",
+            receipt.proofLedgerWriteAllowed ? "proof write on" : "proof write off",
+            compactIsoTimestamp(receipt.deletedAt),
         ].joined(separator: " · ")
     }
 

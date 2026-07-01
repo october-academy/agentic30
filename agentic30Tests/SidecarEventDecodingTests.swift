@@ -4682,6 +4682,30 @@ struct SidecarEventDecodingTests {
                 "warnings": []
               }
             }
+          },
+          "retention_result": {
+            "type": "recorder_retention_result",
+            "scheduler": {
+              "schema": "agentic30.recorder.retention_scheduler_result.v1",
+              "status": "applied",
+              "reason": "boot",
+              "deleted_frame_count": 1,
+              "deleted_audio_chunk_count": 2,
+              "deleted_media_count": 3,
+              "proof_accepted_by_retention": false,
+              "proof_ledger_write_allowed": false
+            },
+            "retention": {
+              "schema": "agentic30.recorder.retention_result.v1",
+              "status": "applied",
+              "deleted_pipe_run_count": 4,
+              "purged_pipe_output_count": 5,
+              "tombstoned_audit_row_count": 6,
+              "proof_accepted_by_retention": false,
+              "proof_ledger_write_allowed": false
+            },
+            "proof_accepted_by_retention": false,
+            "proof_ledger_write_allowed": false
           }
         }
         """
@@ -4701,6 +4725,15 @@ struct SidecarEventDecodingTests {
         #expect(event.readiness?.modeReadiness?.coreFrameCapture?.id == "core_frame_capture_ready")
         #expect(event.readiness?.modeReadiness?.eventDrivenCapture?.ready == false)
         #expect(event.readiness?.modeReadiness?.eventDrivenCapture?.blockers.first?.id == "input_monitoring_missing")
+        #expect(event.recorderRetentionResult?.status == "applied")
+        #expect(event.recorderRetentionResult?.reason == "boot")
+        #expect(event.recorderRetentionResult?.deletedFrameCount == 1)
+        #expect(event.recorderRetentionResult?.deletedAudioChunkCount == 2)
+        #expect(event.recorderRetentionResult?.deletedMediaCount == 3)
+        #expect(event.recorderRetentionResult?.deletedPipeRunCount == 4)
+        #expect(event.recorderRetentionResult?.purgedPipeOutputCount == 5)
+        #expect(event.recorderRetentionResult?.tombstonedAuditRowCount == 6)
+        #expect(event.recorderRetentionResult?.proofAcceptedByRetention == false)
     }
 
     @MainActor @Test func decodesRecorderFrameCaptureIngestedEvent() throws {
@@ -4908,7 +4941,10 @@ struct SidecarEventDecodingTests {
                 },
                 "proof_effect": "none"
               },
-              "proof_boundary": { "proof_accepted_by_next_action": false }
+              "proof_boundary": {
+                "proof_accepted_by_next_action": false,
+                "message": "Recorder next actions are planning decisions. They do not advance proof without verifier-gated proof-ledger writes."
+              }
             },
             "snapshot": {
               "persisted": true,
@@ -4942,6 +4978,7 @@ struct SidecarEventDecodingTests {
         #expect(event.recorderDayLoop?.snapshot?.persisted == true)
         #expect(event.recorderDayLoop?.proofAcceptedByDayLoop == false)
         #expect(event.recorderDayLoop?.nextAction?.proofAcceptedByNextAction == false)
+        #expect(event.recorderDayLoop?.nextAction?.proofBoundaryMessage.contains("planning decisions") == true)
     }
 
     @MainActor @Test func decodesRecorderRawApiTokenIssuedEvent() throws {
@@ -5075,6 +5112,58 @@ struct SidecarEventDecodingTests {
         #expect(event.recorderAuditSource?.audit.first?.sourceIds.first?.id == "frame-1")
     }
 
+    @MainActor @Test func decodesRecorderRetentionResultDetailCounts() throws {
+        let payload = """
+        {
+          "type": "recorder_retention_result",
+          "deleted_frame_count": 1,
+          "deleted_audio_chunk_count": 2,
+          "deleted_media_count": 3,
+          "proof_accepted_by_retention": false,
+          "proof_ledger_write_allowed": false,
+          "retention": {
+            "schema": "agentic30.recorder.retention_result.v1",
+            "status": "applied",
+            "deleted_transcript_segment_count": 4,
+            "deleted_clipboard_event_count": 5,
+            "purged_clipboard_content_count": 6,
+            "deleted_memory_item_count": 7,
+            "deleted_product_event_count": 8,
+            "deleted_evidence_candidate_count": 9,
+            "rejected_evidence_candidate_count": 10,
+            "deleted_pipe_run_count": 11,
+            "purged_pipe_output_count": 12,
+            "tombstoned_audit_row_count": 13,
+            "deleted_export_archive_count": 14,
+            "proof_accepted_by_retention": false,
+            "proof_ledger_write_allowed": false
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        let retention = event.recorderRetentionResult
+
+        #expect(event.type == "recorder_retention_result")
+        #expect(retention?.status == "applied")
+        #expect(retention?.deletedFrameCount == 1)
+        #expect(retention?.deletedAudioChunkCount == 2)
+        #expect(retention?.deletedMediaCount == 3)
+        #expect(retention?.deletedTranscriptSegmentCount == 4)
+        #expect(retention?.deletedClipboardEventCount == 5)
+        #expect(retention?.purgedClipboardContentCount == 6)
+        #expect(retention?.deletedMemoryItemCount == 7)
+        #expect(retention?.deletedProductEventCount == 8)
+        #expect(retention?.deletedEvidenceCandidateCount == 9)
+        #expect(retention?.rejectedEvidenceCandidateCount == 10)
+        #expect(retention?.deletedPipeRunCount == 11)
+        #expect(retention?.purgedPipeOutputCount == 12)
+        #expect(retention?.tombstonedAuditRowCount == 13)
+        #expect(retention?.deletedExportArchiveCount == 14)
+        #expect(retention?.proofAcceptedByRetention == false)
+        #expect(retention?.proofLedgerWriteAllowed == false)
+    }
+
     @MainActor @Test func decodesRecorderPipeManagementEvents() throws {
         let statePayload = """
         {
@@ -5089,6 +5178,54 @@ struct SidecarEventDecodingTests {
               "schedule": "every day at 18:00",
               "enabled": true,
               "pipe_kind": "built_in",
+              "timeout_seconds": 120,
+              "concurrency": "skip_if_running",
+              "retention_days": 30,
+              "permission_manifest": {
+                "read": {
+                  "data_classes": ["frame", "transcript", "memory", "product_event"],
+                  "content_types": ["accessibility", "ocr", "transcript", "memory"],
+                  "raw_access": false
+                },
+                "write": {
+                  "memory_items": true,
+                  "evidence_candidates": false,
+                  "files_under": ".agentic30/pipes/daily-founder-memory/"
+                },
+                "endpoints": ["GET /recorder/search", "GET /recorder/memory"]
+              },
+              "pipe_dsl_plan": {
+                "pipe_id": "daily-founder-memory",
+                "kind": "built_in",
+                "actions": ["recorder.search", "recorder.memory.read", "memory.write_daily_summary", "notify.local"],
+                "steps": [
+                  {
+                    "step": 1,
+                    "action": "recorder.search",
+                    "operation": "recorder_read",
+                    "endpoint": "GET /recorder/search",
+                    "write_permission": "",
+                    "proof_effect": "none"
+                  },
+                  {
+                    "step": 2,
+                    "action": "memory.write_daily_summary",
+                    "operation": "memory_write",
+                    "endpoint": "",
+                    "write_permission": "memoryItems",
+                    "proof_effect": "none"
+                  }
+                ],
+                "endpoints": ["GET /recorder/search", "GET /recorder/memory"],
+                "writes": [{ "action": "memory.write_daily_summary", "permission": "memoryItems" }],
+                "raw_access": false,
+                "proof_accepted_by_pipe_dsl": false,
+                "proof_boundary": {
+                  "proof_accepted_by_pipe_dsl": false,
+                  "proof_ledger_write_allowed": false,
+                  "message": "Pipe DSL plans are local automation metadata and never accepted proof."
+                }
+              },
               "proof_accepted_by_pipe_definition": false
             }
           ],
@@ -5101,15 +5238,71 @@ struct SidecarEventDecodingTests {
               "started_at": "2026-06-28T09:00:00.000Z",
               "ended_at": "2026-06-28T09:00:01.000Z",
               "error_message": "",
+              "input_manifest": {
+                "pipe_id": "daily-founder-memory",
+                "run_id": "run-1",
+                "workspace_id": "workspace-1",
+                "project_id": "project-1",
+                "trigger_reason": "manual",
+                "time_range": {
+                  "started_at": "2026-06-28T08:00:00.000Z",
+                  "ended_at": "2026-06-28T09:00:00.000Z"
+                },
+                "scheduler_state": {
+                  "schedule": "every day at 18:00",
+                  "schedule_time_zone": "local",
+                  "scheduled_at": "2026-06-28T18:00:00.000Z",
+                  "schedule_date": "2026-06-28",
+                  "schedule_key": "2026-06-28-1800",
+                  "due": true
+                },
+                "raw_access": false,
+                "limit": 10,
+                "proof_accepted_by_pipe_input": false,
+                "proof_boundary": {
+                  "proof_accepted_by_pipe_input": false,
+                  "proof_ledger_write_allowed": false,
+                  "message": "Pipe input manifests are local automation metadata and never accepted proof."
+                }
+              },
               "output_manifest": {
+                "generated_at": "2026-06-28T09:00:01.000Z",
                 "output_kind": "day_memory_review",
                 "privacy_state": "memory_safe",
+                "source_ids": ["frame-1", "candidate-1"],
+                "artifacts": [{
+                  "kind": "day_memory_review_snapshot",
+                  "persisted": true,
+                  "privacy_state": "memory_safe"
+                }],
+                "action_results": [{
+                  "action": "memory.write_daily_summary",
+                  "status": "succeeded",
+                  "reason": "",
+                  "proof_effect": "none"
+                }],
                 "proof_accepted_by_pipe_run": false,
                 "proof_boundary": {
                   "proof_accepted_by_pipe_run": false,
                   "proof_ledger_write_allowed": false
                 }
               },
+              "audit_log": [
+                {
+                  "type": "pipe_started",
+                  "at": "2026-06-28T09:00:00.000Z",
+                  "pipeId": "daily-founder-memory",
+                  "runId": "run-1"
+                },
+                {
+                  "type": "pipe_succeeded",
+                  "at": "2026-06-28T09:00:01.000Z",
+                  "pipeId": "daily-founder-memory",
+                  "runId": "run-1",
+                  "code": "succeeded"
+                }
+              ],
+              "deleted_at": "2026-06-28T10:00:00.000Z",
               "proof_accepted_by_pipe_run": false
             }
           ],
@@ -5154,13 +5347,51 @@ struct SidecarEventDecodingTests {
         let state = try decoder.decode(SidecarEvent.self, from: Data(statePayload.utf8))
         #expect(state.pipes?.first?.id == "daily-founder-memory")
         #expect(state.pipes?.first?.kind == "built_in")
+        #expect(state.pipes?.first?.timeoutSeconds == 120)
+        #expect(state.pipes?.first?.concurrency == "skip_if_running")
+        #expect(state.pipes?.first?.retentionDays == 30)
+        #expect(state.pipes?.first?.permissionManifest?.read.dataClasses == ["frame", "transcript", "memory", "product_event"])
+        #expect(state.pipes?.first?.permissionManifest?.read.rawAccess == false)
+        #expect(state.pipes?.first?.permissionManifest?.write.memoryItems == true)
+        #expect(state.pipes?.first?.permissionManifest?.write.evidenceCandidates == false)
+        #expect(state.pipes?.first?.permissionManifest?.endpoints == ["GET /recorder/search", "GET /recorder/memory"])
+        #expect(state.pipes?.first?.dslPlan?.pipeId == "daily-founder-memory")
+        #expect(state.pipes?.first?.dslPlan?.actions == ["recorder.search", "recorder.memory.read", "memory.write_daily_summary", "notify.local"])
+        #expect(state.pipes?.first?.dslPlan?.steps.first?.operation == "recorder_read")
+        #expect(state.pipes?.first?.dslPlan?.writes.first?.permission == "memoryItems")
+        #expect(state.pipes?.first?.dslPlan?.rawAccess == false)
+        #expect(state.pipes?.first?.dslPlan?.proofAcceptedByPipeDsl == false)
+        #expect(state.pipes?.first?.dslPlan?.proofBoundary?.proofLedgerWriteAllowed == false)
         #expect(state.pipes?.first?.proofAcceptedByPipeDefinition == false)
         #expect(state.runs?.first?.pipeId == "daily-founder-memory")
         #expect(state.runs?.first?.status == "succeeded")
+        #expect(state.runs?.first?.inputManifest?.pipeId == "daily-founder-memory")
+        #expect(state.runs?.first?.inputManifest?.runId == "run-1")
+        #expect(state.runs?.first?.inputManifest?.workspaceId == "workspace-1")
+        #expect(state.runs?.first?.inputManifest?.projectId == "project-1")
+        #expect(state.runs?.first?.inputManifest?.limit == 10)
+        #expect(state.runs?.first?.inputManifest?.timeRange?.startedAt == "2026-06-28T08:00:00.000Z")
+        #expect(state.runs?.first?.inputManifest?.timeRange?.endedAt == "2026-06-28T09:00:00.000Z")
+        #expect(state.runs?.first?.inputManifest?.schedulerState?.scheduleKey == "2026-06-28-1800")
+        #expect(state.runs?.first?.inputManifest?.schedulerState?.due == true)
+        #expect(state.runs?.first?.inputManifest?.rawAccess == false)
+        #expect(state.runs?.first?.inputManifest?.proofAcceptedByPipeInput == false)
+        #expect(state.runs?.first?.inputManifest?.proofBoundary?.proofLedgerWriteAllowed == false)
         #expect(state.runs?.first?.outputManifest?.outputKind == "day_memory_review")
         #expect(state.runs?.first?.outputManifest?.privacyState == "memory_safe")
+        #expect(state.runs?.first?.outputManifest?.generatedAt == "2026-06-28T09:00:01.000Z")
+        #expect(state.runs?.first?.outputManifest?.sourceIds == ["frame-1", "candidate-1"])
+        #expect(state.runs?.first?.outputManifest?.artifacts.first?.kind == "day_memory_review_snapshot")
+        #expect(state.runs?.first?.outputManifest?.artifacts.first?.persisted == true)
+        #expect(state.runs?.first?.outputManifest?.actionResults.first?.action == "memory.write_daily_summary")
+        #expect(state.runs?.first?.outputManifest?.actionResults.first?.proofEffect == "none")
         #expect(state.runs?.first?.outputManifest?.proofAcceptedByPipeRun == false)
         #expect(state.runs?.first?.outputManifest?.proofBoundary?.proofLedgerWriteAllowed == false)
+        #expect(state.runs?.first?.auditLog.count == 2)
+        #expect(state.runs?.first?.auditLog.first?.type == "pipe_started")
+        #expect(state.runs?.first?.auditLog.last?.type == "pipe_succeeded")
+        #expect(state.runs?.first?.auditLog.last?.code == "succeeded")
+        #expect(state.runs?.first?.deletedAt == "2026-06-28T10:00:00.000Z")
         #expect(state.runs?.first?.proofAcceptedByPipeRun == false)
         #expect(state.scheduler?.generatedAt == "2026-06-28T09:00:02.000Z")
         #expect(state.scheduler?.skippedCount == 1)
@@ -5187,6 +5418,32 @@ struct SidecarEventDecodingTests {
         let run = try decoder.decode(SidecarEvent.self, from: Data(runPayload.utf8))
         #expect(run.pipeRun?.pipeId == "evidence-inbox-builder")
         #expect(run.pipeRun?.errorMessage == "ERR_RECORDER_PIPE_RUN_FAILED")
+
+        let pipeOutputDeletePayload = """
+        {
+          "type": "recorder_pipe_output_deleted",
+          "pipe_output_deletion": {
+            "status": "deleted",
+            "pipe_run_count": 1,
+            "output_purged_count": 1,
+            "pipe_run_ids": ["run-1"],
+            "invalidated_export_archive_count": 0,
+            "deleted_at": "2026-06-28T10:00:00.000Z",
+            "proof_accepted_by_recorder_delete": false,
+            "proof_ledger_write_allowed": false
+          },
+          "runs": []
+        }
+        """
+        let pipeOutputDelete = try decoder.decode(SidecarEvent.self, from: Data(pipeOutputDeletePayload.utf8))
+        #expect(pipeOutputDelete.pipeOutputDeletion?.status == "deleted")
+        #expect(pipeOutputDelete.pipeOutputDeletion?.pipeRunCount == 1)
+        #expect(pipeOutputDelete.pipeOutputDeletion?.outputPurgedCount == 1)
+        #expect(pipeOutputDelete.pipeOutputDeletion?.pipeRunIds == ["run-1"])
+        #expect(pipeOutputDelete.pipeOutputDeletion?.invalidatedExportArchiveCount == 0)
+        #expect(pipeOutputDelete.pipeOutputDeletion?.deletedAt == "2026-06-28T10:00:00.000Z")
+        #expect(pipeOutputDelete.pipeOutputDeletion?.proofAcceptedByRecorderDelete == false)
+        #expect(pipeOutputDelete.pipeOutputDeletion?.proofLedgerWriteAllowed == false)
 
         let schedulerPayload = """
         {

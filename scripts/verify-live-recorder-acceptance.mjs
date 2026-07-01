@@ -6,18 +6,29 @@ import { fileURLToPath } from "node:url";
 
 import { applyRecorderRetentionPolicy } from "../sidecar/recorder-retention.mjs";
 import {
+  evaluateRecorderCaptureReadiness,
+  loadRecorderControlState,
+} from "../sidecar/recorder-control-state.mjs";
+import {
   assertLiveRecorderAudioChunkRow,
   assertLiveRecorderFrameRow,
   isLiveCapturedAudioChunkRow,
   isLiveCapturedFrameRow,
+  isSeedFixtureFrameRow,
   summarizeLiveRecorderCapture,
 } from "../sidecar/recorder-live-verify.mjs";
 import { buildRecorderSearchResults } from "../sidecar/recorder-search.mjs";
 import { RecorderStore } from "../sidecar/recorder-store.mjs";
 
 const USAGE = `Usage: node scripts/verify-live-recorder-acceptance.mjs --app-support <path> [options]
+       node scripts/verify-live-recorder-acceptance.mjs --launchservices-handoff <path> [options]
 
 Options:
+  --launchservices-handoff <path>
+                              Read app-support and launch metadata from a
+                              LaunchServices prepare handoff manifest
+  --audio-only                Verify live audio chunk/media evidence without
+                              requiring a frame/search/raw-audit row
   --search-query <text>       Query used for redacted frame search (default: Agentic30)
   --frame-id <id>             Require the verifier to validate this live frame id
   --deleted-frame-id <id>     Require this frame id to be deleted/tombstoned
@@ -31,10 +42,15 @@ Options:
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LIVE_FRAME_RAW_READ_ENDPOINT_PATTERN = /^\/recorder\/frames\/([^/]+)\/(?:text|image)$/;
+const LIVE_ACCEPTANCE_RETENTION_HOURS = 0.0001;
+const LIVE_ACCEPTANCE_RETENTION_MARGIN_MS = 1000;
 
 function parseArgs(argv) {
   const options = {
     appSupportPath: process.env.AGENTIC30_APP_SUPPORT_PATH || "",
+    appSupportPathExplicit: false,
+    launchServicesHandoffPath: "",
+    audioOnly: false,
     searchQuery: "Agentic30",
     frameId: "",
     deletedFrameId: "",
@@ -51,6 +67,11 @@ function parseArgs(argv) {
       options.help = true;
     } else if (arg === "--app-support") {
       options.appSupportPath = requireValue(argv, index += 1, arg);
+      options.appSupportPathExplicit = true;
+    } else if (arg === "--launchservices-handoff") {
+      options.launchServicesHandoffPath = requireValue(argv, index += 1, arg);
+    } else if (arg === "--audio-only") {
+      options.audioOnly = true;
     } else if (arg === "--search-query") {
       options.searchQuery = requireValue(argv, index += 1, arg);
     } else if (arg === "--frame-id") {
@@ -80,6 +101,110 @@ function requireValue(argv, index, flag) {
     throw new Error(`${flag} requires a value`);
   }
   return value;
+}
+
+async function writeEvidenceJson(jsonOutput, evidence) {
+  if (!jsonOutput) return;
+  const resolved = path.resolve(jsonOutput);
+  await fsp.mkdir(path.dirname(resolved), { recursive: true });
+  await fsp.writeFile(resolved, `${JSON.stringify(evidence, null, 2)}\n`);
+}
+
+function parseLaunchServicesHandoff(content, manifestPath) {
+  const fields = {};
+  for (const line of String(content || "").split(/\r?\n/)) {
+    const match = /^([A-Za-z0-9_]+):\s*(.*)$/.exec(line);
+    if (!match) continue;
+    fields[match[1]] = match[2].trim();
+  }
+  if (!fields.status) {
+    throw new Error(`LaunchServices handoff is missing status: ${manifestPath}`);
+  }
+  if (fields.status !== "open_succeeded") {
+    throw new Error(`LaunchServices handoff did not record a successful app launch: status=${fields.status}`);
+  }
+  if (!fields.app_support) {
+    throw new Error(`LaunchServices handoff is missing app_support: ${manifestPath}`);
+  }
+  return {
+    path: manifestPath,
+    status: fields.status,
+    generatedAt: fields.generated_at || "",
+    app: fields.app || "",
+    bundleId: fields.bundle_id || "",
+    runRoot: fields.run_root || "",
+    workspace: fields.workspace || "",
+    appSupport: fields.app_support,
+    diagnostics: fields.diagnostics || "",
+    acceptanceState: fields.acceptance_state || "",
+    proofBoundary: fields.proof_boundary || "",
+    nextLiveSignedRunCommand: fields.next_live_signed_run_command || "",
+    nextAcceptanceVerifierCommand: fields.next_acceptance_verifier_command || "",
+  };
+}
+
+function loadLaunchServicesHandoff(manifestPath) {
+  const resolved = path.resolve(String(manifestPath || ""));
+  if (!resolved || !fs.existsSync(resolved)) {
+    throw new Error(`LaunchServices handoff not found: ${resolved || manifestPath}`);
+  }
+  return parseLaunchServicesHandoff(fs.readFileSync(resolved, "utf8"), resolved);
+}
+
+function loadLaunchDiagnostics(diagnosticsPath) {
+  const inputPath = String(diagnosticsPath || "").trim();
+  if (!inputPath) {
+    return { path: "", exists: false };
+  }
+  const resolved = path.resolve(inputPath);
+  if (!resolved || !fs.existsSync(resolved)) {
+    return { path: resolved, exists: false };
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(resolved, "utf8"));
+    return {
+      path: resolved,
+      exists: true,
+      schemaVersion: parsed?.schemaVersion ?? null,
+      writtenAt: parsed?.writtenAt || "",
+      processIdentifier: parsed?.processIdentifier ?? null,
+      bundleIdentifier: parsed?.bundleIdentifier || "",
+      uiTesting: parsed?.uiTesting === true,
+      workspaceSettings: parsed?.workspaceSettings || null,
+      viewModel: parsed?.viewModel || null,
+      defaults: parsed?.defaults || null,
+      files: parsed?.files || null,
+      environment: parsed?.environment || null,
+    };
+  } catch (error) {
+    return {
+      path: resolved,
+      exists: true,
+      error: error?.message || String(error),
+    };
+  }
+}
+
+function resolveAppSupportRoot(options, launchServicesHandoff) {
+  const explicitAppSupport = options.appSupportPathExplicit
+    ? String(options.appSupportPath || "").trim()
+    : "";
+  const envAppSupport = options.appSupportPathExplicit
+    ? ""
+    : String(options.appSupportPath || "").trim();
+  const handoffAppSupport = String(launchServicesHandoff?.appSupport || "").trim();
+  if (explicitAppSupport && handoffAppSupport) {
+    const explicitResolved = path.resolve(explicitAppSupport);
+    const handoffResolved = path.resolve(handoffAppSupport);
+    if (explicitResolved !== handoffResolved) {
+      throw new Error(`--app-support does not match LaunchServices handoff app_support: ${explicitResolved} != ${handoffResolved}`);
+    }
+    return explicitResolved;
+  }
+  if (handoffAppSupport) return path.resolve(handoffAppSupport);
+  if (explicitAppSupport) return path.resolve(explicitAppSupport);
+  if (envAppSupport) return path.resolve(envAppSupport);
+  throw new Error("--app-support or --launchservices-handoff is required.");
 }
 
 function summarizeFrame(frame, media, mediaPath, mediaExists) {
@@ -328,6 +453,8 @@ function assertAudioEvidence(appSupportRoot, store, allowMissingAudio) {
   }
   return {
     id: audio.id,
+    startedAt: audio.started_at,
+    endedAt: audio.ended_at,
     source: audio.source,
     transcriptStatus: audio.transcript_status,
     rawAudioIndicatorState: audio.raw_audio_indicator_state,
@@ -338,23 +465,245 @@ function assertAudioEvidence(appSupportRoot, store, allowMissingAudio) {
   };
 }
 
-async function applyTinyRetention(store) {
-  return applyRecorderRetentionPolicy(store, {
-    policy: {
-      rawFrameRetentionHours: 0.0001,
-      rawAudioRetentionHours: 0.0001,
-    },
-    now: new Date(),
-  });
+function summarizeReadinessItems(items = []) {
+  return items.map((item) => ({
+    id: String(item?.id || ""),
+    severity: String(item?.severity || ""),
+    message: String(item?.message || ""),
+    permission: String(item?.permission || ""),
+    state: String(item?.state || ""),
+  }));
 }
 
-function assertRetentionResult(retention, { audioRequired = true } = {}) {
+async function assertControlStateEvidence(appSupportRoot) {
+  const controlState = await loadRecorderControlState({ appSupportRoot });
+  const readiness = evaluateRecorderCaptureReadiness(controlState, { now: new Date() });
+  const consent = controlState.consent || {};
+  if (consent.status !== "granted") {
+    throw new Error(`Recorder control consent must be granted before live recorder acceptance: ${consent.status || "unknown"}`);
+  }
+  if (consent.visibleIndicatorRequired !== true || consent.visibleIndicatorAcknowledged !== true) {
+    throw new Error("Recorder control visible indicator must be required and acknowledged before live recorder acceptance.");
+  }
+  const permissions = controlState.permissions || {};
+  const requiredPermissions = ["screenRecording", "accessibility", "inputMonitoring"];
+  const missingPermissions = requiredPermissions.filter((permission) => permissions[permission] !== "granted");
+  if (missingPermissions.length) {
+    throw new Error(`Recorder control state is missing granted permissions: ${missingPermissions.join(", ")}`);
+  }
+  const modeReadiness = readiness.modeReadiness || readiness.mode_readiness || {};
+  const coreFrameCapture = modeReadiness.coreFrameCapture || modeReadiness.core_frame_capture || {};
+  const eventDrivenCapture = modeReadiness.eventDrivenCapture || modeReadiness.event_driven_capture || {};
+  if (readiness.canRecord !== true || coreFrameCapture.ready !== true || eventDrivenCapture.ready !== true) {
+    throw new Error(`Recorder control state is not ready for live frame/event capture: ${JSON.stringify({
+      canRecord: readiness.canRecord,
+      coreFrameCaptureReady: coreFrameCapture.ready,
+      eventDrivenCaptureReady: eventDrivenCapture.ready,
+      blockers: summarizeReadinessItems(readiness.blockers),
+    })}`);
+  }
+  return {
+    schema: "agentic30.live_recorder_control_state.v1",
+    mode: controlState.mode,
+    consentStatus: consent.status,
+    consentGrantId: consent.grantId || consent.grant_id || "",
+    visibleIndicatorRequired: consent.visibleIndicatorRequired === true,
+    visibleIndicatorAcknowledged: consent.visibleIndicatorAcknowledged === true,
+    permissions: {
+      screenRecording: permissions.screenRecording,
+      accessibility: permissions.accessibility,
+      inputMonitoring: permissions.inputMonitoring,
+    },
+    readiness: {
+      schema: readiness.schema,
+      canRecord: readiness.canRecord === true,
+      state: readiness.state,
+      coreFrameCaptureReady: coreFrameCapture.ready === true,
+      eventDrivenCaptureReady: eventDrivenCapture.ready === true,
+      blockers: summarizeReadinessItems(readiness.blockers),
+      warnings: summarizeReadinessItems(readiness.warnings),
+      proofAcceptedByReadiness: false,
+    },
+    proofAccepted: false,
+  };
+}
+
+function summarizeDeletedAudioChunk(audio, media, mediaPath, mediaExists) {
+  return {
+    id: audio.id,
+    deletedAt: audio.deleted_at,
+    redactionStatus: audio.redaction_status,
+    privacyState: audio.privacy_state,
+    mediaAssetId: media?.id || "",
+    mediaRelativePath: media?.relative_path || "",
+    mediaDeletedAt: media?.deleted_at || "",
+    mediaByteSize: Number(media?.byte_size || 0),
+    mediaPath,
+    mediaExists,
+  };
+}
+
+function assertDeletedAudioEvidence(appSupportRoot, store, audioId) {
+  const cleanAudioId = String(audioId || "").trim();
+  if (!cleanAudioId) {
+    throw new Error("Deleted-audio verifier requires an audio id.");
+  }
+  const audio = store.getRecord("audio_chunks", cleanAudioId);
+  if (!audio) {
+    throw new Error(`Deleted-audio verifier could not find audio chunk ${cleanAudioId}.`);
+  }
+  if (!audio.deleted_at) {
+    throw new Error(`Audio chunk ${cleanAudioId} is not deleted.`);
+  }
+  if (audio.redaction_status !== "deleted" || audio.privacy_state !== "deleted") {
+    throw new Error(`Deleted audio chunk ${cleanAudioId} has incomplete tombstone flags.`);
+  }
+  const media = store.getRecord("media_assets", audio.audio_asset_id);
+  if (!media) {
+    throw new Error(`Deleted audio chunk ${cleanAudioId} is missing media asset ${audio.audio_asset_id}.`);
+  }
+  if (!media.deleted_at) {
+    throw new Error(`Deleted audio chunk ${cleanAudioId} media asset ${media.id} is not deleted.`);
+  }
+  if (
+    media.asset_type !== "audio_m4a"
+    || !String(media.relative_path || "").startsWith("media/audio/deleted/")
+    || Number(media.byte_size) !== 0
+    || Number(media.encrypted) !== 0
+    || String(media.sha256 || "") !== "0".repeat(64)
+  ) {
+    throw new Error(`Deleted audio chunk ${cleanAudioId} media asset ${media.id} has incomplete tombstone fields.`);
+  }
+  const mediaPath = mediaPathFor(appSupportRoot, media);
+  const mediaExists = mediaPath ? fs.existsSync(mediaPath) : false;
+  if (mediaExists) {
+    throw new Error(`Deleted audio chunk ${cleanAudioId} tombstone media path still exists: ${mediaPath}`);
+  }
+  return {
+    audio,
+    media,
+    mediaPath,
+    summary: summarizeDeletedAudioChunk(audio, media, mediaPath, mediaExists),
+  };
+}
+
+function summarizeRecentFrames(store, limit = 8) {
+  return store
+    .listRecords("frames", { limit, orderBy: "captured_at", direction: "DESC" })
+    .map((row) => ({
+      id: row.id,
+      capturedAt: row.captured_at,
+      captureTrigger: row.capture_trigger,
+      textSource: row.text_source,
+      redactionStatus: row.redaction_status,
+      privacyState: row.privacy_state,
+      safeForSearch: Number(row.safe_for_search) === 1,
+      snapshotAssetId: row.snapshot_asset_id,
+      deletedAt: row.deleted_at || "",
+      liveCaptured: isLiveCapturedFrameRow(row),
+      seedFixture: isSeedFixtureFrameRow(row),
+    }));
+}
+
+function summarizeRecentAudioChunks(store, limit = 8) {
+  return store
+    .listRecords("audio_chunks", { limit, orderBy: "started_at", direction: "DESC" })
+    .map((row) => ({
+      id: row.id,
+      startedAt: row.started_at,
+      source: row.source,
+      transcriptStatus: row.transcript_status,
+      rawAudioIndicatorState: row.raw_audio_indicator_state,
+      consentGrantId: row.consent_grant_id,
+      audioAssetId: row.audio_asset_id,
+      deletedAt: row.deleted_at || "",
+      liveCaptured: isLiveCapturedAudioChunkRow(row),
+    }));
+}
+
+function buildLiveVerifierFailureContext({
+  appSupportRoot,
+  dbPath,
+  launchServicesHandoff,
+  liveCaptureSummary,
+  store,
+} = {}) {
+  return {
+    appSupportRoot,
+    recorderDatabase: dbPath,
+    launchServicesHandoff,
+    launchDiagnostics: loadLaunchDiagnostics(launchServicesHandoff?.diagnostics),
+    liveCaptureSummary,
+    recentFrames: summarizeRecentFrames(store),
+    recentAudioChunks: summarizeRecentAudioChunks(store),
+    proofAccepted: false,
+  };
+}
+
+function buildLiveFailureEvidence(error, context) {
+  const message = error?.message || String(error);
+  return {
+    schema: "agentic30.live_recorder_acceptance_failure.v1",
+    generatedAt: new Date().toISOString(),
+    error: {
+      name: error?.name || "Error",
+      code: error?.code || "",
+      message,
+    },
+    ...context,
+  };
+}
+
+function rethrowWithLiveFailureContext(error, failureEvidence) {
+  const message = error?.message || String(error);
+  const enriched = new Error(`${message}\n\nLive recorder verifier failure context:\n${JSON.stringify(failureEvidence, null, 2)}`);
+  enriched.cause = error;
+  throw enriched;
+}
+
+function retentionEvaluationNowFromEvidence(timestamps = []) {
+  const retentionWindowMs = LIVE_ACCEPTANCE_RETENTION_HOURS * 60 * 60 * 1000;
+  const latestEvidenceTime = timestamps
+    .map((timestamp) => Date.parse(String(timestamp || "")))
+    .filter((value) => Number.isFinite(value))
+    .reduce((latest, value) => Math.max(latest, value), 0);
+  if (latestEvidenceTime <= 0) return new Date();
+  return new Date(latestEvidenceTime + retentionWindowMs + LIVE_ACCEPTANCE_RETENTION_MARGIN_MS);
+}
+
+async function applyTinyRetention(store, { timestamps = [] } = {}) {
+  const now = retentionEvaluationNowFromEvidence(timestamps);
+  const result = await applyRecorderRetentionPolicy(store, {
+    policy: {
+      rawFrameRetentionHours: LIVE_ACCEPTANCE_RETENTION_HOURS,
+      rawAudioRetentionHours: LIVE_ACCEPTANCE_RETENTION_HOURS,
+    },
+    now,
+  });
+  return {
+    ...result,
+    evaluatedAt: now.toISOString(),
+    evaluated_at: now.toISOString(),
+    acceptanceRetentionHours: LIVE_ACCEPTANCE_RETENTION_HOURS,
+    acceptance_retention_hours: LIVE_ACCEPTANCE_RETENTION_HOURS,
+  };
+}
+
+function assertRetentionResult(retention, { audioRequired = true, frameRequired = true } = {}) {
   if (!retention) return null;
   const deletedFrameCount = Number(retention.deletedFrameCount ?? retention.deleted_frame_count ?? 0);
   const deletedAudioChunkCount = Number(retention.deletedAudioChunkCount ?? retention.deleted_audio_chunk_count ?? 0);
   const deletedMediaCount = Number(retention.deletedMediaCount ?? retention.deleted_media_count ?? 0);
-  if (retention.status !== "applied" || deletedFrameCount < 1 || deletedMediaCount < 1) {
-    throw new Error(`Retention did not purge a live frame/media asset: ${JSON.stringify({
+  if (retention.status !== "applied" || deletedMediaCount < 1) {
+    throw new Error(`Retention did not purge a live media asset: ${JSON.stringify({
+      status: retention.status,
+      deletedFrameCount,
+      deletedAudioChunkCount,
+      deletedMediaCount,
+    })}`);
+  }
+  if (frameRequired && deletedFrameCount < 1) {
+    throw new Error(`Retention did not purge a live frame: ${JSON.stringify({
       status: retention.status,
       deletedFrameCount,
       deletedAudioChunkCount,
@@ -369,7 +718,13 @@ function assertRetentionResult(retention, { audioRequired = true } = {}) {
       deletedMediaCount,
     })}`);
   }
-  return { status: retention.status, deletedFrameCount, deletedAudioChunkCount, deletedMediaCount };
+  return {
+    status: retention.status,
+    evaluatedAt: retention.evaluatedAt ?? retention.evaluated_at ?? "",
+    deletedFrameCount,
+    deletedAudioChunkCount,
+    deletedMediaCount,
+  };
 }
 
 async function main() {
@@ -378,9 +733,21 @@ async function main() {
     process.stdout.write(USAGE);
     return;
   }
-  const appSupportRoot = path.resolve(options.appSupportPath);
+  const launchServicesHandoff = options.launchServicesHandoffPath
+    ? loadLaunchServicesHandoff(options.launchServicesHandoffPath)
+    : null;
+  const appSupportRoot = resolveAppSupportRoot(options, launchServicesHandoff);
   if (!appSupportRoot || appSupportRoot === path.parse(appSupportRoot).root) {
     throw new Error("--app-support must point to the live run app-support root.");
+  }
+  if (options.audioOnly && options.frameId) {
+    throw new Error("--audio-only cannot be combined with --frame-id.");
+  }
+  if (options.audioOnly && options.deletedFrameId) {
+    throw new Error("--audio-only cannot be combined with --deleted-frame-id.");
+  }
+  if (options.audioOnly && options.allowMissingAudio) {
+    throw new Error("--audio-only cannot be combined with --allow-missing-audio.");
   }
   const dbPath = path.join(appSupportRoot, "recorder", "recorder.sqlite");
   if (!fs.existsSync(dbPath)) {
@@ -392,6 +759,55 @@ async function main() {
     if (!options.skipWalCheckpoint) {
       store.database().pragma("wal_checkpoint(TRUNCATE)");
     }
+    if (options.audioOnly) {
+      const liveCaptureSummary = summarizeLiveRecorderCapture(store);
+      let audio;
+      let retention;
+      let controlStateEvidence;
+      try {
+        controlStateEvidence = await assertControlStateEvidence(appSupportRoot);
+        audio = assertAudioEvidence(appSupportRoot, store, false);
+        if (options.applyRetention) {
+          const retentionResult = assertRetentionResult(await applyTinyRetention(store, {
+            timestamps: [audio.startedAt],
+          }), {
+            audioRequired: true,
+            frameRequired: false,
+          });
+          const deletedLiveAudio = assertDeletedAudioEvidence(appSupportRoot, store, audio.id);
+          retention = {
+            ...retentionResult,
+            deletedLiveAudio: deletedLiveAudio.summary,
+          };
+        }
+      } catch (error) {
+        const failureEvidence = buildLiveFailureEvidence(error, buildLiveVerifierFailureContext({
+          appSupportRoot,
+          dbPath,
+          launchServicesHandoff,
+          liveCaptureSummary,
+          store,
+        }));
+        await writeEvidenceJson(options.jsonOutput, failureEvidence);
+        rethrowWithLiveFailureContext(error, failureEvidence);
+      }
+      const evidence = {
+        schema: "agentic30.live_recorder_audio_acceptance.v1",
+        generatedAt: new Date().toISOString(),
+        appSupportRoot,
+        launchServicesHandoff,
+        recorderDatabase: dbPath,
+        repoRoot,
+        liveCaptureSummary,
+        controlState: controlStateEvidence,
+        audio,
+        retention,
+        proofAccepted: false,
+      };
+      await writeEvidenceJson(options.jsonOutput, evidence);
+      process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
+      return;
+    }
     if (options.deletedFrameId) {
       if (options.applyRetention) {
         throw new Error("--deleted-frame-id cannot be combined with --apply-retention.");
@@ -401,35 +817,71 @@ async function main() {
         schema: "agentic30.live_recorder_delete_acceptance.v1",
         generatedAt: new Date().toISOString(),
         appSupportRoot,
+        launchServicesHandoff,
         recorderDatabase: dbPath,
         repoRoot,
         requestedDeletedFrameId: options.deletedFrameId,
         deletedFrame: deletedFrame.summary,
         proofAccepted: false,
       };
-      if (options.jsonOutput) {
-        await fsp.mkdir(path.dirname(path.resolve(options.jsonOutput)), { recursive: true });
-        await fsp.writeFile(path.resolve(options.jsonOutput), `${JSON.stringify(evidence, null, 2)}\n`);
-      }
+      await writeEvidenceJson(options.jsonOutput, evidence);
       process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
       return;
     }
     const liveCaptureSummary = summarizeLiveRecorderCapture(store);
-    const liveFrame = assertLiveFrameEvidence(appSupportRoot, store, options.frameId);
-    const search = assertSearchEvidence(store, options.searchQuery, liveFrame.frame.id);
-    const audio = assertAudioEvidence(appSupportRoot, store, options.allowMissingAudio);
-    const rawReadAudit = assertRawReadAuditEvidence(store, liveFrame.frame.id, options.allowMissingAudit);
-    const retention = options.applyRetention
-      ? assertRetentionResult(await applyTinyRetention(store), { audioRequired: audio.status !== "missing_allowed" })
-      : null;
+    let liveFrame;
+    let search;
+    let audio;
+    let rawReadAudit;
+    let retention;
+    let controlStateEvidence;
+    try {
+      liveFrame = assertLiveFrameEvidence(appSupportRoot, store, options.frameId);
+      controlStateEvidence = await assertControlStateEvidence(appSupportRoot);
+      search = assertSearchEvidence(store, options.searchQuery, liveFrame.frame.id);
+      audio = assertAudioEvidence(appSupportRoot, store, options.allowMissingAudio);
+      rawReadAudit = assertRawReadAuditEvidence(store, liveFrame.frame.id, options.allowMissingAudit);
+      if (options.applyRetention) {
+        const retentionTimestamps = [
+          liveFrame.frame.captured_at,
+          audio.status === "missing_allowed" ? "" : audio.startedAt,
+        ];
+        const retentionResult = assertRetentionResult(await applyTinyRetention(store, {
+          timestamps: retentionTimestamps,
+        }), {
+          audioRequired: audio.status !== "missing_allowed",
+        });
+        const deletedLiveFrame = assertDeletedFrameEvidence(appSupportRoot, store, liveFrame.frame.id, options.searchQuery);
+        const deletedLiveAudio = audio.status === "missing_allowed"
+          ? null
+          : assertDeletedAudioEvidence(appSupportRoot, store, audio.id);
+        retention = {
+          ...retentionResult,
+          deletedLiveFrame: deletedLiveFrame.summary,
+          deletedLiveAudio: deletedLiveAudio?.summary ?? null,
+        };
+      }
+    } catch (error) {
+      const failureEvidence = buildLiveFailureEvidence(error, buildLiveVerifierFailureContext({
+        appSupportRoot,
+        dbPath,
+        launchServicesHandoff,
+        liveCaptureSummary,
+        store,
+      }));
+      await writeEvidenceJson(options.jsonOutput, failureEvidence);
+      rethrowWithLiveFailureContext(error, failureEvidence);
+    }
     const evidence = {
       schema: "agentic30.live_recorder_acceptance.v1",
       generatedAt: new Date().toISOString(),
       appSupportRoot,
+      launchServicesHandoff,
       recorderDatabase: dbPath,
       repoRoot,
       requestedFrameId: options.frameId || null,
       liveCaptureSummary,
+      controlState: controlStateEvidence,
       liveFrame: liveFrame.summary,
       search,
       audio,
@@ -437,10 +889,7 @@ async function main() {
       retention,
       proofAccepted: false,
     };
-    if (options.jsonOutput) {
-      await fsp.mkdir(path.dirname(path.resolve(options.jsonOutput)), { recursive: true });
-      await fsp.writeFile(path.resolve(options.jsonOutput), `${JSON.stringify(evidence, null, 2)}\n`);
-    }
+    await writeEvidenceJson(options.jsonOutput, evidence);
     process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
   } finally {
     store.close();

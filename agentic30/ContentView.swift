@@ -3123,6 +3123,7 @@ struct ContentView: View {
                     recorderPipeActionInFlight: viewModel.recorderPipeActionInFlight,
                     recorderPipeSchedulerRunning: viewModel.recorderPipeSchedulerRunning,
                     recorderPipeLastSchedulerResult: viewModel.recorderPipeLastSchedulerResult,
+                    recorderLastPipeOutputDelete: viewModel.recorderLastPipeOutputDelete,
                     recorderPipeLastError: viewModel.recorderPipeLastError,
                     refreshRecorderPipes: {
                         viewModel.refreshRecorderPipes()
@@ -3135,6 +3136,9 @@ struct ContentView: View {
                     },
                     cancelRecorderPipeRun: { runId in
                         viewModel.cancelRecorderPipeRun(runId)
+                    },
+                    deleteRecorderPipeOutput: { runId in
+                        viewModel.deleteRecorderPipeOutput(runId: runId)
                     },
                     tickRecorderPipeScheduler: {
                         viewModel.tickRecorderPipeScheduler()

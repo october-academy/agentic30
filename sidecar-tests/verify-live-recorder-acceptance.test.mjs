@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { deleteRecorderFrameCapture } from "../sidecar/recorder-delete.mjs";
+import { applyRecorderControlAction } from "../sidecar/recorder-control-state.mjs";
 import { RecorderStore } from "../sidecar/recorder-store.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -29,12 +30,35 @@ async function writeRecorderMedia(appSupportRoot, relativePath, content) {
   return mediaPath;
 }
 
+async function writeGrantedRecorderControlState(appSupportRoot) {
+  await applyRecorderControlAction({
+    appSupportRoot,
+    action: {
+      type: "grant_consent",
+      visibleIndicatorAcknowledged: true,
+    },
+    now: new Date("2000-01-01T07:59:00.000Z"),
+  });
+  for (const permission of ["screen_recording", "accessibility", "input_monitoring"]) {
+    await applyRecorderControlAction({
+      appSupportRoot,
+      action: {
+        type: "set_permission",
+        permission,
+        state: "granted",
+      },
+      now: new Date("2000-01-01T07:59:01.000Z"),
+    });
+  }
+}
+
 async function insertLiveFrameFixture(store, appSupportRoot, {
   id = LIVE_FRAME_ID,
   assetId = LIVE_FRAME_ASSET_ID,
   trigger = "auto_swift_event_tap_mouse_down",
   redactedText = "Agentic30 founder replay captured activation evidence",
 } = {}) {
+  await writeGrantedRecorderControlState(appSupportRoot);
   const relativePath = `media/frames/2026-07-01/${assetId}.jpg`;
   await writeRecorderMedia(appSupportRoot, relativePath, "jpeg bytes");
   store.insertRecord("media_assets", {
@@ -80,6 +104,7 @@ async function insertLiveAudioFixture(store, appSupportRoot, {
   assetId = "asset-11111111-2222-3333-4444-555555555555",
   consentGrantId = "recorder-consent-2026-07-01t08-00-00-000z",
 } = {}) {
+  await writeGrantedRecorderControlState(appSupportRoot);
   const relativePath = `media/audio/2026-07-01/${assetId}.m4a`;
   await writeRecorderMedia(appSupportRoot, relativePath, "m4a bytes");
   store.insertRecord("media_assets", {
@@ -132,6 +157,27 @@ function insertAcceptedAuditFixture(store, frameId, overrides = {}) {
   });
 }
 
+async function writeLaunchServicesHandoffFixture(root, appSupportRoot, command) {
+  const handoffPath = path.join(root, "launchservices-handoff.txt");
+  await fs.writeFile(handoffPath, [
+    "Agentic30 live signed LaunchServices handoff",
+    "",
+    "status: open_succeeded",
+    "generated_at: 2026-07-01T08:00:00Z",
+    "app: /Applications/agentic30.app",
+    "bundle_id: october-academy.agentic30",
+    `run_root: ${root}`,
+    `workspace: ${path.join(root, "workspace")}`,
+    `app_support: ${appSupportRoot}`,
+    `diagnostics: ${path.join(root, "diagnostics.json")}`,
+    "acceptance_state: launch_prepared_only",
+    "proof_boundary: no live recorder capture acceptance, no UI E2E acceptance, no proof-ledger acceptance",
+    `next_acceptance_verifier_command: ${command}`,
+    "",
+  ].join("\n"));
+  return handoffPath;
+}
+
 async function runVerifier(args) {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   return execFileAsync(process.execPath, ["scripts/verify-live-recorder-acceptance.mjs", ...args], {
@@ -164,6 +210,14 @@ test("verify-live-recorder-acceptance accepts live frame/search/audio/audit and 
     assert.equal(evidence.liveFrame.id, liveFrame.id);
     assert.equal(evidence.liveCaptureSummary.liveFrameCount, 1);
     assert.deepEqual(evidence.liveCaptureSummary.liveFrameIds, [liveFrame.id]);
+    assert.equal(evidence.controlState.consentStatus, "granted");
+    assert.equal(evidence.controlState.visibleIndicatorAcknowledged, true);
+    assert.equal(evidence.controlState.permissions.screenRecording, "granted");
+    assert.equal(evidence.controlState.permissions.accessibility, "granted");
+    assert.equal(evidence.controlState.permissions.inputMonitoring, "granted");
+    assert.equal(evidence.controlState.readiness.coreFrameCaptureReady, true);
+    assert.equal(evidence.controlState.readiness.eventDrivenCaptureReady, true);
+    assert.equal(evidence.controlState.proofAccepted, false);
     assert.equal(evidence.search.matchingResult.sourceId, liveFrame.id);
     assert.equal(evidence.search.proofAcceptedBySearch, false);
     assert.equal(evidence.audio.id, liveAudio.id);
@@ -172,11 +226,51 @@ test("verify-live-recorder-acceptance accepts live frame/search/audio/audit and 
     assert.equal(evidence.rawReadAudit.accessLevel, "raw_frame");
     assert.deepEqual(evidence.rawReadAudit.sourceIds, [{ id: liveFrame.id, sourceType: "frame" }]);
     assert.equal(evidence.retention.status, "applied");
+    assert.equal(evidence.retention.evaluatedAt, "2000-01-01T08:00:05.360Z");
     assert.equal(evidence.retention.deletedFrameCount, 1);
     assert.equal(evidence.retention.deletedAudioChunkCount, 1);
     assert.equal(evidence.retention.deletedMediaCount, 2);
+    assert.equal(evidence.retention.deletedLiveFrame.id, liveFrame.id);
+    assert.equal(evidence.retention.deletedLiveFrame.mediaAssetId, liveFrame.assetId);
+    assert.equal(evidence.retention.deletedLiveFrame.mediaByteSize, 0);
+    assert.equal(evidence.retention.deletedLiveFrame.mediaExists, false);
+    assert.equal(evidence.retention.deletedLiveFrame.searchResultCount, 0);
+    assert.equal(evidence.retention.deletedLiveAudio.id, liveAudio.id);
+    assert.equal(evidence.retention.deletedLiveAudio.mediaAssetId, liveAudio.assetId);
+    assert.equal(evidence.retention.deletedLiveAudio.mediaByteSize, 0);
+    assert.equal(evidence.retention.deletedLiveAudio.mediaExists, false);
     assert.equal(evidence.proofAccepted, false);
     assert.equal(writtenEvidence.liveFrame.id, liveFrame.id);
+    assert.equal(writtenEvidence.retention.deletedLiveFrame.id, liveFrame.id);
+    assert.equal(writtenEvidence.retention.deletedLiveAudio.id, liveAudio.id);
+  } finally {
+    store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("verify-live-recorder-acceptance preserves one-line LaunchServices verifier command", async () => {
+  const { root, appSupportRoot, store } = await makeFixture();
+  try {
+    const liveFrame = await insertLiveFrameFixture(store, appSupportRoot);
+    insertAcceptedAuditFixture(store, liveFrame.id);
+    const command = "bash scripts/verify-live-recorder-acceptance.sh --launchservices-handoff '/tmp/handoff.txt' --json-output '/tmp/evidence.json'";
+    const handoffPath = await writeLaunchServicesHandoffFixture(root, appSupportRoot, command);
+    store.close();
+
+    const { stdout } = await runVerifier([
+      "--launchservices-handoff", handoffPath,
+      "--search-query", "Agentic30",
+      "--frame-id", liveFrame.id,
+      "--allow-missing-audio",
+    ]);
+    const evidence = JSON.parse(stdout);
+
+    assert.equal(evidence.launchServicesHandoff.status, "open_succeeded");
+    assert.equal(evidence.launchServicesHandoff.appSupport, appSupportRoot);
+    assert.equal(evidence.launchServicesHandoff.nextAcceptanceVerifierCommand, command);
+    assert.equal(evidence.liveFrame.id, liveFrame.id);
+    assert.equal(evidence.proofAccepted, false);
   } finally {
     store.close();
     await fs.rm(root, { recursive: true, force: true });
@@ -326,6 +420,95 @@ test("verify-live-recorder-acceptance rejects seeded audio fixtures for full aud
   }
 });
 
+test("verify-live-recorder-acceptance accepts audio-only live media evidence", async () => {
+  const { root, appSupportRoot, store } = await makeFixture();
+  try {
+    const liveAudio = await insertLiveAudioFixture(store, appSupportRoot);
+    store.close();
+
+    const outputPath = path.join(root, "audio-verifier.json");
+    const { stdout } = await runVerifier([
+      "--app-support", appSupportRoot,
+      "--audio-only",
+      "--apply-retention",
+      "--json-output", outputPath,
+    ]);
+    const evidence = JSON.parse(stdout);
+    const writtenEvidence = JSON.parse(await fs.readFile(outputPath, "utf8"));
+
+    assert.equal(evidence.schema, "agentic30.live_recorder_audio_acceptance.v1");
+    assert.equal(evidence.audio.id, liveAudio.id);
+    assert.equal(evidence.audio.mediaAssetId, liveAudio.assetId);
+    assert.equal(evidence.audio.mediaByteSize, 9);
+    assert.equal(evidence.audio.rawAudioIndicatorState, "visible_indicator_active");
+    assert.equal(evidence.controlState.visibleIndicatorAcknowledged, true);
+    assert.equal(evidence.controlState.permissions.inputMonitoring, "granted");
+    assert.equal(evidence.retention.status, "applied");
+    assert.equal(evidence.retention.evaluatedAt, "2000-01-01T08:00:05.360Z");
+    assert.equal(evidence.retention.deletedAudioChunkCount, 1);
+    assert.equal(evidence.retention.deletedMediaCount, 1);
+    assert.equal(evidence.retention.deletedLiveAudio.id, liveAudio.id);
+    assert.equal(evidence.retention.deletedLiveAudio.mediaAssetId, liveAudio.assetId);
+    assert.equal(evidence.retention.deletedLiveAudio.mediaByteSize, 0);
+    assert.equal(evidence.retention.deletedLiveAudio.mediaExists, false);
+    assert.equal(evidence.proofAccepted, false);
+    assert.equal(writtenEvidence.audio.id, liveAudio.id);
+    assert.equal(writtenEvidence.retention.deletedLiveAudio.id, liveAudio.id);
+  } finally {
+    store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("verify-live-recorder-acceptance rejects missing visible indicator control state", async () => {
+  const { root, appSupportRoot, store } = await makeFixture();
+  try {
+    const liveFrame = await insertLiveFrameFixture(store, appSupportRoot);
+    await insertLiveAudioFixture(store, appSupportRoot);
+    insertAcceptedAuditFixture(store, liveFrame.id);
+    await fs.rm(path.join(appSupportRoot, "recorder", "recorder-control-state.json"), { force: true });
+    store.close();
+
+    await assert.rejects(
+      runVerifier([
+        "--app-support", appSupportRoot,
+        "--search-query", "Agentic30",
+        "--frame-id", liveFrame.id,
+      ]),
+      (error) => {
+        assert.match(String(error.stderr || error.message), /Recorder control consent must be granted/);
+        return true;
+      },
+    );
+  } finally {
+    store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("verify-live-recorder-acceptance rejects audio-only with frame options", async () => {
+  const { root, appSupportRoot, store } = await makeFixture();
+  try {
+    await insertLiveAudioFixture(store, appSupportRoot);
+    store.close();
+
+    await assert.rejects(
+      runVerifier([
+        "--app-support", appSupportRoot,
+        "--audio-only",
+        "--frame-id", LIVE_FRAME_ID,
+      ]),
+      (error) => {
+        assert.match(String(error.stderr || error.message), /--audio-only cannot be combined with --frame-id/);
+        return true;
+      },
+    );
+  } finally {
+    store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("verify-live-recorder-acceptance verifies a deleted frame tombstone", async () => {
   const { root, appSupportRoot, store } = await makeFixture();
   try {
@@ -381,6 +564,34 @@ test("verify-live-recorder-acceptance rejects deleted-frame checks before delete
         return true;
       },
     );
+  } finally {
+    store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("verify-live-recorder-acceptance writes direct failure evidence without fake launch diagnostics", async () => {
+  const { root, appSupportRoot, store } = await makeFixture();
+  try {
+    store.close();
+    const outputPath = path.join(root, "failure-verifier.json");
+
+    await assert.rejects(
+      runVerifier([
+        "--app-support", appSupportRoot,
+        "--json-output", outputPath,
+      ]),
+      (error) => {
+        assert.match(String(error.stderr || error.message), /No undeleted live frame row found/);
+        return true;
+      },
+    );
+
+    const evidence = JSON.parse(await fs.readFile(outputPath, "utf8"));
+    assert.equal(evidence.schema, "agentic30.live_recorder_acceptance_failure.v1");
+    assert.deepEqual(evidence.launchDiagnostics, { path: "", exists: false });
+    assert.equal(evidence.liveCaptureSummary.hasLiveCapture, false);
+    assert.equal(evidence.proofAccepted, false);
   } finally {
     store.close();
     await fs.rm(root, { recursive: true, force: true });
