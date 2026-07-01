@@ -3,12 +3,28 @@ set -euo pipefail
 
 cd "${SRCROOT:?}"
 
-export HOMEBREW_NO_AUTO_UPDATE="${HOMEBREW_NO_AUTO_UPDATE:-1}"
-export HOMEBREW_NO_INSTALL_CLEANUP="${HOMEBREW_NO_INSTALL_CLEANUP:-1}"
-export HOMEBREW_NO_ENV_HINTS="${HOMEBREW_NO_ENV_HINTS:-1}"
 export PATH="$SRCROOT/node_modules/.bin:$HOME/.local/share/mise/shims:$HOME/.asdf/shims:$HOME/.volta/bin:/opt/homebrew/bin:/Users/local/Homebrew/bin:/usr/local/bin:$PATH"
 
+NODE_RUNTIME_VERSION="24.15.0"
+NODE_RUNTIME_CACHE_DIR="${AGENTIC30_NODE_RUNTIME_CACHE_DIR:-$SRCROOT/.omx/node-runtime}"
+
 host_arch="$(uname -m)"
+
+runtime_arch() {
+  case "$host_arch" in
+    arm64) printf '%s\n' arm64 ;;
+    x86_64) printf '%s\n' x64 ;;
+    *) printf '%s\n' "$host_arch" ;;
+  esac
+}
+
+runtime_sha256() {
+  case "$1" in
+    arm64) printf '%s\n' "372331b969779ab5d15b949884fc6eaf88d5afe87bde8ba881d6400b9100ffc4" ;;
+    x64) printf '%s\n' "ffd5ee293467927f3ee731a553eb88fd1f48cf74eebc2d74a6babe4af228673b" ;;
+    *) return 1 ;;
+  esac
+}
 
 node_process_arch() {
   "$1" -p 'process.arch' 2>/dev/null || true
@@ -31,9 +47,60 @@ node_is_usable() {
   return 0
 }
 
+verify_sha256() {
+  local file="$1"
+  local expected="$2"
+  local actual
+
+  actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+  [ "$actual" = "$expected" ]
+}
+
+ensure_node_runtime() {
+  local arch
+  local archive
+  local expected_sha
+  local archive_path
+  local extract_dir
+  local node_path
+
+  arch="$(runtime_arch)"
+  expected_sha="$(runtime_sha256 "$arch")" || {
+    echo "error: unsupported Node runtime architecture for host $(uname -m)" >&2
+    return 1
+  }
+  archive="node-v${NODE_RUNTIME_VERSION}-darwin-${arch}.tar.gz"
+  archive_path="$NODE_RUNTIME_CACHE_DIR/$archive"
+  extract_dir="$NODE_RUNTIME_CACHE_DIR/node-v${NODE_RUNTIME_VERSION}-darwin-${arch}"
+  node_path="$extract_dir/bin/node"
+
+  if node_is_usable "$node_path"; then
+    printf '%s\n' "$node_path"
+    return 0
+  fi
+
+  mkdir -p "$NODE_RUNTIME_CACHE_DIR"
+  if [ ! -f "$archive_path" ] || ! verify_sha256 "$archive_path" "$expected_sha"; then
+    echo "[build-sidecar] downloading Node runtime $archive" >&2
+    curl -fsSL "https://nodejs.org/dist/v${NODE_RUNTIME_VERSION}/${archive}" -o "$archive_path.tmp"
+    mv "$archive_path.tmp" "$archive_path"
+  fi
+  verify_sha256 "$archive_path" "$expected_sha" || {
+    echo "error: Node runtime checksum mismatch for $archive_path" >&2
+    return 1
+  }
+
+  rm -rf "$extract_dir"
+  tar -xzf "$archive_path" -C "$NODE_RUNTIME_CACHE_DIR"
+  node_is_usable "$node_path" || {
+    echo "error: downloaded Node runtime is not usable at $node_path" >&2
+    return 1
+  }
+  printf '%s\n' "$node_path"
+}
+
 find_node_bin() {
   local candidate
-
   if [ -n "${NODE_BINARY:-}" ]; then
     node_is_usable "$NODE_BINARY" && printf '%s\n' "$NODE_BINARY"
     return
@@ -53,37 +120,10 @@ find_node_bin() {
     fi
   done
 
-  return 1
-}
-
-find_brew_bin() {
-  local candidate
-
-  for candidate in \
-    "/opt/homebrew/bin/brew" \
-    "/Users/local/Homebrew/bin/brew" \
-    "$(command -v brew 2>/dev/null || true)" \
-    "/usr/local/bin/brew"; do
-    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  return 1
+  ensure_node_runtime
 }
 
 NODE_BIN="$(find_node_bin || true)"
-if [ -z "$NODE_BIN" ] && { [ -n "${CI_WORKSPACE:-}" ] || [ -n "${CI:-}" ] || [ -n "${XCODE_CLOUD:-}" ] || [ -d /Volumes/workspace/repository ]; }; then
-  BREW="$(find_brew_bin || true)"
-  if [ -n "$BREW" ]; then
-    echo "[build-sidecar] installing node via $BREW (CI fallback)" >&2
-    "$BREW" install node || true
-    hash -r 2>/dev/null || true
-    NODE_BIN="$(find_node_bin || true)"
-  fi
-fi
-
 if [ -z "$NODE_BIN" ]; then
   if [ "$host_arch" = "arm64" ]; then
     echo "error: native arm64 node not found; install arm64 Node.js 20+ or set NODE_BINARY to an arm64 node binary" >&2
@@ -91,6 +131,11 @@ if [ -z "$NODE_BIN" ]; then
     echo "error: node not found in PATH; install Node.js 20+ or set NODE_BINARY to build the sidecar bundle" >&2
   fi
   exit 1
+fi
+
+if [ "${1:-}" = "--print-node" ]; then
+  printf '%s\n' "$NODE_BIN"
+  exit 0
 fi
 
 BUN_BIN="${BUN_BINARY:-$(command -v bun || true)}"
