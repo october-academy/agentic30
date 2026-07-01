@@ -58,7 +58,7 @@ macOS permission acquisition is handled by the native helper defined in `docs/sp
 - Visible recording state, pause, stop-for-today, delete, retention, and storage-budget controls.
 - Screen Recording and Accessibility as core capture permissions, granted through the native macOS permission helper with actor identity checks and runtime probes.
 - Event Tap/Input Monitoring, Clipboard, Microphone/System Audio, Vision OCR, Browser URL capture, and file/document metadata as required permission surfaces with per-surface consent and explicit helper health states where macOS TCC is involved.
-- Synchronized frame rows: screenshot, text, app/window/browser/document metadata, trigger, hashes, timestamp.
+- Synchronized frame rows: encrypted keyframe snapshot, text, app/window/browser/document metadata, trigger, hashes, timestamp, and optional non-proof replay chunk offsets.
 - Audio chunks and local transcript state.
 - Redacted FTS search over frames, transcripts, memory items, and product events.
 - Day Memory Review, search/timeline, Evidence Inbox, and memory views.
@@ -318,6 +318,7 @@ Host-local recorder data:
   recorder.sqlite-wal
   media/
     frames/
+    replay/
     audio/
   indexes/
   exports/
@@ -339,6 +340,17 @@ Workspace-curated outputs:
 ```
 
 Raw media remains host-local. Workspace exports require a manifest and explicit user action unless the Pipe output is redacted-only and non-raw by construction.
+
+### Visual Storage Contract
+
+Agentic30 does not store an unconditional per-second screenshot log. The recorder stores visual history in two layers:
+
+1. **Hot frame layer** — encrypted keyframe snapshot media plus `frames` rows, redacted OCR/AX text, app/window/browser/document metadata, event trigger, hashes, and sink eligibility. This layer powers redacted search, Day Memory Review, Evidence Inbox, deletion, retention, and any proof-boundary checks.
+2. **Replay chunk layer** — optional short-lived encrypted MP4 chunks for visual replay only. Replay chunks are not proof, never satisfy proof-ledger acceptance, and never bypass the frame/OCR/event rows that feed product decisions.
+
+Gate A ships from the hot frame layer. Replay chunks are a separate Gate A.2 contract and must stay disabled until live signed-app acceptance proves chunk deletion, retention, path hiding, and UI-visible replay behavior under granted TCC. When enabled, replay chunks are registered as `media_assets` with `asset_type=screen_video_chunk`; this SPEC does not add a separate `video_chunks` table.
+
+If a frame or visible range is deleted, every replay chunk overlapping that deleted time range must be physically removed or rewritten before the delete receipt is accepted. If a chunk is removed instead of rewritten, surviving frame rows outside the deleted range may keep snapshot/search metadata, but their `replay_asset_id` and `replay_offset_index` must be cleared and replay exports invalidated.
 
 ### 6.0 Schema Inventory
 
@@ -393,6 +405,10 @@ Required columns:
 - `browser_url_search_label TEXT`
 - `document_path TEXT`
 - `snapshot_asset_id TEXT NOT NULL`
+- `replay_asset_id TEXT`
+- `replay_offset_index INTEGER`
+- `capture_sequence INTEGER NOT NULL`
+- `dedupe_of_frame_id TEXT`
 - `snapshot_sha256 TEXT NOT NULL`
 - `content_hash TEXT NOT NULL`
 - `simhash TEXT`
@@ -426,6 +442,14 @@ Required columns:
 - `relative_path TEXT NOT NULL`
 - `sha256 TEXT NOT NULL`
 - `byte_size INTEGER NOT NULL`
+- `container TEXT`
+- `codec TEXT`
+- `duration_ms INTEGER`
+- `frame_count INTEGER`
+- `monitor_id TEXT`
+- `capture_session_id TEXT`
+- `time_range_start_at TEXT`
+- `time_range_end_at TEXT`
 - `encrypted INTEGER NOT NULL DEFAULT 0`
 - `workspace_id TEXT`
 - `project_id TEXT`
@@ -435,8 +459,11 @@ Required columns:
 Allowed `asset_type` values:
 
 - `frame_jpeg`
+- `screen_video_chunk`
 - `audio_m4a`
 - `export_bundle`
+
+`screen_video_chunk` assets must be encrypted at rest, path-hidden from non-`raw_admin` API responses, and stored under `media/replay/`. They carry MP4/container metadata only; searchable text and evidence candidates must continue to come from `frames`, transcript, clipboard, memory, and product-event rows.
 
 ### 6.4 `audio_chunks`
 
@@ -1093,6 +1120,7 @@ Per-surface retention requirements:
 | Surface | Default TTL | User delete behavior | FTS purge | Derived-data invalidation | Known OS-level non-guarantees |
 |---|---|---|---|---|---|
 | frame media | 24h unless user changes policy | physical media delete + tombstone | purge frame FTS | invalidate frame-only memory/candidates/exports | Time Machine, external backups, crash dumps |
+| replay video chunks | disabled until Gate A.2; then 24h unless user changes policy | physical chunk delete or rewrite before receipt; clear replay refs for surviving frames when chunk is removed | no FTS | invalidate replay exports and clear `frames.replay_asset_id` / `frames.replay_offset_index` for affected rows | Time Machine, external backups, crash dumps, media caches |
 | raw AX/OCR text | tied to frame TTL unless explicitly retained as raw-local | clear raw columns or tombstone row | raw text never indexed | recompute summaries that depended only on deleted source | logs if implementation leaked raw text |
 | browser URL/document path raw fields | tied to frame TTL | clear raw fields before or with frame delete | search label/domain purge with frame | invalidate exports containing labels | browser history outside Agentic30 |
 | clipboard raw content | shortest sensitive TTL; default no raw content | clear raw/redacted clipboard text, keep audit tombstone | purge clipboard FTS rows if any | invalidate clipboard-derived memory/candidates | system clipboard history/managers outside Agentic30 |
@@ -1290,7 +1318,8 @@ This substrate builds on Agentic30's current stack. The split below was verified
 
 ### 16.3 Gate-Blocking Contracts To Detail Before Claiming A Gate
 
-- **Capture cadence (Gate A):** default min interval, max-gap fallback, CPU/battery + storage budgets, multi-monitor, idle/sleep/wake, duplicate-frame suppression threshold. Gate A cannot claim event-driven completion without these values and tests.
+- **Capture cadence (Gate A):** event-driven keyframe capture with bounded fallback, not a per-second screenshot log. Initial acceptance values are `automatic_capture_min_interval_ms=1000`, `event_debounce_ms=750`, `active_max_gap_ms=10000`, `idle_max_gap_ms=60000`, duplicate suppression by same app/window/browser/document context plus content/perceptual hash threshold, OCR/AX extraction only for persisted keyframes, multi-monitor attribution via `monitor_id`, and explicit idle/sleep/wake behavior. Gate A cannot claim event-driven completion without tests for these values plus CPU/battery/storage-budget failure states.
+- **Replay chunk storage (Gate A.2):** optional encrypted low-FPS fragmented MP4 chunks are registered as `media_assets.asset_type=screen_video_chunk`, never as proof, and never as a source for search/evidence without matching `frames` rows. Gate A.2 cannot ship until deletion/retention acceptance proves overlapping chunk delete-or-rewrite semantics and clears stale replay offsets for surviving frames.
 - **Permission helper validation (Gate A):** release actor fixture, supported macOS Settings anchors, Screen Recording prompt/registration behavior, Screen Recording relaunch behavior, Accessibility plus-picker or drag capability, Input Monitoring opt-in behavior, and update-in-place TCC identity persistence.
 - **Retention defaults (Gate A/C):** per-surface TTL/delete/FTS/derived-data/OS-non-guarantee rows in Section 10.5 must exist before the related collector or export ships.
 - **Redaction policy matrix (Gate A, before any FTS/memory write):** Section 10.2 is blocking for any sink that consumes recorder-derived data.
@@ -1996,3 +2025,1444 @@ No required surface is complete until it reaches `actual_collector + ui_wired + 
 - Added Swift unit coverage proving the permission probe emits a concrete System Audio state and proving encrypted `system_audio` payloads use the existing sidecar audio route.
 - Verification passed: first Swift unit run failed on an SDK compile issue (`AVAssetWriterInput` has no `error` member), then after fixing the writer error source `npm run test:swift:unit` passed (`569/569`), `node --test sidecar-tests/recorder-audio.test.mjs` passed (`8/8`), `npm run check:public-safety` passed, and `git diff --check` passed for touched Swift/SPEC files.
 - Remaining Gate C gaps include live System Audio permission/capture validation on the signed app, live microphone/Speech permission validation, live timeline/manual UI validation for encrypted media and browser metadata, and live app/manual UI E2E validation. This slice is `actual_collector` for Swift System Audio but not `e2e_accepted`.
+
+### 2026-06-29 KST — Gate B Swift raw SQL inspector UI slice
+
+- Added Swift `RecorderSqlQueryResult` / `RecorderSqlCell` decoding for the sidecar `/recorder/sql/query` response, including snake_case and camelCase field support, mixed JSON cell values, redacted-view metadata, and proof-boundary flags.
+- Added a Founder Replay Control-mode `Raw SQL Inspector` panel that requests local `raw_sql` tokens, posts inspector queries to the loopback raw API with `includeRawColumns=false`, and renders a bounded redacted result table plus query fingerprint, row count, truncation, timeout, path exposure, and proof-write status.
+- The Swift token flow uses a dedicated `agentic30-recorder-sql-inspector` client ID and never requests `raw_admin`. Successful SQL responses refresh the existing Raw API Audit panel so local reads remain inspectable.
+- Added focused Swift unit coverage for the `raw_sql` token request payload and SQL result decoder. The sidecar route coverage remains in `recorder-raw-api-server.test.mjs`.
+- Verification passed: `xcodebuild build -project agentic30.xcodeproj -destination 'platform=macOS' -scheme agentic30 CODE_SIGNING_ALLOWED=NO`, `node --test sidecar-tests/recorder-raw-api-server.test.mjs` (`8/8`), `npm run check:public-safety`, and final `git diff --check` across the touched files.
+- Swift unit execution is now accepted for this slice: `xcodebuild build-for-testing -project agentic30.xcodeproj -destination 'platform=macOS' -scheme agentic30 -only-testing:agentic30Tests -derivedDataPath /tmp/agentic30-sql-build-for-testing CODE_SIGNING_ALLOWED=NO` passed, then raw `xcodebuild test-without-building ... -only-testing:agentic30Tests ... -resultBundlePath /tmp/agentic30-sql-test-without-building.xcresult` passed (`571/571`). `sparkshell` remained stale around the test execution wrapper, so the accepted evidence is the raw xcodebuild exit/result bundle, not the stale wrapper.
+- Live app/manual UI E2E was not run. Remaining Gate B SQL gaps are live app/manual UI validation for the new inspector panel and SQLite authorizer/progress-handler hooks if the runtime later exposes them.
+
+### 2026-06-29 KST — Gate B raw SQL comma-join bypass hardening slice
+
+- Hardened `extractSqlSources()` so the raw SQL inspector also scans top-level comma-separated `FROM` entries, not only `FROM` and explicit `JOIN` tokens. This closes the bypass where an allowlisted view could be followed by a base table through legacy comma join syntax.
+- Added regression coverage for comma-join attempts that introduce `frames`, bracket-quoted `[frames]`, and quoted `"api_tokens"` after an allowlisted redacted view. Each is rejected with `ERR_RECORDER_RAW_API_SQL_BASE_TABLE_REJECTED`.
+- Verification passed: `node --check sidecar/recorder-raw-api-server.mjs` and `node --test sidecar-tests/recorder-raw-api-server.test.mjs` (`8/8`).
+- Remaining Gate B SQL gaps are broader Unicode/token-spacing adversarial coverage and SQLite authorizer/progress-handler hooks if the runtime later exposes them.
+
+### 2026-06-29 KST — Gate B raw SQL adversarial corpus expansion slice
+
+- Expanded the raw SQL inspector route-level adversarial corpus for Unicode/token-spacing and source parsing variants that must stay rejected even when the string validator is the first line of defense.
+- Added coverage for non-breaking-space token separation, quoted base tables, recursive CTE reads from `api_tokens`, `UNION` reads from `api_tokens`, schema-qualified base-table reads (`main.frames`), bracket-quoted raw columns, and spaced `load_extension ( ... )` function calls.
+- These cases prove the current validator rejects with named root-cause errors before execution and keeps the `/recorder/sql/query` response free of SQL rows on denial.
+- Verification passed: `node --check sidecar-tests/recorder-raw-api-server.test.mjs` and `node --test sidecar-tests/recorder-raw-api-server.test.mjs` (`8/8`).
+- Remaining Gate B SQL gap is true SQLite authorizer/progress-handler enforcement if the runtime later exposes it.
+
+### 2026-06-29 KST — Gate B raw SQL copied-view sandbox worker slice
+
+- Checked the installed `better-sqlite3` runtime (`12.8.0`): it exposes `Statement#columns()` and read-only/query-only controls, but not SQLite authorizer or progress-handler hooks.
+- Added a second execution boundary in `recorder-sql-worker.mjs`: the worker opens the recorder DB read-only, copies only the validator-approved inspector views into an in-memory SQLite database, sets `query_only=ON`, and executes the user SQL against that copied-view sandbox instead of the recorder DB.
+- The server now passes the validator-approved `plan.sources` into the worker. If a future validator miss lets a base table through syntactically, the worker sandbox still has no base tables to read.
+- Added direct worker coverage proving an allowed redacted view query succeeds while `SELECT id FROM frames LIMIT 1` fails with no `frames` table when only `recorder_sql_frames_redacted` was copied.
+- Verification passed: `node --check sidecar/recorder-sql-worker.mjs`, `node --check sidecar/recorder-raw-api-server.mjs`, `node --check sidecar-tests/recorder-raw-api-server.test.mjs`, `node --test sidecar-tests/recorder-raw-api-server.test.mjs` (`9/9`), `npm run build:sidecar`, and `node --test sidecar-tests/recorder-raw-api-runtime.test.mjs` (`1/1`) after restoring local `node_modules` with `npm install`.
+- Remaining Gate B SQL gap is native SQLite authorizer/progress-handler enforcement if the selected runtime later exposes those hooks; current implementation now has string validation, read-only source DB, copied-view sandbox execution, query-only execution DB, and worker timeout interruption.
+
+### 2026-06-29 KST — Gate B raw SQL downstream-boundary flags slice
+
+- Made `/recorder/sql/query` responses explicitly non-eligible for downstream product paths, not only proof: SQL results now emit `safeForSearch=false`, `safeForMemory=false`, `safeForExport=false`, `providerPromptAllowed=false`, `pipeOutputAllowed=false`, and `dayProgressWriteAllowed=false` alongside the existing proof-deny flags.
+- Swift `RecorderSqlQueryResult` now decodes the downstream-deny flags, and the Founder Replay Control-mode SQL inspector shows a compact `downstream off` status pill when all forbidden paths remain closed.
+- Updated focused sidecar and Swift decoder coverage so the raw SQL inspector contract proves local SQL output cannot silently become search, memory, export, provider prompt, Pipe output, Day progress, or proof material.
+- Verification passed: `node --check sidecar/recorder-raw-api-server.mjs`, `node --check sidecar-tests/recorder-raw-api-server.test.mjs`, `node --test sidecar-tests/recorder-raw-api-server.test.mjs` (`9/9`), `npm run test:swift:unit` (`571/571` after fixing the local `HStack` return compile issue introduced in this slice), `npm run build:sidecar`, `npm run check:public-safety`, and `git diff --check`.
+- Live app/manual UI E2E was not run. Remaining Gate B SQL gaps are live app/manual UI validation for the inspector panel and native SQLite authorizer/progress-handler enforcement if the selected runtime later exposes those hooks.
+
+### 2026-06-29 KST — Gate C audio deletion and retention slice
+
+- Extended recorder deletion beyond frame media with `deleteRecorderAudioChunksInRange()`: scoped audio chunk deletion now tombstones `audio_chunks`, marks linked `media_assets` deleted, tombstones linked `transcript_segments`, clears transcript search/memory eligibility, records `deletion_source_id`, and physically removes the local `.m4a` file.
+- Added `resolveRecorderAudioMediaPath()` with the same recorder-root containment checks as frame deletion, requiring audio media to stay under `media/audio/` and failing with named root-cause errors for absolute, escaping, wrong-prefix, missing, non-file, or unexpected media rows.
+- Extended retention policy with `rawAudioRetentionHours` / `raw_audio_retention_hours`. Retention plans now include separate audio targets and transcript counts, but expose only IDs/counts and `pathExposed=false`; resolved filesystem paths are used internally only.
+- `applyRecorderRetentionPolicy()` now applies expired frame and audio media retention, including a preflight over all planned frame and audio files before any mutation so a missing audio file cannot partially delete frame rows/media first.
+- Added focused coverage for audio deletion, transcript FTS purge, missing audio media fail-before-mutation, expired audio retention planning/application, and mixed frame+audio retention preflight.
+- Verification passed: `node --check sidecar/recorder-delete.mjs`, `node --check sidecar/recorder-retention.mjs`, `node --check sidecar-tests/recorder-delete.test.mjs`, `node --check sidecar-tests/recorder-retention.test.mjs`, `node --test sidecar-tests/recorder-delete.test.mjs sidecar-tests/recorder-retention.test.mjs` (`14/14`), `node --test sidecar-tests/recorder-audio.test.mjs sidecar-tests/recorder-store.test.mjs` (`11/11`), `npm run build:sidecar`, `npm run check:public-safety`, and `git diff --check`.
+- Remaining Gate C deletion/retention gaps include memory items, evidence candidates, Pipe outputs, audits, exports, and a live/manual acceptance pass for the signed app surfaces. Audio deletion/retention is now covered at the sidecar store/media level, not `e2e_accepted`.
+
+### 2026-06-29 KST — Gate C clipboard deletion and retention slice
+
+- Added `deleteRecorderClipboardEventsInRange()` for scoped clipboard cleanup. It tombstones matching `clipboard_events`, clears `content_text`, resets `content_captured=0`, disables search/memory/export eligibility, and leaves no raw clipboard content in redacted or raw-admin SQL inspector views.
+- Extended retention policy with `rawClipboardRetentionHours` / `raw_clipboard_retention_hours`. Retention plans now include clipboard targets with IDs, timestamps, capture mode, and content-captured booleans only; raw clipboard text and paths stay unexposed.
+- `applyRecorderRetentionPolicy()` now applies expired clipboard retention alongside frame/audio retention and reports deleted clipboard event and purged content counts.
+- Added focused coverage for scoped clipboard deletion, raw content purge, redacted/raw-admin SQL view removal, expired clipboard retention planning, retention application, and no raw content exposure in retention manifests.
+- Verification passed: `node --check sidecar/recorder-delete.mjs`, `node --check sidecar/recorder-retention.mjs`, `node --check sidecar-tests/recorder-delete.test.mjs`, `node --check sidecar-tests/recorder-retention.test.mjs`, `node --test sidecar-tests/recorder-delete.test.mjs sidecar-tests/recorder-retention.test.mjs sidecar-tests/recorder-clipboard.test.mjs` (`20/20`), `node --test sidecar-tests/recorder-store.test.mjs sidecar-tests/recorder-raw-api-server.test.mjs` (`12/12`), `npm run build:sidecar`, `npm run check:public-safety`, and `git diff --check`.
+- Remaining Gate C deletion/retention gaps include memory items, product events, evidence candidates, Pipe outputs, audits, exports, and a live/manual acceptance pass for the signed app surfaces. Clipboard deletion/retention is now covered at the sidecar store/SQL-view level, not `e2e_accepted`.
+
+### 2026-06-29 KST — Gate C memory and product-event deletion and retention slice
+
+- Added `deleteRecorderMemoryItemsInRange()` for scoped memory cleanup. It tombstones matching `memory_items` and clears search/memory/export eligibility so deleted memories leave FTS and downstream sinks without deleting unrelated workspace/project rows.
+- Added `deleteRecorderProductEventsInRange()` for scoped product-event cleanup. It tombstones matching `product_events` and clears search/memory/export eligibility while preserving `proof_ledger_event_id` and `verification_status`, so local retention does not rewrite historical proof-ledger linkage.
+- Extended retention policy with `memoryRetentionHours` / `memory_retention_hours` and `productEventRetentionHours` / `product_event_retention_hours`. Retention plans now include derived-data targets with IDs, type/status, timestamps, proof-link booleans, and explicit `contentExposed=false` / `pathExposed=false`; title, summary, event summary, raw content, and paths are not exposed in the plan/result manifest.
+- `applyRecorderRetentionPolicy()` now applies expired memory and product-event retention alongside frame/audio/clipboard retention and reports deleted memory-item and product-event counts.
+- Added focused coverage for scoped memory tombstoning, memory FTS purge, product-event tombstoning with proof-link preservation, product-event FTS purge, expired memory/product-event retention planning, retention application, and no content/label exposure in retention manifests.
+- Verification passed: `node --check sidecar/recorder-delete.mjs`, `node --check sidecar/recorder-retention.mjs`, `node --check sidecar-tests/recorder-delete.test.mjs`, `node --check sidecar-tests/recorder-retention.test.mjs`, `node --test sidecar-tests/recorder-delete.test.mjs sidecar-tests/recorder-retention.test.mjs` (`21/21`), `node --test sidecar-tests/recorder-store.test.mjs sidecar-tests/recorder-raw-api-server.test.mjs` (`12/12`), `npm run build:sidecar`, `npm run check:public-safety`, and `git diff --check`.
+- Remaining Gate C deletion/retention gaps include evidence candidates, Pipe outputs, audits, exports, and a live/manual acceptance pass for the signed app surfaces. Memory/product-event deletion/retention is now covered at the sidecar store/FTS level, not `e2e_accepted`.
+
+### 2026-06-29 KST — Gate C evidence-candidate deletion and retention slice
+
+- Added `deleteRecorderEvidenceCandidatesInRange()` for scoped evidence-candidate cleanup. It tombstones matching `evidence_candidates`; unresolved proof debt (`pending_review`, `degraded`, `approved_bundle`) is explicitly moved to `rejected` with an `ERR_RECORDER_EVIDENCE_CANDIDATE_DELETED` verifier-result root cause, while already resolved rows keep their review status.
+- Written proof candidates preserve `proof_ledger_event_id` and `candidate_status=written_to_ledger` when tombstoned, so local recorder retention does not rewrite the historical proof-ledger boundary.
+- Extended retention policy with `evidenceCandidateRetentionHours` / `evidence_candidate_retention_hours`. Retention plans target only resolved candidates (`rejected`, `verifier_rejected`, `written_to_ledger`) by `reviewed_at`; old unresolved candidates stay visible for review instead of silently disappearing by age.
+- Evidence-candidate retention manifests include only IDs, status, source state, proof kind, reviewed/created timestamps, proof-link booleans, and explicit `contentExposed=false` / `pathExposed=false`; claims, proof-ledger mapping JSON, evidence debt, source IDs, raw text, and paths are not exposed.
+- `applyRecorderRetentionPolicy()` now applies expired resolved evidence-candidate retention alongside frame/audio/clipboard/memory/product-event retention and reports deleted and rejected evidence-candidate counts.
+- Added focused coverage for scoped candidate tombstoning, unresolved-candidate rejection root cause, proof-link preservation, resolved-only retention planning, pending-candidate retention exclusion, retention application, and no claim/proof/source payload exposure in retention manifests.
+- Verification passed: `node --check sidecar/recorder-delete.mjs`, `node --check sidecar/recorder-retention.mjs`, `node --check sidecar-tests/recorder-delete.test.mjs`, `node --check sidecar-tests/recorder-retention.test.mjs`, `node --test sidecar-tests/recorder-delete.test.mjs sidecar-tests/recorder-retention.test.mjs` (`24/24` after the final bundled rebuild), `node --test sidecar-tests/recorder-evidence-candidates.test.mjs sidecar-tests/recorder-evidence-review.test.mjs sidecar-tests/recorder-evidence-inbox-builder.test.mjs sidecar-tests/recorder-proof-ledger-adapter.test.mjs` (`15/15`), `node --test sidecar-tests/recorder-store.test.mjs sidecar-tests/recorder-raw-api-server.test.mjs` (`12/12`), `npm run build:sidecar`, `npm run check:public-safety`, and `git diff --check`.
+- Remaining Gate C deletion/retention gaps include Pipe outputs, audits, exports, and a live/manual acceptance pass for the signed app surfaces. Evidence-candidate deletion/retention is now covered at the sidecar store/proof-boundary level, not `e2e_accepted`.
+
+### 2026-06-29 KST — Gate C Pipe output deletion and retention slice
+
+- Bumped `recorder.sqlite` schema to v5 and added `pipe_runs.deleted_at` with a forward migration for existing recorder databases. New Pipe run rows start with `deleted_at=null`, and Pipe run DTOs now expose the tombstone timestamp.
+- Added `deleteRecorderPipeRunsInRange()` for scoped Pipe output cleanup. It targets only terminal runs (`succeeded`, `failed`, `cancelled`, `timed_out`) with an existing `output_manifest_json`, clears the output manifest, sets `deleted_at`, and preserves lifecycle status, timestamps, `audit_log_json`, and `error_message`.
+- Extended retention policy with `pipeOutputRetentionHours` / `pipe_output_retention_hours`. Retention plans target terminal Pipe outputs by `ended_at`; queued/running or output-less runs are not purged by output retention.
+- Pipe output retention manifests include only run id, pipe id, run status, output kind, timestamps, artifact/action-result counts, and explicit `contentExposed=false` / `pathExposed=false` / `proofAcceptedByPipeRun=false`; output manifest JSON, item payloads, artifact payloads, raw text, and paths are not exposed.
+- `applyRecorderRetentionPolicy()` now purges expired Pipe output manifests alongside frame/audio/clipboard/memory/product-event/evidence-candidate retention and reports deleted Pipe run and purged output counts.
+- Added focused coverage for scoped Pipe output purge, terminal-only targeting, queued-run exclusion, audit preservation, schema migration column presence, retention planning/application, and no Pipe manifest payload exposure in retention manifests.
+- Verification passed: `node --check sidecar/recorder-store.mjs`, `node --check sidecar/recorder-pipes.mjs`, `node --check sidecar/recorder-delete.mjs`, `node --check sidecar/recorder-retention.mjs`, `node --check sidecar-tests/recorder-delete.test.mjs`, `node --check sidecar-tests/recorder-retention.test.mjs`, `node --test sidecar-tests/recorder-delete.test.mjs sidecar-tests/recorder-retention.test.mjs` (`27/27` after the final bundled rebuild), `node --test sidecar-tests/recorder-pipes.test.mjs sidecar-tests/recorder-store.test.mjs sidecar-tests/recorder-raw-api-server.test.mjs` (`21/21`), `npm run build:sidecar`, `npm run check:public-safety`, and `git diff --check`.
+- Remaining Gate C deletion/retention gaps include audits, exports, and a live/manual acceptance pass for the signed app surfaces. Pipe output deletion/retention is now covered at the sidecar store/manifest level, not `e2e_accepted`.
+
+### 2026-06-29 KST — Gate C audit tombstone retention slice
+
+- Bumped `recorder.sqlite` schema to v6 and added `recorder_audit.deleted_at` with a forward migration for existing recorder databases. New raw API audit rows start with `deleted_at=null`.
+- Added `deleteRecorderAuditRowsInRange()` for scoped audit cleanup. It sets `deleted_at` only and preserves request id, actor type/id, workspace/project scope, endpoint, access level, source ids, decision, reason, and created timestamp for accountability.
+- Extended retention policy with `auditRetentionHours` / `audit_retention_hours`. Audit retention plans target audit rows by `created_at` and mark them as `tombstoneOnly=true`; they do not claim media/data deletion.
+- Audit retention manifests include only audit id, endpoint, access level, decision, created timestamp, and explicit `tombstoneOnly=true` / `contentExposed=false` / `pathExposed=false`; request ids, actor ids, source IDs, and raw payloads are not exposed in the plan/result manifest.
+- Raw API audit listing and the `buildRecorderAuditSource()` DTO now include `deletedAt` / `deleted_at`, so tombstoned audit rows remain visible as accountable access-history records.
+- `applyRecorderRetentionPolicy()` now tombstones expired audit rows alongside frame/audio/clipboard/memory/product-event/evidence-candidate/Pipe-output retention and reports tombstoned audit-row counts separately from destructive delete counts.
+- Added focused coverage for scoped audit tombstoning, accountability-field preservation, sanitized audit-source rendering of tombstones, schema migration column presence, retention planning/application, and no request/actor/source payload exposure in retention manifests.
+- Verification passed: `node --check sidecar/recorder-store.mjs`, `node --check sidecar/recorder-raw-api-auth.mjs`, `node --check sidecar/recorder-audit-source.mjs`, `node --check sidecar/recorder-raw-api-server.mjs`, `node --check sidecar/recorder-delete.mjs`, `node --check sidecar/recorder-retention.mjs`, `node --check sidecar-tests/recorder-delete.test.mjs`, `node --check sidecar-tests/recorder-retention.test.mjs`, `node --check sidecar-tests/recorder-audit-source.test.mjs`, `node --test sidecar-tests/recorder-delete.test.mjs sidecar-tests/recorder-retention.test.mjs` (`30/30` after the final bundled rebuild), `node --test sidecar-tests/recorder-delete.test.mjs sidecar-tests/recorder-retention.test.mjs sidecar-tests/recorder-audit-source.test.mjs sidecar-tests/recorder-store.test.mjs sidecar-tests/recorder-raw-api-server.test.mjs` (`44/44`), `npm run build:sidecar`, `npm run check:public-safety`, and `git diff --check`.
+- Remaining Gate C deletion/retention gaps include exports and a live/manual acceptance pass for the signed app surfaces. Audit retention is now covered at the sidecar store/raw-API DTO level, not `e2e_accepted`.
+
+### 2026-06-29 KST — Gate C export archive deletion and retention slice
+
+- Raw API export archive creation now registers each local archive JSON as a managed `media_assets` row with `asset_type=export_bundle`, scoped workspace/project ids, SHA-256, byte size, creation timestamp, and `deleted_at=null`. The raw API response still keeps `pathExposed=false` and does not expose the archive filesystem path.
+- Added `deleteRecorderExportArchivesInRange()` for scoped export cleanup. It targets only managed `export_bundle` media assets by `created_at`, validates the persisted relative path under `exports/*.json`, preflights every archive file before mutation, tombstones the media asset, and physically removes the local archive JSON.
+- Extended retention policy with `exportArchiveRetentionHours` / `export_archive_retention_hours`. The default is long-lived/user-owned (`87600` hours), while configured retention targets only managed export archives and reports deleted export-archive/media counts separately.
+- Export archive retention manifests include only archive/media ids, creation timestamp, byte size, SHA-256, and explicit `contentExposed=false` / `pathExposed=false` / `proofAcceptedByExport=false`; archive JSON content, filesystem paths, export manifest payloads, and copied raw data are not exposed.
+- Added focused coverage for raw API managed-asset registration, scoped archive deletion, physical JSON removal, workspace isolation, retention planning/application, and no archive path/content exposure in retention plans or results.
+- Verification passed: `node --check sidecar/recorder-delete.mjs`, `node --check sidecar/recorder-retention.mjs`, `node --check sidecar/recorder-raw-api-server.mjs`, `node --check sidecar-tests/recorder-delete.test.mjs`, `node --check sidecar-tests/recorder-retention.test.mjs`, `node --check sidecar-tests/recorder-raw-api-server.test.mjs`, `node --test sidecar-tests/recorder-delete.test.mjs sidecar-tests/recorder-retention.test.mjs sidecar-tests/recorder-raw-api-server.test.mjs sidecar-tests/recorder-store.test.mjs` (`45/45`), `npm run build:sidecar`, `npm run check:public-safety`, `git diff --check`, post-build `node --test sidecar-tests/recorder-delete.test.mjs sidecar-tests/recorder-retention.test.mjs` (`33/33`), broader `npm run test:sidecar` (`2310/2313` pass, `3` skipped, no failures), and `npm run test:swift:unit` (`572/572`).
+- Gate C deletion/retention is now covered at the sidecar store/file level for frames, AX/OCR/search rows, browser/document metadata through frame retention, clipboard content, audio/transcripts, memory, product events, evidence candidates, Pipe outputs, audits, and export archives. It is not `e2e_accepted`; remaining readiness work still requires live/manual acceptance on signed app surfaces and the required adversarial/readiness reviews before any final implementation-readiness claim.
+
+### 2026-06-29 KST — Post-`insane-review` recorder hardening status
+
+- A full `insane-review` source pack (~4.50M tokens) and a focused 25-file pack (~1.03M tokens) both reached ChatGPT GPT-5.5 Pro with model verification but could not create a user turn because the send control stayed disabled. Narrow recorder packs were therefore used for the sidecar/store hardening review, while preserving the failed large-pack blocker as a non-readiness condition.
+- The first successful narrow recorder review (`.insane-review/response_prj_20260629_205956_95790_7baa1b.md`, ~159k tokens) returned **Blocked**. Follow-up GPT-5.5 Pro reviews also returned **Blocked** while checking: browser URL/domain FTS sanitization, clipboard Gate C envelope migration, export archive registration cleanup, retention fail-before-mutation archive preflight, non-expired source-linked archive invalidation, fixed-point derived-row invalidation, direct evidence-candidate archive invalidation, and same-table memory/product derived-row deletion. Blocking response artifacts include `.insane-review/response_prj_20260629_215619_36851_87f6d1.md`, `.insane-review/response_prj_20260629_221458_88655_4058f1.md`, `.insane-review/response_prj_20260629_222834_15726_1076aa.md`, `.insane-review/response_prj_20260629_224033_41058_66dcba.md`, `.insane-review/response_prj_20260629_225051_49281_a55f75.md`, `.insane-review/response_prj_20260629_230309_58535_d547ab.md`, and `.insane-review/response_prj_20260629_231626_66508_421d38.md`.
+- The final focused GPT-5.5 Pro recorder review passed (`.insane-review/response_prj_20260629_232802_72018_4ed024.md`, ~194k tokens). Scope of the PASS: sidecar/store hardening only. GPT accepted the fixed-point source-ref closure across `memory_items`, `product_events`, `evidence_candidates`, and Pipe output refs; archive preflight/unlink/tombstone reuse of that closure; direct evidence-candidate export archive invalidation; cleanup failure surfacing for failed archive registration; browser URL/domain FTS sanitization; Gate C clipboard envelope/policy; raw API request-id enforcement; injected interactive archive approval; deletion-time sensitive-field clearing; unlink-before-tombstone ordering; ordered retention scans; and WAL checkpoint/vacuum maintenance.
+- Post-review implementation fixes now cover: redacted `browser_domain` / `browser_url_search_label` storage and FTS migration instead of raw/normalized URL indexing; canonical Gate C clipboard envelope storage/migration (`captured_at`, `policy_mode`, `source_app_name`, `source_window_title`, `content_size`, `suppression_reason`, `raw_retention_expires_at`); managed export archive source maps (`media_assets.source_ids_json`); fixed-point source-aware archive unlink/tombstone invalidation; explicit post-retention store maintenance with WAL checkpoint and vacuum policy; deletion-time clearing for frame URL/document/text, transcript text, clipboard content/hash/text/size/raw-retention metadata, memory/product summaries, and evidence candidate payloads; required `x-agentic30-recorder-request-id` on raw API requests; interactive export approval through an injected verifier instead of trusting `approvedByLocalUser`; archive-file cleanup when media-asset registration fails; and fail-before-mutation preflight for direct media, direct archives, and source-linked archives.
+- Focused verification passed after the final blocker fixes: `node --check` on changed recorder modules/tests, focused delete/retention/raw-API suites (`53/53`), and full recorder glob `node --test sidecar-tests/recorder-*.test.mjs` (`132/132`).
+- Final non-UI verification passed after the focused GPT-5.5 PASS: full `npm run test:sidecar` (`2330` passed, `3` skipped, `0` failed), forced `AGENTIC30_FORCE_SIDECAR_BUILD=1 npm run build:sidecar` with bundled `better-sqlite3` rebuild, `npm run check:public-safety`, and `git diff --check`. The forced build still reports the existing npm audit/deprecation warnings.
+- Remaining blockers before any readiness claim: the full/focused large-pack `insane-review` attempts remain blocked by the ChatGPT send-button failure, and no live/manual signed-app acceptance pass has been run. This status is sidecar/store-level hardening, not `actual_collector + ui_wired + e2e_accepted`.
+
+### 2026-06-30 KST — Approved blocking UI E2E run and Office Hours/Intake repair
+
+- With explicit local approval for foreground UI E2E, smoke verification passed: `OMO_SPARKSHELL_SPARK=0 omo sparkshell -- env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` executed `16` selected UI tests with `0` failures. Result bundle: `/Users/october/Library/Developer/Xcode/DerivedData/agentic30-fqojdvkkhmwzswfynutajcrvmkte/Logs/Test/Test-agentic30UITests-2026.06.30_07-01-57-+0900.xcresult`.
+- The first full direct run failed with `57` tests executed and `3` failures. Result bundle: `/Users/october/Library/Developer/Xcode/DerivedData/agentic30-fqojdvkkhmwzswfynutajcrvmkte/Logs/Test/Test-agentic30UITests-2026.06.30_07-12-24-+0900.xcresult`. Failing tests were `testIntakeV2ScanWaitDoesNotShowEarlyAnswerQuestions`, `testIntakeV2ScanWaitRendersInDarkTheme`, and `testOpenDesignDayHandoffFlowSmoke`.
+- Root cause 1: `requiresMacOnboarding` treated `AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES=1` as an unconditional onboarding bypass, so scan-wait UI tests jumped to `workspace.surface` instead of the Intake V2 focus-area step. The shortcut was removed so tests with inline provider stubs still honor the real onboarding state.
+- Root cause 2: the Office Hours first-question structured prompt used a taller footer than later questions, pushing `assistant.structuredContinueButton` just below the measured `opendesign.officeHours.main.scroll` viewport (`-5.5` bottom gap). The Office Hours structured-prompt footer now uses the same compact vertical spacing across questions.
+- Targeted verification passed after the fixes: `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 bash scripts/xcode-test.sh ui-full -only-testing:agentic30UITests/agentic30UITests/testIntakeV2ScanWaitDoesNotShowEarlyAnswerQuestions -only-testing:agentic30UITests/agentic30UITests/testIntakeV2ScanWaitRendersInDarkTheme -only-testing:agentic30UITests/agentic30UITests/testOpenDesignDayHandoffFlowSmoke` executed `3` tests with `0` failures. Result bundle: `/Users/october/Library/Developer/Xcode/DerivedData/agentic30-fqojdvkkhmwzswfynutajcrvmkte/Logs/Test/Test-agentic30UITests-2026.06.30_07-42-27-+0900.xcresult`.
+- Full post-fix UI E2E passed: `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full` executed `57` tests with `0` failures in `1213.818s`. Result bundle: `/Users/october/Library/Developer/Xcode/DerivedData/agentic30-fqojdvkkhmwzswfynutajcrvmkte/Logs/Test/Test-agentic30UITests-2026.06.30_07-46-29-+0900.xcresult`.
+- This closes the blocking debug-app UI E2E failure found during the approved run. It still does not replace live/manual signed-app acceptance for ScreenCaptureKit/media timelines, permissions, encrypted media preview, or real recorder capture behavior, and it does not resolve the earlier large-pack ChatGPT send-button blocker.
+
+### 2026-06-30 KST — Gate A mode-specific recorder readiness slice
+
+- Extended `evaluateRecorderCaptureReadiness()` with explicit `modeReadiness` / `mode_readiness` DTOs for `core_frame_capture_ready`, `event_driven_capture_ready`, `ocr_text_completion_ready`, and `sensitive_capture_ready` while keeping legacy `canRecord` as the core frame-capture compatibility flag.
+- Missing Input Monitoring now blocks only the `event_driven_capture_ready` mode with `input_monitoring_missing`, so manual/scheduled ScreenCaptureKit frame capture can stay available while the app cannot claim event-driven readiness.
+- Missing Vision OCR now blocks only the `ocr_text_completion_ready` mode with `vision_ocr_unavailable_named_root_cause`, keeping AX-only capture separate from OCR-complete text capture.
+- Sensitive capture readiness now checks explicit clipboard-content, microphone, and System Audio opt-ins plus their expanded-media permission policy. Raw frames/search hits/mode status remain non-proof through `proofAcceptedByReadinessMode=false`.
+- Swift now probes and sends `inputMonitoring` and `visionOcr` permission states in `refreshRecorderPermissionProbe()`. The Input Monitoring check uses `CGPreflightListenEventAccess()` plus a non-running listen-only `CGEvent.tapCreate()` runtime probe; it does not capture or log raw key values. Vision OCR readiness uses a local `VNRecognizeTextRequest` supported-language runtime probe.
+- Founder Replay Control now decodes and renders the mode-specific readiness rows so the UI can show core/event/OCR/sensitive readiness separately instead of only the top-level `can record` state.
+- Verification passed: `node --check sidecar/recorder-control-state.mjs`, `node --test sidecar-tests/recorder-control-state.test.mjs` (`5/5`), `npm run test:swift:unit` (`572/572`), `env -u AGENTIC30_TEST_STUB_PROVIDER -u AGENTIC30_APP_SUPPORT_PATH npm run test:sidecar` (`2330` passed, `3` skipped, `0` failed), approved foreground `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` (`16/16`, result bundle `Test-agentic30UITests-2026.06.30_08-46-31-+0900.xcresult`), `npm run check:public-safety`, and `git diff --check`.
+- A raw `npm run test:sidecar` first failed `10` provider-runner tests because this shell had `AGENTIC30_TEST_STUB_PROVIDER=1` and a temporary `AGENTIC30_APP_SUPPORT_PATH`; rerunning with those two environment variables removed produced the passing result above.
+- This slice is `sidecar_policy_only + ui_wired` for mode-specific readiness and Swift permission probing. It is not `e2e_accepted`: live signed-app validation still needs to prove Input Monitoring registration/settings behavior, the event-tap runtime probe under real TCC state, Vision OCR probe behavior on target macOS versions, and UI-visible mode transitions during actual recorder operation.
+
+### 2026-06-30 KST — Gate A frame text provenance enforcement slice
+
+- `normalizeFrameCaptureEnvelope()` now accepts only the four Gate A text provenance states: `accessibility_only`, `ocr_only`, `ax_plus_ocr`, and `ocr_unavailable_named_root_cause`. Legacy/fake values such as `screen_capture`, `accessibility`, or `ocr` now fail explicitly with `ERR_RECORDER_INGEST_INVALID_TEXT_PROVENANCE`.
+- The ingest validator checks the stored AX/OCR text shape against the declared provenance. AX-only rows require `accessibility_text` and no `ocr_text`; OCR-only rows require `ocr_text` and no `accessibility_text`; `ax_plus_ocr` requires both; OCR-unavailable rows require a named `text_provenance_root_cause` and no OCR text.
+- Bumped `recorder.sqlite` to schema v11 with `frames.text_provenance_root_cause`. The migration canonicalizes old local rows by deriving strict provenance from existing `accessibility_text` / `ocr_text`, and maps legacy no-text `screen_capture` rows to `ocr_unavailable_named_root_cause` with `legacy_screen_capture_text_extraction_unavailable`.
+- Frame receipts and raw API frame DTOs now expose `textSource` / `text_source` plus `textProvenanceRootCause` / `text_provenance_root_cause`. SQL inspector frame views expose the same root-cause metadata while leaving raw AX/OCR text gated to raw-admin views as before.
+- Swift ScreenCaptureKit frame capture no longer labels screenshots as `screen_capture`; until local AX/OCR extraction is implemented on that path, it sends `ocr_unavailable_named_root_cause` with `screen_capture_text_extraction_not_implemented`. Founder Replay frame rows render the provenance/root-cause status so the UI does not hide OCR gaps.
+- Verification passed: `node --check sidecar/recorder-ingest.mjs`, `node --check sidecar/recorder-store.mjs`, `node --check sidecar/index.mjs`, `node --check sidecar/recorder-raw-api-server.mjs`, focused recorder suite `node --test sidecar-tests/recorder-ingest.test.mjs sidecar-tests/recorder-store.test.mjs sidecar-tests/recorder-raw-api-server.test.mjs sidecar-tests/recorder-raw-api-runtime.test.mjs sidecar-tests/recorder-delete.test.mjs sidecar-tests/recorder-retention.test.mjs sidecar-tests/recorder-search.test.mjs sidecar-tests/recorder-day-memory-review.test.mjs sidecar-tests/recorder-day-loop.test.mjs sidecar-tests/recorder-pipes.test.mjs sidecar-tests/recorder-control-state.test.mjs` (`93/93`), `npm run test:swift:unit` (`572/572`, result bundle `Test-agentic30-2026.06.30_09-08-44-+0900.xcresult`), `env -u AGENTIC30_TEST_STUB_PROVIDER -u AGENTIC30_APP_SUPPORT_PATH npm run test:sidecar` (`2333` passed, `3` skipped, `0` failed), approved foreground `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` (`16/16`, result bundle `Test-agentic30UITests-2026.06.30_09-12-04-+0900.xcresult`), `npm run check:public-safety`, and `git diff --check`.
+- This slice is `sidecar_policy_only + ui_wired` for text provenance enforcement. It is not `actual_collector` or `e2e_accepted` for OCR: live signed-app validation still needs real Accessibility extraction, local Vision OCR extraction/fallback, and UI-visible transitions from `ocr_unavailable_named_root_cause` to `accessibility_only` / `ocr_only` / `ax_plus_ocr` during actual recorder operation.
+
+### 2026-06-30 KST — Gate A local AX/OCR frame text extraction slice
+
+- The Swift ScreenCaptureKit frame capture path now attempts local text extraction before ingest. If Accessibility is trusted, it takes a bounded raw AX snapshot from the focused element, focused window, and app-level AX attributes (`AXSelectedText`, `AXValue`, `AXTitle`, `AXDescription`, `AXHelp`).
+- The same capture path runs a local `VNRecognizeTextRequest` over the captured `CGImage`. No cloud OCR/VLM fallback was added. OCR failures/no-text states stay named root causes rather than falling back to fake text completion.
+- The frame envelope now derives the strict Gate A provenance from actual text availability: `ax_plus_ocr` when both collectors return text, `accessibility_only` for AX-only text, `ocr_only` for Vision-only text, and `ocr_unavailable_named_root_cause` with a combined named root cause when neither collector returns text.
+- Extracted AX/OCR text remains `raw_local`, `redactionStatus=not_redacted`, and `safeForSearch=false` / `safeForMemory=false` / `safeForExport=false`. This keeps raw screen text out of FTS, memory, export, provider prompts, and proof paths until a redaction adapter explicitly approves it.
+- Verification passed: focused Swift compile/decode test `bash scripts/xcode-test.sh unit -only-testing:agentic30Tests/SidecarEventDecodingTests` (`130/130`, result bundle `Test-agentic30-2026.06.30_09-18-54-+0900.xcresult`), full `npm run test:swift:unit` (`572/572`, result bundle `Test-agentic30-2026.06.30_09-20-55-+0900.xcresult`), approved foreground `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` (`16/16`, result bundle `Test-agentic30UITests-2026.06.30_09-21-15-+0900.xcresult`), `npm run check:public-safety`, and `git diff --check`.
+- This slice adds the local collector code path for manual ScreenCaptureKit frame capture, but it is still not a Gate A completion claim. It needs live signed-app acceptance that proves real TCC states, AX text extraction, Vision OCR text extraction/no-text root causes, sidecar ingest receipts, UI provenance transitions, and deletion/retention behavior under actual recorder operation.
+
+### 2026-06-30 KST — Gate A redaction policy matrix enforcement slice
+
+- Added `sidecar/recorder-redaction-policy.mjs` as the Gate A policy matrix for recorder-derived rows before they can become search, memory, export, provider, Pipe, day-progress, or proof inputs.
+- `RecorderStore` now enforces the matrix at the insert/update boundary for `frames`, `transcript_segments`, `clipboard_events`, `memory_items`, `product_events`, and evidence-candidate references. This means unsafe `safe_for_search`, `safe_for_memory`, or `safe_for_export` rows fail before SQLite triggers can index them into FTS or downstream product code can consume them.
+- Tables with `redaction_status` require a safe status plus required public text fields before any public sink eligibility is accepted. `product_events` do not currently have a `redaction_status` column, so the matrix requires public title/summary text and rejects obvious raw-sensitive patterns before a row can be marked safe for search, memory, or export.
+- Existing defensive checks in the Evidence Inbox builder and Pipe path remain in place. Their tests now seed unsafe legacy/corrupt `product_events` rows through direct SQL to prove downstream rejection still works even if old data bypassed the newer store policy.
+- Verification passed: `node --check sidecar/recorder-redaction-policy.mjs`, `node --check sidecar/recorder-store.mjs`, `node --check sidecar-tests/recorder-store.test.mjs`, `node --check sidecar-tests/recorder-evidence-inbox-builder.test.mjs`, `node --check sidecar-tests/recorder-pipes.test.mjs`, `node --check sidecar-tests/recorder-raw-api-server.test.mjs`, `node --test sidecar-tests/recorder-store.test.mjs` (`10/10`), focused recorder suite (`64/64`), `env -u AGENTIC30_TEST_STUB_PROVIDER -u AGENTIC30_APP_SUPPORT_PATH npm run test:sidecar` (`2336` passed, `3` skipped, `0` failed), approved foreground `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` (`16/16`, result bundle `Test-agentic30UITests-2026.06.30_09-49-35-+0900.xcresult`), `npm run check:public-safety`, and `git diff --check`.
+- An approved `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full` attempt was interrupted and is not counted as passing evidence: after several minutes, the active app process still carried the `--ui-testing-seed-intake-scan-wait` arguments but the visible desktop showed an inconsistent Day 12 briefing surface rather than the expected intake wait state. The bounded UI smoke run above is the current accepted UI signal for this sidecar-policy slice.
+- This slice is `sidecar_policy_only` for the redaction matrix. It does not complete Gate A redaction acceptance: live signed-app validation still needs the actual redaction adapter that turns raw local screen/audio/clipboard/document text into policy-approved public labels, proves FTS sync under real capture, and shows UI-visible search/memory/export eligibility transitions without leaking raw text.
+
+### 2026-06-30 KST — Gate A browser/document metadata search-label slice
+
+- Bumped `recorder.sqlite` to schema v12 with `frames.document_path_search_label`. The v12 migration adds the column, sanitizes existing frame metadata labels, and rebuilds frame FTS only when a `frames` table exists so partial legacy stores such as clipboard-only migrations still open.
+- Frame FTS now indexes only `redacted_text`, app/window labels, `browser_domain`, `browser_url_search_label`, and `document_path_search_label`. It still never indexes `browser_url`, `browser_url_normalized`, or `document_path`.
+- `RecorderStore` normalizes frame metadata before store writes: raw browser labels collapse to domain labels, raw document paths or path-looking document labels collapse to conservative type labels such as `md document`, and unsafe URL/path-looking metadata labels are rejected by the redaction policy if they survive normalization.
+- Search results, `/recorder/search`, `/recorder/frames`, safe export frame items, and SQL inspector redacted frame views now expose the safe URL/document search labels while keeping raw URL/path fields restricted to raw-admin views and raw-frame permissions.
+- Verification passed: `node --check` on changed recorder modules/tests, focused metadata surface suite `node --test sidecar-tests/recorder-store.test.mjs sidecar-tests/recorder-ingest.test.mjs sidecar-tests/recorder-search.test.mjs sidecar-tests/recorder-raw-api-server.test.mjs sidecar-tests/recorder-pipes.test.mjs` (`39/39`), and full `env -u AGENTIC30_TEST_STUB_PROVIDER -u AGENTIC30_APP_SUPPORT_PATH npm run test:sidecar` (`2336` passed, `3` skipped, `0` failed).
+- This slice is `sidecar_policy_only` for the Gate A browser/document metadata indexing blocker. It is not a browser/document metadata completion claim: the actual macOS-accessible collector, degraded-state UI, live signed-app capture acceptance, and retention/delete acceptance for real browser/document metadata remain required before the surface can be marked `actual_collector + ui_wired + e2e_accepted`.
+
+### 2026-06-30 KST — Gate A safe metadata label WebSocket/UI wiring slice
+
+- Normal recorder frame WebSocket receipts now carry the safe metadata labels from the stored frame row: `browserDomain` / `browser_domain`, `browserUrlSearchLabel` / `browser_url_search_label`, and `documentPathSearchLabel` / `document_path_search_label`. The receipt still does not expose raw `browser_url`, `browser_url_normalized`, `document_path`, media relative paths, raw token hashes, or raw screen text.
+- `recordFrameCaptureEnvelope()` now returns the `RecorderStore`-normalized frame/media rows after insert, so ingest receipts use the same browser/document label sanitization policy that SQLite persistence and FTS use. This prevents a pre-store response from reporting `null` for derived document labels while the stored row contains a safe type label.
+- Swift `RecorderFrameCaptureReceipt` decodes both camelCase and snake_case safe metadata label keys. Founder Replay table rows render window/app context plus safe browser/document labels, using conservative labels such as `example.com` and `md document` rather than raw URL/path strings.
+- Focused verification passed: `node --check sidecar/index.mjs`, `node --check sidecar/recorder-ingest.mjs`, `node --check sidecar-tests/recorder-raw-api-runtime.test.mjs`, `node --test sidecar-tests/recorder-raw-api-runtime.test.mjs` (`1/1`), and `bash scripts/xcode-test.sh unit -only-testing:agentic30Tests/SidecarEventDecodingTests` (`130/130`, result bundle `Test-agentic30-2026.06.30_10-14-58-+0900.xcresult`).
+- Broad non-UI verification passed after clearing this shell's UI/test overrides: `env -u AGENTIC30_TEST_STUB_PROVIDER -u AGENTIC30_APP_SUPPORT_PATH npm run test:sidecar` (`2336` passed, `3` skipped, `0` failed). The unclean shell environment first failed provider-runner expectations because `AGENTIC30_TEST_STUB_PROVIDER=1` and `AGENTIC30_APP_SUPPORT_PATH=/tmp/...` were active.
+- Approved UI E2E smoke was attempted with `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke`, but it is not acceptance evidence for this slice. All `16/16` selected UI tests failed before app assertions because XCUITest could launch the built app but could not activate it (`current state: Running Background`), with repeated `DebuggerLLDB.DebuggerVersionStore.StoreError error 0`, `no debugger version`, `sysmond service not found`, and `pkill: Cannot get process list`. A clean-env single-case retry of `testWorkspaceStartupDay1RoutesToOfficeHours` reproduced the same activation failure.
+- This slice is `ui_wired` for safe browser/document metadata label display in the normal Swift receipt/UI path. It is not `actual_collector` or `e2e_accepted`: the local UI E2E activation blocker must be resolved before live signed-app capture can prove browser/document metadata collection, degraded states, deletion/retention, and UI-visible label transitions.
+
+### 2026-06-30 KST — UI E2E locked-session root-cause guard slice
+
+- Re-ran the approved local UI E2E path after the harness repairs. Focused `testWorkspaceStartupDay1RoutesToOfficeHours` and `testAgentSettingsModelPickersSaveClaudeCodexAndGeminiModels` passed, and `xcodebuild build-for-testing -project agentic30.xcodeproj -destination 'platform=macOS,arch=arm64' -scheme agentic30UITests` passed.
+- The full approved smoke command `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` executed 16 tests with 10 passed and 6 failed. Exported attachments and `ioreg` showed the root cause was a locked/loginwindow-shielded macOS session, not a product assertion: the screenshot attachment was the lock screen, app accessibility roots were `Disabled`, XCTest reported a full-screen `com.apple.loginwindow` interrupting element, and `CGSSessionScreenIsLocked=Yes`.
+- Fixed the UI E2E wrapper preflight in `scripts/xcode-test.sh`: the previous `ioreg | grep -q` check was unreliable under `set -o pipefail` because `grep -q` could close the pipe early and make the pipeline look failed. The guard now captures `ioreg` output first, then checks it, and exits `3` before invoking `xcodebuild` when the screen is locked.
+- Added an XCUITest `setUpWithError()` guard that fails raw `xcodebuild test` invocations with the same explicit root cause if `CGSessionScreenIsLocked` is true or `com.apple.loginwindow` is frontmost, so direct UI runs no longer degrade into misleading activation/hittability failures.
+- Verification passed for the guard path: `bash -n scripts/xcode-test.sh`, `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` while locked exits `3` with the explicit locked-session message and does not launch XCTest, `xcodebuild test-without-building ... -only-testing:agentic30UITests/agentic30UITests/testWorkspaceStartupDay1RoutesToOfficeHours` fails in `setUpWithError()` with the explicit locked-session message (`CGSSessionScreenIsLocked=true`, `frontmostApplication=com.apple.loginwindow`), and `git diff --check` passes for the touched harness/script/SPEC files.
+- This slice is an E2E harness/root-cause hardening step, not `e2e_accepted` evidence for Founder Memory OS. Live signed-app UI acceptance still requires an unlocked foreground session and a successful rerun that drives the recorder surfaces end-to-end.
+
+### 2026-06-30 KST — Gate A frame text redaction adapter slice
+
+- Added a sidecar-owned public-text redaction adapter in `sidecar/recorder-redaction-policy.mjs` and wired it into `recordFrameCaptureEnvelope()` normalization. When a frame asks for a search/memory/export-safe sink and carries a safe redaction status but no `redacted_text`, the ingest path can now derive bounded public text from local AX/OCR text before the row reaches `RecorderStore` and FTS triggers.
+- The adapter masks email addresses, HTTP URLs, secret/token/password assignments, token-like values, phone-like numbers, and local path locators. It then reuses the existing unsafe-text and raw-locator checks, failing with `ERR_RECORDER_REDACTION_ADAPTER_UNSAFE_OUTPUT` if the derived public text still looks unsafe.
+- Safe sinks still fail closed when neither explicit `redacted_text` nor local AX/OCR text exists (`ERR_RECORDER_INGEST_REDACTION_INPUT_REQUIRED`), and unsafe redaction statuses still cannot become FTS/search/memory/export rows.
+- Added ingest coverage proving the adapter indexes safe derived terms while raw emails, private URL paths, local filesystem paths, and token values remain absent from FTS. The test fixture uses a local non-provider-shaped token string so public-safety scans do not treat the repository as containing an API key.
+- Verification passed: `node --check sidecar/recorder-redaction-policy.mjs`, `node --check sidecar/recorder-ingest.mjs`, `node --check sidecar-tests/recorder-ingest.test.mjs`, `node --test sidecar-tests/recorder-ingest.test.mjs` (`9/9`), adjacent recorder suite `node --test sidecar-tests/recorder-store.test.mjs sidecar-tests/recorder-search.test.mjs sidecar-tests/recorder-raw-api-server.test.mjs sidecar-tests/recorder-pipes.test.mjs sidecar-tests/recorder-evidence-inbox-builder.test.mjs` (`35/35`), `env -u AGENTIC30_TEST_STUB_PROVIDER -u AGENTIC30_APP_SUPPORT_PATH npm run test:sidecar` (`2338` passed, `3` skipped, `0` failed), and `npm run check:public-safety`.
+- This slice is `sidecar_policy_only` for Gate A redaction acceptance. It advances the actual ingest-to-FTS policy path, but still does not complete Gate A because live signed-app validation must prove real AX/OCR capture, UI-visible eligibility transitions, search results under actual recorder operation, and deletion/retention behavior.
+
+### 2026-06-30 KST — Gate C frame document metadata deletion hardening slice
+
+- Hardened frame deletion so `document_path_search_label` is cleared together with raw `document_path`, browser URL labels, AX/OCR text, redacted text, sink eligibility flags, and the deleted privacy/redaction statuses. This closes the lingering safe-label metadata gap for both direct frame deletion and range/retention-driven frame deletion.
+- Strengthened `deleteRecorderFrameCapture()` coverage so the fixture starts with a non-null document path and document search label, then proves both are purged after deletion.
+- Strengthened `deleteRecorderFrameCapturesInRange()` coverage so in-range frame document paths and document labels are purged while an out-of-range frame keeps its document metadata.
+- Verification passed: `node --check sidecar/recorder-delete.mjs`, `node --check sidecar-tests/recorder-delete.test.mjs`, `node --test sidecar-tests/recorder-delete.test.mjs` (`19/19`), `node --test sidecar-tests/recorder-retention.test.mjs` (`24/24`), `npm run check:public-safety`, and `git diff --check`.
+- This slice is sidecar deletion/retention hardening for document metadata. It is not `e2e_accepted`: live signed-app recorder acceptance still needs an unlocked foreground session and real capture/delete/retention validation for the Founder Memory surfaces.
+
+### 2026-06-30 KST — UI E2E runner network entitlement and Strategy sidecar smoke slice
+
+- The dynamic Strategy UI E2E root cause was the sandboxed `agentic30UITests-Runner.app` missing `com.apple.security.network.server`. Direct `Process.run()` launch kept app arguments/environment deterministic, but the child sidecar inherited the runner sandbox and failed sidecar bootstrap with `listen EPERM: operation not permitted 127.0.0.1`.
+- `scripts/xcode-test.sh` local UI modes now run `build-for-testing`, locate the real non-Index DerivedData `agentic30UITests-Runner.app`, re-sign it ad-hoc with `network.server`, verify the entitlement, then run `test-without-building`. `AGENTIC30_UI_E2E_RESIGN_NETWORK_SERVER=0` disables the local adjustment if needed.
+- Failed LaunchServices/`launchctl setenv` experiments were removed from the XCUITest harness. The Strategy sidecar test now keeps the direct app executable launch path, uses app-readable cache workspace/app-support paths, preserves failure artifacts, waits for `ready_event_received`, and asserts canonical run/cache diagnostics before UI badge assertions.
+- The Strategy provider stub path now recognizes Strategy report research/synthesis prompts before live auth checks in UI-test mode, so the dynamic Strategy test does not depend on live Exa/provider credentials while still exercising sidecar startup, WebSocket routing, persistence, and UI rendering.
+- UI smoke blockers found during the approved run were repaired: Office Hours daily-card replacement now uses one sheet state owner instead of three independent `.sheet(item:)` modifiers, and the Strategy matrix/loading accessibility identifiers were adjusted so tests target stable, concrete nodes rather than off-screen/ambiguous containers.
+- Verification passed: targeted dynamic Strategy sidecar UI E2E `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 bash scripts/xcode-test.sh ui-full -only-testing:agentic30UITests/agentic30UITests/testStrategyResearchRunsThroughSidecarAndPersistsCanonicalRunDiagnostics` (`1/1`, result bundle `Test-agentic30UITests-2026.06.30_13-35-33-+0900.xcresult`) and approved local UI smoke `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 bash scripts/xcode-test.sh ui-smoke` (`16/16`, `231.723s`, result bundle `Test-agentic30UITests-2026.06.30_13-36-24-+0900.xcresult`).
+- This is debug-app UI E2E harness and Strategy/Office Hours smoke evidence. It is not live signed-app recorder acceptance for Founder Memory OS capture/delete/retention under real TCC and media state.
+
+### 2026-07-01 KST — Gate A SCStream first-frame collector slice
+
+- Swift frame capture no longer uses `SCScreenshotManager.captureImage`. Manual
+  and automatic frame capture now start a short-lived `SCStream` screen output,
+  wait for the first `.screen` sample buffer, convert the pixel buffer to
+  `CGImage` locally, and then continue through the existing recorder frame
+  envelope/media path.
+- The stream collector fails explicitly instead of falling back to another
+  capture API: unconfigured stream, stream-start failure, missing first frame,
+  missing pixel buffer, and CGImage conversion failure surface as
+  `ERR_RECORDER_FRAME_STREAM_*` root causes.
+- This closes the specific "screenshot manager" implementation gap for the
+  Swift frame collector, but it is not a final always-on completion claim: the
+  current auto path still records discrete first-frame samples on readiness,
+  timer, and app-activation triggers rather than maintaining a continuous
+  background frame stream.
+- Verification passed: `xcodebuild build-for-testing -project
+  agentic30.xcodeproj -destination 'platform=macOS' -scheme agentic30` (`TEST
+  BUILD SUCCEEDED`), `env SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml
+  bash scripts/preflight-release.sh --skip-tests` (`Release configuration
+  compiles`, no Swift warnings emitted), `npm run check:public-safety`
+  (`public-safety: clean`), and targeted `git diff --check`.
+- Approved focused UI E2E for the Founder Replay recorder control was retried
+  after this change, but `scripts/xcode-test.sh` refused before app launch
+  because the macOS screen is locked. This slice is therefore compile/build
+  evidenced only; live signed-app recorder acceptance still requires an
+  unlocked foreground session and granted TCC so the UI can drive real
+  capture/delete/retention/media behavior.
+
+### 2026-07-01 KST — Gate A persistent SCStream auto-capture session slice
+
+- Swift auto-capture no longer starts a fresh frame stream for every automatic
+  frame. Starting auto-capture now starts a persistent `SCStream` screen session
+  first, stores it on `AgenticViewModel`, and uses that live stream's latest
+  frame for readiness-auto-arm, timer, and app-activation captures.
+- Manual capture also reuses the active auto-capture stream when one exists;
+  otherwise it keeps the short-lived `SCStream` first-frame path from the prior
+  slice.
+- Auto-capture stop, latest-frame delete, and `AgenticViewModel` deinit now stop
+  and release the frame stream session, so the stream lifetime is tied to the
+  visible recorder control state instead of leaking after local stop conditions.
+- This is still not a full Gate A acceptance claim: it moves the Swift collector
+  from screenshot API / per-frame stream startup toward an always-on stream
+  while auto-capture is active, but live signed-app acceptance still must prove
+  real TCC permission states, UI-visible capture/delete/retention, media rows,
+  and Input Monitoring/event-driven transitions.
+- Verification passed: `xcodebuild build-for-testing -project
+  agentic30.xcodeproj -destination 'platform=macOS' -scheme agentic30` (`TEST
+  BUILD SUCCEEDED`), `env SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml
+  bash scripts/preflight-release.sh --skip-tests` (`Release configuration
+  compiles`), `npm run check:public-safety` (`public-safety: clean`), and
+  targeted `git diff --check`.
+- Approved focused UI E2E for the Founder Replay recorder control was retried
+  again, but `scripts/xcode-test.sh` refused before app launch because the macOS
+  screen is locked.
+
+### 2026-07-01 KST — Gate A listen-only event tap trigger slice
+
+- Swift auto-capture now starts a listen-only Event Tap/Input Monitoring trigger
+  while recorder auto-capture is running, but only after
+  `event_driven_capture_ready` is true and the main app actor's runtime event tap
+  probe still reports granted.
+- The trigger does not capture raw keys or pointer payloads. It maps macOS input
+  events to coarse event-class trigger IDs such as
+  `auto_swift_event_tap_keyboard_activity`,
+  `auto_swift_event_tap_pointer_click`, and
+  `auto_swift_event_tap_scroll_activity`, then routes them through the existing
+  recorder frame capture path with a 10 second debounce.
+- Event tap creation and run-loop source failures are explicit root causes
+  (`ERR_RECORDER_EVENT_TAP_CREATE_FAILED` and
+  `ERR_RECORDER_EVENT_TAP_RUN_LOOP_SOURCE_FAILED`). They do not silently claim
+  event-driven readiness or hide the system permission/runtime failure behind
+  timer-only capture.
+- Auto-capture readiness reconciliation now handles the late-grant transition:
+  if core frame capture is already running and a later control-state refresh
+  moves `event_driven_capture_ready` to true, Swift attempts to attach the
+  listen-only event tap instead of returning early. If event-driven readiness
+  later becomes false while core capture remains usable, Swift stops only the
+  event tap trigger and keeps the timer/app-activation capture path separate.
+- Verification passed: `xcodebuild build-for-testing -project
+  agentic30.xcodeproj -destination 'platform=macOS' -scheme agentic30` (`TEST
+  BUILD SUCCEEDED`), targeted Swift unit test
+  `bash scripts/xcode-test.sh unit '-only-testing:agentic30Tests/AgenticViewModelAuthTests/recorderEventTapTriggerRequiresEventDrivenReadiness()'`
+  (`TEST SUCCEEDED`), `env SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml
+  bash scripts/preflight-release.sh --skip-tests` (`preflight passed`),
+  `npm run check:public-safety` (`public-safety: clean`), and targeted
+  `git diff --check`.
+- Approved focused UI E2E for the Founder Replay recorder control was retried
+  again after this change, but `scripts/xcode-test.sh` refused before app launch
+  because the macOS screen is locked. This slice is therefore
+  `actual_collector` code/build evidence for the trigger path, not
+  `e2e_accepted` live recorder acceptance under granted TCC.
+- The same approved focused UI E2E target was retried after the readiness-update
+  transition fix and refused at the same screen-lock guard before app launch.
+
+### 2026-07-01 KST — Gate C typed local-transcription unavailable root-cause slice
+
+- Swift microphone local transcription now distinguishes local-only failure
+  causes instead of collapsing every unavailable path to
+  `local_unavailable_no_cloud_fallback`.
+- The emitted no-cloud terminal states cover Speech framework unavailable,
+  Speech permission missing, local recognizer unavailable, local recognition
+  error, and local recognition timeout. None of these states enables a cloud
+  transcription retry.
+- `sidecar/recorder-audio.mjs` now allowlists those typed terminal states for
+  `transcriptStatus=local_transcription_unavailable`, persists the exact state,
+  rejects unknown/cloud-retry-like terminal states, and keeps unavailable audio
+  chunks out of transcript segment insertion and search/memory indexing.
+- Added Swift envelope coverage for constructing an encrypted microphone chunk
+  with a typed unavailable terminal state, plus sidecar coverage for preserving
+  every typed state and rejecting `cloud_retry_available`.
+- Verification passed: `node --check sidecar/recorder-audio.mjs`,
+  `node --check sidecar-tests/recorder-audio.test.mjs`,
+  `node --test sidecar-tests/recorder-audio.test.mjs` (`9/9`), and
+  `xcodebuild build-for-testing -project agentic30.xcodeproj -destination
+  'platform=macOS' -scheme agentic30` (`TEST BUILD SUCCEEDED`). Follow-up
+  release/public checks passed with `env SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml
+  bash scripts/preflight-release.sh --skip-tests`, `npm run
+  check:public-safety`, targeted `git diff --check`, and a whitespace scan for
+  the untracked checkpoint file.
+- The targeted Swift unit invocation for this new envelope test hung after
+  launching the host app, so this slice is sidecar-contract plus Swift
+  compile/build evidence only. It still needs live microphone/Speech permission
+  validation and unlocked UI/live signed-app recorder acceptance.
+- Follow-up focused debug-app UI E2E passed for the adjacent recorder
+  consent/visible-indicator/sensitive-audio opt-in surface, but this typed
+  transcription slice itself remains sidecar-contract plus Swift compile/build
+  evidenced until live microphone/Speech permission validation runs.
+
+### 2026-07-01 KST — Gate C audio consent-grant provenance slice
+
+- Recorder control-state now creates a durable consent grant id when
+  `grant_consent` succeeds, returning it as both `consent.grantId` and
+  `consent.grant_id`. Normalization also derives the same stable id from
+  `grantedAt` for older granted control-state files without an explicit id.
+- Swift decodes the consent grant id and includes it in microphone and System
+  Audio envelopes. Runtime audio finalization now fails explicitly with
+  `ERR_RECORDER_AUDIO_CONSENT_GRANT_ID_MISSING` before sending an audio chunk if
+  the current recorder control-state is granted but lacks a grant id.
+- `recordAudioChunk()` now requires `consent_grant_id` and fails closed before
+  persistence when it is absent, so background raw audio cannot enter the local
+  recorder without a consent trace.
+- Focused coverage proves control-state id generation, Swift envelope id
+  propagation, sidecar fail-closed ingest, and real sidecar WebSocket raw API
+  runtime ingestion preserving the same grant id.
+- Verification passed: `node --test sidecar-tests/recorder-audio.test.mjs`
+  (`9/9`), `node --test sidecar-tests/recorder-control-state.test.mjs` (`5/5`),
+  `node --test sidecar-tests/recorder-delete.test.mjs
+  sidecar-tests/recorder-retention.test.mjs` (`51/51`),
+  `node --test sidecar-tests/recorder-raw-api-runtime.test.mjs
+  sidecar-tests/recorder-raw-api-server.test.mjs` (`19/19`),
+  `npm run check:public-safety`, and `xcodebuild build-for-testing -project
+  agentic30.xcodeproj -destination 'platform=macOS' -scheme agentic30`
+  (`TEST BUILD SUCCEEDED`). Follow-up release/diff verification also passed
+  with `env SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml bash
+  scripts/preflight-release.sh --skip-tests`, targeted `git diff --check`, and
+  docs whitespace scan.
+- This is still contract/build evidence, not live signed-app audio acceptance:
+  live microphone/System Audio capture under granted TCC and unlocked UI E2E
+  remain required.
+- Focused debug-app real-sidecar UI E2E now passes for the visible consent
+  grant path: it grants recorder consent, observes the revoke control plus
+  `granted`/`indicator ack`, toggles Microphone and System Audio opt-in, and
+  requires either `audio running` or a named `ERR_RECORDER_*` blocker.
+
+### 2026-07-01 KST — Gate C raw-audio indicator provenance slice
+
+- `recordAudioChunk()` no longer accepts missing or explicit `unknown`
+  `raw_audio_indicator_state` values. Both cases fail closed with
+  `ERR_RECORDER_AUDIO_INDICATOR_STATE_REQUIRED` before an audio chunk, media
+  asset, transcript row, or search row can be persisted.
+- The accepted Swift microphone/System Audio contract remains explicit:
+  envelopes carry `rawAudioIndicatorState=visible_indicator_active` when raw
+  audio is captured under the visible recording indicator.
+- The raw API runtime test fixture for unencrypted background audio now names
+  `visible_indicator_active`, so the expected failure remains
+  `ERR_RECORDER_MEDIA_ENCRYPTION_REQUIRED` and cannot be masked by the new
+  provenance requirement.
+- Verification passed: `node --check sidecar/recorder-audio.mjs`,
+  `node --check sidecar-tests/recorder-audio.test.mjs`,
+  `node --check sidecar-tests/recorder-raw-api-runtime.test.mjs`,
+  `node --test sidecar-tests/recorder-audio.test.mjs` (`9/9`),
+  `node --test sidecar-tests/recorder-raw-api-runtime.test.mjs
+  sidecar-tests/recorder-raw-api-server.test.mjs` (`19/19`), and
+  `node --test sidecar-tests/recorder-delete.test.mjs
+  sidecar-tests/recorder-retention.test.mjs` (`51/51`).
+  Follow-up release/safety/broad verification also passed: `npm run
+  check:public-safety`, `env
+  SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml bash
+  scripts/preflight-release.sh --skip-tests`, `env -u
+  AGENTIC30_TEST_STUB_PROVIDER -u AGENTIC30_APP_SUPPORT_PATH npm run
+  test:sidecar` (`2381` passed, `3` skipped, `0` failed), targeted
+  `git diff --check`, and whitespace scan.
+- Focused debug-app real-sidecar UI E2E now passes for the visible
+  indicator/sensitive-audio opt-in path: it observes `indicator ack`, enables
+  Microphone/System Audio, and requires either `audio running` or a named
+  `ERR_RECORDER_*` blocker.
+- This is still contract/runtime-test evidence. It does not replace live
+  signed-app microphone/System Audio validation under granted TCC, visible
+  indicator behavior, and unlocked UI E2E recorder acceptance.
+
+### 2026-07-01 KST — Gate A redacted search Swift UI slice
+
+- Founder Replay Control now exposes the existing recorder redacted search path
+  as a user-visible panel instead of leaving `/recorder/search` as sidecar-only
+  behavior.
+- `AgenticViewModel` now owns `recorderSearchResult`, running/error state, and a
+  pending query. It requests an authenticated raw API token with exactly
+  `search` scope, calls `/recorder/search` with redacted source types
+  (`frame,transcript,memory,product_event`) and `limit=12`, decodes result rows,
+  empty states, and `proof_boundary`, and refreshes raw API audit rows after a
+  successful fetch.
+- Sidecar error envelopes now clear pending search state explicitly, so a
+  failed token/request path does not leave the Swift UI stuck in a running
+  state.
+- `OpenDesignDayPageView` threads the result/running/error state from
+  `ContentView` into Founder Replay and renders a `Redacted Search` control
+  panel with `search`, `redacted`, and `non-proof` badges, stable
+  accessibility identifiers, result rows, empty-state rendering, and a summary
+  accessibility label that keeps search hits explicitly non-proof.
+- Focused verification passed:
+  `xcrun swiftc -parse agentic30/AgenticViewModel.swift`,
+  `xcrun swiftc -parse agentic30/OpenDesignDayPageView.swift`,
+  `xcrun swiftc -parse agentic30/ContentView.swift`, targeted Swift unit tests
+  `recorderSearchRequestsRedactedSearchToken()` and
+  `recorderSearchResultDecodesRedactedBoundaryAndMetadata()` (`2/2`),
+  `xcodebuild build-for-testing -project agentic30.xcodeproj -destination
+  'platform=macOS' -scheme agentic30` (`TEST BUILD SUCCEEDED`),
+  `npm run check:public-safety`, and `env
+  SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml bash
+  scripts/preflight-release.sh --skip-tests`.
+- Approved focused UI E2E was retried with
+  `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`, but `scripts/xcode-test.sh` refused
+  before app launch because the macOS screen is locked.
+- This slice is `ui_wired` and compile/unit evidenced, not unlocked UI E2E
+  acceptance and not live signed-app recorder acceptance. It still needs a
+  foreground unlocked UI run and live signed-app validation under granted TCC
+  before redacted search can be counted as an accepted Founder Memory surface.
+
+### 2026-07-01 KST — Gate A Evidence Inbox candidate rows Swift UI slice
+
+- Founder Replay Control's Day Memory Review panel now surfaces concrete
+  Evidence Inbox candidates from the existing `recorder_day_memory_loop_result`
+  payload instead of only showing aggregate counts.
+- `AgenticViewModel` decodes `evidence_build_result.created` into
+  `RecorderEvidenceCandidateSummary`, including real sidecar DB-row shape:
+  snake-case fields plus JSON-string `source_ids_json`,
+  `proof_ledger_mapping_json`, and `evidence_debt_json`.
+- Candidate rows render status, proof kind, target gate, claim, source count,
+  evidence-debt count, and stable accessibility identifiers. Accessibility
+  labels explicitly include `evidence inbox candidate` and `non-proof`, so
+  recorder-derived candidate material remains review input only.
+- Verification passed: targeted Swift tests
+  `recorderDayMemoryLoopResultUpdatesViewModelState()` and
+  `decodesRecorderDayMemoryLoopResultEvent()` (`2/2`), `xcodebuild
+  build-for-testing -project agentic30.xcodeproj -destination 'platform=macOS'
+  -scheme agentic30` (`TEST BUILD SUCCEEDED`), `npm run check:public-safety`,
+  `npm run preflight:bundle`, and `env
+  SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml bash
+  scripts/preflight-release.sh --skip-tests`.
+- The same release preflight against the live appcast failed before bundle
+  checks because `CFBundleVersion` is `49` while the live Sparkle appcast build
+  is also `49`. That is a release numbering gate to resolve before shipping,
+  not a candidate-row regression.
+- Approved focused UI E2E was retried with
+  `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`, but `scripts/xcode-test.sh` refused
+  before app launch because the macOS screen is locked.
+- This slice is `ui_wired` and compile/unit evidenced only. It still needs
+  unlocked UI E2E plus live signed-app recorder validation before Evidence
+  Inbox candidate review can be treated as accepted product behavior.
+
+### 2026-07-01 KST — Gate A Evidence Inbox candidate row UI E2E fixture/assertion slice
+
+- Candidate rows are now exposed as first-class accessibility elements on the
+  row itself instead of through hidden 1x1 overlay elements. The row label still
+  includes candidate id/status/proof kind/target gate/claim/source count/debt
+  count plus `evidence inbox candidate` and `non-proof`.
+- The existing focused Founder Replay recorder UI E2E now seeds its temporary
+  `AGENTIC30_APP_SUPPORT_PATH` recorder DB through the real sidecar
+  `RecorderStore` and `recordFrameCaptureEnvelope` modules before app launch.
+  The seed creates a recent frame plus customer-interview product event inside
+  the default 24-hour Day Memory Review range.
+- The same UI E2E now requires the real `recorder_day_memory_loop_run` path to
+  produce `review_evidence_inbox`, `candidate rows 1`, and
+  `opendesign.founderReplay.control.dayMemory.candidate.0` with pending
+  customer-reply/non-proof labels.
+- Verification passed: `xcrun swiftc -parse
+  agentic30/OpenDesignDayPageView.swift`, `xcrun swiftc -parse
+  agentic30UITests/agentic30UITests.swift`, standalone Node seed smoke,
+  `xcodebuild build-for-testing -project agentic30.xcodeproj -destination
+  'platform=macOS' -scheme agentic30` (`TEST BUILD SUCCEEDED`), `npm run
+  check:public-safety`, `npm run preflight:bundle`, and `env
+  SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml bash
+  scripts/preflight-release.sh --skip-tests`.
+- Approved focused UI E2E was retried with
+  `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`, but `scripts/xcode-test.sh` refused
+  before app launch because the macOS screen is locked.
+- This strengthens the unlocked UI E2E gate for candidate review but does not
+  count as observed UI acceptance until the Mac is unlocked and the focused
+  test actually drives the Agentic30 window.
+
+### 2026-07-01 KST — Gate A redacted search UI E2E fixture/assertion slice
+
+- The `Redacted Search` query identifier now sits on the actual SwiftUI
+  `TextField`, so the focused UI E2E can enter a seeded query directly instead
+  of relying on a container-level identifier.
+- Search result rows are now first-class accessibility elements on the row
+  itself. Their labels include source type/id, timestamp, title/snippet,
+  metadata, `redacted search result`, and `search proof rejected`.
+- Raw API Audit rows now expose an accepted search-specific identifier,
+  `opendesign.founderReplay.control.audit.search.accepted`, when a row is
+  `/recorder/search` + `search` + `accepted`. The existing SQL-specific audit
+  identifier remains unchanged.
+- The focused Founder Replay recorder UI E2E now reuses the real recorder-store
+  fixture created for Day Memory Review, types `founder activation`, and
+  requires `/recorder/search` to return one non-proof frame result for
+  `ui-frame-1`. It also waits for the accepted `/recorder/search` audit row and
+  asserts the raw-read/audit proof boundary language.
+- Verification passed: `xcrun swiftc -parse
+  agentic30/OpenDesignDayPageView.swift`, `xcrun swiftc -parse
+  agentic30UITests/agentic30UITests.swift`, standalone Node recorder-search
+  smoke (`resultCount=1`, `sourceId=ui-frame-1`), `git diff --check`,
+  `xcodebuild build-for-testing -project agentic30.xcodeproj -destination
+  'platform=macOS' -scheme agentic30` (`TEST BUILD SUCCEEDED`), `npm run
+  check:public-safety`, `npm run preflight:bundle`, and `env
+  SPARKLE_APPCAST_URL=http://127.0.0.1:9/appcast.xml bash
+  scripts/preflight-release.sh --skip-tests`.
+- Approved focused UI E2E was retried with
+  `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`, but `scripts/xcode-test.sh` refused
+  before app launch because the macOS screen is locked.
+- This strengthens the unlocked UI E2E gate for redacted search but does not
+  count as observed UI acceptance until the Mac is unlocked and the focused
+  test actually drives the Agentic30 window.
+
+### 2026-07-01 KST — Gate A visible-range delete UI E2E acceptance slice
+
+- Founder Replay replay mode now exposes the seeded recorder frame list through
+  leaf accessibility identifiers for refresh, status, visible-range delete, and
+  timeline frame buttons. The previous container-level
+  `opendesign.founderReplay.timeline` identifier clobbered those child
+  identifiers in the macOS accessibility tree; it was removed so the actual
+  controls are queryable.
+- `AgenticViewModel` now retries `recorder_frame_captures_list` once the sidecar
+  ready event arrives if the earlier display prepare call ran before connection.
+  This keeps the replay rail from staying empty after a pre-ready first render.
+- The new focused UI E2E
+  `testFounderReplaySeededVisibleRangeDeleteReceipt()` seeds `ui-frame-1` through
+  the real `RecorderStore` and `recordFrameCaptureEnvelope`, opens the real
+  Founder Replay replay surface, observes `ui-frame-1` / `ui-asset-frame-1`
+  through the sidecar frame-list path, deletes the currently visible range, and
+  asserts the non-proof range tombstone receipt. The receipt labels frame ids,
+  media ids, delete status, path exposure, and `range delete proof rejected`.
+- Verification passed: `xcrun swiftc -parse agentic30/AgenticViewModel.swift`,
+  `xcrun swiftc -parse agentic30/OpenDesignDayPageView.swift`,
+  `xcrun swiftc -parse agentic30UITests/agentic30UITests.swift`, targeted
+  `git diff --check`, and `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 omo sparkshell
+  bash scripts/xcode-test.sh ui-full
+  '-only-testing:agentic30UITests/agentic30UITests/testFounderReplaySeededVisibleRangeDeleteReceipt'`
+  (`TEST EXECUTE SUCCEEDED`, 1 test, 0 failures).
+- This is debug-app real-sidecar UI acceptance for the seeded visible-range
+  deletion path. It does not replace live signed-app recorder validation under
+  granted Screen Recording/Accessibility/Input Monitoring TCC, real media
+  capture, retention, and manual/timeline validation.
+
+### 2026-07-01 KST — Gate A candidate/search focused UI E2E acceptance slice
+
+- Added the focused UI E2E
+  `testFounderReplaySeededDayMemoryCandidateAndRedactedSearchReceipt()` to
+  isolate Day Memory candidate review and redacted search/audit assertions from
+  the broader Founder Replay control UI E2E.
+- The test seeds a temporary `AGENTIC30_APP_SUPPORT_PATH` recorder DB through
+  the real `RecorderStore`/ingest modules, launches the debug app against the
+  real sidecar, opens Founder Replay Control, runs the real
+  `recorder_day_memory_loop_run` path, and asserts `candidate rows 1` plus
+  `opendesign.founderReplay.control.dayMemory.candidate.0` with pending
+  customer-reply, `evidence inbox candidate`, and `non-proof` labels.
+- The same run types `founder activation` into the actual `Redacted Search`
+  text field, drives `/recorder/search` through the authenticated `search`
+  scope, asserts the single non-proof `ui-frame-1` result, and verifies
+  `opendesign.founderReplay.control.audit.search.accepted` includes
+  `/recorder/search`, `search`, `accepted`, `authorized_raw_read`,
+  `no sources`, and `audit proof rejected`.
+- Verification passed: `xcrun swiftc -parse
+  agentic30UITests/agentic30UITests.swift`, targeted `git diff --check`, and
+  `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 omo sparkshell bash
+  scripts/xcode-test.sh ui-full
+  '-only-testing:agentic30UITests/agentic30UITests/testFounderReplaySeededDayMemoryCandidateAndRedactedSearchReceipt'`
+  (`TEST EXECUTE SUCCEEDED`, 1 test, 0 failures; result bundle
+  `/Users/october/Library/Developer/Xcode/DerivedData/agentic30-fqojdvkkhmwzswfynutajcrvmkte/Logs/Test/Test-agentic30UITests-2026.07.01_08-02-03-+0900.xcresult`).
+- This is debug-app real-sidecar UI acceptance for seeded Day Memory candidate
+  review plus redacted search/audit. It still does not complete Gate A because
+  live signed-app validation under granted Screen
+  Recording/Accessibility/Input Monitoring TCC must prove actual capture,
+  search, delete, retention, media behavior, and manual/timeline validation.
+
+### 2026-07-01 KST — Gate A broad Founder Replay control UI E2E cleanup slice
+
+- Cleaned the broad Founder Replay control UI E2E so it no longer duplicates
+  the focused exact-query redacted-search assertion. The broad path now uses the
+  default `activation` query to prove integrated search/audit flow, while
+  `testFounderReplaySeededDayMemoryCandidateAndRedactedSearchReceipt()` remains
+  responsible for exact `founder activation` single-result coverage.
+- The broad test now allows multiple redacted search hits, waits for the seeded
+  `ui-frame-1` row anywhere in the first three rendered result rows, and checks
+  the non-proof/search-boundary labels instead of depending on a brittle
+  text-field replacement sequence.
+- The SQL inspector step now uses the same 1360x960 UI-test workspace window as
+  the focused slices, emits screenshot/tree/element diagnostics if the SQL run
+  button is not hittable, and falls through to the existing accessibility press
+  helper when the button exists and is enabled.
+- Verification passed with Xcode output redirected to a local log to avoid the
+  UI trace exceeding the 64 MB capture limit:
+  `env AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 bash scripts/xcode-test.sh ui-full
+  '-only-testing:agentic30UITests/agentic30UITests/testFounderReplayRecorderControlSurfaceReportsTccReadinessAndDrivesCaptureWhenGranted'`
+  (`TEST EXECUTE SUCCEEDED`, 1 test, 0 failures; result bundle
+  `/Users/october/Library/Developer/Xcode/DerivedData/agentic30-fqojdvkkhmwzswfynutajcrvmkte/Logs/Test/Test-agentic30UITests-2026.07.01_08-19-57-+0900.xcresult`).
+- The passing run reached the explicit `Founder Replay TCC Blocked` attachment
+  path. This is debug-app real-sidecar UI acceptance for
+  readiness/search/audit/SQL/replay flow stability, not live signed-app capture
+  acceptance under granted TCC.
+
+### 2026-07-01 KST — Gate A permission ladder focused UI E2E acceptance slice
+
+- Added the focused UI E2E
+  `testFounderReplayPermissionLadderExposesNativeRequestsAndActorDiagnostics()`
+  to isolate native permission request exposure and actor/release diagnostics
+  from the broader Founder Replay control flow.
+- The test launches the debug app against the real sidecar, opens Founder Replay
+  Control, and asserts the native `Request` buttons plus permission-row
+  diagnostics for Screen Recording/System Audio, Accessibility,
+  Input Monitoring/Event Tap, Microphone, and System Audio. It verifies TCC
+  service names, manual System Settings paths, relaunch scopes,
+  settings-anchor labels, drag-capability labels, `actorSource mainApp`, and
+  actor/release-gate diagnostics including Sparkle key/feed and release-policy
+  fields.
+- The first focused run proved a test issue, not a product defect:
+  offscreen-hittable scrolling could not bring the lower permission ladder
+  `Check` button into hit-test range. The final test keeps this slice to
+  exposure/diagnostic assertions and intentionally does not click native TCC
+  prompts.
+- Verification passed: `omo sparkshell xcrun swiftc -parse
+  agentic30UITests/agentic30UITests.swift` and `env
+  AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 omo sparkshell bash scripts/xcode-test.sh
+  ui-full
+  '-only-testing:agentic30UITests/agentic30UITests/testFounderReplayPermissionLadderExposesNativeRequestsAndActorDiagnostics'`
+  (`TEST EXECUTE SUCCEEDED`, 1 test, 0 failures; result bundle
+  `/Users/october/Library/Developer/Xcode/DerivedData/agentic30-fqojdvkkhmwzswfynutajcrvmkte/Logs/Test/Test-agentic30UITests-2026.07.01_08-33-40-+0900.xcresult`).
+- This is debug-app real-sidecar UI acceptance for native permission request
+  exposure and permission actor diagnostics. It is not live signed-app TCC
+  acceptance: granted Screen Recording/Accessibility/Input
+  Monitoring/microphone/System Audio permissions must still be validated through
+  actual capture, media, delete, retention, and timeline/manual behavior.
+
+### 2026-07-01 KST — Gate C sensitive audio consent/indicator focused UI E2E acceptance slice
+
+- Added the focused UI E2E
+  `testFounderReplaySensitiveAudioConsentExposesVisibleIndicatorAndNamedOutcome()`
+  to isolate recorder consent, visible indicator acknowledgement, and sensitive
+  Microphone/System Audio opt-in from the broader Founder Replay control flow.
+- The test launches the debug app against the real sidecar, opens Founder
+  Replay Control, grants recorder consent when needed, asserts the revoke
+  control plus `granted` and `indicator ack`, toggles Microphone and System
+  Audio opt-in, and requires the UI to expose either `audio running` or a named
+  `ERR_RECORDER_*` blocker. This keeps explicit local TCC/recorder root causes
+  visible instead of hiding them behind fallback logic.
+- Verification passed: `omo sparkshell xcrun swiftc -parse
+  agentic30UITests/agentic30UITests.swift` and `env
+  AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 omo sparkshell bash scripts/xcode-test.sh
+  ui-full
+  '-only-testing:agentic30UITests/agentic30UITests/testFounderReplaySensitiveAudioConsentExposesVisibleIndicatorAndNamedOutcome'`
+  (`TEST EXECUTE SUCCEEDED`, 1 test, 0 failures; result bundle
+  `/Users/october/Library/Developer/Xcode/DerivedData/agentic30-fqojdvkkhmwzswfynutajcrvmkte/Logs/Test/Test-agentic30UITests-2026.07.01_08-43-22-+0900.xcresult`).
+- This is debug-app real-sidecar UI acceptance for consent/indicator/audio
+  named-outcome exposure. It does not replace live signed-app microphone/System
+  Audio capture validation under granted TCC, visible recording indicator
+  behavior, local transcription permission behavior, media retention, delete,
+  and timeline/manual validation.
+
+### 2026-07-01 KST — Gate A live signed-app core capture/delete harness slice
+
+- Added the env-gated UI E2E
+  `testFounderReplayLiveSignedAppCoreFrameCaptureAndDeleteWhenTccGranted()`.
+  It intentionally does not use the debug app as a substitute: the test starts
+  by reading `AGENTIC30_LIVE_SIGNED_APP_PATH`, requires it to point to an
+  existing `.app` bundle, and otherwise throws an explicit `XCTSkip`.
+- The harness launches that app bundle with an isolated test workspace/app
+  support path, opens Founder Replay Control, verifies the permission actor
+  reports `releaseGate release_ready` and `releasePolicyVerified true`, clicks
+  the permission check when available, and only then drives the visible
+  `captureFrame` and `deleteFrame` controls. If the capture button is disabled,
+  the failure preserves UI diagnostics and states that granted Screen
+  Recording/Accessibility/Input Monitoring TCC is required.
+- Verification passed for harness compilation and skip behavior:
+  `omo sparkshell xcrun swiftc -parse
+  agentic30UITests/agentic30UITests.swift`, and `env
+  AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 omo sparkshell bash scripts/xcode-test.sh
+  ui-full
+  '-only-testing:agentic30UITests/agentic30UITests/testFounderReplayLiveSignedAppCoreFrameCaptureAndDeleteWhenTccGranted'`
+  (`TEST EXECUTE SUCCEEDED`, 1 test skipped, 0 failures; result bundle
+  `/Users/october/Library/Developer/Xcode/DerivedData/agentic30-fqojdvkkhmwzswfynutajcrvmkte/Logs/Test/Test-agentic30UITests-2026.07.01_08-55-24-+0900.xcresult`).
+- This is live-acceptance harness readiness, not live signed-app acceptance.
+  The gate remains open until the same test is run with a signed
+  `agentic30.app` that already has granted Screen
+  Recording/Accessibility/Input Monitoring TCC and observes actual
+  capture/delete/media behavior.
+
+### 2026-07-01 KST — Gate A current signed-app workflow and locked-session blocker
+
+- Added `scripts/run-live-signed-recorder-ui-e2e.sh` as the repeatable
+  current-source workflow for the live signed-app acceptance test. It builds a
+  Release `agentic30.app` with the local Developer ID Application identity,
+  embeds `AGENTIC30_EXTERNAL_PERMISSION_ONBOARDING_ALLOWED=1` plus Sparkle
+  feed/key values, strips sidecar `.bin` symlinks, re-signs with Hardened
+  Runtime and app entitlements, verifies strict codesign, enforces Developer ID
+  authority, Team ID, Hardened Runtime, bundle identity, Sparkle feed/key
+  values, and the release permission flag, and then runs
+  `testFounderReplayLiveSignedAppCoreFrameCaptureAndDeleteWhenTccGranted` with
+  `AGENTIC30_LIVE_SIGNED_APP_PATH` pointing at the built app.
+- Current-source signed candidate was produced at
+  `build/live-signed-e2e/DerivedData/Build/Products/Release/agentic30.app` and
+  verified with strict codesign. The app reports version `1.0.29`, build `49`,
+  `Agentic30ExternalPermissionOnboardingAllowed=1`, Developer ID Team
+  `77S8MPV96M`, and Hardened Runtime.
+- The focused live signed-app UI E2E was then attempted through the new
+  workflow, reusing that app path, but `scripts/xcode-test.sh` exited `3`
+  before launching XCTest because the macOS session is locked/loginwindow
+  shielded. This preserves the explicit root cause: XCUITest can read parts of
+  the tree behind loginwindow, but Agentic30 windows are disabled and controls
+  are not reliably hittable.
+- A 2026-07-01 09:12 KST rerun with
+  `AGENTIC30_LIVE_SIGNED_SKIP_BUILD=1` and the same
+  `build/live-signed-e2e/DerivedData/Build/Products/Release/agentic30.app`
+  path re-verified strict codesign and the `1.0.29` build `49` permission flag,
+  then exited at the same locked-session guard before XCTest launch.
+- Follow-up read-only review identified that the reuse/build-only path needed
+  stronger identity checks than `codesign --verify`. The runner now rejects
+  apps unless the bundle id, permission actor bundle id, Developer ID authority,
+  Team ID, Hardened Runtime, Sparkle feed/key values, and
+  `Agentic30ExternalPermissionOnboardingAllowed=1` all match the live acceptance
+  requirements. A strengthened skip-build rerun passed those identity checks
+  (`77S8MPV96M`, Hardened Runtime `26.5.0`) before reaching the same locked
+  session guard.
+- This is still not Gate A live signed-app acceptance. It advances the
+  acceptance workflow from "harness exists" to "current signed app can be
+  produced and verified"; the remaining acceptance evidence requires an
+  unlocked foreground session, granted Screen
+  Recording/Accessibility/Input Monitoring TCC for that signed app, and an
+  observed capture/delete/media result from the same focused test.
+
+### 2026-07-01 KST — Gate A live signed-app runner Accessibility blocker
+
+- Hardened the live signed-app workflow beyond the earlier locked-session
+  blocker. `scripts/run-live-signed-recorder-ui-e2e.sh` now checks for an
+  unlocked GUI session before running live UI E2E, writes a short-lived signed
+  app path marker for the XCTest process, builds the Release candidate with the
+  `AGENTIC30_LIVE_SIGNED_UI_E2E` compilation condition, and requires
+  `Agentic30LiveSignedUIE2EAllowed=1` on skip-build reuse so stale signed apps
+  cannot be accepted accidentally.
+- The live signed UI test now launches with `--ui-testing-direct-workspace-window`
+  and treats actual OpenDesign workspace text as a readiness signal if the
+  top-level `opendesign.day.shell` accessibility identifier is not visible to
+  the attached process. Failure now preserves an explicit
+  "workspace missing" root cause instead of silently waiting on one container
+  identifier.
+- Latest focused run:
+  `AGENTIC30_LIVE_SIGNED_SKIP_BUILD=1 AGENTIC30_LIVE_SIGNED_APP_PATH=build/live-signed-e2e/DerivedData/Build/Products/Release/agentic30.app scripts/run-live-signed-recorder-ui-e2e.sh`.
+  It verified signed app version `1.0.29` build `49`, Team ID `77S8MPV96M`,
+  Hardened Runtime `26.5.0`, `Agentic30ExternalPermissionOnboardingAllowed=1`,
+  and `Agentic30LiveSignedUIE2EAllowed=1`; the app launched with the isolated
+  workspace and the sidecar reached `ready_event_received`.
+- The run still failed before Founder Replay rail interaction because
+  `agentic30UITests-Runner` could not observe any app window/static text through
+  XCUITest, while System Events observed two `Agentic30` windows and the
+  Office Hours/Day 2 surface in the same app process. Current blocker:
+  `runner_accessibility_blocked` / missing local Accessibility/TCC grant for
+  `october-academy.agentic30UITests.xctrunner`.
+- The live signed workflow now executes
+  `testFounderReplayLiveSignedAppRunnerAccessibilityPreflight` before the
+  longer capture/delete test. The preflight uses the same signed app launch
+  path and fails fast with `runner_accessibility_blocked` if the XCUITest runner
+  cannot observe a window plus known Office Hours/Day 2 static text.
+- 2026-07-01 09:55 KST skip-build rerun verified this ordering with
+  `Test-agentic30UITests-2026.07.01_09-55-57-+0900.xcresult`: the preflight ran
+  first, emitted `runner_accessibility_blocked`, preserved its launch
+  diagnostics/artifact root, and the longer capture/delete test did not run.
+- Hardened the granted branch for the next unblocked run. Swift now sends
+  `redactionStatus=redacted` and `safeForSearch=true` for live frame envelopes
+  that contain AX/OCR text, so sidecar ingest can derive redacted public text
+  and create searchable FTS rows without indexing raw text. The live signed UI
+  E2E now requires a live `frame-`/`asset-` receipt, rejects `ui-frame-` and
+  `ui-asset`, runs redacted search for `Agentic30` before delete, and requires a
+  non-proof result row with a live `frame-` id.
+- 2026-07-01 10:04 KST skip-build rerun after this hardening still stopped at
+  the runner Accessibility preflight:
+  `Test-agentic30UITests-2026.07.01_10-04-58-+0900.xcresult`. The new
+  capture/search assertions remain unexecuted until
+  `october-academy.agentic30UITests.xctrunner` can observe the signed app.
+- Added the live signed sensitive-audio leg
+  `testFounderReplayLiveSignedAppSensitiveAudioRunsWhenTccGranted` to the
+  workflow after core frame/search/delete. It launches the same signed app path,
+  verifies the release-ready permission actor, grants consent and visible
+  indicator acknowledgement, toggles Microphone and System Audio, and requires
+  `audio running`; named `ERR_RECORDER_*` audio errors fail live acceptance.
+  This test is wired into `scripts/run-live-signed-recorder-ui-e2e.sh` but
+  remains unexecuted while the runner Accessibility preflight is blocked.
+- Verification passed for the added audio leg: Swift parse, script
+  `bash -n`/`shellcheck`, targeted diff check, public-safety, and
+  `xcodebuild build-for-testing -project agentic30.xcodeproj -destination
+  "platform=macOS" -scheme agentic30UITests` (`TEST BUILD SUCCEEDED`). A
+  direct UI run of the new audio test was refused by the local screen-lock guard
+  because macOS was locked/loginwindow-shielded.
+- The live signed workflow now defaults
+  `AGENTIC30_LIVE_SIGNED_PRESERVE_ARTIFACTS=1` and forwards it to the runner
+  Accessibility preflight, core frame/search/delete test, and sensitive-audio
+  test. All three live signed teardowns honor the flag, so a successful
+  unblocked run keeps the xctrunner-container evidence roots under
+  `~/Library/Containers/october-academy.agentic30UITests.xctrunner/Data/Library/Caches/agentic30-ui-test-live-signed-{preflight,capture,audio}/<run-id>`.
+  The workflow prints that path pattern plus
+  `live-recorder-frame-search-verifier.json`, allowing the operator to collect
+  the core verifier JSON with the isolated app-support recorder DB/media rather
+  than relying only on `.xcresult` attachments.
+- This is not `actual_collector + ui_wired + e2e_accepted`. The signed app and
+  sidecar launch path are verified, but live capture/delete/media acceptance
+  still requires the UI-test runner to be allowed to observe/drive the app and
+  the signed app itself to have granted recorder TCC permissions.
+
+### 2026-07-01 KST — Gate A/C live recorder operator verifier slice
+
+- Added `scripts/verify-live-recorder-acceptance.mjs` plus the npm alias
+  `npm run verify:live-recorder -- --app-support <path>` for the
+  post-run/operator acceptance lane that should not be embedded into Swift UI.
+- The verifier opens the target app-support root and fails closed unless it
+  finds an undeleted live `frame-` row whose `capture_trigger` contains
+  `screencapturekit`, a live `asset-` media row with a non-empty file on disk,
+  a redacted search result for the same live frame with
+  `proofAcceptedBySearch=false`, a live `audio-` chunk with non-empty media
+  unless `--allow-missing-audio` is explicitly provided, and an accepted
+  raw-read audit row referencing the live frame unless
+  `--allow-missing-audit` is explicitly provided.
+- With `--apply-retention`, the verifier calls the production
+  `applyRecorderRetentionPolicy` using a tiny raw frame/audio window and
+  requires `status:"applied"`, `deletedFrameCount >= 1`,
+  `deletedAudioChunkCount >= 1` when audio was present, and
+  `deletedMediaCount >= 1`. This keeps retention as an operator harness unless
+  a real UI affordance exists.
+- Verification passed: `node --check
+  scripts/verify-live-recorder-acceptance.mjs`, `node
+  scripts/verify-live-recorder-acceptance.mjs --help`, and a temporary
+  live-like recorder fixture smoke that produced schema
+  `agentic30.live_recorder_acceptance.v1`, a live `frame-live-fixture` search
+  hit, live `audio-live-fixture`, accepted raw-read audit, and retention result
+  `{status:"applied", deletedFrameCount:1, deletedAudioChunkCount:1,
+  deletedMediaCount:2}`.
+- This is not live signed-app acceptance. It makes the post-run evidence check
+  deterministic once the unlocked signed-app/TCC run produces real rows, but
+  the live collector path remains blocked by the local
+  `runner_accessibility_blocked` state until the XCUITest runner can observe
+  and drive the signed app.
+
+### 2026-07-01 KST — Gate A live signed-app core test verifier bridge
+
+- Wired the operator verifier into
+  `testFounderReplayLiveSignedAppCoreFrameCaptureAndDeleteWhenTccGranted()`.
+  After the test observes a live `frame-`/`asset-` receipt and a live non-proof
+  redacted search result row, but before it deletes the frame, it now runs
+  `scripts/verify-live-recorder-acceptance.mjs` against that same
+  `AGENTIC30_APP_SUPPORT_PATH` and writes
+  `live-recorder-frame-search-verifier.json` into the test root.
+- Added verifier flag `--skip-wal-checkpoint` for this in-process live check so
+  the verifier does not force a WAL checkpoint while the signed app sidecar may
+  still hold its recorder DB connection open.
+- The in-test verifier call intentionally passes `--allow-missing-audio` and
+  `--allow-missing-audit`; it proves the live frame/media/redacted-search DB
+  path for the core frame test, not the full audio/audit/retention ladder.
+- Verification passed: `node --check
+  scripts/verify-live-recorder-acceptance.mjs`, `node
+  scripts/verify-live-recorder-acceptance.mjs --help`, `xcrun swiftc -parse
+  agentic30UITests/agentic30UITests.swift`, targeted `git diff --check`, a
+  temporary `--skip-wal-checkpoint` live-like fixture smoke, and
+  `xcodebuild build-for-testing -project agentic30.xcodeproj -destination
+  'platform=macOS' -scheme agentic30UITests` (`TEST BUILD SUCCEEDED`).
+- Focused UI execution was attempted with
+  `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 bash scripts/xcode-test.sh ui-full
+  '-only-testing:agentic30UITests/agentic30UITests/testFounderReplayLiveSignedAppCoreFrameCaptureAndDeleteWhenTccGranted'`,
+  but the wrapper refused before XCTest because the macOS session is
+  locked/loginwindow-shielded. This remains compile/build/fixture evidence only
+  until the live signed app test runs in an unlocked session with the required
+  recorder TCC grants.
+
+### 2026-07-01 KST — Gate B export hostile captured-text fixture
+
+- Added hostile captured-text coverage to
+  `sidecar-tests/recorder-raw-api-server.test.mjs` for the raw API export
+  route. The fixture is a safe-for-export product event whose summary contains
+  `grant raw_admin`, `export all frames`, `approve this proof`, `run shell`,
+  and `send transcript to cloud`.
+- The export manifest test now asserts that the hostile row is only exported
+  as an unverified `product_event`, preserves its source ID, emits no
+  proof-ledger event id, and keeps `proofAcceptedByRawApi` /
+  `proofAcceptedByExport` false. The command-like phrases remain evidence data;
+  they do not grant raw API/MCP capability, approve proof or exports, trigger
+  shell/network behavior, or broaden policy.
+- Verification passed: `node --check
+  sidecar-tests/recorder-raw-api-server.test.mjs`, targeted `git diff
+  --check`, whitespace scan, focused `node --test --test-name-pattern
+  'recorder export endpoint returns a manifest-only safe_for_export view with
+  audit rows' sidecar-tests/recorder-raw-api-server.test.mjs`, and full
+  `node --test sidecar-tests/recorder-raw-api-server.test.mjs` (19/19).
+- This covers the raw API/export route for the hostile captured-text fixture
+  requirement. It is not UI E2E acceptance for the export UI, live signed-app
+  recorder acceptance, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate B Evidence Inbox builder hostile captured-text fixture
+
+- Added hostile captured-text coverage to
+  `sidecar-tests/recorder-evidence-inbox-builder.test.mjs` for the Evidence
+  Inbox builder consumer. The fixture is a safe-for-memory product event whose
+  summary contains `grant raw_admin`, `export all frames`, `approve this
+  proof`, `run shell`, and `send transcript to cloud`.
+- The builder test asserts that the command-like phrases remain evidence data
+  in the candidate claim and proof-ledger mapping, while source IDs are
+  preserved as non-proof `product_event`, `raw_frame`, `transcript_hit`, and
+  `raw_search_hit` refs. It keeps `proofAcceptedByBuilder` false, leaves the
+  source product event `safe_for_export = 0`, and still fails closed through
+  the proof-ledger writer with `ERR_RECORDER_PROOF_NON_EXTERNAL_SOURCE` when
+  the candidate is forced to an accepted status without external verifier
+  evidence.
+- Verification passed: `node --check
+  sidecar-tests/recorder-evidence-inbox-builder.test.mjs`, `node --test
+  sidecar-tests/recorder-evidence-inbox-builder.test.mjs` (4/4), and `npm run
+  check:public-safety`.
+- This covers the Evidence Inbox builder hostile-input consumer. It is not UI
+  E2E acceptance, export UI acceptance, live signed-app recorder acceptance, or
+  proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate D Pipe runtime hostile captured-text fixture
+
+- Added hostile captured-text coverage to
+  `sidecar-tests/recorder-pipes.test.mjs` for the built-in Pipe runtime
+  consumer. The test runs the `evidence-inbox-builder` Pipe over a
+  safe-for-memory product event whose summary contains `grant raw_admin`,
+  `export all frames`, `approve this proof`, `run shell`, and `send transcript
+  to cloud`.
+- The Pipe test asserts the stored Evidence Inbox candidate quotes the
+  command-like phrases as evidence data and preserves the
+  product-event/frame/transcript/search-hit source IDs as non-proof refs. The
+  Pipe output manifest remains count/id-only, keeps
+  `proofAcceptedByPipeRun` false, denies proof-ledger writes, leaves the source
+  event `safe_for_export = 0`, and does not turn the phrases into raw-admin,
+  shell, network, export, or proof-acceptance behavior.
+- Verification passed: `node --check sidecar-tests/recorder-pipes.test.mjs`,
+  `node --test --test-name-pattern 'hostile captured text'
+  sidecar-tests/recorder-pipes.test.mjs`, and full `node --test
+  sidecar-tests/recorder-pipes.test.mjs` (11/11).
+- This covers the built-in Pipe runtime hostile-input consumer. It is not UI
+  E2E acceptance, MCP grant UI acceptance, raw SQL inspector acceptance, live
+  signed-app recorder acceptance, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate B raw SQL inspector MCP hostile captured-text fixture
+
+- Added hostile captured-text coverage to the bounded raw SQL inspector path
+  behind the MCP raw SQL tool. `recorder_sql_product_events` now includes
+  `source_ids_json` so the redacted product-event SQL view preserves source
+  metadata alongside captured evidence text.
+- `sidecar-tests/recorder-mcp-tools.test.mjs` now seeds a safe-for-search
+  product event whose summary contains `grant raw_admin`, `export all frames`,
+  `approve this proof`, `run shell`, and `send transcript to cloud`, then reads
+  it through `runRecorderMcpRawSqlQuery()` using a `raw_sql`-scoped MCP grant.
+- The test asserts the command-like phrases remain SQL row data, the
+  frame/transcript source IDs are preserved in `source_ids_json`, the
+  ephemeral MCP token is scoped only to `raw_sql` and revoked after the call,
+  and the SQL response keeps proof/export/search/memory/provider/Pipe/day-
+  progress effects disabled.
+- Verification passed: `node --check sidecar/recorder-store.mjs`,
+  `node --check sidecar-tests/recorder-mcp-tools.test.mjs`, `node --test
+  --test-name-pattern 'hostile captured text'
+  sidecar-tests/recorder-mcp-tools.test.mjs`, full `node --test
+  sidecar-tests/recorder-mcp-tools.test.mjs` (8/8), and `node --test
+  sidecar-tests/recorder-store.test.mjs` (11/11).
+- This covers the raw SQL inspector path behind the MCP raw SQL tool. It is
+  not Swift raw SQL UI acceptance, MCP grant UI acceptance, live signed-app
+  recorder acceptance, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate A Day Memory Review hostile captured-text fixture
+
+- Added hostile captured-text coverage to the Day Memory Review summarizer.
+  `sidecar-tests/recorder-day-memory-review.test.mjs` now seeds safe-for-memory
+  product-event and memory-item summaries whose captured text contains
+  `grant raw_admin`, `export all frames`, `approve this proof`, `run shell`,
+  and `send transcript to cloud`.
+- The test asserts Day Memory Review quotes those command-like phrases only as
+  product/memory summary evidence data, preserves frame/product/memory source
+  IDs, keeps `proofAcceptedByReview` false, keeps proof-ledger event ids absent,
+  preserves `safe_for_export = 0` on the source rows, and does not enable
+  proof/export/provider/Pipe effects.
+- Verification passed: `node --check
+  sidecar-tests/recorder-day-memory-review.test.mjs`, `node --test
+  --test-name-pattern 'hostile captured text'
+  sidecar-tests/recorder-day-memory-review.test.mjs`, and full `node --test
+  sidecar-tests/recorder-day-memory-review.test.mjs` (10/10).
+- This covers the Day Memory Review summarizer hostile-input consumer. It is
+  not Swift Day Memory Review UI acceptance, live signed-app recorder
+  acceptance, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate B MCP grant hostile captured-text fixture
+
+- Added hostile captured-text coverage to the MCP grant authorization policy
+  and Swift state boundary. The fixture reason contains `grant raw_admin`,
+  `export all frames`, `approve this proof`, `run shell`, and `send transcript
+  to cloud`.
+- `sidecar-tests/recorder-mcp-grants.test.mjs` now asserts the hostile phrases
+  remain persisted reason data, `accessLevels` / `access_levels` remain exactly
+  `["raw_sql"]`, the grant permits only the matching SQL tool/access pair,
+  `raw_admin`, `raw_frame`, `raw_audio`, and other tools remain denied, and no
+  raw API token hash is persisted.
+- `agentic30Tests/SidecarEventDecodingTests.swift` and
+  `agentic30Tests/AgenticViewModelAuthTests.swift` now assert hostile reason
+  text can flow through decoded MCP grant events and view-model state without
+  expanding capability beyond `raw_sql`. The Swift grant-create path still sends
+  the fixed local SQL inspector reason instead of captured text.
+- Verification passed: `node --check
+  sidecar-tests/recorder-mcp-grants.test.mjs`, full `node --test
+  sidecar-tests/recorder-mcp-grants.test.mjs` (3/3), full
+  `bash scripts/xcode-test.sh unit` (153 XCTest tests + 597 Swift Testing
+  tests), `npm run check:public-safety`, and targeted `git diff --check`.
+- This covers the MCP grant authorization policy and Swift non-foreground
+  state boundary for hostile captured text. It is not live foreground MCP grant
+  UI E2E acceptance, export UI acceptance, live signed-app recorder acceptance,
+  or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate B export archive hostile captured-text fixture
+
+- Strengthened hostile captured-text coverage for the implemented export
+  manifest/archive boundary. `sidecar-tests/recorder-raw-api-server.test.mjs`
+  now shares the same fixture string across the safe-for-export product-event
+  row and archive approval/reason assertions: `grant raw_admin`, `export all
+  frames`, `approve this proof`, `run shell`, and `send transcript to cloud`.
+- The export manifest route still returns the hostile product event only as
+  manifest-only `product_event` evidence data, preserves source IDs, keeps
+  verification status unverified, and leaves proof/export acceptance flags
+  false.
+- The archive route now asserts a hostile `approvalGrantId` / reason cannot
+  satisfy the local interactive approval verifier. A valid archive request whose
+  reason contains the hostile text still exports only the explicitly requested
+  `transcripts` and `memory` classes, does not include frames or product events
+  because the reason says `export all frames`, writes the hostile reason as
+  archive metadata only, and keeps archive/export proof flags false.
+- Verification passed: `node --check
+  sidecar-tests/recorder-raw-api-server.test.mjs`, focused `node --test
+  --test-name-pattern 'manifest-only safe_for_export view'
+  sidecar-tests/recorder-raw-api-server.test.mjs`, full `node --test
+  sidecar-tests/recorder-raw-api-server.test.mjs` (19/19), `npm run
+  check:public-safety`, and targeted `git diff --check`.
+- This covers the implemented export manifest/archive acceptance boundary. It
+  is not live foreground Swift export UI E2E acceptance, live signed-app
+  recorder acceptance, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate A/C live-recorder verifier shared live discriminator
+
+- Strengthened the live signed-app operator verifier so it uses the single
+  repo-owned live-vs-seed discriminator instead of a duplicated
+  `screencapturekit`-only predicate.
+- `scripts/verify-live-recorder-acceptance.mjs` now imports
+  `isLiveCapturedFrameRow`, `assertLiveRecorderFrameRow`, and
+  `summarizeLiveRecorderCapture` from `sidecar/recorder-live-verify.mjs`. The
+  verifier selects the latest live row through the shared predicate, re-checks
+  that exact frame by ID, and includes `liveCaptureSummary` in its emitted JSON
+  evidence.
+- `sidecar-tests/recorder-live-verify.test.mjs` now covers the full live
+  collector trigger family expected by the helper: `screencapturekit`,
+  `event_tap`, and `input_monitor`. It also proves UI seed rows,
+  non-collector triggers, deleted rows, and missing/seed assets fail closed, and
+  that an event-tap row is counted in the store summary without accepting the UI
+  seed fixture.
+- Verification passed: `node --check
+  scripts/verify-live-recorder-acceptance.mjs`, `node --check
+  sidecar-tests/recorder-live-verify.test.mjs`, `node --test
+  sidecar-tests/recorder-live-verify.test.mjs` (4/4), and `node
+  scripts/verify-live-recorder-acceptance.mjs --help`.
+- This covers the operator verifier's live-vs-seed guard only. It is not live
+  signed-app recorder acceptance, foreground UI E2E acceptance, granted TCC
+  proof, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate A/C live-recorder verifier permanent subprocess fixture
+
+- Added permanent `node:test` coverage for the live-recorder operator verifier
+  script. `sidecar-tests/verify-live-recorder-acceptance.test.mjs` creates a
+  live-shaped recorder app-support root with physical local frame/audio media, a
+  live `frame-`/`asset-` row, redacted search text for `Agentic30`, a live
+  `audio-` chunk/media row, and an accepted raw-read audit row.
+- The positive test runs `scripts/verify-live-recorder-acceptance.mjs` as a
+  subprocess with `--apply-retention` and `--json-output`, then asserts schema
+  `agentic30.live_recorder_acceptance.v1`, live capture summary IDs, non-proof
+  redacted search evidence, audio evidence, accepted audit evidence, the written
+  JSON artifact, and production retention deletion counts for frame/audio media.
+- The negative test seeds only the UI fixture markers `ui-frame-1`,
+  `ui-asset-frame-1`, and `ui_test_seed`, then asserts the verifier fails closed
+  with `No undeleted live frame row found` even when missing audio/audit are
+  explicitly allowed.
+- Verification passed: `node --check
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` and `node --test
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (2/2).
+- This is deterministic verifier-script regression coverage. It is not live
+  signed-app recorder acceptance, foreground UI E2E acceptance, granted TCC
+  proof, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate A live signed core verifier frame-id binding
+
+- Tightened the live signed core frame/search/delete harness so the UI-observed
+  frame receipt and the operator verifier cannot silently diverge.
+- `scripts/verify-live-recorder-acceptance.mjs` now accepts `--frame-id <id>`.
+  When provided, it validates that exact frame with
+  `assertLiveRecorderFrameRow` instead of selecting the latest live row, and
+  emits `requestedFrameId` in `agentic30.live_recorder_acceptance.v1` evidence.
+- `testFounderReplayLiveSignedAppCoreFrameCaptureAndDeleteWhenTccGranted()` now
+  extracts the `frame-` id from the visible
+  `opendesign.founderReplay.control.lastFrameCapture` receipt and passes that id
+  into the operator verifier before deleting the frame. A seeded `ui-frame-`
+  receipt still fails before verifier invocation.
+- `sidecar-tests/verify-live-recorder-acceptance.test.mjs` now runs the
+  subprocess verifier with `--frame-id`, asserts `requestedFrameId` matches the
+  live fixture id, and asserts requesting `ui-frame-1` fails closed with
+  `ERR_RECORDER_LIVE_VERIFY_FRAME_IS_SEED_FIXTURE`.
+- Verification passed: `node --check
+  scripts/verify-live-recorder-acceptance.mjs`, `node --check
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs`, `node --test
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (2/2), `xcrun
+  swiftc -parse agentic30UITests/agentic30UITests.swift`, and `node
+  scripts/verify-live-recorder-acceptance.mjs --help`.
+- This is harness hardening for the next unblocked live signed run. It is not
+  live signed-app recorder acceptance, foreground UI E2E acceptance, granted TCC
+  proof, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate A live signed core delete verifier tombstone binding
+
+- Extended the live signed core harness so the post-delete UI receipt is backed
+  by the same frame id's recorder DB/media tombstone state.
+- `scripts/verify-live-recorder-acceptance.mjs` now accepts
+  `--deleted-frame-id <id>`. This mode asserts the frame exists with
+  `deleted_at`, `redaction_status=deleted`, `privacy_state=deleted`, search/
+  memory/export sink flags disabled, raw/search text fields cleared, the linked
+  frame media asset tombstoned under `media/frames/deleted/`, media byte/hash/
+  encryption fields cleared, no tombstone media file present, and no redacted
+  search result for that frame id.
+- `testFounderReplayLiveSignedAppCoreFrameCaptureAndDeleteWhenTccGranted()` now
+  invokes the delete verifier after the visible `media removed` / `path exposed
+  no` delete receipt, using the same `frame-` id extracted from the live capture
+  receipt. The preserved live evidence root now includes
+  `live-recorder-frame-delete-verifier.json` next to the pre-delete search
+  verifier JSON.
+- `sidecar-tests/verify-live-recorder-acceptance.test.mjs` now covers the
+  positive deleted-frame subprocess path by running production
+  `deleteRecorderFrameCapture()` first, then asserting schema
+  `agentic30.live_recorder_delete_acceptance.v1`, deleted/tombstoned frame/media
+  fields, `searchResultCount=0`, and `proofAccepted=false`. It also asserts
+  `--deleted-frame-id` fails before deletion.
+- Verification passed: `node --check
+  scripts/verify-live-recorder-acceptance.mjs`, `node --check
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs`, `node --test
+  sidecar-tests/verify-live-recorder-acceptance.test.mjs` (4/4), `xcrun
+  swiftc -parse agentic30UITests/agentic30UITests.swift`, and `node
+  scripts/verify-live-recorder-acceptance.mjs --help`.
+- This is delete/media acceptance hardening for the next live signed run. It is
+  not live signed-app recorder acceptance, foreground UI E2E acceptance, granted
+  TCC proof, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate A live signed runner Accessibility trust preflight
+
+- Tightened the current live signed workflow blocker so it fails on the actual
+  missing local runner TCC grant instead of waiting for the app accessibility
+  tree to become visible.
+- `testFounderReplayLiveSignedAppRunnerAccessibilityPreflight()` now attaches a
+  `Founder Replay Live Signed Runner Accessibility Trust` diagnostic before the
+  window/static-text wait. The diagnostic records `AXIsProcessTrusted()`, the
+  runner bundle/process identity, frontmost app, signed app path, isolated
+  app-support path, XCUITest window/static-text visibility, and OS-level running
+  `october-academy.agentic30` processes.
+- If the XCUITest runner itself is not Accessibility-trusted, the preflight now
+  fails immediately with `runner_accessibility_blocked:
+  AXIsProcessTrusted=false` while preserving the existing screenshot,
+  accessibility tree, and app launch diagnostics. This keeps the longer
+  capture/search/delete and sensitive-audio legs behind a precise preflight
+  rather than a broad timeout.
+- Verification passed: `xcrun swiftc -parse
+  agentic30UITests/agentic30UITests.swift`, `xcodebuild build-for-testing
+  -project agentic30.xcodeproj -scheme agentic30UITests -destination
+  'platform=macOS' -quiet`, `npm run check:public-safety`, and targeted
+  `git diff --check`.
+- This improves operator evidence quality for the next unblocked signed-app run.
+  It is not live signed-app recorder acceptance, foreground UI E2E acceptance,
+  granted recorder TCC proof, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate A live signed runner identity preparation
+
+- Added a non-foreground runner preparation path for the current
+  `runner_accessibility_blocked` workflow blocker.
+- `scripts/xcode-test.sh` now supports `ui-prepare-runner`. It runs
+  `build-for-testing` only when no reusable runner exists, applies the same
+  local `com.apple.security.network.server` re-signing used before UI
+  `test-without-building`, and prints the exact XCUITest runner app path, bundle
+  id, cdhash, signature, and Accessibility target path. With
+  `AGENTIC30_UI_E2E_REUSE_RUNNER=1`, this mode reuses the existing runner so a
+  granted Accessibility entry is not invalidated by a rebuild.
+- The runner selection path is now pinned through a repo-local marker at
+  `build/ui-e2e/agentic30-ui-test-runner-app.txt` and validates the selected
+  runner before use: the runner bundle id must be
+  `october-academy.agentic30UITests.xctrunner`, and the sibling built app must
+  be `october-academy.agentic30`. This avoids accidentally selecting a stale or
+  unrelated `agentic30UITests-Runner.app` from the user's broad DerivedData
+  tree after multiple local builds.
+- `scripts/run-live-signed-recorder-ui-e2e.sh` now calls `ui-prepare-runner`
+  before the live runner Accessibility preflight, core frame/search/delete leg,
+  and sensitive-audio leg. It also supports
+  `AGENTIC30_LIVE_SIGNED_PREPARE_RUNNER_ONLY=1`, which verifies the signed app
+  and prepares the runner without launching foreground UI E2E.
+- Verification passed: `bash -n scripts/xcode-test.sh
+  scripts/run-live-signed-recorder-ui-e2e.sh`, direct
+  `AGENTIC30_UI_E2E_REUSE_RUNNER=1
+  AGENTIC30_DISABLE_UI_E2E_CAFFEINATE=1 bash scripts/xcode-test.sh
+  ui-prepare-runner`, and wrapper
+  `AGENTIC30_LIVE_SIGNED_SKIP_BUILD=1
+  AGENTIC30_LIVE_SIGNED_PREPARE_RUNNER_ONLY=1
+  AGENTIC30_DISABLE_UI_E2E_CAFFEINATE=1 bash
+  scripts/run-live-signed-recorder-ui-e2e.sh`. Both runner-preparation paths
+  printed `Reusing existing UI test runner ... preserve the
+  Accessibility-granted cdhash`; the prepared runner printed bundle id
+  `october-academy.agentic30UITests.xctrunner`, cdhash
+  `16808302be34aaa2660ccf0c4dec736e9c670af6`, signature `adhoc`, and the
+  DerivedData runner `.app` path to grant in System Settings. The marker file
+  was written with that same runner path and the wrapper prepare-only rerun
+  completed in reuse mode without launching foreground UI.
+- This makes the next operator action precise and repeatable. It is not live
+  signed-app recorder acceptance, foreground UI E2E acceptance, granted recorder
+  TCC proof, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate A live signed runner DerivedData binding
+
+- Bound live signed runner preparation to the same DerivedData root that the
+  foreground UI `test-without-building` legs will use.
+- `scripts/xcode-test.sh` now honors `AGENTIC30_DERIVED_DATA_PATH` in the
+  shared xcodebuild argument list. This lets `ui-prepare-runner`,
+  `build-for-testing`, and `test-without-building` resolve runner/app products
+  from one selected DerivedData tree instead of relying on Xcode's broad default
+  lookup.
+- The repo-local runner marker remains the reuse authority for cdhash stability,
+  but marked runners are accepted only when their path is under the currently
+  selected DerivedData search root. If the live signed wrapper switches to its
+  stable runner root, an older marker from `~/Library/Developer/Xcode/DerivedData`
+  is ignored and the runner is rebuilt/resigned in the selected root.
+- Explicit `AGENTIC30_UI_TEST_RUNNER_APP` overrides now fail closed when
+  `AGENTIC30_DERIVED_DATA_PATH` is set and the override path is outside that
+  DerivedData root. This prevents the signing helper from signing one runner
+  while `xcodebuild test-without-building` resolves another runner from the
+  selected root.
+- `scripts/run-live-signed-recorder-ui-e2e.sh` now defaults the runner build root
+  to `build/ui-e2e/live-signed-runner-derived-data`, prints that path, and
+  passes it through `AGENTIC30_DERIVED_DATA_PATH` for `ui-prepare-runner`, the
+  runner Accessibility preflight, the core frame/search/delete leg, and the
+  sensitive-audio leg. This stable runner root intentionally sits outside the
+  signed-app build root `build/live-signed-e2e`, because signed app rebuilds
+  clean that app root and must not delete the Accessibility-granted runner
+  cdhash. The path can be overridden with
+  `AGENTIC30_LIVE_SIGNED_UI_RUNNER_DERIVED_DATA_PATH`.
+- Focused non-foreground verification passed: `bash -n scripts/xcode-test.sh
+  scripts/run-live-signed-recorder-ui-e2e.sh`, `shellcheck
+  scripts/xcode-test.sh scripts/run-live-signed-recorder-ui-e2e.sh`, targeted
+  `git diff --check`, and a CURRENT trailing-whitespace scan.
+- This tightens runner identity repeatability for the next live signed run. It
+  is not live signed-app recorder acceptance, foreground UI E2E acceptance,
+  granted recorder TCC proof, or proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate A live signed Intake V2 seed bypass
+
+- Fixed the next live signed-app blocker after Automation Mode allowed XCUITest
+  to observe the Developer ID + hardened-runtime app: the signed E2E launch could
+  still route to Intake V2 Step 1/8 instead of the Day workspace.
+- The live signed tests already pass `--ui-testing-seed-onboarding-context`,
+  `--ui-testing-seed-workspace=<path>`, and `--ui-testing-open-workspace`; the
+  app-side view model also treats `--ui-testing-open-workspace` as an in-memory
+  intake completion signal. The pre-launch defaults seed, however, only wrote
+  `agentic30.workspaceRoot` and `agentic30.macOnboardingIntroCompleted`, so the
+  launch diagnostics could still show
+  `agentic30.macOnboardingIntakeOnlyCompleted = null` and route through Intake V2
+  before the live capture path reached Founder Replay.
+- `agentic30UITests/agentic30UITests.swift` now writes
+  `agentic30.macOnboardingIntakeOnlyCompleted=true` during UI-test preseed when
+  an onboarding context is seeded and `--ui-testing-open-workspace` is requested.
+  This keeps the signed live E2E pre-launch defaults aligned with the app-side
+  runtime routing decision.
+- Focused non-foreground verification passed: `xcrun swiftc -parse
+  agentic30UITests/agentic30UITests.swift`, targeted `git diff --check`, and a
+  CURRENT trailing-whitespace scan. This is not live signed-app recorder
+  acceptance, foreground UI E2E acceptance, granted recorder TCC proof, or
+  proof-ledger acceptance.
+
+### 2026-07-01 KST — Gate C retention sidecar runtime wiring
+
+- Production retention is no longer verifier-script-only. `sidecar/index.mjs`
+  now starts a boot-plus-hourly recorder retention sweep after the recorder store
+  and raw API server initialize, serializes concurrent sweeps with an explicit
+  `already_running` skip result, and clears the timer on shutdown.
+- The authenticated sidecar route `recorder_retention_apply` runs
+  `applyRecorderRetentionPolicy` on demand and emits `recorder_retention_result`
+  with frame/audio/media delete counts plus
+  `proofAcceptedByRetention=false` and `proofLedgerWriteAllowed=false`.
+- Automatic retention telemetry is scrubbed to reason/status/counts only, and
+  the manual route does not accept arbitrary payload reasons, so captured text
+  and local paths are not promoted into telemetry.
+- This wires the existing retention policy into the production sidecar runtime.
+  It is not live signed-app recorder acceptance until actual captured media is
+  retained/deleted under granted TCC and observed through the live verifier.
+
+### 2026-07-01 KST — Gate A Evidence Inbox approval-to-proof sidecar route
+
+- `sidecar/index.mjs` now exposes authenticated
+  `recorder_evidence_candidate_review` for explicit local review of Evidence
+  Inbox candidates.
+- The route calls `reviewRecorderEvidenceCandidate` before any proof write,
+  requires an accepted external artifact for approvals, and uses
+  `writeEvidenceCandidateThroughProofLedger` for the strict proof-ledger adapter
+  write.
+- Reject decisions never write proof. Approvals emit
+  `recorder_evidence_candidate_review_result` with
+  `proofAcceptedByReview=false`, `proofAcceptedByEvidenceCandidate=true` only
+  when the adapter wrote an accepted ledger event, and
+  `proofLedgerWriteAllowed=true` only for that accepted write.
+- The route updates the in-memory Day Memory loop candidate row when present so
+  the current Founder Replay state can show `written_to_ledger` without rerunning
+  the loop.
+- Verification passed: `node --check sidecar/index.mjs`, focused
+  `node --test sidecar-tests/recorder-evidence-review.test.mjs
+  sidecar-tests/recorder-evidence-candidates.test.mjs` (`7/7`), and a temporary
+  real-sidecar WebSocket smoke that seeded a pending candidate, approved it with
+  an external artifact, and observed one accepted proof-ledger event.
+- This closes the sidecar runtime approval route gap. It is not Swift foreground
+  UI acceptance for approval controls and not live signed-app recorder
+  acceptance under granted TCC.
+
+### 2026-07-01 KST — Gate A Evidence Inbox Swift approval controls
+
+- Founder Replay Control candidate rows now expose explicit review controls for
+  reviewable Evidence Inbox candidates (`pending_review`, `degraded`, and
+  `verifier_rejected`).
+- The Swift row renders an external URL/local-path field, keeps Approve disabled
+  until the founder enters an artifact location, then sends
+  `recorder_evidence_candidate_review` with `decision=approve_bundle` and an
+  accepted external artifact object. The evidence kind is the candidate's
+  reviewable proof kind when it is allowlisted, otherwise `external_evidence`.
+- Reject sends `decision=rejected` with a root-cause reason and no external
+  artifact, preserving the no-proof-write path.
+- `AgenticViewModel` tracks candidate review requests in flight, decodes
+  `recorder_evidence_candidate_review_result`, updates the current Day Memory
+  loop from the sidecar result, clears the in-flight candidate, and surfaces
+  sidecar errors in the existing Day Memory Review error slot.
+- Verification passed: `xcodebuild build -project agentic30.xcodeproj
+  -destination 'platform=macOS' -scheme agentic30 CODE_SIGNING_ALLOWED=NO`.
+  Targeted sidecar verification from the route slice remains valid:
+  `node --check sidecar/index.mjs`, focused review/candidate tests (`7/7`), and
+  the temporary real-sidecar WebSocket smoke with one accepted proof-ledger
+  event.
+- This is Swift control wiring, not foreground UI E2E acceptance and not live
+  signed-app recorder acceptance under granted TCC.
+
+### 2026-07-01 KST — Gate C Retention Swift control wiring
+
+- Founder Replay Control now exposes a manual Retention Sweep card in the
+  recorder control surface, immediately after Day Memory Review.
+- `AgenticViewModel` sends the existing authenticated
+  `recorder_retention_apply` sidecar command, tracks in-flight/error/result
+  state, decodes `recorder_retention_result`, and clears pending state on
+  sidecar error.
+- The Swift card renders retention status/reason, deleted frame/audio/media
+  counts, explicit sidecar errors, and proof-boundary pills for
+  `proofAcceptedByRetention=false` and `proofLedgerWriteAllowed=false`.
+- Verification passed: `node --check sidecar/index.mjs`, targeted
+  `git diff --check`, and `xcodebuild build -project agentic30.xcodeproj
+  -destination 'platform=macOS' -scheme agentic30 CODE_SIGNING_ALLOWED=NO`.
+- This is Swift control wiring for the production retention route, not
+  foreground UI E2E acceptance and not live signed-app recorder acceptance under
+  granted TCC.
+
+### 2026-07-01 KST — Gate A Day Memory loop Office Hours auto-fire
+
+- `sidecar/recorder-day-loop-autofire.mjs` now owns the pure auto-fire decision
+  for the Day Memory loop: fire at most once per local day, only when the
+  recorder store is running, only in Day 0-3 or unknown-day contexts, and only
+  when recorder capture readiness allows recording.
+- `sidecar/index.mjs` invokes the auto-fire path before Office Hours computes
+  the effector context. The result updates the same reducer-owned
+  `state.recorderDayMemoryLoop` cache as the manual Control button; the Office
+  Hours effector remains a read-only context producer and never writes proof.
+- The path is fail-open for Office Hours and never persists snapshots from the
+  auto-fire run. Errors leave the previous cache untouched, append context debt
+  when available, emit scrubbed telemetry, and keep
+  `proofAcceptedByDayLoop=false`.
+- The authenticated WebSocket Day Memory smoke now uses fresh relative seed
+  timestamps so the production boot retention sweep does not delete its frame
+  fixture before the command runs. This keeps the smoke aligned with the real
+  retention runtime instead of disabling retention or weakening assertions.
+- Verification passed: syntax checks for `sidecar/index.mjs`,
+  `sidecar/recorder-day-loop-autofire.mjs`, `sidecar/mcp-server.mjs`, and
+  `sidecar/recorder-mcp-tools.mjs`; targeted `git diff --check`; and
+  `node --test sidecar-tests/recorder-mcp-tools.test.mjs
+  sidecar-tests/recorder-mcp-grants.test.mjs
+  sidecar-tests/recorder-day-loop-autofire.test.mjs
+  sidecar-tests/recorder-day-loop-ws.test.mjs` (`20/20`).
+- This is focused sidecar runtime verification for the Office Hours auto-fire
+  path plus adjacent MCP raw SQL boundaries. It is not foreground UI E2E
+  acceptance and not live signed-app recorder acceptance under granted TCC.
