@@ -2,6 +2,7 @@
 
 > Design approved: 2026-06-27 KST · Status: **Final design — approved to build through the Section 13 gates.**
 > Revised 2026-07-02 KST: frame-storage architecture review incorporated (Section 15) — tiered aging ladder, dedup/cadence semantics and authority, storage budget contract, long-horizon retention.
+> Revised again 2026-07-02 KST (founder direction, Section 15 second entry): indefinite local retention + end-to-end-encrypted cloud archive (Gate E, Section 10.7), screenpipe-style snapshot compaction via VideoToolbox (Gate A.2), unified visual pointer, `video_quality` resolution profiles. Deletion semantics unified: explicit user delete / budget pressure / user-configured TTL only — compaction and archival are never deletions.
 > File name kept as `agentic30_screenpipe_benchmarking_SPEC.md` for link continuity; the benchmarking phase is over and this is the Founder Memory OS design contract.
 > Scope of this doc: the **Founder Memory OS** substrate (always-on local recorder → search/memory → evidence → proof). Schema and FTS are specified to be implementable on the current stack; Section 16 records the feasibility grounding and the reuse-vs-net-new split.
 > Product target: macOS-only execution OS for solo developers
@@ -26,10 +27,11 @@ searchable, automatable work-memory layer for a solo developer. It includes:
 - raw local data access APIs
 - Pi Agent / Pipes-like local automations
 - expanded macOS media and permission capture
+- end-to-end-encrypted cloud archive for long-horizon durability (user-held keys, explicit opt-in; Gate E)
 
 and excludes:
 
-- new model or cloud expansion
+- new cloud model/provider integration
 - Rust backend or non-macOS platform expansion
 - direct Screenpipe database import or runtime dependency
 
@@ -57,7 +59,7 @@ Consent ladder
   -> proof accepted/rejected through verifier-gated ledger logic
 ```
 
-All other surfaces exist to support that journey. A raw API, search result, memory summary, product event, or pipe output is never proof by itself.
+All other surfaces exist to support that journey. A raw API, search result, memory summary, product event, usage aggregate, or pipe output is never proof by itself.
 
 macOS permission acquisition is handled by the native permission helper whose normative contract is Section 4.1. The helper is part of the recorder permission ladder, not a TCC bypass: it resolves the actual protected-API actor, requests native macOS permission APIs from that actor where possible, opens System Settings with manual fallback instructions, uses drag guidance only for OS/pane combinations proven by validation, and marks success only after the correct actor passes preflight or runtime probe checks.
 
@@ -69,11 +71,13 @@ macOS permission acquisition is handled by the native permission helper whose no
 - Visible recording state, pause, stop-for-today, delete, retention, and storage-budget controls.
 - Screen Recording and Accessibility as core capture permissions, granted through the native macOS permission helper with actor identity checks and runtime probes.
 - Event Tap/Input Monitoring, Clipboard, Microphone/System Audio, Vision OCR, Browser URL capture, and file/document metadata as required permission surfaces with per-surface consent and explicit helper health states where macOS TCC is involved.
-- Synchronized frame rows: encrypted keyframe snapshot, text, app/window/browser/document metadata, trigger, hashes, timestamp, and optional non-proof replay chunk offsets.
+- Synchronized frame rows: encrypted keyframe snapshot, text, app/window/browser/document metadata, trigger, hashes, timestamp, and optional non-proof compacted-chunk offsets.
 - Audio chunks and local transcript state.
 - Redacted FTS search over frames, transcripts, memory items, and product events.
 - Day Memory Review, search/timeline, Evidence Inbox, and memory views.
-- Tiered visual-memory aging (hot encrypted frames -> warm compacted chunks -> cold text/aggregates/rollups) serving day/month/quarter/year founder coaching.
+- Tiered visual-memory aging (hot encrypted frames -> compacted encrypted chunks -> cold text/aggregates/rollups) serving day/month/quarter/year founder coaching.
+- Snapshot compaction (hot JPEG -> encrypted HEVC chunks via VideoToolbox) as a storage-optimization tier move, never a deletion (Gate A.2).
+- End-to-end-encrypted cloud archive to a user-configured S3-compatible target (user-held keys only, explicit opt-in, deletion propagation; Gate E, Section 10.7).
 - Raw local data APIs for the app, sidecar, and explicitly granted local tools.
 - Bounded raw SQL inspector for local admin/debug analytics over recorder SQLite, separate from typed raw APIs.
 - Agentic30 Pipes-like local automation through a constrained local DSL and built-in pipes.
@@ -87,7 +91,7 @@ macOS permission acquisition is handled by the native permission helper whose no
 - Windows/Linux/iOS/browser-extension collectors.
 - New cloud model/provider integration.
 - Cloud transcription.
-- Cloud sync/archive/team memory.
+- Cloud team memory/sync.
 - Silent cloud fallback.
 - Direct Screenpipe DB import.
 - Reading `~/.screenpipe/db.sqlite`.
@@ -128,6 +132,9 @@ Copy these durable patterns:
 - Pipes as markdown-defined scheduled local automations.
 - Pipe permissions declared before execution and enforced at runtime.
 - Clear health state for Screen Recording, Accessibility, Microphone, Event Tap/Input Monitoring, OCR, DB, disk, scheduler, and API auth.
+- Snapshot compaction lifecycle: JPEGs older than a minimum age are batch-encoded into HEVC chunks per monitor, frame rows are repointed, and originals are deleted only after the chunk file and the repoint transaction have committed (crash-safe, no data loss).
+- Zero-knowledge archive shape: client-side encryption, watermark-tracked upload of time-window sync chunks, and restore on demand.
+- One `video_quality` knob driving snapshot max width, JPEG quality, and chunk encoding quality together.
 
 ### 3.2 Adapt For Agentic30
 
@@ -140,7 +147,9 @@ Screenpipe is a general personal memory product. Agentic30 adapts it into a foun
 - Automations are local execution support, not autonomous business agency.
 - Memory summaries must become Day Memory Review, Evidence Inbox, and next-action inputs.
 - Proof extraction must feed existing Day progress and Office Hours contracts.
-- Screenpipe's snapshot compaction (JPEG -> H.265 chunks, then delete originals) is adapted, not copied: it becomes the warm tier of the Section 6 tiered aging ladder, serving long-horizon local memory instead of indefinite raw archival. Capture defaults to 1x logical resolution (Section 16.3) — the dominant storage saving in the benchmark, ahead of the codec.
+- Snapshot compaction is adapted to macOS-native encoding: VideoToolbox hardware HEVC instead of a bundled ffmpeg/libx265 (GPL-incompatible with proprietary DMG distribution, 30-70MB binary + signing surface, and real CPU/battery cost in an always-on menu-bar app; the M-series media engine encodes at near-zero CPU). Acceptance is a measured byte budget, not a CRF number (Section 16.3), with a measured kill criterion: if the live median reduction is below 1.5x, compaction ships disabled.
+- Screenpipe's cloud archive is adapted, not copied: the key hierarchy is strengthened (user passphrase -> Argon2id KEK -> random archive master key, instead of an auth-token-derived key), the uploader is never a second delete path (archive-verified upload is a deletion precondition, not a trigger — Section 10.7), and restore is manifest-based time-range selection instead of full-archive download.
+- The storage-resolution decision is made explicit: the benchmark's dominant saving is the resolution cap, ahead of the codec. Capture stores at `effective_width = min(1x logical width, snapshot_max_width)` per the `video_quality` profile (Section 16.3).
 
 ### 3.3 Reject
 
@@ -150,7 +159,8 @@ Reject these patterns:
 - Rust backend rewrite.
 - Screenpipe DB import or direct Screenpipe filesystem reads.
 - Mutating SQL, unbounded SQL, multi-statement SQL, or SQL access to external databases.
-- Cloud archive, cloud team sync, cloud transcription, or new model-provider integration.
+- Provider-readable or plaintext cloud archive, cloud team sync/team memory, cloud transcription, or new model-provider integration. (The original ground for rejecting "cloud archive" was an operator who can read your memory; the zero-knowledge, user-keyed archive in Section 10.7 does not have that property and is in scope as Gate E.)
+- Screenpipe's auth-token-derived archive key (an operator who knows the token can derive the key — not zero-knowledge) and its upload-triggered local deletion.
 - Silent cloud fallback when local capture, search, transcription, or automation is unavailable.
 - Automation that sends outreach, posts publicly, deploys, charges customers, or modifies payment systems.
 - Proof score changes from model inference, memory summary, raw search hit, or automation output without verifier checks.
@@ -168,6 +178,7 @@ First-run onboarding asks for permissions in steps, not all at once:
 3. **Text Completion:** Vision OCR fallback.
 4. **Context Enrichment:** Browser URL and document metadata.
 5. **Sensitive Capture:** Clipboard, Microphone, and System Audio.
+6. **Cloud Archive (Gate E):** end-to-end-encrypted archive to a user-configured target; requires setting a recovery passphrase and acknowledging the "passphrase + device both lost = archive unrecoverable" boundary (Section 10.7). Default off.
 
 Defaults:
 
@@ -191,6 +202,7 @@ Text provenance states:
 - `ocr_only`
 - `ax_plus_ocr`
 - `ocr_unavailable_named_root_cause`
+- `dedupe_reference` (dedupe rows only; text lives on the original frame — Section 6.2)
 
 Native permission helper requirements:
 
@@ -283,6 +295,7 @@ Swift owns macOS capture only:
 - Browser URL/document metadata collection where locally available
 - AVFoundation audio capture where enabled
 - media chunk creation before handoff
+- compaction chunk encoding on sidecar request: VideoToolbox hardware HEVC with job-scoped, memory-only decryption of hot JPEGs (Section 6.1 exception; plaintext frames stay in `CVPixelBuffer` memory, never on disk)
 - visible recording state
 
 Swift remains the source of truth for macOS permission health. It emits local `mac_permission_health` events through the existing authenticated bridge so the sidecar can gate recorder behavior, but it does not let the sidecar infer TCC grants.
@@ -305,6 +318,8 @@ Node sidecar owns:
 - evidence-candidate generation
 - Agentic30 Pipes scheduler/runtime
 - strict proof-ledger adapter
+- compaction lifecycle: polling, frame selection, chunk verification (decrypt + MP4 box parse + frame-count match, before the asset row is inserted), frames repoint, and original-JPEG removal (Section 16.3)
+- cloud archive uploader, watermark state, deletion propagation, and restore (Gate E, Section 10.7)
 - bridge events back to Swift
 
 The sidecar may consume Swift-emitted permission health to block capture, expose degraded recorder state, and persist local health metadata. It must not call macOS TCC APIs, infer that a permission is granted, or turn a system preflight into proof-ledger progress.
@@ -358,23 +373,26 @@ Raw media remains host-local. Workspace exports require a manifest and explicit 
 
 ### Visual Storage Contract
 
-Agentic30 does not store an unconditional per-second screenshot log. The recorder stores visual history as a **tiered aging ladder**: long-horizon founder memory must survive locally (cloud archive is rejected in Section 3.3), so data ages from expensive raw media into cheap text and aggregates instead of being either kept raw forever or destroyed wholesale.
+Agentic30 does not store an unconditional per-second screenshot log. The recorder stores visual history as a **tiered aging ladder**: data moves from raw JPEG into compact encrypted video chunks and cheap text/aggregate rows locally, and — when the user enables the archive — into an end-to-end-encrypted cloud archive for indefinite durability. Compaction and archival are storage optimizations, never deletions.
 
-1. **Hot frame tier** — encrypted keyframe snapshot media (`asset_type=frame_jpeg`) plus `frames` rows, redacted OCR/AX text, app/window/browser/document metadata, event trigger, hashes, and sink eligibility. This tier powers redacted search, Day Memory Review, Evidence Inbox, deletion, retention, and any proof-boundary checks. All snapshot media — automatic and manual capture alike — is encrypted at rest per Section 6.1; a plaintext snapshot file on disk is a defect.
-2. **Warm compacted tier (Gate A.2)** — encrypted low-FPS fragmented MP4 chunks (`asset_type=screen_video_chunk`) at 1x logical resolution. Warm chunks serve visual replay AND long-horizon visual memory for expired hot frames, but they are not proof, never satisfy proof-ledger acceptance, and never bypass the frame/OCR/event rows that feed product decisions. Searchable text and evidence candidates continue to come from rows, never from chunk pixels.
+1. **Hot frame tier** — encrypted keyframe snapshot media (`asset_type=frame_jpeg`) plus `frames` rows, redacted OCR/AX text, app/window/browser/document metadata, event trigger, hashes, and sink eligibility. This tier powers redacted search, Day Memory Review, Evidence Inbox, deletion, retention, and any proof-boundary checks. All snapshot media — automatic and manual capture alike — is encrypted at rest per Section 6.1; a plaintext snapshot file on disk is a defect. Hot JPEGs have no TTL of their own: they live until the compaction repoint replaces them (Gate A.2) or a Section 10.5 deletion cause removes them.
+2. **Compacted chunk tier (Gate A.2)** — encrypted HEVC fragmented MP4 chunks (`asset_type=screen_video_chunk`) at the stored snapshot resolution (single `video_quality` authority, Section 16.3; no separate chunk knob). Compaction batch-encodes hot JPEGs into chunks and repoints their frame rows; chunks then serve both visual replay and long-horizon visual memory. Chunks are not proof, never satisfy proof-ledger acceptance, and never bypass the frame/OCR/event rows that feed product decisions. Searchable text and evidence candidates continue to come from rows, never from chunk pixels.
 3. **Cold long-horizon tier (Gate A)** — `frames` rows with redacted text and metadata (retained independently of media, Section 10.5), `usage_daily_aggregates` rows (Section 6.14), `product_events`, and rollup `memory_items`. This tier is the primary substrate for weekly/monthly/quarterly/yearly founder coaching and must remain byte-cheap (tens of KB per frame at most; see the Section 6.2 column prohibition).
+4. **Archive durability layer (Gate E, Section 10.7)** — end-to-end-encrypted sync chunks in a user-configured S3-compatible target. The archive is a durability replica with user-held keys, not a policy sink: it never changes privacy/redaction states, never serves silent cloud queries, and honors deletion propagation.
 
-**Compaction-before-expiry ordering:** a TTL sweep may delete a day's hot frame media only after that day's cold-tier outputs (`usage_daily_aggregates` rows and the `daily_summary` memory item) are committed, and — once Gate A.2 ships — after eligible frames are registered into warm chunks. Explicit user deletes always win immediately and skip this ordering: privacy beats memory.
+**Deletion rule (single authority):** recorder data is deleted only by (a) an explicit user delete, (b) storage-budget pressure (Section 10.6 ladder), or (c) a user-configured TTL. Compaction is not deletion — original JPEGs are removed only after the chunk file and the frames repoint transaction have committed (Section 16.3). Archival is not deletion — the uploader never deletes; instead, **archive-before-expiry** makes checksum-verified upload a precondition for (b) and (c) when the archive is enabled (Section 10.7). **Compaction-before-expiry** additionally requires a day's cold-tier outputs (`usage_daily_aggregates` rows and the `daily_summary` memory item) to be committed before that day's visual data leaves local disk via (b) or (c). Explicit user deletes always win immediately, skip both preconditions, and propagate to the archive: privacy beats memory.
 
 **Dedupe asset ownership:** a frame row carrying `dedupe_of_frame_id` shares the original frame's `snapshot_asset_id`, writes no new media file, and re-runs no OCR/AX extraction (Section 6.2). `media_assets` rows may therefore be referenced by multiple frames; a media asset is physically deleted only when no live (non-deleted) frame references it, and a frame's delete receipt must state whether its asset was removed or retained for surviving references.
 
-Gate A ships from the hot frame tier plus the cold-tier rows. Warm/replay chunks are a separate Gate A.2 contract and must stay disabled until live signed-app acceptance proves chunk deletion, retention, path hiding, and UI-visible replay behavior under granted TCC. When enabled, warm/replay chunks are registered as `media_assets` with `asset_type=screen_video_chunk`; this SPEC does not add a separate `video_chunks` table.
+**Unified visual pointer:** a frame's visual source is always the pair (`snapshot_asset_id`, `snapshot_offset_index`) — a `frame_jpeg` asset with a null offset before compaction, a `screen_video_chunk` asset with the frame's index after the compaction repoint. There is no separate replay pointer column and no reader fallback chain. If a chunk is removed without rewrite (fail-closed downgrade, Section 16.3), surviving frames keep pointing at the tombstoned asset and readers return the named error `ERR_RECORDER_MEDIA_CHUNK_REMOVED` — rows, redacted text, and search survive; the pixels are gone.
 
-If a frame or visible range is deleted, every replay chunk overlapping that deleted time range must be physically removed or rewritten before the delete receipt is accepted. If a chunk is removed instead of rewritten, surviving frame rows outside the deleted range may keep snapshot/search metadata, but their `replay_asset_id` and `replay_offset_index` must be cleared and replay exports invalidated. The atomicity, crash-recovery, and failure-downgrade rules for delete-or-rewrite are part of the Gate A.2 contract in Section 16.3.
+Gate A ships from the hot frame tier plus the cold-tier rows; until Gate A.2 ships, the visual horizon is bounded by the storage budget and the UI must say so (Section 10.6). Compaction/chunks are the Gate A.2 contract and stay disabled until live signed-app acceptance proves chunk encoding verification, deletion, retention, path hiding, and UI-visible replay behavior under granted TCC. Chunks are registered as `media_assets` with `asset_type=screen_video_chunk`; this SPEC does not add a separate `video_chunks` table.
+
+If a frame or visible range is deleted, every chunk overlapping that deleted time range must be physically removed or rewritten before the delete receipt is accepted. If a chunk is removed instead of rewritten, surviving frame rows outside the deleted range keep their snapshot/search metadata but lose pixels (named error above), and replay exports are invalidated. The atomicity, crash-recovery, and failure-downgrade rules for compaction and delete-or-rewrite are part of the Gate A.2 contract in Section 16.3.
 
 ### 6.0 Schema Inventory
 
-This spec defines **13 tables**. Migrations must create exactly these (any 14th table must be named here first):
+This spec defines **13 base tables**. Migrations must create exactly these (any 14th base table must be named here first). The count excludes the Section 7 FTS5 virtual tables and the shadow tables SQLite creates for them (`*_data`, `*_idx`, `*_content`, `*_docsize`, `*_config`), plus SQLite internals (`sqlite_*`); a schema census or snapshot test must apply the same exclusions rather than flagging FTS artifacts as unnamed tables:
 
 1. `frames`
 2. `media_assets`
@@ -405,10 +423,11 @@ Requirements:
 - per-file SHA-256 in DB
 - **encryption at rest is required for all snapshot/audio media — automatic, background, and manual capture alike — before any raw capture ships.** The implemented contract is normative: a per-file AES-256-GCM envelope with a random 96-bit nonce per file and an `encryption_key_id` for key rotation, key stored in Keychain. Key loss is fail-closed: media becomes unreadable with an explicit error, never silently served or re-keyed. Until encryption + key management + log/diagnostics exclusion land, raw frame/audio capture stays out of the build and the host-user trust boundary is recorded explicitly
 - per-`asset_type` encryption invariant: `frame_jpeg`, `screen_video_chunk`, and `audio_m4a` require `encrypted=1`; `export_bundle` follows the export manifest policy. Writers reject an unencrypted row for a required type; a plaintext snapshot on disk is a defect, not a mode
-- decryption happens only inside the sidecar recorder data plane (RecorderStore-mediated streaming for `GET /recorder/frames/:id/image`, Day Memory Review thumbnails, and replay); plaintext media is never written to temp files, caches, logs, or diagnostics
+- decryption happens only inside the sidecar recorder data plane (RecorderStore-mediated streaming for `GET /recorder/frames/:id/image`, Day Memory Review thumbnails, and replay), with exactly one named exception: the Swift compaction encoder receives a job-scoped, memory-only key handoff over the authenticated bridge to decrypt hot JPEGs for chunk encoding — plaintext stays in `CVPixelBuffer` memory, is never written to disk, and the key material is never logged (auth-context scrubbing rules apply). This exception covers the encoding job only; it does not extend decryption rights to Pipes, MCP, or any API surface. Plaintext media is never written to temp files, caches, logs, or diagnostics
+- decryption is whole-file: a chunk is decrypted as a unit for replay or frame extraction, so the chunk size cap (<= 100 frames / <= 16MB, Section 16.3) is part of this encryption contract — it bounds the memory a single decryption may require
 - Pipes never receive the media root path, raw API token, or unrestricted filesystem grants
 - symlinks and path traversal are rejected
-- orphan-file containment: if a capture envelope fails to send or is rejected by ingest, the capture side must delete the already-written media file (compensating cleanup); the retention sweep must additionally walk the media tree and remove files not referenced by `media_assets` once they are older than the frame-media TTL, reporting counts in the retention result
+- orphan-file containment: if a capture envelope fails to send or is rejected by ingest, the capture side must delete the already-written media file (compensating cleanup); the retention sweep must additionally walk the media tree and remove files not referenced by `media_assets` once they are older than a grace window — at least 2x the compaction poll interval for `media/replay/` (so in-flight chunk encodes are never swept) and at least the compaction minimum age for `media/frames/` — reporting counts in the retention result
 - the media root is excluded from Spotlight (`.noindex`) and marked for Time Machine exclusion at creation; TTL sweeps run in low-load/idle windows
 
 ### 6.2 `frames`
@@ -431,13 +450,12 @@ Required columns:
 - `document_path TEXT`
 - `document_path_search_label TEXT`
 - `snapshot_asset_id TEXT NOT NULL`
-- `replay_asset_id TEXT` *(added by the Gate A.2 migration)*
-- `replay_offset_index INTEGER` *(added by the Gate A.2 migration)*
+- `snapshot_offset_index INTEGER` *(added by the Gate A.2 migration; the frame's index within a compacted chunk — null while the snapshot asset is a `frame_jpeg`. There is no separate replay pointer: see the Visual Storage Contract unified visual pointer)*
 - `capture_sequence INTEGER NOT NULL`
 - `dedupe_of_frame_id TEXT`
 - `snapshot_sha256 TEXT NOT NULL`
-- `content_hash TEXT NOT NULL`
-- `simhash TEXT`
+- `content_hash TEXT` *(writer-enforced non-null at ingest; cleared with the raw minimization window — see Column Semantics)*
+- `simhash TEXT` *(cleared with the raw minimization window — see Column Semantics)*
 - `text_source TEXT NOT NULL`
 - `text_provenance_root_cause TEXT`
 - `accessibility_text TEXT`
@@ -466,9 +484,12 @@ These definitions are part of the Gate A capture-envelope contract (Section 16.3
 
 - `content_hash` — SHA-256 over the **pre-encryption** capture content: the normalized AX/OCR plain text concatenated with the context key (`app_name`, `window_title`, `browser_url_normalized`, `document_path`, `monitor_id`). When no text is available it falls back to the SHA-256 of the plaintext JPEG bytes. Computed by the Swift collector at capture time, before any encryption. A ciphertext digest is never a valid `content_hash` — AES-GCM's random nonce makes it non-deterministic and useless for dedup, and `snapshot_sha256` already covers the stored bytes.
 - `simhash` — 64-bit perceptual hash (dHash over a downsampled grayscale plaintext frame), computed by Swift. Initial acceptance threshold: Hamming distance <= 3/64 counts as visually identical (tunable; calibrate against screenpipe's 5% visual-change reference).
+- Raw-derived digest lifecycle: `content_hash` and `simhash` exist only for the ingest dedup window — dedup always compares against the last persisted frame per monitor (Section 16.3), so neither digest has any purpose after the raw minimization window (Section 10.5, default 24h) closes. A digest of raw content is still raw-derived: left in place it becomes a confirmation-attack target (hash a guessed document, URL, or window text and compare against the stored digest) that would otherwise outlive the raw fields by the whole row lifetime. The retention sweep therefore clears both columns whenever it clears the frame's raw AX/OCR text and raw browser/document fields (Section 10.5). The columns are nullable in schema for exactly this reason; ingest still writer-enforces presence — a frame envelope without `content_hash` is an explicit error, not a null row. HMAC-with-rotating-key was considered and rejected: the digests have no post-window purpose, so clearing them is strictly stronger and simpler than key management.
 - `capture_sequence` — monotonically increasing per `monitor_id` within one recorder capture session, generated by Swift; gaps are allowed and the counter resets on session restart. It orders frames; it does not identify them (`id` does).
-- Duplicate suppression: the sidecar ingest is the single cadence/dedup authority (Section 16.3). A capture whose dedup context key (same app/window/browser/document/monitor) matches the previous persisted frame AND whose `content_hash` matches exactly (or whose `simhash` is within threshold) is either skipped or persisted as a dedupe row: `dedupe_of_frame_id` points to the original, `snapshot_asset_id` reuses the original's asset (Visual Storage Contract), text columns stay null, OCR/AX extraction is skipped, and `text_source` records the dedupe provenance.
+- Duplicate suppression: the sidecar ingest is the single cadence/dedup authority (Section 16.3). A capture whose dedup context key (same app/window/browser/document/monitor) matches the previous persisted frame AND whose `content_hash` matches exactly (or whose `simhash` is within threshold) is either skipped or persisted as a dedupe row: `dedupe_of_frame_id` points to the original, `snapshot_asset_id` reuses the original's asset (Visual Storage Contract), text columns stay null, OCR/AX extraction is skipped, and `text_source` records the provenance value `dedupe_reference` (Section 4.1).
+- Dedupe row semantics: `dedupe_of_frame_id` always points at the root original frame (the row that owns the extracted text), never at another dedupe row — ingest flattens chains. A dedupe row still carries its own `captured_at`, `capture_sequence`, `monitor_id`, and app/window/browser/document context columns; only text extraction is skipped. Dedupe rows are never FTS-indexed (`safe_for_search` stays 0 — there is no text to index): content search resolves to the original frame, while timeline surfaces, Day Memory Review, and `usage_daily_aggregates` derivation read dedupe rows' metadata directly, so a duplicate-heavy hour still counts as screen time. A user delete of an original frame includes its dedupe chain in the same receipt — a dedupe row without its original is content-free and must not keep the shared asset alive after a privacy delete. TTL row expiry needs no cascade: expiry is uniform by `captured_at`, and a dedupe row that briefly outlives its expired original stays valid for timeline/aggregate reads.
 - Envelope idempotency: re-sending an identical envelope (same frame `id`, same `snapshot_sha256`) is an idempotent no-op success; the same `id` with different content is an explicit error. Hard-failing every duplicate `id` is not compliant — retries must be safe.
+- Compaction repoint: the Gate A.2 compaction transaction repoints `snapshot_asset_id` to the chunk asset and sets `snapshot_offset_index` for the batch's originals **and their dedupe rows together** (one `UPDATE ... WHERE snapshot_asset_id = :jpeg_asset AND deleted_at IS NULL`). `snapshot_sha256` and `content_hash` are capture-time provenance and are never rewritten by compaction — envelope idempotency and dedup history stay valid. The replaced JPEG asset row is tombstoned with audit root cause `compaction_repoint`, distinguishing tier moves from privacy deletes.
 
 Column prohibition: `frames` must not grow AX-tree JSON or OCR word-box JSON columns (screenpipe's `text_json`/`accessibility_tree_json` pattern measures ~100KB+/frame — an 8x row-size blowup that destroys the cold tier's year-scale viability). Any such column must be named here first, like the Section 6.0 table rule.
 
@@ -509,11 +530,11 @@ Allowed `asset_type` values:
 - `audio_m4a`
 - `export_bundle`
 
-`screen_video_chunk` assets must be encrypted at rest, path-hidden from non-`raw_admin` API responses, and stored under `media/replay/`. They carry MP4/container metadata only; searchable text and evidence candidates must continue to come from `frames`, transcript, clipboard, memory, and product-event rows.
+`screen_video_chunk` assets must be encrypted at rest, path-hidden from non-`raw_admin` API responses, and stored under `media/replay/`. They carry MP4/container metadata only; searchable text and evidence candidates must continue to come from `frames`, transcript, clipboard, memory, and product-event rows. Chunk files are the compacted storage of hot frames, not a second capture product: after the compaction repoint, `frames.snapshot_asset_id` points at a chunk asset, so every frame-delete path must be chunk-aware — asset-type-branched validation, a `media/replay/` path validator, and a chunk tombstone `relative_path` under `media/replay/deleted/`. A frame delete that hard-fails on `asset_type != 'frame_jpeg'` is a defect.
 
 Schema invariants:
 
-- `width`/`height` record the pixel dimensions of the stored asset and are required for `frame_jpeg` and `screen_video_chunk` rows — the `capture_scale` acceptance value (Section 16.3) must be auditable by query, not by decrypting files.
+- `width`/`height` record the pixel dimensions of the stored asset and are required for `frame_jpeg` and `screen_video_chunk` rows — the `video_quality` `snapshot_max_width` acceptance value (Section 16.3) must be auditable by query (`width <= snapshot_max_width`), not by decrypting files. The Swift frame envelope carries `width`/`height` in its snapshot subobject (asset-scoped, once per asset; dedupe envelopes reuse the original's asset and do not repeat it).
 - The required-column lists in Sections 6.2/6.3 and the actual `CREATE TABLE`/migration output must match exactly per gate; a schema snapshot test pins this (Section 14). Columns marked *(added by the Gate A.2 migration)* arrive with that gate's forward-only migration, not at first install.
 - `media_assets` rows may be referenced by multiple `frames` rows (dedupe sharing). Physical deletion of an asset requires zero live frame references; delete paths must check references, not assume 1:1.
 
@@ -592,6 +613,8 @@ Allowed `policy_mode` values:
 - `blocked`
 
 Clipboard events store trigger metadata by default. Raw clipboard text may be stored only when `policy_mode=content_opt_in`, the local user granted the current session, the content is under the size cap, and secret/token/password suppression did not fire. Scheduled Pipes can never export raw clipboard text.
+
+`content_hash` is a digest of raw clipboard content and must never outlive the content's retention window: it is cleared no later than `raw_retention_expires_at`, and under `trigger_only` policy it may exist only within the same shortest sensitive TTL it serves for dedup (Section 10.5). A clipboard digest that survives indefinitely is a dictionary-attack oracle for short secrets (passwords, tokens) that pass through the clipboard.
 
 ### 6.7 `memory_items`
 
@@ -817,10 +840,10 @@ Required columns:
 
 - `id TEXT PRIMARY KEY`
 - `day TEXT NOT NULL` (local calendar date, `YYYY-MM-DD`)
-- `workspace_id TEXT`
-- `project_id TEXT`
-- `app_name TEXT`
-- `browser_domain TEXT`
+- `workspace_id TEXT NOT NULL DEFAULT ''`
+- `project_id TEXT NOT NULL DEFAULT ''`
+- `app_name TEXT NOT NULL DEFAULT ''`
+- `browser_domain TEXT NOT NULL DEFAULT ''`
 - `frame_count INTEGER NOT NULL`
 - `first_seen_at TEXT NOT NULL`
 - `last_seen_at TEXT NOT NULL`
@@ -831,7 +854,7 @@ Required columns:
 
 Rules:
 
-- Uniqueness: one row per `(day, workspace_id, project_id, app_name, browser_domain)`; re-derivation upserts.
+- Uniqueness: one row per `(day, workspace_id, project_id, app_name, browser_domain)`, enforced by a unique index over exactly those five columns, which re-derivation upserts against (`ON CONFLICT` target). SQLite treats NULLs as distinct in unique indexes — nullable dimension columns would both allow duplicate rows and make the upsert miss — so the four dimension columns are `NOT NULL` with the empty string `''` as the explicit "none" sentinel: derivation normalizes absent `frames` values to `''`, and readers treat `''` as unattributed.
 - Aggregates answer trend questions ("how often was the Meta Ads dashboard open last quarter") after the source frames are gone; they are the cheapest layer of the coaching substrate (KB per day, viable for years).
 - Aggregates are not proof and never advance Day progress, active-user counts, evidence counts, or revenue state (Section 11).
 - Retention: indefinite, user-delete only (Section 10.5). Full-day user deletion offers deleting that day's aggregates alongside frames.
@@ -850,6 +873,7 @@ FTS tables:
 Rules:
 
 - FTS indexes only rows where `safe_for_search=1`.
+- Dedupe rows (`dedupe_of_frame_id` set) are never FTS-indexed; content hits resolve to the original frame (Section 6.2).
 - Raw text can be viewed by raw-admin APIs, but raw text does not enter FTS.
 - Browser URL search indexes only `browser_domain` and `browser_url_search_label`; `browser_url_search_label` must strip or policy-redact path, query, fragment, usernames, emails, and token-like values before FTS insertion.
 - Insert/update/delete triggers must sync FTS.
@@ -880,6 +904,8 @@ Endpoint families:
 - `GET /recorder/pipes/runs`
 - `POST /recorder/pipes/:pipeId/run`
 - `POST /recorder/pipes/runs/:runId/cancel`
+- `GET /recorder/archive/status` *(Gate E)*
+- `POST /recorder/archive/restore` *(Gate E; explicit user action, manifest-displayed)*
 
 Security requirements:
 
@@ -1066,6 +1092,7 @@ Blocked actions:
 - payment mutation
 - raw file read
 - raw media read unless built-in pipe has explicit local user approval
+- archive control — enable/disable/scope/restore/delete propagation is never a DSL action (Section 10.7)
 
 ### 9.4 Permission Enforcement
 
@@ -1103,6 +1130,7 @@ Pipe output rules:
 - output manifest records source IDs and privacy state
 - incomplete outputs are marked on crash/cancel/timeout
 - scheduled pipes cannot perform raw exports without interactive approval
+- `retention_days` in a pipe definition governs files under `.agentic30/pipes/<pipe-id>/runs/` only; `memory_items` rows written by a pipe follow the Section 10.5 memory-summary tiers (a pipe-written `daily_summary` follows the daily tier), and `pipe_output`-type memory items follow the Pipe outputs retention row
 
 ## 10. Privacy, Redaction, Prompt-Injection, And Retention
 
@@ -1127,28 +1155,30 @@ Allowed `redaction_status` values:
 
 Rules:
 
-- Raw data is local-only.
+- Raw plaintext is local-only. Ciphertext encrypted with user-held keys may leave the device only through the explicit archive sink (Section 10.7); upload never changes `privacy_state`, `redaction_status`, or `safe_for_*` — the archive is a durability replica, not a policy sink.
 - Raw data can be viewed by the local user/admin through raw APIs after auth and audit.
 - Raw data cannot enter FTS, memory summaries, pipe outputs, or exports until policy allows it.
 - Derived memory inherits the least-safe source state.
 - Private app/window/domain exclusions apply before capture.
 - Exports require manifest, redaction report, and explicit user action.
-- Provider egress is default-deny for recorder-derived data.
+- Provider egress is default-deny for recorder-derived data. The archive sink is not provider egress: it is a separately named channel with its own opt-in (Section 4.1 step 6) and never feeds model prompts.
 
 ### 10.2 Minimum Redaction Policy Matrix
 
 The redaction policy matrix is a Gate A/Gate C blocker, not implementation polish. No FTS, memory, export, Pipe, provider, or proof-candidate surface may accept a recorder-derived row until its `data_class × sink` rule exists and has tests.
 
-| Data class | Search | Memory | Export | Provider | Pipe | Required blockers |
-|---|---|---|---|---|---|---|
-| AX/OCR text | redacted only | `safe_for_memory=1` only | `safe_for_export=1` manifest only | default-deny | redacted only | suppress secrets, API keys, OAuth tokens, private chats, emails, customer names, payment data |
-| Browser metadata | domain + sanitized search label only | redacted URL label only | manifest only, no raw URL unless raw-admin export approval | default-deny | domain/search label only | strip query/fragment/userinfo/token-like path segments before FTS |
-| Document metadata | redacted title/path label only | redacted label only | manifest only | default-deny | redacted label only | never index full local paths; redact home paths and customer/private folder names |
-| Clipboard content | off by default; redacted only after opt-in | opt-in + redacted only | never from scheduled pipes | default-deny | trigger metadata only | size cap, content hash, suppression reason, secret/token/password detection |
-| Audio/transcript | redacted transcript only | local transcript state + redacted only | manifest only after local transcript completion | default-deny | redacted transcript only | consent grant, meeting notice, local transcriber provenance, no cloud fallback |
-| Product events | safe summaries only | safe summaries only | safe summaries only | default-deny unless explicit typed adapter | redacted summaries only | preserve source IDs and non-proof flags |
-| Usage aggregates | safe (app names/domains/counts only) | safe | manifest only | default-deny unless explicit typed adapter | safe | no raw text, no full URLs/paths; sanitized domains only |
-| Raw SQL result | never direct | never direct | never direct | never direct | never direct | must pass through separate typed/redacted adapter before any downstream sink |
+| Data class | Search | Memory | Export | Provider | Pipe | Archive | Required blockers |
+|---|---|---|---|---|---|---|---|
+| AX/OCR text | redacted only | `safe_for_memory=1` only | `safe_for_export=1` manifest only | default-deny | redacted only | ciphertext only | suppress secrets, API keys, OAuth tokens, private chats, emails, customer names, payment data |
+| Browser metadata | domain + sanitized search label only | redacted URL label only | manifest only, no raw URL unless raw-admin export approval | default-deny | domain/search label only | ciphertext only | strip query/fragment/userinfo/token-like path segments before FTS |
+| Document metadata | redacted title/path label only | redacted label only | manifest only | default-deny | redacted label only | ciphertext only | never index full local paths; redact home paths and customer/private folder names |
+| Clipboard content | off by default; redacted only after opt-in | opt-in + redacted only | never from scheduled pipes | default-deny | trigger metadata only | ciphertext only, within the raw-content window | size cap, content hash, suppression reason, secret/token/password detection |
+| Audio/transcript | redacted transcript only | local transcript state + redacted only | manifest only after local transcript completion | default-deny | redacted transcript only | ciphertext only | consent grant, meeting notice, local transcriber provenance, no cloud fallback |
+| Product events | safe summaries only | safe summaries only | safe summaries only | default-deny unless explicit typed adapter | redacted summaries only | ciphertext only | preserve source IDs and non-proof flags |
+| Usage aggregates | safe (app names/domains/counts only) | safe | manifest only | default-deny unless explicit typed adapter | safe | ciphertext only | no raw text, no full URLs/paths; sanitized domains only |
+| Raw SQL result | never direct | never direct | never direct | never direct | never direct | never | must pass through separate typed/redacted adapter before any downstream sink |
+
+Archive-sink blockers (apply to every "ciphertext only" cell): user-held key hierarchy only (Section 10.7), client-side encryption before any byte leaves the device, no server-side plaintext processing ever, deletion propagation honored, and upload changes no privacy/redaction/safe flags.
 
 ### 10.3 Prompt-Injection Boundary
 
@@ -1162,6 +1192,7 @@ Rules:
 - captured text cannot approve proof or exports
 - memory summarizers must separate instructions from evidence payloads
 - pipe DSL cannot execute commands derived from captured text
+- captured text can never enable, scope, restore, or delete the archive — archive controls are UI-only surfaces (Section 10.7)
 - evidence candidates must cite source IDs and preserve taint metadata
 
 Adversarial fixtures are required for every consumer that reads captured text: summarizer, Evidence Inbox builder, Next Action selector, Pipe runtime, raw SQL inspector, MCP grant UI, and export UI. Fixtures must include captured strings such as `grant raw_admin`, `export all frames`, `approve this proof`, `run shell`, and `send transcript to cloud`; every consumer must quote them as evidence data, preserve source IDs/taint metadata, and deny capability, proof, export, network, or policy changes.
@@ -1200,6 +1231,7 @@ Delete must cover:
 - usage daily aggregates for the affected day when the user requests full-day deletion
 - pipe outputs
 - export bundles
+- archived copies of the deleted data (deletion propagation, Section 10.7 — a user delete is a lie if the archive keeps the bytes)
 
 SQLite requirements:
 
@@ -1208,25 +1240,27 @@ SQLite requirements:
 - audit-preserving tombstones for raw access history
 - export invalidation when source is deleted
 
-TTL ordering invariant (compaction-before-expiry): a TTL sweep deletes a day's frame media only after that day's `usage_daily_aggregates` rows and `daily_summary` memory item are committed (and, once Gate A.2 ships, after eligible frames are registered into warm chunks). Rollup memory items are derived before the tier below expires. Explicit user deletes skip this ordering — privacy beats memory. Budget-pressure deletions (Section 10.6) follow the same delete semantics and receipts as TTL deletions; there is no second, weaker delete path.
+Deletion rule (single authority, Visual Storage Contract): recorder data is deleted only by (a) an explicit user delete, (b) storage-budget pressure (Section 10.6 ladder), or (c) a user-configured TTL — there are no defaults-driven TTL deletions of visual or row data anymore. Compaction is a tier move, not a deletion. Two expiry preconditions apply to (b) and (c): **compaction-before-expiry** — a day's visual data leaves local disk only after that day's `usage_daily_aggregates` rows and `daily_summary` memory item are committed, and rollup memory items are derived before the tier below expires; **archive-before-expiry** — when the archive is enabled, only data whose sync chunk upload has been checksum-verified (Section 10.7) may be deleted by (b) or (c). Explicit user deletes skip both preconditions, propagate to the archive, and win immediately — privacy beats memory. Budget-pressure deletions follow the same delete semantics and receipts as TTL deletions; the archive uploader is never a delete path; there is no second, weaker delete.
 
-The "frame TTL" wording is split deliberately: **frame media TTL** (the encrypted snapshot file, default 24h) and **frame row TTL** (the metadata + redacted-text row that powers search/timeline, default 365d) are independent policies. Raw AX/OCR text and raw browser/document fields die with the media TTL; the redacted row lives on as the cold tier's search substrate.
+The **raw minimization window** (default 24h, a fixed privacy dial independent of media retention): raw AX/OCR text, raw browser URL/document-path fields, and the raw-derived digests `content_hash`/`simhash` (Section 6.2) are cleared when this window closes, regardless of how long the media and rows live. Making media retention indefinite must not silently make raw plaintext indefinite. The redacted row lives on as the cold tier's search substrate.
 
 Per-surface retention requirements:
 
 | Surface | Default TTL | User delete behavior | FTS purge | Derived-data invalidation | Known OS-level non-guarantees |
 |---|---|---|---|---|---|
-| frame media | 24h unless user changes policy; deletion gated on the compaction-before-expiry ordering above | physical media delete + tombstone (asset removed only when no live frame references it) | media expiry alone keeps FTS; FTS follows the frame row | invalidate frame-only memory/candidates/exports | Time Machine, external backups, crash dumps |
-| frame rows (metadata + redacted text) | 365d unless user changes policy | row tombstone + redacted text cleared | purge frame FTS at row expiry/delete | recompute or invalidate summaries that depended only on expired rows | Time Machine, external backups |
-| warm/replay video chunks | disabled until Gate A.2; then 90d default (warm tier) unless user changes policy | physical chunk delete or rewrite before receipt; clear replay refs for surviving frames when chunk is removed | no FTS | invalidate replay exports and clear `frames.replay_asset_id` / `frames.replay_offset_index` for affected rows | Time Machine, external backups, crash dumps, media caches |
-| raw AX/OCR text | tied to frame media TTL unless explicitly retained as raw-local | clear raw columns or tombstone row | raw text never indexed | recompute summaries that depended only on deleted source | logs if implementation leaked raw text |
-| browser URL/document path raw fields | tied to frame media TTL | clear raw fields before or with frame media delete | sanitized search label/domain follow the frame row | invalidate exports containing labels | browser history outside Agentic30 |
-| clipboard raw content | shortest sensitive TTL; default no raw content | clear raw/redacted clipboard text, keep audit tombstone | purge clipboard FTS rows if any | invalidate clipboard-derived memory/candidates | system clipboard history/managers outside Agentic30 |
+| frame media (hot JPEG) | none — lives until the compaction repoint replaces it (Gate A.2); bounded by the Section 10.6 budget backstop, explicit user delete, or a user-configured TTL; before Gate A.2 the budget is the only bound and the UI states the visual horizon | physical media delete + tombstone (asset removed only when no live frame references it) | media removal alone keeps FTS; FTS follows the frame row | invalidate frame-only memory/candidates/exports | Time Machine, external backups, crash dumps |
+| frame rows (metadata + redacted text) | indefinite unless the user sets a TTL; budget-pressure deletion only for archive-verified rows (Section 10.6) | row tombstone + redacted text cleared | purge frame FTS at row expiry/delete | recompute or invalidate summaries that depended only on expired rows | Time Machine, external backups |
+| compacted video chunks | disabled until Gate A.2; then indefinite local under the storage budget; archive-before-expiry applies when the archive is enabled | physical chunk delete or rewrite before receipt; surviving frames keep the tombstoned pointer and readers return `ERR_RECORDER_MEDIA_CHUNK_REMOVED` (unified visual pointer) | no FTS | invalidate replay exports for affected ranges | Time Machine, external backups, crash dumps, media caches |
+| raw AX/OCR text | raw minimization window (default 24h, independent of media retention) unless explicitly retained as raw-local | clear raw columns (including the raw-derived digests `content_hash`/`simhash`) or tombstone row | raw text never indexed | recompute summaries that depended only on deleted source | logs if implementation leaked raw text |
+| browser URL/document path raw fields | raw minimization window (default 24h) | clear raw fields when the window closes or with frame delete | sanitized search label/domain follow the frame row | invalidate exports containing labels | browser history outside Agentic30 |
+| clipboard raw content | shortest sensitive TTL; default no raw content | clear raw/redacted clipboard text and `content_hash`, keep audit tombstone | purge clipboard FTS rows if any | invalidate clipboard-derived memory/candidates | system clipboard history/managers outside Agentic30 |
 | audio media | user opt-in TTL; default metadata-only until raw audio enabled | physical audio delete + tombstone | transcript FTS purge if transcript deleted | invalidate transcript-derived memory/candidates/exports | system audio caches outside Agentic30 |
 | transcripts | follows audio/transcript policy | clear raw and redacted transcript segments unless user keeps redacted summary | purge transcript FTS | invalidate memory/candidates sourced only from transcript | meeting app/cloud transcripts not created by Agentic30 |
-| memory summaries | tiered, unless user changes policy: `daily_summary` 90d · `weekly_summary` 365d · `monthly/quarterly/yearly_summary` indefinite (user delete only); rollups derived before the tier below expires | delete summary JSON/rows | purge memory FTS | invalidate dependent candidates unless other sources remain; higher rollups survive lower-tier expiry | workspace backups made by user |
+| memory summaries | indefinite, user delete only (users may set per-tier TTLs; rollups are always derived before a lower tier expires) | delete summary JSON/rows | purge memory FTS | invalidate dependent candidates unless other sources remain; higher rollups survive lower-tier expiry | workspace backups made by user |
 | product events | indefinite, user delete only | delete row; on source deletion the safe summary survives by default with `source_ids_json` re-pointed at tombstone references | purge product-event FTS on delete | invalidate candidates sourced only from deleted events | OS backups |
 | usage daily aggregates | indefinite, user delete only | delete rows for the day/range | not FTS-indexed | recompute dependent rollups | OS backups |
+| archived data (cloud, Gate E) | until the user deletes it | user deletes propagate: overlapping sync chunks are deleted or rewritten in the archive before the delete receipt closes; offline propagation queues as `pending_delete` with a named health state | not indexed | restore never resurrects tombstoned rows | provider-side backups are outside the zero-knowledge boundary only as ciphertext |
+| restored archive data | user-managed, default 30d after restore | delete restored rows/media like any local data | follows normal FTS rules for its privacy flags | none beyond normal rules | restored copies excluded from the uploader (no echo) and from TTL sweeps until the user's restore window closes |
 | evidence candidates | until resolved or source deleted | delete/reject candidate when all sources deleted | no raw source text indexed | block proof write if source deleted | external proof artifact remains outside Agentic30 |
 | Pipe outputs | pipe retention policy, default 30d | delete output manifest/files | purge any indexed output | invalidate exports and follow-on candidates | files copied outside managed pipe dir |
 | audit rows | retained for accountability with minimized payload | tombstone only, no raw payload deletion needed | not indexed with raw data | none | OS backups |
@@ -1236,14 +1270,55 @@ Deletion cannot guarantee removal from Spotlight, QuickLook thumbnails, Time Mac
 
 ### 10.6 Storage Budget Contract
 
-Storage budget is a Gate A contract (Sections 2.1 and 16.3), not UI polish. Cadence parameters alone leave a theoretical ceiling near 90GB/day (1s min-interval x multi-monitor x native-resolution capture), and dedup efficiency is workload-dependent, so the byte budget is the deterministic backstop.
+Storage budget is a Gate A contract (Sections 2.1 and 16.3), not UI polish. With indefinite local retention as the default, the byte budget IS the retention boundary: cadence parameters alone leave a theoretical ceiling near 90GB/day (1s min-interval x multi-monitor x uncapped-resolution capture), dedup efficiency is workload-dependent, and "indefinite local" honestly means "budget-bounded local + indefinite archive" (Section 10.7).
 
 - Measurement scope: recursive bytes under the recorder home (`recorder.sqlite` + WAL + `media/` + `indexes/` + `exports/`), recomputed by every sweep and on demand for the UI.
-- Default budget: 100GB total, user-adjustable. The retention UI must show the projected steady-state usage for the chosen retention policy (frames/day x bytes/frame x retention days, using `media_assets` averages) next to the budget control.
-- Soft threshold (80% of budget): the sweep accelerates deletion of the oldest frame media first — still respecting the Section 10.5 ordering invariant and delete semantics (tombstones, FTS behavior, derived-data invalidation) — then the oldest warm chunks. Export archives are never auto-deleted; they are counted, named in the UI, and left to the user.
-- Hard threshold (100% of budget): new capture pauses fail-closed, recorder health becomes `storage_budget_exceeded`, and the UI names the state and the recovery actions (raise budget, lower retention, delete exports). Capture resumes automatically once usage falls below the soft threshold.
-- Budget-pressure deletion and TTL deletion share one code path and one receipt semantics; there is no second, weaker delete.
-- Gate A acceptance requires tests for soft-threshold acceleration, hard-threshold pause + health state, automatic resume, and projected-usage display values.
+- Default budget: 100GB total, user-adjustable. The retention UI must show the projected steady-state usage for any finite retention policy (frames/day x bytes/frame x retention days, using `media_assets` averages) and — because the default retention is indefinite — the measured growth rate (GB/year) plus the projected date the budget fills, next to the budget control.
+- Soft threshold (80% of budget): the sweep first attempts one compaction cycle regardless of power state (compression preserves memory better than deletion; Section 16.3 `compaction_requires_ac` yields here), then deletes in order, oldest first and respecting both Section 10.5 expiry preconditions: (1) compacted chunks — archive-verified ones first when the archive is enabled; (2) archive-verified frame rows. `usage_daily_aggregates`, memory items, `product_events`, and audit rows are never auto-deleted. Export archives are never auto-deleted; they are counted, named in the UI, and left to the user. With the archive enabled and reachable, budget pressure therefore moves data to the archive rather than destroying it; with no archive, the UI names what will be destroyed before it is.
+- Hard threshold (100% of budget): new capture pauses fail-closed, recorder health becomes `storage_budget_exceeded`, and the UI names the state and the recovery actions (raise budget, enable/repair the archive, delete exports, lower a user-set TTL). Capture resumes automatically once usage falls below the soft threshold.
+- Budget-pressure deletion and TTL deletion share one code path and one receipt semantics; the archive uploader is never a delete path; there is no second, weaker delete.
+- Gate A acceptance requires tests for soft-threshold compaction-then-deletion order, hard-threshold pause + health state, automatic resume, and projected-usage/growth-rate display values.
+
+### 10.7 Cloud Archive Contract (Gate E)
+
+The archive gives "무기한" its honest meaning: local disk holds what the budget allows; the archive holds everything, end-to-end encrypted, for as long as the user wants. It is a durability replica — never a policy sink, never a search backend, never a delete path of its own.
+
+Key hierarchy (user-held, zero-knowledge):
+
+- user recovery passphrase -> Argon2id KEK (parameters fixed and versioned in the manifest; `node:crypto` scrypt is the named allowed alternative, algorithm-ID'd in the manifest) -> wraps a locally generated random 256-bit **archive master key** (stored in Keychain under its own `key_id`, separate from the Section 6.1 media key — local key exposure must not equal archive exposure) -> per-sync-chunk keys derived via HKDF(master, chunk_id), never stored.
+- AEAD is the existing AES-256-GCM envelope (single crypto stack); ChaCha20-Poly1305 was considered and rejected — macOS-only means hardware AES everywhere.
+- Plaintext key material (master key, chunk keys, passphrase) never leaves the device. The Argon2id-wrapped master-key blob and KDF parameters are uploaded as the archive manifest header — this is what makes "empty machine + passphrase" recovery real. Passphrase + device both lost = archive permanently unrecoverable; the enable flow states this and requires passphrase re-entry verification.
+- Key loss is fail-closed with an explicit error, same wording family as Section 6.1; silent re-key is forbidden.
+
+Upload contract:
+
+- Unit: time-window **sync chunks** — encrypted media chunk files plus encrypted row-export JSONL (frames metadata/redacted text, transcripts, product events, memory items, aggregates) with a manifest (time range, source IDs, sha256 checksums, byte sizes).
+- A watermark timestamp tracks the verified-uploaded boundary; verification means a checksum comparison (stored object sha256 metadata vs manifest), not an HTTP 200.
+- The uploader never deletes local data. Deletion stays with the Section 10.5/10.6 sweep, for which verified upload is the archive-before-expiry precondition.
+- Restored data and export archives are excluded from upload (no echo loops).
+- Upload failure is a named health state (`archive_upload_failing`), never a silent skip; a growing un-uploaded backlog while budget pressure rises must surface in the UI.
+
+Deletion propagation (Gate E blocker):
+
+- An explicit user delete applies to the archive in the same receipt: overlapping sync chunks are deleted or rewritten (same delete-or-rewrite semantics as local chunks, Section 16.3). If the target is unreachable, the propagation queues as `pending_delete` with a named health state and the receipt says so — the deletion is not silently forgotten.
+- Restore consults tombstones and never resurrects deleted rows.
+
+Restore contract:
+
+- Manifest-based time-range selective restore (full-archive download is not the primary path); explicit user action with a displayed manifest (chunk list, byte totals).
+- Restored rows keep their original `privacy_state`/`redaction_status`/`safe_for_*`/taint metadata — restore performs no state promotion; FTS re-entry only via the existing `safe_for_search=1` trigger path.
+- Restored media is re-encrypted with the local Section 6.1 envelope on landing (one read path; no archive-format-specific reader surface).
+- Restored data lands inside the recorder home marked `restored_at`, counts toward the Section 10.6 budget, is excluded from the uploader and from TTL sweeps for its restore window (Section 10.5), and is still recorder media for Section 11 purposes — restoring an old screenshot does not make it external-origin proof.
+- Search beyond the local horizon shows "N sync chunks in archive for this range" plus an explicit restore action; there is no silent cloud query.
+
+Storage target:
+
+- Contract: SigV4-signed S3-compatible object storage with the minimal verb set PUT/GET/HEAD/DELETE/List. The verified reference target is Cloudflare R2 (already operated for `updates.agentic30.app`); other S3-compatible stores are best-effort.
+- Credentials (access key/secret) live in Keychain, never in sidecar JSON state, and are scrubbed from logs/telemetry like all auth material.
+- The archive is the single named exception to the Section 10.1 egress default-deny, as the separately named **archive sink** (Section 10.2 column); it is not provider egress and never feeds model prompts.
+- An Agentic30-operated archive service implementing this same client contract (managed storage, Paddle-billed) is a future adapter under a separate spec, per the Section 12 pattern — subscription-lapse grace, data reclamation, and hosting obligations are that spec's problem, not this one's.
+
+Controls: enabling, scoping, restoring, and deleting the archive are UI-only surfaces behind permission-ladder step 6 (Section 4.1). Captured text and Pipe DSL can never touch them (Sections 9.3 and 10.3).
 
 ## 11. Proof Ledger Boundary
 
@@ -1256,8 +1331,10 @@ Rules:
 - raw frame hit is not proof
 - transcript hit is not proof
 - memory item is not proof
-- product event is not proof
+- product event (including its `metrics_json`) is not proof
+- usage aggregate row is not proof
 - pipe output is not proof
+- archive-restored data is not proof (it remains recorder media — restore confers no external origin)
 - evidence candidate approval is not proof
 - only verifier-compatible proof-ledger writes count
 
@@ -1311,8 +1388,20 @@ The final scope is broad, but implementation must proceed through gates.
 - strict proof adapter rejection tests
 - cadence + dedup authority at sidecar ingest with the Section 16.3 acceptance values and boundary tests
 - storage budget contract (Section 10.6): soft/hard thresholds, `storage_budget_exceeded` health state, projected-usage display
-- cold-tier long-horizon rows: `usage_daily_aggregates`, rollup memory types, and compaction-before-expiry ordering
+- cold-tier long-horizon rows: `usage_daily_aggregates`, `product_events` retention + `metrics_json` derivation-before-media-TTL, rollup memory types, the raw minimization window, and compaction-before-expiry ordering
 - orphan media containment: capture-side compensating cleanup plus retention-sweep orphan scan
+- visual-horizon honesty: until Gate A.2 ships, UI copy states that visual memory is bounded by the storage budget (Section 10.6)
+
+### Gate A.2: Snapshot Compaction And Chunks
+
+Ships after Gate A acceptance, independently of Gates B-D; chunks stay disabled until this gate's live signed-app acceptance passes.
+
+- compaction lifecycle (sidecar-owned) + VideoToolbox chunk encoding (Swift-owned) per Section 16.3
+- unified-pointer migration: `snapshot_offset_index`, `media_assets` chunk-metadata columns, `asset_type` CHECK rebuild to include `screen_video_chunk` (one forward-only migration)
+- chunk-aware frame delete path (type-branched validation, `media/replay/` path validator, chunk tombstone path)
+- delete-or-rewrite with `pending_delete` ordering, crash recovery, fail-closed downgrade, and named health states (Section 16.3)
+- measured kill criterion: live median byte reduction >= 1.5x, else compaction ships disabled (Section 16.3)
+- indefinite visual retention becomes the effective default only when this gate ships — compaction is what makes it affordable
 
 ### Gate B: Raw API And Audit
 
@@ -1341,6 +1430,16 @@ The final scope is broad, but implementation must proceed through gates.
 - permission enforcement
 - output manifests
 - cancellation/timeout
+
+### Gate E: Cloud Archive
+
+- key hierarchy + empty-machine recovery rehearsal (Section 10.7)
+- sync-chunk uploader with checksum-verified watermark and named failure health states
+- archive-before-expiry wired into the TTL/budget sweep as a deletion precondition
+- deletion propagation (including offline `pending_delete` queueing) proven before any local deletion depends on the archive
+- manifest-based selective restore with no state promotion, no upload echo, and tombstone non-resurrection
+- permission-ladder step 6 opt-in UI with the unrecoverability boundary stated
+- R2-verified S3 contract; credentials in Keychain; egress limited to the named archive sink
 
 No gate may claim proof progress without the strict proof adapter.
 
@@ -1401,7 +1500,7 @@ Suggested tests:
 - memory redaction and taint tests
 - proof adapter rejection tests
 - cadence boundary tests for the four Section 16.3 values, enforced at sidecar ingest (min-interval, debounce, active/idle max-gap)
-- dedup tests: context+content-hash skip, simhash Hamming threshold, dedupe-row asset sharing, shared-asset delete with surviving references
+- dedup tests: context+content-hash skip, simhash Hamming threshold, dedupe-row asset sharing, shared-asset delete with surviving references, dedupe-chain flattening to the root original, original-delete cascading its dedupe chain, dedupe-row FTS exclusion
 - envelope idempotency tests: identical resend is a no-op, same-id-different-content is an explicit error
 - orphan media tests: ingest-rejected file compensating cleanup plus sweep of unreferenced files
 - zero-plaintext-media test: every `frame_jpeg`/`audio_m4a`/`screen_video_chunk` on disk is encrypted, manual capture included
@@ -1411,6 +1510,9 @@ Suggested tests:
 - product-event retention tests: indefinite survival, tombstone re-pointing on source deletion, FTS purge on delete
 - rollup survival tests: weekly/monthly rollups outlive expired daily summaries and never resurrect deleted raw data
 - `metrics_json` derivation tests: ad/analytics-domain frames attempt derivation before media TTL, failures recorded, non-proof invariant enforced
+- raw-derived digest expiry tests: `content_hash`/`simhash` cleared together with raw text/fields at frame-media TTL; clipboard `content_hash` never outlives its raw-content window
+- `usage_daily_aggregates` uniqueness tests: `''` sentinel normalization at derivation and NULL-free unique upsert (re-derivation updates rows with unattributed dimensions, never duplicates them)
+- warm chunk delete-or-rewrite tests (Gate A.2): overlapping-range chunk delete/rewrite, `pending_delete` crash recovery on restart, fail-closed rewrite-to-delete downgrade, stale replay/offset reference clearing for surviving frames (Section 16.3)
 
 ## 15. Review Evidence And Disposition
 
@@ -1422,7 +1524,7 @@ Reviews incorporated into this final design:
 - **`insane-review` GPT-5.5 Pro, 2026-06-27** (`.insane-review/response_agentic30-public_20260627_224857_61137_ac461d.md`): focused design review of this SPEC + GOAL_PROMPT against the product context (`docs/SPEC.md`, `VALUES.md`, `GOAL.md`, `ICP.md`, `PHILOSOPHY.md`, `known-limitations.md`). Verdict: **blocked for MVP implementation; demote from "Final implementation spec" to "Deferred RFC"** — grounds: external evidence N=0 / MVP Success 0/5, the active wedge is still Day 0-3, and an always-on recorder substrate conflicts with VALUES #4/#5 (build-instead-of-sell). It also flagged real spec bugs: FTS rules referenced `safe_for_search` on `memory_items`/`product_events`, which lacked the column; "optional encryption" is too weak for always-on raw media; and capture cadence, retention defaults, the redaction policy matrix, and the Pipe DSL grammar were undefined. The spec bugs are fixed in Sections 6-7; the strategic flag is answered structurally in Sections 11 and 16 (see Section 1).
 - **`insane-review` GPT-5.5 Pro, 2026-06-28** (`.insane-review/response_agentic30-public_20260628_135538_36318_8629c3.md`; pack ~228,058 tokens): narrower source-pack review of this SPEC + GOAL_PROMPT + recorder implementation status. It accepted the user's fixed required/excluded surfaces and returned blocker edits: mirror the browser-extension exclusion in the GOAL_PROMPT, make every required surface independently gateable, add `raw_sql` access-level implementation blockers, enforce SQL at the SQLite authorizer/progress-handler level, split readiness modes, harden OCR provenance, promote the redaction matrix to a blocker, sanitize browser URL FTS fields, add clipboard/audio schemas, broaden deletion/retention, block proof laundering from local artifacts, add captured-text adversarial fixtures, add the completion-status legend, and align the Pipe route namespace. Incorporated in Sections 2, 4, 6-11, 13-17 and the GOAL_PROMPT.
 
-- **Frame-storage architecture review, 2026-07-02** (multi-agent adversarial review: 4 parallel analyses + 18 verification passes; 17 findings confirmed, 1 refuted; quantified against real screenpipe data on the target machine): capture cadence and dedup had no enforcement authority (`content_hash` was specified without semantics and implemented as a ciphertext digest, making dedup structurally impossible); the retention ladder (frame media 24h, memory summaries 30d) contradicted the month/quarter/year coaching goal with no aging tier, no `product_events` retention row, no aggregates table, and no storage-budget or capture-resolution contract; ingest failures orphaned media files outside the TTL boundary. Measured anchors: ~5,000-9,000 keyframes/day for this workload; screenpipe's 5-10GB/month is [1x logical resolution ~4x] x [HEVC ~2.2x], so the resolution decision dominates the codec. Incorporated as: the tiered-aging Visual Storage Contract with compaction-before-expiry ordering, the Section 6.2 column-semantics + dedup/idempotency contract and dedupe asset-ownership rules, `usage_daily_aggregates` (table 13), rollup memory types, `product_events.metrics_json` + snapshot event types + retention row, the frame media/row TTL split in Section 10.5, the Section 10.6 storage budget, capture-scale and cadence-authority acceptance values in Section 16.3, and the normative encryption envelope + orphan containment in Section 6.1. The encryption-contract finding was refuted — the implemented AES-256-GCM envelope already exceeded the spec text, which now documents it.
+- **Frame-storage architecture review, 2026-07-02** (Fable multi-agent adversarial review, session-internal; 17 findings confirmed, 1 refuted. Unlike the `.insane-review/` entries above, no response artifact was persisted — the auditable residue is the incorporated section list below, with anchors measured against real screenpipe data on the target machine): capture cadence and dedup had no enforcement authority (`content_hash` was specified without semantics and implemented as a ciphertext digest, making dedup structurally impossible); the retention ladder (frame media 24h, memory summaries 30d) contradicted the month/quarter/year coaching goal with no aging tier, no `product_events` retention row, no aggregates table, and no storage-budget or capture-resolution contract; ingest failures orphaned media files outside the TTL boundary. Measured anchors: ~5,000-9,000 keyframes/day for this workload; screenpipe's 5-10GB/month is [1x logical resolution ~4x] x [HEVC ~2.2x], so the resolution decision dominates the codec. Incorporated as: the tiered-aging Visual Storage Contract with compaction-before-expiry ordering, the Section 6.2 column-semantics + dedup/idempotency contract and dedupe asset-ownership rules, `usage_daily_aggregates` (table 13), rollup memory types, `product_events.metrics_json` + snapshot event types + retention row, the frame media/row TTL split in Section 10.5, the Section 10.6 storage budget, capture-scale and cadence-authority acceptance values in Section 16.3, and the normative encryption envelope + orphan containment in Section 6.1. The encryption-contract finding was refuted — the implemented AES-256-GCM envelope already exceeded the spec text, which now documents it.
 
 Disposition: **final design — approved to build through the Section 13 gates.** The strategic flag (scope is large for an N=0 wedge) is recorded; the user's direction is to proceed while keeping Gate A focused on the Day-0-3-serving journey and the proof-ledger boundary strict. The previous narrow manual-capture review is historical context only.
 

@@ -166,6 +166,9 @@ blocking foreground UI E2E (CLAUDE.md rule).
      four acceptance values (1000/750/10000/60000ms) per `monitor_id`;
      current reality is a fixed 120s Swift timer + undebounced app-activation
      trigger + 10s event-tap throttle, no ingest enforcement, zero tests.
+     Dedupe-row contract (SPEC 6.2/7): `dedupe_of_frame_id` chain-flattens to
+     the root original, dedupe rows are FTS-excluded, and deleting an
+     original cascades its dedupe chain in the same receipt.
    - `content_hash` semantics fix in Swift (SPEC 6.2): pre-encryption
      content hash + context key; today it is the AES-GCM ciphertext sha256
      (random nonce → dedup structurally impossible). Add `simhash` (64-bit
@@ -173,17 +176,24 @@ blocking foreground UI E2E (CLAUDE.md rule).
    - Envelope idempotency (SPEC 6.2): identical resend must be a no-op;
      ingest currently hard-fails every duplicate frame id
      (`ERR_RECORDER_INGEST_DUPLICATE_FRAME`).
-   - Schema migration (SPEC 6.2/6.3): add `capture_sequence`,
-     `dedupe_of_frame_id`, `document_path_search_label` (frames already has
-     the text-provenance column), `media_assets.width/height` +
-     `source_ids_json`; pin spec-vs-CREATE TABLE with a snapshot test.
-     Replay columns and chunk metadata stay Gate A.2.
+   - Schema migration (SPEC 6.2/6.3): add `capture_sequence` and
+     `dedupe_of_frame_id` (frames already has the text-provenance and
+     `document_path_search_label` columns), plus `media_assets.width/height`
+     and `monitor_id` (`source_ids_json` already exists at
+     recorder-store.mjs:1016); relax `frames.content_hash` to nullable
+     (writer-enforced at ingest) so digest expiry can clear it; pin
+     spec-vs-CREATE TABLE with a snapshot test. Chunk metadata columns stay
+     Gate A.2.
    - Retention defaults (SPEC 10.5): memory tiering (daily 90d / weekly 365d
      / monthly+ indefinite — code default is 168h flat), product_events
      indefinite (code: 168h), frame-row TTL 365d split from 24h media TTL;
-     pin every default with a test (none are pinned today).
-   - `usage_daily_aggregates` (SPEC 6.14) + compaction-before-expiry
-     ordering in the sweep (SPEC 10.5).
+     pin every default with a test (none are pinned today). Raw-derived
+     digest expiry (SPEC 6.2/6.6/10.5): the sweep clears
+     `content_hash`/`simhash` with the raw fields at media TTL, and
+     clipboard `content_hash` never outlives its raw-content window.
+   - `usage_daily_aggregates` (SPEC 6.14: NOT NULL `''` dimension sentinels
+     + five-column unique upsert index — SQLite treats NULLs as distinct) +
+     compaction-before-expiry ordering in the sweep (SPEC 10.5).
    - Storage budget (SPEC 10.6): 100GB default, 80% soft / 100% hard +
      `storage_budget_exceeded` health state; no budget code exists.
    - Orphan media containment (SPEC 6.1): Swift compensating delete on

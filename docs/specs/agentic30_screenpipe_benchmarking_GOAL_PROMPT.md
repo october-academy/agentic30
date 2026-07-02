@@ -199,6 +199,9 @@ Gate A blockers:
   write
 - browser URL/document metadata uses redacted search labels, not raw URL/path
   indexing
+- 2026-07-02 revision additions (SPEC Sections 13/16.3): sidecar-ingest
+  cadence/dedup authority, storage budget (10.6), cold-tier long-horizon rows
+  (6.14/6.7/10.5), orphan media containment (6.1)
 
 ### Gate B: Raw API And Audit
 
@@ -231,8 +234,8 @@ Gate C blockers:
   raw-audio indicator state, local transcriber name/version, transcript
   provenance, deletion linkage, and `local_unavailable_no_cloud_fallback`
 - deletion/retention covers frames, raw AX/OCR, browser URLs, document paths,
-  clipboard content, audio, transcripts, memory, candidates, Pipe outputs,
-  audits, and exports
+  clipboard content, audio, transcripts, memory, product events, usage daily
+  aggregates, candidates, Pipe outputs, audits, and exports
 
 ### Gate D: Agentic30 Pipes
 
