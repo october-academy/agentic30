@@ -1,5 +1,43 @@
-> from: https://github.com/sSQzd385b6CvTrh/VictoriaMetrics/blob/79baf628923306f1191078a21408d9992458a622/docs/victoriametrics/goals.md?plain=1#L45-L63
-- A small usability improvement is more valuable than a major new feature. The usability fix makes happy existing users. Non-trivial feature may make happy some new users, while it may make upset a big share of existing users if the feature breaks the essential functionality of VictoriaMetrics products or makes it less efficient.
-- Having clean and concise documentation is more valuable than having a lot of great but undocumented features. Good docs help users discovering new functionality and dealing with VictoriaMetrics products in the most efficient way. Nobody uses new shiny features if they aren’t documented properly.
-- A simple solution is better than a smart one. The simple solution is easier to setup, operate, debug and troubleshoot than the smart solution. This saves users’ time, costs and nerve cells.
-- Happy users are more important than the short-term profit. Happy users spread the word about VictoriaMetrics, so more people convert to VictoriaMetrics users. Happy users are eager to become happy customers over time. This increases long-term profit. Upset users may be forced to become customers, but they will constantily search for the opportunity to switch to competing solutions.
+# Agentic30 개발 철학
+
+> **최종 업데이트:** 2026-07-02
+
+## 목표 (Goals)
+
+1. **주 목표 — 전업 1인 개발자가 Agentic30으로 30일 안에 활성 사용자 100명과 첫 매출 증거를 가장 효율적으로 확보하도록 돕는다.** 모든 개발 작업은 이 목표에 기여하는 순서로 정렬한다.
+1. 핵심 기능의 버그를 고친다. 작은 사용성 버그가 사용자를 가장 자주 괴롭히므로 **가장 먼저 고친다**. 드문 엣지케이스에서 소수에게만 영향을 주는 버그는 뒤로 미뤄도 된다.
+1. 문서를 개선한다. 사용자가 개발자에게 직접 묻지 않고도 README, docs/, 앱 안의 안내만으로 스스로 답을 찾을 수 있어야 한다. 문서는 현재 상태를 정직하게 기록한다 — 구현했다는 것과 검증됐다는 것은 다르며, 한계는 [known-limitations.md](./known-limitations.md)에 남긴다.
+1. 제품 사용을 단순하게 만든다. 설치에서 첫 과제까지의 시간을 줄이고, 질문은 짧게, 출력은 명확하게 유지한다. 업데이트가 사용자의 로컬 기록을 조용히 망가뜨리지 않게 해서, 기존 사용자가 안심하고 최신 릴리즈로 올라오게 한다.
+1. 이미 있는 기능의 사용성을 개선한다.
+1. 불필요한 추상화를 제거하고 코드를 단순화해 가독성과 유지보수성을 높인다. Agentic30은 1인이 유지보수하는 코드베이스다 — 미래의 자신이 첫 번째 독자다.
+1. 테스트와 빌드를 빠르고 결정론적으로 유지해 개발 속도를 높인다. 테스트는 로컬에서 전부 돌아야 하고, 기본 테스트 스위트에는 시간·네트워크에 의존하는 단언을 두지 않는다. 라이브 프로바이더 카나리는 명시적 opt-in 환경변수 뒤에만 둔다.
+
+## 목표가 아닌 것 (Non-goals)
+
+1. 더 적합한 도구가 따로 있는 사람을 설득해 Agentic30을 쓰게 만드는 것. Anti-ICP(부업 직장인, 팀 스타트업, "대신 해줘" 수요자 — [ICP.md](./ICP.md))를 끌어들이면 나중에 실망한 사용자만 남는다.
+1. 공개 문서의 링크와 경로를 깨는 것. 오래된 링크를 클릭한 사용자가 404를 만나면 불행해진다. Agentic30에서는 한 단계 더 나아간다 — 제품 source-of-truth 문서([ICP.md](./ICP.md) / [GOAL.md](./GOAL.md) / [VALUES.md](./VALUES.md) / [SPEC.md](./SPEC.md))는 사이드카 코드와 워크스페이스 스캔이 구조째 소비하므로(런타임 캐노니컬 경로는 사용자 워크스페이스의 `.agentic30/docs/*`), 구조를 소비처 업데이트 없이 바꾸면 링크가 아니라 제품이 깨진다.
+1. 하위호환 레이어를 쌓는 것. 지금 단계에서 레거시 경로, 폴백, shim은 자산이 아니라 비용이다. 깨야 하면 명시적으로 깨고, 지속 상태(persisted state)는 스키마 버전과 마이그레이션 테스트로 다루며, 실패는 조용한 폴백 대신 명시적 에러로 드러낸다.
+1. 코드와 아키텍처를 크게 바꿔야 하는 기능을 추가하는 것. 그런 기능은 핵심 루프(기록을 읽는다 → 오늘의 과제를 정한다 → 실행 결과를 다음 판단에 반영한다)를 깨뜨려 기존 사용자 다수를 불행하게 만들 수 있다.
+1. 불필요한 추상화를 추가하는 것. 유지보수성만 나빠진다.
+1. 사용자가 요청하는 모든 기능을 구현하는 것. 기능 요청은 [GOAL.md](./GOAL.md)와 [VALUES.md](./VALUES.md)에 맞아야 한다. 맞지 않으면 이 문서 링크와 함께 `won't implement`로 닫는다.
+1. 제출되는 모든 PR을 머지하는 것. 기능 요청과 같은 기준을 적용하고, 맞지 않으면 이 문서 링크와 함께 `won't merge`로 닫는다.
+1. CI/CD를 비필수 작업으로 무겁게 만드는 것. 파이프라인이 느려지고 디버깅이 어려워지면 개발 속도가 죽는다.
+1. 비필수 요구사항을 도입하는 것. 꼭 필요하지 않은 도구·의존성·프로세스는 개발 속도만 늦춘다.
+1. 고객 검증을 대체하는 개발 작업. 오늘 해야 할 고객 행동이 정해져 있는데 인프라 정비·리팩터링·신기능으로 바쁘게 지내는 것은 진전이 아니라 회피다. Agentic30이 사용자에게 요구하는 기준을 Agentic30 개발에도 똑같이 적용한다.
+
+## Agentic30 격언 (Proverbs)
+
+- **작은 사용성 개선이 큰 신기능보다 가치 있다.** 사용성 개선은 기존 사용자를 행복하게 만든다. 큰 신기능은 일부 새 사용자를 기쁘게 할 수 있지만, 핵심 기능을 깨뜨리거나 느리게 만들면 기존 사용자 다수를 불행하게 만든다.
+
+- **깔끔하고 간결한 문서가, 문서 없이 쌓인 훌륭한 기능들보다 가치 있다.** 문서가 좋아야 사용자가 기능을 발견하고 가장 효율적으로 쓸 수 있다. 문서가 없으면 아무리 그럴듯한 기능도 아무도 쓰지 않는다.
+
+- **단순한 해법이 영리한 해법보다 낫다.** 단순한 해법은 설치·운영·디버깅·트러블슈팅이 쉽다. 사용자의 시간을 아끼고 신경 쓸 일을 줄이며, 1인 유지보수자 자신의 시간도 아낀다.
+
+- **행복한 사용자가 단기 수익보다 중요하다.** 행복한 사용자는 Agentic30을 알아서 알리고, 시간이 지나면 기꺼이 유료 고객이 된다. 억지로 결제하게 만든 사용자는 고객이 아니라 이탈할 기회를 찾는 사람이다. 다만 Agentic30에서 첫 매출은 수익이 아니라 증거다 — 가치를 확인한 사용자에게 결제 요청을 미루는 것은 배려가 아니라 검증 회피다.
+
+## 참고 문서
+
+- [GOAL.md](./GOAL.md) — 프로젝트 미션과 핵심 결과
+- [VALUES.md](./VALUES.md) — 제품·코칭 판단 기준
+- [ICP.md](./ICP.md) — 이상적 고객과 Anti-ICP
+- [SPEC.md](./SPEC.md) — 제품 명세
