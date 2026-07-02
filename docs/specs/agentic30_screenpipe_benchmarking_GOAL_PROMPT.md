@@ -328,29 +328,15 @@ proof approval, tool policy, or permission to broaden access.
 Before claiming implementation readiness:
 
 1. Run focused Swift and sidecar tests for every changed contract.
-2. Run adversarial read-only reviews from product, implementation, and
-   security perspectives.
-3. Run `insane-review` with GPT-5.5 Pro against the spec, implementation
-   diff, and relevant source pack.
-
-Known review command:
-
-```bash
-python3 /tmp/insane-review-inspect/bin/pack_and_ask.py --check-env
-python3 /tmp/insane-review-inspect/bin/pack_and_ask.py \
-  --target /Users/october/prj \
-  --include "agentic30-public/docs/specs/agentic30_screenpipe_benchmarking_SPEC.md,agentic30-public/docs/specs/agentic30_screenpipe_benchmarking_GOAL_PROMPT.md,agentic30-public/docs/specs/agentic30_screenpipe_benchmarking_TODO.md,agentic30-public/docs/SPEC.md,agentic30-public/sidecar/execution-os.mjs,agentic30-public/sidecar/office-hours-structured-input.mjs,agentic30-public/agentic30/**,agentic30-public/sidecar/**,agentic30-public/sidecar-tests/**,agentic30-public/agentic30Tests/**,screenpipe/docs/EVENT_DRIVEN_CAPTURE_SPEC.md,screenpipe/docs/VISION_PIPELINE_SPEC.md,screenpipe/docs/PIPE_EXECUTION_SPEC.md,screenpipe/README.md" \
-  --model pro \
-  --require-model "GPT-5.5" \
-  --force-answer-after 240 \
-  --max-wait 900 \
-  --prompt "Review this Agentic30 Founder Memory OS final spec/implementation for product fit, schema correctness, privacy/security, raw API safety, Pipe runtime safety, local-only constraints, proof-ledger integrity, and scope creep. Return blocking findings first with file:line citations."
-```
-
-If `insane-review` cannot run, do not pretend it ran. Record the exact
-blocker: missing script/plugin, Python dependency, CDP browser, ChatGPT
-login, GPT-5.5 Pro mismatch, DOM/tooling failure, upload failure, or
-pack-size problem.
+2. Run Fable adversarial read-only reviews of the slice: fresh-context
+   subagents against the targeted SPEC sections and the diff, covering at
+   minimum the product, implementation, and security lenses. Every blocking
+   finding must be adversarially verified against the actual code (verdict
+   CONFIRMED/REFUTED with file:line citations) before it is fixed or
+   dismissed.
+3. Do not run `insane-review` or any external GPT web review — retired by
+   user decision on 2026-07-02 (multi-minute web waits per pack; packs over
+   ~700KB cannot send at all). Fable reviews replace it entirely.
 
 ## Acceptance Criteria
 

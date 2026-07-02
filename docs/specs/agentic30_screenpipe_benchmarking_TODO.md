@@ -13,6 +13,10 @@
 
 ## Status Snapshot
 
+- Gate A: partially re-opened by the 2026-07-02 SPEC revision (tiered aging,
+  cadence/dedup authority, storage budget, long-horizon retention) — see
+  P1 item 0 for the delta list; the lines below describe the pre-revision
+  scope.
 - Gate A (sidecar): done — RecorderStore `recorder.sqlite` schema v12,
   redacted-only FTS, ingest/delete/range-delete, redaction policy matrix
   (NFKC-hardened), Day Memory Review + snapshots, Evidence Inbox builder +
@@ -154,18 +158,57 @@ blocking foreground UI E2E (CLAUDE.md rule).
 
 ## P1 — Next up
 
-1. **insane-review coverage — DECISION RECORDED (2026-07-02): incremental
-   delta packs, not monolithic packs.** The web UI cannot send the ~4.5M/1.03M
-   token packs (send-button failure is a pack-size limit); packs ≤~700KB
-   (~130-195k tokens) send reliably. Coverage strategy: review each new slice
-   with a delta pack against the SPEC. Executed twice and PASSED/actioned:
-   narrow recorder hardening pack
-   (`.insane-review/response_prj_20260629_232802_72018_4ed024.md`, PASS) and
-   the pipes/live-acceptance delta pack
-   (`.insane-review/response_prj_20260702_082908_98772_e3e33a.md`, BLOCKED →
-   all 5 findings adversarially verified and fixed the same day: pipe sandbox
-   artifact write, artifact file deletion, manifest sourceIds, triage schema
-   fork, failed-run incomplete manifests).
+0. **Gate A re-opened by the 2026-07-02 SPEC revision (frame-storage
+   architecture review; SPEC Section 15 entry).** The Status Snapshot's
+   "Gate A (sidecar): done" covers the schema-v12 scope; these contracts are
+   new/changed and unimplemented (`spec_only` unless noted):
+   - Cadence/dedup authority at sidecar ingest (SPEC 16.3 + 6.2): enforce the
+     four acceptance values (1000/750/10000/60000ms) per `monitor_id`;
+     current reality is a fixed 120s Swift timer + undebounced app-activation
+     trigger + 10s event-tap throttle, no ingest enforcement, zero tests.
+   - `content_hash` semantics fix in Swift (SPEC 6.2): pre-encryption
+     content hash + context key; today it is the AES-GCM ciphertext sha256
+     (random nonce → dedup structurally impossible). Add `simhash` (64-bit
+     dHash, Hamming <= 3/64) — currently never sent.
+   - Envelope idempotency (SPEC 6.2): identical resend must be a no-op;
+     ingest currently hard-fails every duplicate frame id
+     (`ERR_RECORDER_INGEST_DUPLICATE_FRAME`).
+   - Schema migration (SPEC 6.2/6.3): add `capture_sequence`,
+     `dedupe_of_frame_id`, `document_path_search_label` (frames already has
+     the text-provenance column), `media_assets.width/height` +
+     `source_ids_json`; pin spec-vs-CREATE TABLE with a snapshot test.
+     Replay columns and chunk metadata stay Gate A.2.
+   - Retention defaults (SPEC 10.5): memory tiering (daily 90d / weekly 365d
+     / monthly+ indefinite — code default is 168h flat), product_events
+     indefinite (code: 168h), frame-row TTL 365d split from 24h media TTL;
+     pin every default with a test (none are pinned today).
+   - `usage_daily_aggregates` (SPEC 6.14) + compaction-before-expiry
+     ordering in the sweep (SPEC 10.5).
+   - Storage budget (SPEC 10.6): 100GB default, 80% soft / 100% hard +
+     `storage_budget_exceeded` health state; no budget code exists.
+   - Orphan media containment (SPEC 6.1): Swift compensating delete on
+     ingest failure/rejection + sweep scan for unreferenced files (today
+     orphaned raw JPEGs survive forever; manual-capture orphans are
+     plaintext).
+   - Manual-capture encryption (SPEC 6.1): all snapshot media encrypted;
+     manual captures are currently plaintext by design of the old wording.
+   - `product_events.metrics_json` + `ad_metric_snapshot` /
+     `post_engagement_snapshot` event types + derivation-before-expiry rule
+     (SPEC 6.8).
+   - Media root `.noindex` + Time Machine exclusion; sweeps in idle windows
+     (SPEC 6.1).
+
+1. **Slice reviews are Fable-native — USER DECISION (2026-07-02):
+   insane-review retired.** External GPT web review waits minutes per pack
+   and packs over ~700KB cannot send at all; do not run it. Review each new
+   slice with fresh-context Fable subagents (product / implementation /
+   security lenses against the targeted SPEC sections and the diff), and
+   adversarially verify every blocking finding against code (CONFIRMED /
+   REFUTED with file:line citations) before fixing. Historical insane-review
+   artifacts stay in `.insane-review/` (narrow pack PASS 2026-06-29; delta
+   pack 2026-07-02 BLOCKED → all 5 findings verified and fixed the same day:
+   pipe sandbox artifact write, artifact file deletion, manifest sourceIds,
+   triage schema fork, failed-run incomplete manifests).
 
 ## P2 — After the P0/P1 items
 
@@ -191,14 +234,6 @@ blocking foreground UI E2E (CLAUDE.md rule).
   leg** (wired + non-UI verified, no observed foreground acceptance), plus
   live/manual UI validation for the SQL inspector panel and Pipes tab.
   Blocking UI E2E needs user approval + `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`.
-- **Day-loop memory-summaries snapshot files lack deletion/retention
-  coverage.** `recorder-day-loop.mjs` persists
-  `.agentic30/recorder/memory-summaries/day-memory-review-<date>.json` via
-  `writeRecorderDayMemoryReviewSnapshot`, but no recorder-delete/retention
-  path unlinks those files (memory_items rows are covered; the workspace
-  snapshot file is not). Surfaced by the 2026-07-02 GPT-5.5 delta review
-  alongside B1; the pipe-side write now goes to the run-scoped pipe sandbox
-  and is deletion-covered, this recorder-owned file is the remaining gap.
 - **SQLite authorizer/progress-handler enforcement — deferred.**
   better-sqlite3 12.8.0 exposes no hooks; the accepted defense-in-depth is
   string validator + read-only source DB + copied-view sandbox worker +
