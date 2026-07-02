@@ -3003,6 +3003,10 @@ struct ContentView: View {
                     recorderMcpGrantsRefreshing: viewModel.recorderMcpGrantsRefreshing,
                     recorderMcpGrantActionInFlight: viewModel.recorderMcpGrantActionInFlight,
                     recorderMcpGrantLastError: viewModel.recorderMcpGrantLastError,
+                    recorderExportManifestSummary: viewModel.recorderExportManifestSummary,
+                    recorderExportArchiveReceipt: viewModel.recorderExportArchiveReceipt,
+                    recorderExportActionInFlight: viewModel.recorderExportActionInFlight,
+                    recorderExportLastError: viewModel.recorderExportLastError,
                     recorderAutoCaptureRunning: viewModel.recorderAutoCaptureRunning,
                     recorderAutoCaptureLastTrigger: viewModel.recorderAutoCaptureLastTrigger,
                     recorderAutoCaptureLastError: viewModel.recorderAutoCaptureLastError,
@@ -3087,6 +3091,12 @@ struct ContentView: View {
                     },
                     revokeRecorderMcpGrant: { grantId in
                         viewModel.revokeRecorderMcpGrant(id: grantId)
+                    },
+                    buildRecorderExportManifest: {
+                        viewModel.buildRecorderExportManifestPreview()
+                    },
+                    writeRecorderExportArchive: {
+                        viewModel.requestRecorderExportArchiveWrite()
                     },
                     startRecorderAutoCapture: {
                         viewModel.startRecorderAutoCapture()

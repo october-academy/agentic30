@@ -176,11 +176,17 @@ blocking foreground UI E2E (CLAUDE.md rule).
   different observation/drive mechanism (e.g. `XCUIApplication().launch()`
   semantics) if a deterministic XCUITest live acceptance is wanted;
   computer-use is the working alternative.
-- **Swift export UI (Gate B).** Export manifest + local archive exist only
-  behind the raw API (`POST /recorder/export`, `/recorder/export/archive`
-  with interactive approval). Build a Control-surface export card over the
-  existing authenticated bridge pattern (same as the SQL inspector token
-  flow), then a focused UI E2E.
+- **Swift export UI (Gate B) — built 2026-07-02, focused UI E2E still
+  pending.** Control-surface "Export Archive" card (build-manifest preview →
+  two-step confirm → archive write) over the raw-API token bridge; archive
+  approval is a one-shot in-memory grant
+  (`sidecar/recorder-export-approval.mjs`, WS
+  `recorder_export_approval_create` → envelope
+  `recorder_export_approval_created`, verifier injected into
+  `createRecorderRawApiServer` — previously `/recorder/export/archive` always
+  failed with INTERACTIVE_APPROVAL_REQUIRED because no verifier was wired).
+  Remaining: focused debug-app UI E2E for the export card (blocking
+  foreground run needs user approval).
 - **Foreground UI E2E for Evidence Inbox approve/reject and the MCP grant
   leg** (wired + non-UI verified, no observed foreground acceptance), plus
   live/manual UI validation for the SQL inspector panel and Pipes tab.

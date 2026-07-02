@@ -524,6 +524,11 @@ import {
 import { RecorderStore } from "./recorder-store.mjs";
 import { buildRecorderAuditSource } from "./recorder-audit-source.mjs";
 import { createRecorderRawApiServer } from "./recorder-raw-api-server.mjs";
+import {
+  buildRecorderExportApprovalVerifier,
+  createRecorderExportApprovalGrant,
+  createRecorderExportApprovals,
+} from "./recorder-export-approval.mjs";
 import { issueRecorderApiToken } from "./recorder-raw-api-auth.mjs";
 import { writeEvidenceCandidateThroughProofLedger } from "./recorder-evidence-candidates.mjs";
 import { reviewRecorderEvidenceCandidate } from "./recorder-evidence-review.mjs";
@@ -807,8 +812,10 @@ try {
     store: state.recorderStore,
     now: new Date(),
   });
+  state.recorderExportApprovals = createRecorderExportApprovals();
   state.recorderRawApiServer = await createRecorderRawApiServer({
     store: state.recorderStore,
+    exportArchiveApprovalVerifier: buildRecorderExportApprovalVerifier(state.recorderExportApprovals),
   });
   state.recorderPipeSchedulerTimer = startRecorderPipeScheduler();
   state.recorderRetentionSweepTimer = startRecorderRetentionSweepScheduler();
@@ -1414,6 +1421,10 @@ async function handleClientMessage(socket, payload) {
     }
     case "recorder_raw_api_token_issue": {
       handleRecorderRawApiTokenIssue(socket, payload);
+      return;
+    }
+    case "recorder_export_approval_create": {
+      handleRecorderExportApprovalCreate(socket, payload);
       return;
     }
     case "recorder_mcp_grants_list": {
@@ -4950,6 +4961,20 @@ async function handleRecorderRetentionApply(socket, payload = {}) {
     now,
   });
   send(socket, buildRecorderRetentionResultPayload(result));
+}
+
+function handleRecorderExportApprovalCreate(socket, payload = {}) {
+  const approval = createRecorderExportApprovalGrant(state.recorderExportApprovals, {
+    reason: payload.reason,
+    ttlMs: payload.ttlMs ?? payload.ttl_ms ?? undefined,
+    now: new Date(),
+  });
+  send(socket, {
+    type: "recorder_export_approval_created",
+    approval,
+    proofAcceptedByExportApproval: false,
+    proof_accepted_by_export_approval: false,
+  });
 }
 
 async function handleRecorderMcpGrantsList(socket) {

@@ -4629,6 +4629,10 @@ struct OpenDesignDayPageView: View {
     let recorderMcpGrantsRefreshing: Bool
     let recorderMcpGrantActionInFlight: String?
     let recorderMcpGrantLastError: String?
+    let recorderExportManifestSummary: RecorderExportManifestSummary?
+    let recorderExportArchiveReceipt: RecorderExportArchiveReceipt?
+    let recorderExportActionInFlight: String?
+    let recorderExportLastError: String?
     let recorderAutoCaptureRunning: Bool
     let recorderAutoCaptureLastTrigger: String?
     let recorderAutoCaptureLastError: String?
@@ -4666,6 +4670,8 @@ struct OpenDesignDayPageView: View {
     let prepareRecorderMcpGrants: () -> Void
     let grantRecorderRawSqlMcpAccess: () -> Void
     let revokeRecorderMcpGrant: (String) -> Void
+    let buildRecorderExportManifest: () -> Void
+    let writeRecorderExportArchive: () -> Void
     let startRecorderAutoCapture: () -> Void
     let stopRecorderAutoCapture: () -> Void
     let setRecorderClipboardMode: (String) -> Void
@@ -4793,6 +4799,10 @@ struct OpenDesignDayPageView: View {
         recorderMcpGrantsRefreshing: Bool = false,
         recorderMcpGrantActionInFlight: String? = nil,
         recorderMcpGrantLastError: String? = nil,
+        recorderExportManifestSummary: RecorderExportManifestSummary? = nil,
+        recorderExportArchiveReceipt: RecorderExportArchiveReceipt? = nil,
+        recorderExportActionInFlight: String? = nil,
+        recorderExportLastError: String? = nil,
         recorderAutoCaptureRunning: Bool = false,
         recorderAutoCaptureLastTrigger: String? = nil,
         recorderAutoCaptureLastError: String? = nil,
@@ -4830,6 +4840,8 @@ struct OpenDesignDayPageView: View {
         prepareRecorderMcpGrants: @escaping () -> Void = {},
         grantRecorderRawSqlMcpAccess: @escaping () -> Void = {},
         revokeRecorderMcpGrant: @escaping (String) -> Void = { _ in },
+        buildRecorderExportManifest: @escaping () -> Void = {},
+        writeRecorderExportArchive: @escaping () -> Void = {},
         startRecorderAutoCapture: @escaping () -> Void = {},
         stopRecorderAutoCapture: @escaping () -> Void = {},
         setRecorderClipboardMode: @escaping (String) -> Void = { _ in },
@@ -4942,6 +4954,10 @@ struct OpenDesignDayPageView: View {
         self.recorderMcpGrantsRefreshing = recorderMcpGrantsRefreshing
         self.recorderMcpGrantActionInFlight = recorderMcpGrantActionInFlight
         self.recorderMcpGrantLastError = recorderMcpGrantLastError
+        self.recorderExportManifestSummary = recorderExportManifestSummary
+        self.recorderExportArchiveReceipt = recorderExportArchiveReceipt
+        self.recorderExportActionInFlight = recorderExportActionInFlight
+        self.recorderExportLastError = recorderExportLastError
         self.recorderAutoCaptureRunning = recorderAutoCaptureRunning
         self.recorderAutoCaptureLastTrigger = recorderAutoCaptureLastTrigger
         self.recorderAutoCaptureLastError = recorderAutoCaptureLastError
@@ -4979,6 +4995,8 @@ struct OpenDesignDayPageView: View {
         self.prepareRecorderMcpGrants = prepareRecorderMcpGrants
         self.grantRecorderRawSqlMcpAccess = grantRecorderRawSqlMcpAccess
         self.revokeRecorderMcpGrant = revokeRecorderMcpGrant
+        self.buildRecorderExportManifest = buildRecorderExportManifest
+        self.writeRecorderExportArchive = writeRecorderExportArchive
         self.startRecorderAutoCapture = startRecorderAutoCapture
         self.stopRecorderAutoCapture = stopRecorderAutoCapture
         self.setRecorderClipboardMode = setRecorderClipboardMode
@@ -5119,6 +5137,10 @@ struct OpenDesignDayPageView: View {
                     recorderMcpGrantsRefreshing: recorderMcpGrantsRefreshing,
                     recorderMcpGrantActionInFlight: recorderMcpGrantActionInFlight,
                     recorderMcpGrantLastError: recorderMcpGrantLastError,
+                    recorderExportManifestSummary: recorderExportManifestSummary,
+                    recorderExportArchiveReceipt: recorderExportArchiveReceipt,
+                    recorderExportActionInFlight: recorderExportActionInFlight,
+                    recorderExportLastError: recorderExportLastError,
                     recorderAutoCaptureRunning: recorderAutoCaptureRunning,
                     recorderAutoCaptureLastTrigger: recorderAutoCaptureLastTrigger,
                     recorderAutoCaptureLastError: recorderAutoCaptureLastError,
@@ -5156,6 +5178,8 @@ struct OpenDesignDayPageView: View {
                     prepareRecorderMcpGrants: prepareRecorderMcpGrants,
                     grantRecorderRawSqlMcpAccess: grantRecorderRawSqlMcpAccess,
                     revokeRecorderMcpGrant: revokeRecorderMcpGrant,
+                    buildRecorderExportManifest: buildRecorderExportManifest,
+                    writeRecorderExportArchive: writeRecorderExportArchive,
                     startRecorderAutoCapture: startRecorderAutoCapture,
                     stopRecorderAutoCapture: stopRecorderAutoCapture,
                     setRecorderClipboardMode: setRecorderClipboardMode,
@@ -5904,6 +5928,10 @@ struct OpenDesignDayShell: View {
     let recorderMcpGrantsRefreshing: Bool
     let recorderMcpGrantActionInFlight: String?
     let recorderMcpGrantLastError: String?
+    let recorderExportManifestSummary: RecorderExportManifestSummary?
+    let recorderExportArchiveReceipt: RecorderExportArchiveReceipt?
+    let recorderExportActionInFlight: String?
+    let recorderExportLastError: String?
     let recorderAutoCaptureRunning: Bool
     let recorderAutoCaptureLastTrigger: String?
     let recorderAutoCaptureLastError: String?
@@ -5941,6 +5969,8 @@ struct OpenDesignDayShell: View {
     let prepareRecorderMcpGrants: () -> Void
     let grantRecorderRawSqlMcpAccess: () -> Void
     let revokeRecorderMcpGrant: (String) -> Void
+    let buildRecorderExportManifest: () -> Void
+    let writeRecorderExportArchive: () -> Void
     let startRecorderAutoCapture: () -> Void
     let stopRecorderAutoCapture: () -> Void
     let setRecorderClipboardMode: (String) -> Void
@@ -6087,6 +6117,10 @@ struct OpenDesignDayShell: View {
         recorderMcpGrantsRefreshing: Bool,
         recorderMcpGrantActionInFlight: String?,
         recorderMcpGrantLastError: String?,
+        recorderExportManifestSummary: RecorderExportManifestSummary?,
+        recorderExportArchiveReceipt: RecorderExportArchiveReceipt?,
+        recorderExportActionInFlight: String?,
+        recorderExportLastError: String?,
         recorderAutoCaptureRunning: Bool,
         recorderAutoCaptureLastTrigger: String?,
         recorderAutoCaptureLastError: String?,
@@ -6124,6 +6158,8 @@ struct OpenDesignDayShell: View {
         prepareRecorderMcpGrants: @escaping () -> Void,
         grantRecorderRawSqlMcpAccess: @escaping () -> Void,
         revokeRecorderMcpGrant: @escaping (String) -> Void,
+        buildRecorderExportManifest: @escaping () -> Void,
+        writeRecorderExportArchive: @escaping () -> Void,
         startRecorderAutoCapture: @escaping () -> Void,
         stopRecorderAutoCapture: @escaping () -> Void,
         setRecorderClipboardMode: @escaping (String) -> Void,
@@ -6246,6 +6282,10 @@ struct OpenDesignDayShell: View {
         self.recorderMcpGrantsRefreshing = recorderMcpGrantsRefreshing
         self.recorderMcpGrantActionInFlight = recorderMcpGrantActionInFlight
         self.recorderMcpGrantLastError = recorderMcpGrantLastError
+        self.recorderExportManifestSummary = recorderExportManifestSummary
+        self.recorderExportArchiveReceipt = recorderExportArchiveReceipt
+        self.recorderExportActionInFlight = recorderExportActionInFlight
+        self.recorderExportLastError = recorderExportLastError
         self.recorderAutoCaptureRunning = recorderAutoCaptureRunning
         self.recorderAutoCaptureLastTrigger = recorderAutoCaptureLastTrigger
         self.recorderAutoCaptureLastError = recorderAutoCaptureLastError
@@ -6283,6 +6323,8 @@ struct OpenDesignDayShell: View {
         self.prepareRecorderMcpGrants = prepareRecorderMcpGrants
         self.grantRecorderRawSqlMcpAccess = grantRecorderRawSqlMcpAccess
         self.revokeRecorderMcpGrant = revokeRecorderMcpGrant
+        self.buildRecorderExportManifest = buildRecorderExportManifest
+        self.writeRecorderExportArchive = writeRecorderExportArchive
         self.startRecorderAutoCapture = startRecorderAutoCapture
         self.stopRecorderAutoCapture = stopRecorderAutoCapture
         self.setRecorderClipboardMode = setRecorderClipboardMode
@@ -6564,6 +6606,10 @@ struct OpenDesignDayShell: View {
                         mcpGrantsRefreshing: recorderMcpGrantsRefreshing,
                         mcpGrantActionInFlight: recorderMcpGrantActionInFlight,
                         mcpGrantLastError: recorderMcpGrantLastError,
+                        exportManifestSummary: recorderExportManifestSummary,
+                        exportArchiveReceipt: recorderExportArchiveReceipt,
+                        exportActionInFlight: recorderExportActionInFlight,
+                        exportLastError: recorderExportLastError,
                         autoCaptureRunning: recorderAutoCaptureRunning,
                         autoCaptureLastTrigger: recorderAutoCaptureLastTrigger,
                         autoCaptureLastError: recorderAutoCaptureLastError,
@@ -6601,6 +6647,8 @@ struct OpenDesignDayShell: View {
                         prepareMcpGrants: prepareRecorderMcpGrants,
                         grantRawSqlMcpAccess: grantRecorderRawSqlMcpAccess,
                         revokeMcpGrant: revokeRecorderMcpGrant,
+                        buildExportManifest: buildRecorderExportManifest,
+                        writeExportArchive: writeRecorderExportArchive,
                         startAutoCapture: startRecorderAutoCapture,
                         stopAutoCapture: stopRecorderAutoCapture,
                         setClipboardMode: self.setRecorderClipboardMode,
@@ -8949,6 +8997,10 @@ private struct OpenDesignFounderReplayPageView: View {
     let mcpGrantsRefreshing: Bool
     let mcpGrantActionInFlight: String?
     let mcpGrantLastError: String?
+    let exportManifestSummary: RecorderExportManifestSummary?
+    let exportArchiveReceipt: RecorderExportArchiveReceipt?
+    let exportActionInFlight: String?
+    let exportLastError: String?
     let autoCaptureRunning: Bool
     let autoCaptureLastTrigger: String?
     let autoCaptureLastError: String?
@@ -8986,6 +9038,8 @@ private struct OpenDesignFounderReplayPageView: View {
     let prepareMcpGrants: () -> Void
     let grantRawSqlMcpAccess: () -> Void
     let revokeMcpGrant: (String) -> Void
+    let buildExportManifest: () -> Void
+    let writeExportArchive: () -> Void
     let startAutoCapture: () -> Void
     let stopAutoCapture: () -> Void
     let setClipboardMode: (String) -> Void
@@ -9016,6 +9070,7 @@ private struct OpenDesignFounderReplayPageView: View {
     @State private var sqlQueryText = "SELECT id, captured_at, app_name, window_title, browser_domain, redacted_text FROM recorder_sql_frames_redacted LIMIT 20"
     @State private var evidenceArtifactLocations: [String: String] = [:]
     @State private var evidenceRejectReasons: [String: String] = [:]
+    @State private var exportArchiveConfirmArmed = false
 
     private let rows: [OpenDesignFounderReplaySummaryRow] = [
         .init(id: "permission", time: "권한", action: "Screen Recording · Accessibility", workState: "미확인", decision: "Swift permission UI 필요"),
@@ -9063,6 +9118,10 @@ private struct OpenDesignFounderReplayPageView: View {
         mcpGrantsRefreshing: Bool = false,
         mcpGrantActionInFlight: String? = nil,
         mcpGrantLastError: String? = nil,
+        exportManifestSummary: RecorderExportManifestSummary? = nil,
+        exportArchiveReceipt: RecorderExportArchiveReceipt? = nil,
+        exportActionInFlight: String? = nil,
+        exportLastError: String? = nil,
         autoCaptureRunning: Bool = false,
         autoCaptureLastTrigger: String? = nil,
         autoCaptureLastError: String? = nil,
@@ -9100,6 +9159,8 @@ private struct OpenDesignFounderReplayPageView: View {
         prepareMcpGrants: @escaping () -> Void = {},
         grantRawSqlMcpAccess: @escaping () -> Void = {},
         revokeMcpGrant: @escaping (String) -> Void = { _ in },
+        buildExportManifest: @escaping () -> Void = {},
+        writeExportArchive: @escaping () -> Void = {},
         startAutoCapture: @escaping () -> Void = {},
         stopAutoCapture: @escaping () -> Void = {},
         setClipboardMode: @escaping (String) -> Void = { _ in },
@@ -9156,6 +9217,10 @@ private struct OpenDesignFounderReplayPageView: View {
         self.mcpGrantsRefreshing = mcpGrantsRefreshing
         self.mcpGrantActionInFlight = mcpGrantActionInFlight
         self.mcpGrantLastError = mcpGrantLastError
+        self.exportManifestSummary = exportManifestSummary
+        self.exportArchiveReceipt = exportArchiveReceipt
+        self.exportActionInFlight = exportActionInFlight
+        self.exportLastError = exportLastError
         self.autoCaptureRunning = autoCaptureRunning
         self.autoCaptureLastTrigger = autoCaptureLastTrigger
         self.autoCaptureLastError = autoCaptureLastError
@@ -9193,6 +9258,8 @@ private struct OpenDesignFounderReplayPageView: View {
         self.prepareMcpGrants = prepareMcpGrants
         self.grantRawSqlMcpAccess = grantRawSqlMcpAccess
         self.revokeMcpGrant = revokeMcpGrant
+        self.buildExportManifest = buildExportManifest
+        self.writeExportArchive = writeExportArchive
         self.startAutoCapture = startAutoCapture
         self.stopAutoCapture = stopAutoCapture
         self.setClipboardMode = setClipboardMode
@@ -10120,6 +10187,7 @@ private struct OpenDesignFounderReplayPageView: View {
                 controlSensitivePolicy
                 controlAuditPanel
                 controlMcpGrantPanel
+                controlExportPanel
                 controlSqlInspectorPanel
             }
             .padding(28)
@@ -11741,6 +11809,140 @@ private struct OpenDesignFounderReplayPageView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
         .accessibilityIdentifier("opendesign.founderReplay.control.mcpGrant.row.\(index)")
+    }
+
+    private var controlExportPanel: some View {
+        let actionBusy = exportActionInFlight != nil
+        let summaryLabel = [
+            "Recorder export",
+            exportManifestSummary == nil ? "no manifest" : "manifest \(exportManifestSummary?.itemCount ?? 0) items",
+            exportArchiveReceipt == nil ? "no archive" : "archive \(exportArchiveReceipt?.archiveId ?? "")",
+            "export non-proof",
+        ].joined(separator: " · ")
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Export Archive")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                founderReplayStatusPill("export", tone: .sky)
+                founderReplayStatusPill("local-only", tone: .accent)
+                founderReplayStatusPill("non-proof", tone: .amber)
+                Spacer(minLength: 0)
+                Button {
+                    exportArchiveConfirmArmed = false
+                    buildExportManifest()
+                } label: {
+                    Label(exportActionInFlight == "manifest" ? "생성 중" : "Build Manifest", systemImage: "doc.text.magnifyingglass")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(height: 28)
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .disabled(actionBusy)
+                .accessibilityIdentifier("opendesign.founderReplay.control.export.buildManifest")
+                if exportArchiveConfirmArmed {
+                    Button {
+                        exportArchiveConfirmArmed = false
+                        writeExportArchive()
+                    } label: {
+                        Label(exportActionInFlight == "archive" ? "작성 중" : "Confirm Write", systemImage: "checkmark.seal")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle())
+                    .disabled(actionBusy)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.export.confirmWrite")
+                    Button {
+                        exportArchiveConfirmArmed = false
+                    } label: {
+                        Label("Cancel", systemImage: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle())
+                    .disabled(actionBusy)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.export.cancelWrite")
+                } else {
+                    Button {
+                        exportArchiveConfirmArmed = true
+                    } label: {
+                        Label(exportActionInFlight == "archive" ? "작성 중" : "Write Archive…", systemImage: "archivebox")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(OpenDesignInteractiveButtonStyle())
+                    .disabled(actionBusy)
+                    .accessibilityIdentifier("opendesign.founderReplay.control.export.writeArchive")
+                }
+            }
+
+            Text("로컬 export입니다. manifest는 safe_for_export 데이터만 나열하고, archive 작성은 명시적 확인 후 1회용 승인으로만 진행됩니다. export 산출물은 증거(proof)가 아닙니다.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let exportLastError, !exportLastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ZStack(alignment: .topLeading) {
+                    Text(exportLastError)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                        .lineLimit(3)
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(exportLastError)
+                        .accessibilityIdentifier("opendesign.founderReplay.control.export.error")
+                        .allowsHitTesting(false)
+                }
+            }
+
+            if let manifest = exportManifestSummary {
+                HStack(spacing: 8) {
+                    founderReplayStatusPill("manifest", tone: .sky)
+                    Text("\(manifest.itemCount) items · \(compactIsoTimestamp(manifest.generatedAt))")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("export manifest \(manifest.itemCount) items")
+                .accessibilityIdentifier("opendesign.founderReplay.control.export.manifestSummary")
+            }
+
+            if let archive = exportArchiveReceipt {
+                HStack(spacing: 8) {
+                    founderReplayStatusPill("archive", tone: .accent)
+                    Text("\(archive.archiveId) · \(archive.itemCount) items · \(max(archive.byteSize, 0) / 1024)KB")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                        .lineLimit(1)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("export archive \(archive.archiveId)")
+                .accessibilityIdentifier("opendesign.founderReplay.control.export.archiveReceipt")
+            } else if exportManifestSummary == nil {
+                Text(actionBusy ? "export 실행 중" : "No export manifest yet")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                )
+        )
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summaryLabel)
+                .accessibilityIdentifier("opendesign.founderReplay.control.export.summary")
+                .allowsHitTesting(false)
+        }
+        .accessibilityIdentifier("opendesign.founderReplay.control.export")
     }
 
     private var controlSqlInspectorPanel: some View {

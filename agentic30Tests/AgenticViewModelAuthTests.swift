@@ -2479,6 +2479,63 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.recorderMcpGrants[0].reason == hostileCapturedText)
     }
 
+    @Test @MainActor func recorderExportActionsSendScopedTokenAndApprovalPayloads() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        sidecar.resetSentPayloads()
+
+        viewModel.buildRecorderExportManifestPreview()
+        var payload = try #require(sidecar.sentPayloads.last)
+        #expect(payload["type"] as? String == "recorder_raw_api_token_issue")
+        #expect(payload["scopes"] as? [String] == ["export"])
+        #expect(payload["clientId"] as? String == "agentic30-recorder-export")
+        #expect(viewModel.recorderExportActionInFlight == "manifest")
+        #expect(viewModel.recorderExportLastError == nil)
+
+        sidecar.resetSentPayloads()
+        viewModel.requestRecorderExportArchiveWrite()
+        payload = try #require(sidecar.sentPayloads.last)
+        #expect(payload["type"] as? String == "recorder_export_approval_create")
+        #expect(payload["reason"] as? String == "founder_replay_export_card")
+        #expect(payload["ttlMs"] as? Int == 120_000)
+        #expect(viewModel.recorderExportActionInFlight == "archive")
+
+        // The approval envelope must chain into an export-scoped token issue
+        // that carries the one-shot grant id for the archive POST.
+        sidecar.resetSentPayloads()
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent("""
+        {
+          "type": "recorder_export_approval_created",
+          "approval": {
+            "id": "recorder-export-approval-11111111-2222-3333-4444-555555555555",
+            "reason": "founder_replay_export_card",
+            "created_at": "2026-07-02T09:00:00.000Z",
+            "expires_at": "2026-07-02T09:02:00.000Z",
+            "ttl_ms": 120000,
+            "one_shot": true,
+            "proof_accepted_by_export_approval": false
+          },
+          "proof_accepted_by_export_approval": false
+        }
+        """))
+        payload = try #require(sidecar.sentPayloads.last)
+        #expect(payload["type"] as? String == "recorder_raw_api_token_issue")
+        #expect(payload["scopes"] as? [String] == ["export"])
+        #expect(payload["clientId"] as? String == "agentic30-recorder-export")
+        #expect(viewModel.recorderExportActionInFlight == "archive")
+
+        // A sidecar error envelope resets export in-flight state.
+        try viewModel.applySidecarEventForTesting(sidecar.decodeEvent("""
+        {
+          "type": "error",
+          "message": "ERR_RECORDER_EXPORT_APPROVAL_TTL_TOO_LONG: recorder export approval ttlMs exceeds the maximum allowed"
+        }
+        """))
+        #expect(viewModel.recorderExportActionInFlight == nil)
+        #expect(viewModel.recorderExportLastError?.contains("ERR_RECORDER_EXPORT_APPROVAL_TTL_TOO_LONG") == true)
+    }
+
     @Test @MainActor func recorderSensitiveCapturePolicyActionsSendSidecarPatches() throws {
         let sidecar = FakeSidecarTransport(workspaceRoot: "/tmp/workspace")
         let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})

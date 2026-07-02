@@ -5320,6 +5320,189 @@ struct RecorderRawApiToken: Decodable, Equatable, Hashable {
     }
 }
 
+struct RecorderExportApprovalGrant: Decodable, Equatable, Hashable, Identifiable {
+    let id: String
+    let reason: String
+    let createdAt: String
+    let expiresAt: String
+    let ttlMs: Int
+    let oneShot: Bool
+    let proofAcceptedByExportApproval: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case reason
+        case createdAt, created_at
+        case expiresAt, expires_at
+        case ttlMs, ttl_ms
+        case oneShot, one_shot
+        case proofAcceptedByExportApproval, proof_accepted_by_export_approval
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? ""
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+            ?? c.decodeIfPresent(String.self, forKey: .created_at)
+            ?? ""
+        expiresAt = try c.decodeIfPresent(String.self, forKey: .expiresAt)
+            ?? c.decodeIfPresent(String.self, forKey: .expires_at)
+            ?? ""
+        ttlMs = try c.decodeIfPresent(Int.self, forKey: .ttlMs)
+            ?? c.decodeIfPresent(Int.self, forKey: .ttl_ms)
+            ?? 0
+        oneShot = try c.decodeIfPresent(Bool.self, forKey: .oneShot)
+            ?? c.decodeIfPresent(Bool.self, forKey: .one_shot)
+            ?? false
+        proofAcceptedByExportApproval = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByExportApproval)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_export_approval)
+            ?? false
+    }
+}
+
+struct RecorderExportProofBoundary: Decodable, Equatable, Hashable {
+    let proofAcceptedByExport: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case proofAcceptedByExport, proof_accepted_by_export
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        proofAcceptedByExport = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByExport)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_export)
+            ?? false
+    }
+}
+
+struct RecorderExportManifestSummary: Decodable, Equatable, Hashable {
+    let id: String
+    let generatedAt: String
+    let itemCount: Int
+    let proofAcceptedByExport: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case generatedAt, generated_at
+        case itemCount, item_count
+        case proofBoundary, proof_boundary
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .generated_at)
+            ?? ""
+        itemCount = try c.decodeIfPresent(Int.self, forKey: .itemCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .item_count)
+            ?? 0
+        let boundary = try c.decodeIfPresent(RecorderExportProofBoundary.self, forKey: .proofBoundary)
+            ?? c.decodeIfPresent(RecorderExportProofBoundary.self, forKey: .proof_boundary)
+        proofAcceptedByExport = boundary?.proofAcceptedByExport ?? false
+    }
+}
+
+struct RecorderExportManifestResponse: Decodable {
+    let exportManifest: RecorderExportManifestSummary?
+
+    private enum CodingKeys: String, CodingKey {
+        case exportManifest, export_manifest
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        exportManifest = try c.decodeIfPresent(RecorderExportManifestSummary.self, forKey: .exportManifest)
+            ?? c.decodeIfPresent(RecorderExportManifestSummary.self, forKey: .export_manifest)
+    }
+}
+
+struct RecorderExportArchiveReceipt: Decodable, Equatable, Hashable {
+    let archiveId: String
+    let manifestId: String
+    let generatedAt: String
+    let itemCount: Int
+    let byteSize: Int
+    let sha256: String
+    let localOnly: Bool
+    let pathExposed: Bool
+    let proofAcceptedByArchive: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case archiveId, archive_id, id
+        case manifestId, manifest_id
+        case generatedAt, generated_at
+        case itemCount, item_count
+        case byteSize, byte_size
+        case sha256
+        case localOnly, local_only
+        case pathExposed, path_exposed
+        case proofAcceptedByArchive, proof_accepted_by_archive
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        archiveId = try c.decodeIfPresent(String.self, forKey: .archiveId)
+            ?? c.decodeIfPresent(String.self, forKey: .archive_id)
+            ?? c.decodeIfPresent(String.self, forKey: .id)
+            ?? ""
+        manifestId = try c.decodeIfPresent(String.self, forKey: .manifestId)
+            ?? c.decodeIfPresent(String.self, forKey: .manifest_id)
+            ?? ""
+        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
+            ?? c.decodeIfPresent(String.self, forKey: .generated_at)
+            ?? ""
+        itemCount = try c.decodeIfPresent(Int.self, forKey: .itemCount)
+            ?? c.decodeIfPresent(Int.self, forKey: .item_count)
+            ?? 0
+        byteSize = try c.decodeIfPresent(Int.self, forKey: .byteSize)
+            ?? c.decodeIfPresent(Int.self, forKey: .byte_size)
+            ?? 0
+        sha256 = try c.decodeIfPresent(String.self, forKey: .sha256) ?? ""
+        localOnly = try c.decodeIfPresent(Bool.self, forKey: .localOnly)
+            ?? c.decodeIfPresent(Bool.self, forKey: .local_only)
+            ?? false
+        pathExposed = try c.decodeIfPresent(Bool.self, forKey: .pathExposed)
+            ?? c.decodeIfPresent(Bool.self, forKey: .path_exposed)
+            ?? false
+        proofAcceptedByArchive = try c.decodeIfPresent(Bool.self, forKey: .proofAcceptedByArchive)
+            ?? c.decodeIfPresent(Bool.self, forKey: .proof_accepted_by_archive)
+            ?? false
+    }
+}
+
+struct RecorderExportArchiveResponse: Decodable {
+    let exportArchive: RecorderExportArchiveReceipt?
+
+    private enum CodingKeys: String, CodingKey {
+        case exportArchive, export_archive
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        exportArchive = try c.decodeIfPresent(RecorderExportArchiveReceipt.self, forKey: .exportArchive)
+            ?? c.decodeIfPresent(RecorderExportArchiveReceipt.self, forKey: .export_archive)
+    }
+}
+
+enum RecorderExportRequestError: LocalizedError {
+    case invalidRawApiURL
+    case invalidResponse
+    case emptyResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidRawApiURL:
+            return "Recorder raw API 주소가 올바르지 않아 export를 실행할 수 없습니다."
+        case .invalidResponse:
+            return "Recorder raw API 응답을 해석할 수 없습니다."
+        case .emptyResponse:
+            return "Recorder raw API 응답에 export 결과가 없습니다."
+        }
+    }
+}
+
 struct RecorderAuditSourceId: Decodable, Equatable, Hashable, Identifiable {
     let id: String
     let sourceType: String
@@ -6486,6 +6669,10 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var recorderMcpGrantsRefreshing = false
     @Published private(set) var recorderMcpGrantActionInFlight: String?
     @Published private(set) var recorderMcpGrantLastError: String?
+    @Published private(set) var recorderExportManifestSummary: RecorderExportManifestSummary?
+    @Published private(set) var recorderExportArchiveReceipt: RecorderExportArchiveReceipt?
+    @Published private(set) var recorderExportActionInFlight: String?
+    @Published private(set) var recorderExportLastError: String?
     @Published private(set) var recorderPipes: [RecorderPipeDefinition] = []
     @Published private(set) var recorderPipeRuns: [RecorderPipeRun] = []
     @Published private(set) var recorderPipesRefreshing = false
@@ -6570,6 +6757,14 @@ final class AgenticViewModel: ObservableObject {
     private static let recorderFrameImageClientId = "agentic30-founder-replay"
     private static let recorderSearchClientId = "agentic30-recorder-redacted-search"
     private static let recorderSqlInspectorClientId = "agentic30-recorder-sql-inspector"
+    private static let recorderExportClientId = "agentic30-recorder-export"
+
+    private enum RecorderExportRequestKind: Equatable {
+        case manifest
+        case archive(approvalGrantId: String)
+    }
+
+    private var pendingRecorderExportRequest: RecorderExportRequestKind?
     static let recorderMcpRawSqlToolName = "recorder_raw_sql_query"
 
     struct WorkspaceScanResult: Codable, Equatable {
@@ -11714,6 +11909,39 @@ final class AgenticViewModel: ObservableObject {
            token.scopes.contains("raw_sql"),
            let pendingQuery = pendingRecorderSqlQuery {
             handleRecorderSqlQueryToken(token, status: event.recorderRawApi ?? recorderRawApiStatus, query: pendingQuery)
+            return
+        }
+        if token.clientId == Self.recorderExportClientId,
+           token.scopes.contains("export"),
+           let pendingExport = pendingRecorderExportRequest {
+            handleRecorderExportToken(token, status: event.recorderRawApi ?? recorderRawApiStatus, request: pendingExport)
+        }
+    }
+
+    private func handleRecorderExportToken(
+        _ token: RecorderRawApiToken,
+        status: RecorderRawApiStatus?,
+        request: RecorderExportRequestKind
+    ) {
+        pendingRecorderExportRequest = nil
+        guard let rawApiURL = status?.url.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawApiURL.isEmpty,
+              status?.enabled == true else {
+            recorderExportActionInFlight = nil
+            recorderExportLastError = "Recorder raw API가 준비되지 않아 export를 실행할 수 없습니다."
+            return
+        }
+        let rawToken = token.token
+        guard !rawToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            recorderExportActionInFlight = nil
+            recorderExportLastError = "export 토큰 응답이 비어 있어 export를 실행할 수 없습니다."
+            return
+        }
+        switch request {
+        case .manifest:
+            fetchRecorderExportManifest(rawApiURL: rawApiURL, token: rawToken)
+        case .archive(let approvalGrantId):
+            fetchRecorderExportArchive(rawApiURL: rawApiURL, token: rawToken, approvalGrantId: approvalGrantId)
         }
     }
 
@@ -12107,6 +12335,186 @@ final class AgenticViewModel: ObservableObject {
             properties: ["tool_name": Self.recorderMcpRawSqlToolName],
             authSession: macAuthSession
         )
+    }
+
+    func buildRecorderExportManifestPreview() {
+        guard isConnected else {
+            recorderExportLastError = "실행 보조 앱이 연결되지 않아 export manifest를 만들 수 없습니다."
+            return
+        }
+        recorderExportActionInFlight = "manifest"
+        recorderExportLastError = nil
+        pendingRecorderExportRequest = .manifest
+        guard sidecar.send(payload: [
+            "type": "recorder_raw_api_token_issue",
+            "scopes": ["export"],
+            "ttlMs": 60_000,
+            "clientId": Self.recorderExportClientId,
+            "clientName": "Agentic30 Founder Replay Export",
+        ]) else {
+            recorderExportActionInFlight = nil
+            pendingRecorderExportRequest = nil
+            recorderExportLastError = "export 토큰 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_export_manifest_requested",
+            authSession: macAuthSession
+        )
+    }
+
+    func requestRecorderExportArchiveWrite() {
+        guard isConnected else {
+            recorderExportLastError = "실행 보조 앱이 연결되지 않아 export archive를 작성할 수 없습니다."
+            return
+        }
+        recorderExportActionInFlight = "archive"
+        recorderExportLastError = nil
+        guard sidecar.send(payload: [
+            "type": "recorder_export_approval_create",
+            "reason": "founder_replay_export_card",
+            "ttlMs": 120_000,
+        ]) else {
+            recorderExportActionInFlight = nil
+            recorderExportLastError = "export 승인 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+        PostHogTelemetry.capture(
+            "mac_recorder_export_archive_approval_requested",
+            authSession: macAuthSession
+        )
+    }
+
+    private func handleRecorderExportApprovalCreated(_ event: SidecarEvent) {
+        guard recorderExportActionInFlight == "archive",
+              let approval = event.recorderExportApproval,
+              !approval.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+        pendingRecorderExportRequest = .archive(approvalGrantId: approval.id)
+        guard sidecar.send(payload: [
+            "type": "recorder_raw_api_token_issue",
+            "scopes": ["export"],
+            "ttlMs": 60_000,
+            "clientId": Self.recorderExportClientId,
+            "clientName": "Agentic30 Founder Replay Export",
+        ]) else {
+            recorderExportActionInFlight = nil
+            pendingRecorderExportRequest = nil
+            recorderExportLastError = "export 토큰 요청을 실행 보조 앱에 보내지 못했습니다."
+            return
+        }
+    }
+
+    private static func recorderExportRequestBody(approvalGrantId: String? = nil) -> [String: Any] {
+        var body: [String: Any] = [
+            "dataClasses": ["frames", "transcripts", "memory", "product_events"],
+            "limit": 100,
+            "reason": "founder_replay_export_card",
+        ]
+        if let approvalGrantId {
+            body["approvalGrantId"] = approvalGrantId
+        }
+        return body
+    }
+
+    private func fetchRecorderExportManifest(rawApiURL: String, token: String) {
+        Task { [weak self] in
+            do {
+                guard let baseURL = URL(string: rawApiURL) else {
+                    throw RecorderExportRequestError.invalidRawApiURL
+                }
+                let url = baseURL
+                    .appendingPathComponent("recorder")
+                    .appendingPathComponent("export")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("agentic30://app", forHTTPHeaderField: "Origin")
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                request.setValue("application/json", forHTTPHeaderField: "content-type")
+                request.setValue("export-manifest-\(UUID().uuidString.lowercased())", forHTTPHeaderField: "x-agentic30-recorder-request-id")
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+                request.httpBody = try JSONSerialization.data(withJSONObject: Self.recorderExportRequestBody())
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw RecorderExportRequestError.invalidResponse
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    throw Self.recorderRawApiHTTPError(statusCode: http.statusCode, data: data)
+                }
+                let decoded = try JSONDecoder().decode(RecorderExportManifestResponse.self, from: data)
+                guard let manifest = decoded.exportManifest else {
+                    throw RecorderExportRequestError.emptyResponse
+                }
+                await MainActor.run {
+                    self?.recorderExportManifestSummary = manifest
+                    self?.recorderExportActionInFlight = nil
+                    self?.recorderExportLastError = nil
+                    self?.refreshRecorderAuditEvents(limit: 10)
+                }
+            } catch {
+                await MainActor.run {
+                    self?.recorderExportActionInFlight = nil
+                    self?.recorderExportLastError = error.localizedDescription
+                    PostHogTelemetry.captureException(error, properties: [
+                        "component": "agentic_view_model",
+                        "operation": "recorder_export_manifest_fetch",
+                    ], authSession: self?.macAuthSession)
+                }
+            }
+        }
+    }
+
+    private func fetchRecorderExportArchive(rawApiURL: String, token: String, approvalGrantId: String) {
+        Task { [weak self] in
+            do {
+                guard let baseURL = URL(string: rawApiURL) else {
+                    throw RecorderExportRequestError.invalidRawApiURL
+                }
+                let url = baseURL
+                    .appendingPathComponent("recorder")
+                    .appendingPathComponent("export")
+                    .appendingPathComponent("archive")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("agentic30://app", forHTTPHeaderField: "Origin")
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                request.setValue("application/json", forHTTPHeaderField: "content-type")
+                request.setValue("export-archive-\(UUID().uuidString.lowercased())", forHTTPHeaderField: "x-agentic30-recorder-request-id")
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+                request.httpBody = try JSONSerialization.data(
+                    withJSONObject: Self.recorderExportRequestBody(approvalGrantId: approvalGrantId)
+                )
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw RecorderExportRequestError.invalidResponse
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    throw Self.recorderRawApiHTTPError(statusCode: http.statusCode, data: data)
+                }
+                let decoded = try JSONDecoder().decode(RecorderExportArchiveResponse.self, from: data)
+                guard let archive = decoded.exportArchive else {
+                    throw RecorderExportRequestError.emptyResponse
+                }
+                await MainActor.run {
+                    self?.recorderExportArchiveReceipt = archive
+                    self?.recorderExportActionInFlight = nil
+                    self?.recorderExportLastError = nil
+                    self?.refreshRecorderAuditEvents(limit: 10)
+                }
+            } catch {
+                await MainActor.run {
+                    self?.recorderExportActionInFlight = nil
+                    self?.recorderExportLastError = error.localizedDescription
+                    PostHogTelemetry.captureException(error, properties: [
+                        "component": "agentic_view_model",
+                        "operation": "recorder_export_archive_fetch",
+                    ], authSession: self?.macAuthSession)
+                }
+            }
+        }
     }
 
     private func replaceRecorderMcpGrants(_ grants: [RecorderMcpGrant]) {
@@ -16185,6 +16593,8 @@ final class AgenticViewModel: ObservableObject {
             recorderMcpGrantsRefreshing = false
             recorderMcpGrantActionInFlight = nil
             recorderMcpGrantLastError = nil
+        case "recorder_export_approval_created":
+            handleRecorderExportApprovalCreated(event)
         case "recorder_control_state":
             if let controlState = event.controlState {
                 recorderControlState = controlState
@@ -17021,6 +17431,11 @@ final class AgenticViewModel: ObservableObject {
                 recorderMcpGrantsRefreshing = false
                 recorderMcpGrantActionInFlight = nil
                 recorderMcpGrantLastError = event.message ?? "Recorder MCP grant 요청이 실패했습니다."
+            }
+            if recorderExportActionInFlight != nil || pendingRecorderExportRequest != nil {
+                recorderExportActionInFlight = nil
+                pendingRecorderExportRequest = nil
+                recorderExportLastError = event.message ?? "Recorder export 요청이 실패했습니다."
             }
             if recorderDayMemoryLoopRunning {
                 recorderDayMemoryLoopRunning = false
@@ -22931,6 +23346,7 @@ struct SidecarEvent: Decodable {
     let recorderAuditSource: RecorderAuditSource?
     let recorderMcpGrants: [RecorderMcpGrant]?
     let recorderMcpGrant: RecorderMcpGrant?
+    let recorderExportApproval: RecorderExportApprovalGrant?
     let pipes: [RecorderPipeDefinition]?
     let runs: [RecorderPipeRun]?
     let pipeRun: RecorderPipeRun?
@@ -23806,6 +24222,7 @@ struct SidecarEvent: Decodable {
         self.recorderAuditSource = nil
         self.recorderMcpGrants = nil
         self.recorderMcpGrant = nil
+        self.recorderExportApproval = nil
         self.pipes = nil
         self.runs = nil
         self.pipeRun = nil
@@ -24258,6 +24675,7 @@ extension SidecarEvent {
         case recorderAuditSourceSnake = "recorder_audit_source"
         case recorderMcpGrants = "grants"
         case recorderMcpGrant = "grant"
+        case recorderExportApproval = "approval"
         case pipes
         case runs
         case pipeRun
@@ -24442,6 +24860,7 @@ extension SidecarEvent {
             ?? Self.decodeIfPresent(RecorderAuditSource.self, from: container, forKey: .recorderAuditSourceSnake)
         recorderMcpGrants = Self.decodeIfPresent([RecorderMcpGrant].self, from: container, forKey: .recorderMcpGrants)
         recorderMcpGrant = Self.decodeIfPresent(RecorderMcpGrant.self, from: container, forKey: .recorderMcpGrant)
+        recorderExportApproval = Self.decodeIfPresent(RecorderExportApprovalGrant.self, from: container, forKey: .recorderExportApproval)
         pipes = Self.decodeIfPresent([RecorderPipeDefinition].self, from: container, forKey: .pipes)
         runs = Self.decodeIfPresent([RecorderPipeRun].self, from: container, forKey: .runs)
         pipeRun = Self.decodeIfPresent(RecorderPipeRun.self, from: container, forKey: .pipeRun)

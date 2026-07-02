@@ -35,6 +35,8 @@ Options:
   --apply-retention           Apply a tiny retention window to prove purge behavior
   --json-output <path>        Write the evidence JSON to a file
   --allow-missing-audio       Do not fail when no live audio-<uuid> chunk exists
+                              (forces the live_recorder_triage.v1 schema; the
+                              result can never back an e2e_accepted claim)
   --allow-missing-audit       Do not fail when no accepted raw-read audit exists
   --skip-wal-checkpoint       Do not checkpoint WAL before reading the DB
   --help                      Show this message
