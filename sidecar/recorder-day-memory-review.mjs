@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 
 import { atomicWriteJson, withFileLock } from "./atomic-store.mjs";
@@ -167,6 +168,76 @@ export async function writeRecorderDayMemoryReviewSnapshot({
       relative_path: relativePath,
     };
   });
+}
+
+const DAY_MEMORY_REVIEW_SNAPSHOT_FILE_PATTERN = /^day-memory-review-\d{4}-\d{2}-\d{2}\.json$/;
+
+// Retention companion for the day-loop's persisted snapshot files: memory
+// rows are deleted by the store-level range delete, and the workspace-side
+// snapshot files covering a fully-contained time range are unlinked here.
+// One unreadable or symlinked file must not deadlock the hourly sweep, so
+// those are skipped with an explicit reason instead of thrown.
+export async function deleteRecorderDayMemoryReviewSnapshotsInRange({
+  workspaceRoot,
+  startedAt,
+  endedAt,
+} = {}) {
+  const dir = resolveRecorderMemorySummariesDir(workspaceRoot);
+  // Retention windows are open-start ("everything before the cutoff"), so a
+  // null startedAt means unbounded past; endedAt is always required.
+  const startMs = startedAt === null || startedAt === undefined || startedAt === ""
+    ? Number.NEGATIVE_INFINITY
+    : Date.parse(String(startedAt));
+  const endMs = Date.parse(String(endedAt ?? ""));
+  if (Number.isNaN(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    fail("ERR_RECORDER_DAY_REVIEW_SNAPSHOT_RANGE_INVALID", "snapshot deletion requires a valid startedAt/endedAt range");
+  }
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { deletedSnapshotCount: 0, deleted_snapshot_count: 0, deletedFiles: [], skipped: [] };
+    }
+    fail("ERR_RECORDER_DAY_REVIEW_SNAPSHOT_DIR_UNREADABLE", `memory summary directory could not be read: ${error?.message || error}`);
+  }
+  const deletedFiles = [];
+  const skipped = [];
+  for (const entry of entries) {
+    if (!DAY_MEMORY_REVIEW_SNAPSHOT_FILE_PATTERN.test(entry.name)) continue;
+    if (entry.isSymbolicLink() || !entry.isFile()) {
+      skipped.push({ file: entry.name, reason: "symlink_or_non_file_rejected" });
+      continue;
+    }
+    const filePath = path.join(dir, entry.name);
+    let snapshot;
+    try {
+      snapshot = JSON.parse(await fs.readFile(filePath, "utf8"));
+    } catch {
+      skipped.push({ file: entry.name, reason: "unreadable_snapshot_json" });
+      continue;
+    }
+    const snapshotStartMs = Date.parse(String(snapshot?.timeRange?.startedAt ?? snapshot?.time_range?.started_at ?? ""));
+    const snapshotEndMs = Date.parse(String(snapshot?.timeRange?.endedAt ?? snapshot?.time_range?.ended_at ?? ""));
+    if (!Number.isFinite(snapshotStartMs) || !Number.isFinite(snapshotEndMs)) {
+      skipped.push({ file: entry.name, reason: "snapshot_time_range_missing" });
+      continue;
+    }
+    if (snapshotStartMs < startMs || snapshotEndMs > endMs) continue;
+    try {
+      await fs.unlink(filePath);
+      deletedFiles.push(entry.name);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      fail("ERR_RECORDER_DAY_REVIEW_SNAPSHOT_UNLINK_FAILED", `failed to remove memory summary snapshot ${entry.name}: ${error?.message || error}`);
+    }
+  }
+  return {
+    deletedSnapshotCount: deletedFiles.length,
+    deleted_snapshot_count: deletedFiles.length,
+    deletedFiles,
+    skipped,
+  };
 }
 
 export function normalizeRecorderDayMemoryReviewSnapshot(review = {}, { now = new Date() } = {}) {

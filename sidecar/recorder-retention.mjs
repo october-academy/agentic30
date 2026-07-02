@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 
+import { deleteRecorderDayMemoryReviewSnapshotsInRange } from "./recorder-day-memory-review.mjs";
 import {
   deleteRecorderAudioChunksInRange,
   deleteRecorderAuditRowsInRange,
@@ -587,12 +588,44 @@ export function buildRecorderRetentionPlan(store, {
 
 export async function applyRecorderRetentionPolicy(store, options = {}) {
   const plan = buildRecorderRetentionPlan(store, options);
-  if (!plan.targetCount) {
+  // Day-loop snapshot files live outside the store, so they are cleaned even
+  // when no row targets exist — otherwise orphaned snapshot files would
+  // outlive their deleted memory rows forever. Without workspaceRoot the
+  // files cannot be located; that skip is recorded explicitly, never silent.
+  const memorySnapshotResult = !plan.memoryDeleteRange?.endedAt
+    ? {
+      status: "skipped_memory_retention_disabled",
+      deletedSnapshotCount: 0,
+      deleted_snapshot_count: 0,
+      deletedFiles: [],
+      skipped: [],
+    }
+    : options.workspaceRoot
+      ? await deleteRecorderDayMemoryReviewSnapshotsInRange({
+        workspaceRoot: options.workspaceRoot,
+        // Open start on purpose: an expired snapshot file must be removed
+        // even when its memory rows were already deleted in an earlier sweep
+        // (plan.memoryDeleteRange.startedAt collapses to the cutoff then).
+        startedAt: null,
+        endedAt: plan.memoryDeleteRange.endedAt,
+      })
+      : {
+        status: "skipped_workspace_root_missing",
+        deletedSnapshotCount: 0,
+        deleted_snapshot_count: 0,
+        deletedFiles: [],
+        skipped: [],
+      };
+  if (!plan.targetCount && !memorySnapshotResult.deletedSnapshotCount) {
     return {
       schemaVersion: RECORDER_RETENTION_SCHEMA_VERSION,
       schema_version: RECORDER_RETENTION_SCHEMA_VERSION,
       schema: "agentic30.recorder.retention_result.v1",
       status: "noop",
+      memorySnapshotDeleteResult: memorySnapshotResult,
+      memory_snapshot_delete_result: memorySnapshotResult,
+      deletedMemorySnapshotCount: 0,
+      deleted_memory_snapshot_count: 0,
       plan,
       deletedFrameCount: 0,
       deleted_frame_count: 0,
@@ -754,6 +787,8 @@ export async function applyRecorderRetentionPolicy(store, options = {}) {
     clipboard_delete_result: clipboardResult,
     memoryDeleteResult: memoryResult,
     memory_delete_result: memoryResult,
+    memorySnapshotDeleteResult: memorySnapshotResult,
+    memory_snapshot_delete_result: memorySnapshotResult,
     productEventDeleteResult: productEventResult,
     product_event_delete_result: productEventResult,
     evidenceCandidateDeleteResult: evidenceCandidateResult,
@@ -778,6 +813,8 @@ export async function applyRecorderRetentionPolicy(store, options = {}) {
     purged_clipboard_content_count: clipboardResult?.contentPurgedCount ?? 0,
     deletedMemoryItemCount: memoryResult?.memoryItemCount ?? 0,
     deleted_memory_item_count: memoryResult?.memoryItemCount ?? 0,
+    deletedMemorySnapshotCount: memorySnapshotResult?.deletedSnapshotCount ?? 0,
+    deleted_memory_snapshot_count: memorySnapshotResult?.deletedSnapshotCount ?? 0,
     deletedProductEventCount: productEventResult?.productEventCount ?? 0,
     deleted_product_event_count: productEventResult?.productEventCount ?? 0,
     deletedEvidenceCandidateCount: evidenceCandidateResult?.evidenceCandidateCount ?? 0,

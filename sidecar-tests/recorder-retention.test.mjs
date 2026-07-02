@@ -1047,6 +1047,68 @@ test("applyRecorderRetentionPolicy tombstones expired memory and product events"
   }
 });
 
+test("applyRecorderRetentionPolicy unlinks day-memory snapshot files inside the memory window", async () => {
+  const { store } = await makeStore();
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-retention-snapshot-"));
+  try {
+    insertMemoryItem(store, {
+      id: "old-memory",
+      createdAt: "2026-06-26T00:00:00.000Z",
+      title: "Old memory",
+      summary: "redacted old memory retention proof",
+    });
+    const summariesDir = path.join(workspaceRoot, ".agentic30", "recorder", "memory-summaries");
+    await fs.mkdir(summariesDir, { recursive: true });
+    const oldSnapshot = path.join(summariesDir, "day-memory-review-2026-06-26.json");
+    const recentSnapshot = path.join(summariesDir, "day-memory-review-2026-06-28.json");
+    const corruptSnapshot = path.join(summariesDir, "day-memory-review-2026-06-25.json");
+    await fs.writeFile(oldSnapshot, JSON.stringify({
+      timeRange: { startedAt: "2026-06-26T00:00:00.000Z", endedAt: "2026-06-27T00:00:00.000Z" },
+    }));
+    await fs.writeFile(recentSnapshot, JSON.stringify({
+      timeRange: { startedAt: "2026-06-28T00:00:00.000Z", endedAt: "2026-06-29T00:00:00.000Z" },
+    }));
+    await fs.writeFile(corruptSnapshot, "{not json");
+
+    // Without workspaceRoot the sweep records an explicit skip, never a
+    // silent no-op.
+    const retentionPolicy = {
+      rawFrameRetentionHours: 999,
+      rawAudioRetentionHours: 999,
+      rawClipboardRetentionHours: 999,
+      memoryRetentionHours: 24,
+      productEventRetentionHours: 999,
+    };
+    const skipped = await applyRecorderRetentionPolicy(store, {
+      workspaceId: "workspace-1",
+      projectId: "project-1",
+      now: new Date("2026-06-28T12:00:00.000Z"),
+      policy: retentionPolicy,
+    });
+    assert.equal(skipped.memorySnapshotDeleteResult.status, "skipped_workspace_root_missing");
+    await fs.access(oldSnapshot);
+
+    const result = await applyRecorderRetentionPolicy(store, {
+      workspaceId: "workspace-1",
+      projectId: "project-1",
+      workspaceRoot,
+      now: new Date("2026-06-28T12:00:00.000Z"),
+      policy: retentionPolicy,
+    });
+    assert.equal(result.deletedMemorySnapshotCount, 1);
+    assert.deepEqual(result.memorySnapshotDeleteResult.deletedFiles, ["day-memory-review-2026-06-26.json"]);
+    assert.deepEqual(result.memorySnapshotDeleteResult.skipped, [
+      { file: "day-memory-review-2026-06-25.json", reason: "unreadable_snapshot_json" },
+    ]);
+    await assert.rejects(fs.access(oldSnapshot), { code: "ENOENT" });
+    await fs.access(recentSnapshot);
+    await fs.access(corruptSnapshot);
+  } finally {
+    store.close();
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test("applyRecorderRetentionPolicy invalidates memory-to-memory evidence archive chains", async () => {
   const { store } = await makeStore();
   try {
