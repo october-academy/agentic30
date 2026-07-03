@@ -21,6 +21,11 @@
     "ReferenceHeader": { "cardMode": "column" },
     "ReferenceShell": { "cardMode": "column" },
     "Titlebar": { "cardMode": "column" },
-    "ProjectsReferencePage": { "cardMode": "column" }
+    "ProjectsReferencePage": { "cardMode": "column" },
+    "SettingsReferencePage": { "cardMode": "column" },
+    "InterviewsReferencePage": { "cardMode": "column" },
+    "BipLogReferencePage": { "cardMode": "column" },
+    "NewsReferencePage": { "cardMode": "column" },
+    "HistoryReferencePage": { "cardMode": "column" }
   }
 }

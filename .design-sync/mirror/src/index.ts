@@ -13,6 +13,7 @@ export { Input, type InputProps } from "./components/Input";
 export { Toggle, type ToggleProps } from "./components/Toggle";
 export { Segmented, type SegmentedProps } from "./components/Segmented";
 export { IconButton, type IconButtonProps } from "./components/IconButton";
+export { Icon, type IconProps } from "./components/Icon";
 export { Avatar, type AvatarProps } from "./components/Avatar";
 export { SectionHeader, type SectionHeaderProps } from "./components/SectionHeader";
 export { Spinner, type SpinnerProps } from "./components/Spinner";
@@ -50,5 +51,10 @@ export { ReferenceShell, type ReferenceShellProps } from "./components/reference
 export { PhaseGateRow, type PhaseGateRowProps } from "./components/reference/PhaseGateRow";
 export { DayCalendar, type DayCalendarProps, type CalendarPhase } from "./components/reference/DayCalendar";
 
-/* ---- Screen compositions ---- */
+/* ---- Screen compositions (the 6 reference-page dashboards) ---- */
 export { ProjectsReferencePage, type ProjectsReferencePageProps } from "./components/reference/ProjectsReferencePage";
+export { SettingsReferencePage, type SettingsReferencePageProps } from "./components/reference/SettingsReferencePage";
+export { InterviewsReferencePage, type InterviewsReferencePageProps } from "./components/reference/InterviewsReferencePage";
+export { BipLogReferencePage, type BipLogReferencePageProps } from "./components/reference/BipLogReferencePage";
+export { NewsReferencePage, type NewsReferencePageProps } from "./components/reference/NewsReferencePage";
+export { HistoryReferencePage, type HistoryReferencePageProps } from "./components/reference/HistoryReferencePage";

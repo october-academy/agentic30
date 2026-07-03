@@ -60,10 +60,15 @@ the user's request ("완전히 처음부터, 다른 이름"). Its artifacts are 
   audit-complete: dark palette + StyleSeed + **full light theme (`[data-theme="white"]`)** +
   rounded font + spacing/pane/height/radius tokens + confetti/brand/chat/scene accents +
   reference-tone violet `#B085FA`.
-- **Wave 2 — TODO (P0 infra + shot-backed screens):** `<Icon>` registry (176 SF Symbols),
-  `WorkspaceShell` (responsive 3-col), `SurfaceState` (cold/loading/empty/error/unavailable),
-  workspace Titlebar/Rail variants; then Settings/Interviews/BIP/News/History reference pages
-  (data → ReferenceShell), Day/Today, Office Hours states, Strategy, Morning Briefing, real Settings.
+- **Wave 2a — SHIPPED (2026-07-03):** `<Icon>` registry (101 SF Symbols → inline SVG, `icons.ts` +
+  `Icon.tsx`) + the 5 remaining reference-page SCREENS (Settings/Interviews/BipLog/News/History),
+  each composed on ReferenceShell from the OpenDesignReferenceCatalog data, uploaded. Total now
+  **46 components + 6 dashboard screens**. News/Interviews/BipLog verified vs their e2e shots;
+  Settings/History reproduced from source. All render clean.
+- **Wave 2b — TODO (workspace screens):** `WorkspaceShell` (responsive 3-col rail 48/52 + sidebar
+  200/220/240 + meta 252/280, breakpoints 860/1100/1280), `SurfaceState` (cold/loading/empty/error/
+  unavailable), workspace Titlebar/Rail variants; then Day/Today, Office Hours states (10 shots),
+  Strategy (3 shots), Morning Briefing (4 shots), real SettingsView. All shot-backed.
 - **Wave 3 — TODO (non-shot):** Intake V2 8 steps, Market, Founder Replay (~4000 lines), History,
   locked mocks, menubar, search palette — after extended e2e capture.
 
