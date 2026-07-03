@@ -1,6 +1,7 @@
 import React from "react";
 import { Tone, toneVars } from "../../tokens";
 import { Avatar } from "../Avatar";
+import { Icon } from "../Icon";
 import { Badge } from "../Badge";
 import { Button } from "../Button";
 import { Chip } from "../Chip";
@@ -48,8 +49,12 @@ function BipMetricPill({ title, count, tone }: { title: string; count: string; t
   );
 }
 
-/** Numbered signal row in the "고객 후보 신호" sidebar group. */
-function SignalLeading({ label, tone }: { label: string; tone: Tone }) {
+/**
+ * Rounded tone tile that leads a sidebar row. Renders either an SF-symbol
+ * `<Icon>` (source rows) or a short mono `label` (numbered signal rows,
+ * brand marks like "X").
+ */
+function SignalLeading({ label, icon, tone }: { label?: string; icon?: React.ReactNode; tone: Tone }) {
   const t = toneVars(tone);
   return (
     <span
@@ -69,7 +74,7 @@ function SignalLeading({ label, tone }: { label: string; tone: Tone }) {
         border: `1px solid ${t.line}`,
       }}
     >
-      {label}
+      {icon ?? label}
     </span>
   );
 }
@@ -143,13 +148,12 @@ export function BipLogReferencePage({ height = 900 }: BipLogReferencePageProps) 
   const rail = (
     <Rail
       items={[
-        { icon: "▦" },
-        { icon: "▷" },
-        { icon: "◫" },
-        { icon: "▤" },
-        { icon: "◈", active: true, dot: true },
-        { icon: "◵" },
-        { icon: "⚙" },
+        { icon: <Icon name="folder" size={19} title="프로젝트" /> },
+        { icon: <Icon name="gearshape" size={19} title="설정" /> },
+        { icon: <Icon name="bubble.left.and.bubble.right" size={19} title="인터뷰" /> },
+        { icon: <Icon name="doc.text" size={19} title="공개기록" />, active: true },
+        { icon: <Icon name="newspaper" size={19} title="뉴스" /> },
+        { icon: <Icon name="clock.arrow.circlepath" size={19} title="히스토리" /> },
       ]}
       footer={<Avatar initials="Z" size={34} tone="accent" />}
     />
@@ -165,12 +169,12 @@ export function BipLogReferencePage({ height = 900 }: BipLogReferencePageProps) 
           rows: [
             <SideRow
               active
-              leading={<SignalLeading label="▣" tone="accent" />}
+              leading={<SignalLeading icon={<Icon name="line.3.horizontal" size={15} title="" />} tone="accent" />}
               title="전체"
               badge={<Badge neutral>1</Badge>}
             />,
             <SideRow
-              leading={<SignalLeading label="✓" tone="accent" />}
+              leading={<SignalLeading icon={<Icon name="checkmark.circle" size={15} title="" />} tone="accent" />}
               title="강한 적합"
               badge={<Badge neutral>1</Badge>}
             />,
@@ -180,17 +184,17 @@ export function BipLogReferencePage({ height = 900 }: BipLogReferencePageProps) 
               badge={<Badge neutral>1</Badge>}
             />,
             <SideRow
-              leading={<SignalLeading label="@" tone="violet" />}
+              leading={<SignalLeading icon={<Icon name="at" size={15} title="" />} tone="violet" />}
               title="Threads (Meta)"
               badge={<Badge neutral>0</Badge>}
             />,
             <SideRow
-              leading={<SignalLeading label="◎" tone="pink" />}
+              leading={<SignalLeading icon={<Icon name="photo" size={15} title="" />} tone="pink" />}
               title="Instagram"
               badge={<Badge neutral>0</Badge>}
             />,
             <SideRow
-              leading={<SignalLeading label="!" tone="amber" />}
+              leading={<SignalLeading icon={<Icon name="exclamationmark.triangle" size={15} title="" />} tone="amber" />}
               title="워치리스트"
               badge={<Badge neutral>0</Badge>}
             />,
@@ -240,16 +244,33 @@ export function BipLogReferencePage({ height = 900 }: BipLogReferencePageProps) 
 
   const header = (
     <ReferenceHeader
-      icon={<Avatar initials="◫" size={56} tone="accent" />}
+      icon={
+        <span
+          style={{
+            width: 56,
+            height: 56,
+            flex: "0 0 auto",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: "var(--ds-r-control)",
+            color: "var(--ds-accent)",
+            background: "var(--ds-accent-dim)",
+            border: "1px solid var(--ds-accent-line)",
+          }}
+        >
+          <Icon name="doc.text" size={24} title="공개 기록" />
+        </span>
+      }
       title="공개 기록 · 고객 후보 리서치"
       badge={<Badge tone="accent">공개 기록</Badge>}
       subtitleParts={["웹 자료 검색 + 원문 확인", "후보 1명", "Day 1", "UI 테스트 fixture"]}
       actions={
         <>
-          <Button variant="ghost" size="sm" icon={<span>▤</span>}>
+          <Button variant="ghost" size="sm" icon={<Icon name="doc.text" size={14} title="" />}>
             초안
           </Button>
-          <Button variant="primary" size="sm" icon={<span>⟳</span>}>
+          <Button variant="primary" size="sm" icon={<Icon name="arrow.clockwise" size={14} title="" />}>
             다시 리서치
           </Button>
         </>
@@ -266,7 +287,7 @@ export function BipLogReferencePage({ height = 900 }: BipLogReferencePageProps) 
         />
       </div>
       <div style={{ flex: "0 0 240px", paddingBottom: 6 }}>
-        <Input placeholder="고객 후보 증거 검색" icon={<span>⌕</span>} />
+        <Input placeholder="고객 후보 증거 검색" icon={<Icon name="magnifyingglass" size={14} title="" />} />
       </div>
     </div>
   );
@@ -561,7 +582,7 @@ export function BipLogReferencePage({ height = 900 }: BipLogReferencePageProps) 
         방식으로 관리하는지 10분만 여쭤봐도 될까요?
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
-        <Button variant="primary" size="sm" icon={<span>⧉</span>}>
+        <Button variant="primary" size="sm" icon={<Icon name="doc.on.doc" size={14} title="" />}>
           초안 복사
         </Button>
         <Button variant="ghost" size="sm">
@@ -635,24 +656,24 @@ export function BipLogReferencePage({ height = 900 }: BipLogReferencePageProps) 
       {candidateBanner}
 
       <MetaGroupLabel>리서치 상태</MetaGroupLabel>
-      <MetaRow glyph="◉" label="리서치 소스" value="live" valueTone="accent" dot />
-      <MetaRow glyph="◫" label="X 원문" value="1" valueTone="sky" />
-      <MetaRow glyph="@" label="Threads(Meta)" value="0" />
-      <MetaRow glyph="✓" label="강한 적합" value="1 / 1" valueTone="accent" />
-      <MetaRow glyph="!" label="확인 필요" value="0" />
-      <MetaRow glyph="◵" label="마지막 리서치" value="방금" />
+      <MetaRow glyph={<Icon name="record.circle" size={14} title="" />} label="리서치 소스" value="live" valueTone="accent" dot />
+      <MetaRow glyph={<Icon name="doc.text" size={14} title="" />} label="X 원문" value="1" valueTone="sky" />
+      <MetaRow glyph={<Icon name="at" size={14} title="" />} label="Threads(Meta)" value="0" />
+      <MetaRow glyph={<Icon name="checkmark" size={14} title="" />} label="강한 적합" value="1 / 1" valueTone="accent" />
+      <MetaRow glyph={<Icon name="exclamationmark.triangle" size={14} title="" />} label="확인 필요" value="0" />
+      <MetaRow glyph={<Icon name="clock" size={14} title="" />} label="마지막 리서치" value="방금" />
 
       <MetaGroupLabel>확인할 공백</MetaGroupLabel>
-      <MetaRow glyph="₩" label="결제 의향" value="미확인" valueTone="amber" dot />
-      <MetaRow glyph="◔" label="반복 사용 빈도" value="미확인" valueTone="amber" dot />
-      <MetaRow glyph="◐" label="현재 대안" value="DM 예정" valueTone="sky" />
+      <MetaRow glyph={<Icon name="creditcard.fill" size={14} title="" />} label="결제 의향" value="미확인" valueTone="amber" dot />
+      <MetaRow glyph={<Icon name="arrow.triangle.2.circlepath" size={14} title="" />} label="반복 사용 빈도" value="미확인" valueTone="amber" dot />
+      <MetaRow glyph={<Icon name="bubble.left" size={14} title="" />} label="현재 대안" value="DM 예정" valueTone="sky" />
 
       <MetaGroupLabel>빠른 액션</MetaGroupLabel>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
-        <Button variant="primary" fullWidth size="sm" icon={<span>›</span>}>
+        <Button variant="primary" fullWidth size="sm" icon={<Icon name="paperplane.fill" size={14} title="" />}>
           DM 후보로 보내기
         </Button>
-        <Button variant="ghost" fullWidth size="sm" icon={<span>⟳</span>}>
+        <Button variant="ghost" fullWidth size="sm" icon={<Icon name="arrow.clockwise" size={14} title="" />}>
           다시 리서치 실행
         </Button>
       </div>

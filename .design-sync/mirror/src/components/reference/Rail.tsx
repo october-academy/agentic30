@@ -1,4 +1,5 @@
 import React from "react";
+import { Icon } from "../Icon";
 
 export interface RailItem {
   /** SF-symbol-like glyph or small node. */
@@ -6,6 +7,10 @@ export interface RailItem {
   active?: boolean;
   /** Small "new" dot on the top-right of the slot. */
   dot?: boolean;
+  /** Gated feature — dims the slot and overlays a small lock badge. */
+  lock?: boolean;
+  /** Small count badge (top-right). Takes precedence over `dot`. */
+  badge?: React.ReactNode;
   onClick?: () => void;
 }
 
@@ -47,15 +52,53 @@ export function Rail({ items, footer }: RailProps) {
             borderRadius: "var(--ds-r-control)",
             fontSize: 17,
             cursor: "pointer",
-            color: it.active ? "var(--ds-accent)" : "var(--ds-muted)",
+            color: it.active ? "var(--ds-accent)" : it.lock ? "var(--ds-muted-deep)" : "var(--ds-muted)",
             background: it.active ? "var(--ds-accent-dim)" : "transparent",
             border: it.active ? "1px solid var(--ds-accent-line)" : "1px solid transparent",
+            opacity: it.lock ? 0.7 : 1,
             transition:
               "background var(--ds-dur-fast) var(--ds-ease-snap), color var(--ds-dur-fast) var(--ds-ease-snap)",
           }}
         >
           {it.icon}
-          {it.dot && (
+          {it.badge != null ? (
+            <span
+              style={{
+                position: "absolute",
+                top: 2,
+                right: 1,
+                minWidth: 13,
+                height: 13,
+                padding: "0 3px",
+                borderRadius: 999,
+                background: "var(--ds-accent)",
+                color: "var(--ds-accent-ink)",
+                fontFamily: "var(--ds-mono)",
+                fontSize: 8.5,
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: "1.5px solid var(--ds-bg-deep)",
+              }}
+            >
+              {it.badge}
+            </span>
+          ) : it.lock ? (
+            <span
+              style={{
+                position: "absolute",
+                bottom: 3,
+                right: 3,
+                display: "inline-flex",
+                color: "var(--ds-muted-deep)",
+                background: "var(--ds-bg-deep)",
+                borderRadius: 4,
+              }}
+            >
+              <Icon name="lock.fill" size={9} />
+            </span>
+          ) : it.dot ? (
             <span
               style={{
                 position: "absolute",
@@ -68,7 +111,7 @@ export function Rail({ items, footer }: RailProps) {
                 border: "1px solid var(--ds-bg-deep)",
               }}
             />
-          )}
+          ) : null}
         </button>
       ))}
       {footer != null && <div style={{ marginTop: "auto" }}>{footer}</div>}

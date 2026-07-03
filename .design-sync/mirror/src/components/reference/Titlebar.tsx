@@ -1,5 +1,6 @@
 import React from "react";
 import { IconButton } from "../IconButton";
+import { Icon } from "../Icon";
 
 export interface TitlebarProps {
   /** Centered breadcrumb — a plain string, or {page, detail} rendered "page / detail". */
@@ -10,9 +11,9 @@ export interface TitlebarProps {
 
 const DEFAULT_ACTIONS = (
   <>
-    <IconButton aria-label="검색" icon={<span>⌕</span>} />
-    <IconButton aria-label="새로고침" icon={<span>⟳</span>} />
-    <IconButton aria-label="사이드바 토글" icon={<span>◨</span>} active />
+    <IconButton aria-label="검색" icon={<Icon name="magnifyingglass" size={15} />} />
+    <IconButton aria-label="공유" icon={<Icon name="square.and.arrow.up" size={15} />} />
+    <IconButton aria-label="패널 토글" icon={<Icon name="sidebar.right" size={15} />} active />
   </>
 );
 

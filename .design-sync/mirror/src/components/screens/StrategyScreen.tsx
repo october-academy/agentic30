@@ -3,6 +3,7 @@ import { Tone, toneVars } from "../../tokens";
 import { Badge } from "../Badge";
 import { Card } from "../Card";
 import { Icon } from "../Icon";
+import { IconButton } from "../IconButton";
 import { Avatar } from "../Avatar";
 import { WorkspaceShell } from "../WorkspaceShell";
 import { WorkspaceRail } from "../WorkspaceRail";
@@ -440,18 +441,23 @@ export function StrategyScreen({ height = 900 }: StrategyScreenProps) {
   const rail = (
     <WorkspaceRail
       items={[
-        { icon: "folder.fill", title: "프로젝트" },
-        { icon: "play.fill", title: "리플레이" },
+        { icon: "calendar", title: "오늘" },
+        { icon: "play.rectangle.on.rectangle", title: "Founder Replay" },
         { icon: "chart.line.uptrend.xyaxis", title: "전략", active: true },
-        { icon: "chart.bar.fill", title: "채널", locked: true },
-        { icon: "person.2.fill", title: "커뮤니티", locked: true },
+        { icon: "newspaper", title: "뉴스", locked: true },
+        { icon: "sunrise", title: "아침 브리핑", locked: true },
         { icon: "gearshape", title: "설정" },
       ]}
       footer={<Avatar initials="Z" size={34} tone="accent" />}
     />
   );
 
-  const titlebar = <Titlebar breadcrumb={{ page: "전략", detail: "Business Canvas · 경쟁 구도" }} />;
+  const titlebar = (
+    <Titlebar
+      breadcrumb={{ page: "전략", detail: "Business Canvas · 경쟁 구도" }}
+      actions={<IconButton aria-label="검색" icon={<Icon name="magnifyingglass" size={15} title="" />} />}
+    />
+  );
 
   const whyHere = (
     <Card>

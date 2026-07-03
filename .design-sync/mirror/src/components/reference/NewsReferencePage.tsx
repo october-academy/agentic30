@@ -3,6 +3,8 @@ import { Tone, toneVars } from "../../tokens";
 import { Avatar } from "../Avatar";
 import { Badge } from "../Badge";
 import { Button } from "../Button";
+import { Icon } from "../Icon";
+import { IconButton } from "../IconButton";
 import { KVRow } from "../KVRow";
 import { DebtBanner } from "../DebtBanner";
 import { Rail } from "./Rail";
@@ -35,6 +37,28 @@ function GlyphTile({ glyph, tone = "accent", muted }: { glyph: React.ReactNode; 
       }}
     >
       {glyph}
+    </span>
+  );
+}
+
+/** Circular accent identity tile for the page header (newspaper glyph in a ring). */
+function HeaderIconTile({ name, size = 52 }: { name: string; size?: number }) {
+  return (
+    <span
+      style={{
+        width: size,
+        height: size,
+        flex: "0 0 auto",
+        borderRadius: 999,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "var(--ds-accent)",
+        background: "var(--ds-accent-dim)",
+        border: "1px solid var(--ds-accent-line)",
+      }}
+    >
+      <Icon name={name} size={Math.round(size * 0.42)} title="" />
     </span>
   );
 }
@@ -121,8 +145,8 @@ function RadarCard() {
           </div>
         </div>
         <div style={{ flex: "0 0 auto", display: "flex", gap: 6 }}>
-          <ActionGlyph glyph="✉" />
-          <ActionGlyph glyph="🔖" />
+          <ActionGlyph glyph={<Icon name="envelope" size={14} title="" />} tone="accent" dot />
+          <ActionGlyph glyph={<Icon name="bookmark" size={14} title="" />} />
         </div>
       </div>
 
@@ -146,7 +170,7 @@ function RadarCard() {
         }}
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: 7, color: "var(--ds-muted)", fontSize: 12.5 }}>
-          <span style={{ fontSize: 13 }}>💬</span>
+          <Icon name="bubble.left" size={14} title="" />
           관련 답변
         </span>
         <span style={{ fontFamily: "var(--ds-mono)", fontSize: 12.5, fontWeight: 600, color: "var(--ds-fg)" }}>
@@ -169,7 +193,8 @@ function RadarCard() {
             border: "1px solid var(--ds-border-soft)",
           }}
         >
-          <span style={{ flex: "0 0 auto", marginTop: 1, color: "var(--ds-muted)", fontSize: 14 }}>🔗</span>
+          <Icon name="link" size={14} title="" style={{ flex: "0 0 auto", marginTop: 2, color: "var(--ds-muted)" }} />
+
           <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ds-fg)" }}>Codex 웹 검색 도구</span>
             <span style={{ fontFamily: "var(--ds-mono)", fontSize: 11.5, color: "var(--ds-muted)" }}>
@@ -187,10 +212,12 @@ function RadarCard() {
 }
 
 /** Small square icon action button in the radar card header. */
-function ActionGlyph({ glyph }: { glyph: React.ReactNode }) {
+function ActionGlyph({ glyph, tone, dot }: { glyph: React.ReactNode; tone?: "accent"; dot?: boolean }) {
+  const accent = tone === "accent";
   return (
     <span
       style={{
+        position: "relative",
         width: 28,
         height: 28,
         display: "inline-flex",
@@ -199,11 +226,24 @@ function ActionGlyph({ glyph }: { glyph: React.ReactNode }) {
         borderRadius: "var(--ds-r-control)",
         background: "var(--ds-surface-2)",
         border: "1px solid var(--ds-border)",
-        color: "var(--ds-muted)",
-        fontSize: 13,
+        color: accent ? "var(--ds-accent)" : "var(--ds-muted)",
       }}
     >
       {glyph}
+      {dot && (
+        <span
+          style={{
+            position: "absolute",
+            top: 5,
+            right: 5,
+            width: 5,
+            height: 5,
+            borderRadius: 999,
+            background: "var(--ds-accent)",
+            border: "1px solid var(--ds-surface-2)",
+          }}
+        />
+      )}
     </span>
   );
 }
@@ -220,12 +260,12 @@ export function NewsReferencePage({ height = 900 }: NewsReferencePageProps) {
   const rail = (
     <Rail
       items={[
-        { icon: "▦" },
-        { icon: "▷" },
-        { icon: "◫" },
-        { icon: "▤", active: true, dot: true },
-        { icon: "◵" },
-        { icon: "⚙" },
+        { icon: <Icon name="calendar" size={19} title="오늘" /> },
+        { icon: <Icon name="play.rectangle.on.rectangle" size={19} title="Founder Replay" /> },
+        { icon: <Icon name="chart.line.uptrend.xyaxis" size={19} title="전략" /> },
+        { icon: <Icon name="newspaper" size={19} title="뉴스" />, active: true, dot: true },
+        { icon: <Icon name="sunrise" size={19} title="아침 브리핑" /> },
+        { icon: <Icon name="gearshape" size={19} title="설정" /> },
       ]}
       footer={<Avatar initials="Z" size={34} tone="accent" />}
     />
@@ -235,7 +275,7 @@ export function NewsReferencePage({ height = 900 }: NewsReferencePageProps) {
     <ReferenceSidebar
       title={
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <span style={{ color: "var(--ds-accent)", fontSize: 15 }}>▤</span>
+          <Icon name="newspaper" size={16} title="" style={{ color: "var(--ds-accent)" }} />
           <span style={{ fontFamily: "var(--ds-mono)", letterSpacing: "0.01em" }}>Market Radar</span>
         </span>
       }
@@ -246,13 +286,13 @@ export function NewsReferencePage({ height = 900 }: NewsReferencePageProps) {
           rows: [
             <SideRow
               active
-              leading={<GlyphTile glyph="⌸" tone="accent" />}
+              leading={<GlyphTile glyph={<Icon name="tray.full" size={17} title="" />} tone="accent" />}
               title="전체"
               subtitle="모든 레이더 카드"
               badge={<Badge tone="accent">1</Badge>}
             />,
             <SideRow
-              leading={<GlyphTile glyph="🔖" tone="sky" />}
+              leading={<GlyphTile glyph={<Icon name="bookmark" size={16} title="" />} tone="sky" />}
               title="Saved"
               subtitle="이 workspace에서 저장"
               badge={<Badge neutral>0</Badge>}
@@ -263,7 +303,7 @@ export function NewsReferencePage({ height = 900 }: NewsReferencePageProps) {
           label: "레이더 레인",
           rows: [
             <SideRow
-              leading={<GlyphTile glyph="◉" tone="accent" />}
+              leading={<GlyphTile glyph={<Icon name="line.3.horizontal" size={16} title="" />} tone="accent" />}
               title="대안/가격"
               subtitle="이미 돈을 쓰는 대안과 가격 기준은 무엇인가"
               badge={<Badge neutral>1</Badge>}
@@ -274,7 +314,7 @@ export function NewsReferencePage({ height = 900 }: NewsReferencePageProps) {
           label: "소스",
           rows: [
             <SideRow
-              leading={<GlyphTile glyph="🌐" tone="muted" muted />}
+              leading={<GlyphTile glyph={<Icon name="globe" size={16} title="" />} tone="muted" muted />}
               title="Web"
               subtitle="출처 그룹"
               badge={<Badge neutral>1</Badge>}
@@ -293,11 +333,22 @@ export function NewsReferencePage({ height = 900 }: NewsReferencePageProps) {
     />
   );
 
-  const titlebar = <Titlebar breadcrumb={{ page: "뉴스", detail: "안 읽음 17건" }} />;
+  const titlebar = (
+    <Titlebar
+      breadcrumb={{ page: "뉴스", detail: "안 읽음 17건" }}
+      actions={
+        <>
+          <IconButton aria-label="검색" icon={<Icon name="magnifyingglass" size={15} title="" />} />
+          <IconButton aria-label="새로고침" icon={<Icon name="arrow.clockwise" size={15} title="" />} />
+          <IconButton aria-label="사이드바 토글" icon={<Icon name="sidebar.right" size={16} title="" />} active />
+        </>
+      }
+    />
+  );
 
   const header = (
     <ReferenceHeader
-      icon={<Avatar initials="📰" size={52} tone="accent" />}
+      icon={<HeaderIconTile name="newspaper" size={52} />}
       title="시장 리서치 레이더"
       subtitleParts={[
         "1 카드",
@@ -308,7 +359,7 @@ export function NewsReferencePage({ height = 900 }: NewsReferencePageProps) {
         "0초 걸림",
       ]}
       actions={
-        <Button variant="ghost" size="sm" icon={<span>⟳</span>}>
+        <Button variant="ghost" size="sm" icon={<Icon name="arrow.clockwise" size={13} title="" />}>
           새로고침
         </Button>
       }
@@ -376,16 +427,16 @@ export function NewsReferencePage({ height = 900 }: NewsReferencePageProps) {
           border: "1px solid var(--ds-border)",
         }}
       >
-        <span style={{ flex: "0 0 auto", fontSize: 14, color: "var(--ds-muted)" }}>🌐</span>
+        <Icon name="globe" size={15} title="" style={{ flex: "0 0 auto", color: "var(--ds-muted)" }} />
         <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "var(--ds-fg)" }}>Web</span>
         <span style={{ fontFamily: "var(--ds-mono)", fontSize: 12.5, color: "var(--ds-fg-secondary)" }}>1</span>
       </div>
 
       <MetaGroupLabel>다음 액션</MetaGroupLabel>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <MetaActionButton glyph="⟳" label="오래된 레이더 새로고침" />
-        <MetaActionButton glyph="✉" label="1개 안 읽은 카드 검토" highlight />
-        <MetaActionButton glyph="🔖" label="0개 저장 카드로 문서 갱신" />
+        <MetaActionButton glyph={<Icon name="arrow.clockwise" size={14} title="" />} label="오래된 레이더 새로고침" />
+        <MetaActionButton glyph={<Icon name="envelope" size={14} title="" />} label="1개 안 읽은 카드 검토" highlight />
+        <MetaActionButton glyph={<Icon name="bookmark" size={14} title="" />} label="0개 저장 카드로 문서 갱신" />
       </div>
     </MetaPanel>
   );

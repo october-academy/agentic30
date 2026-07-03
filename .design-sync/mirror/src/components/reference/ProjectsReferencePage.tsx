@@ -2,6 +2,7 @@ import React from "react";
 import { Tone, toneVars } from "../../tokens";
 import { Avatar } from "../Avatar";
 import { Badge } from "../Badge";
+import { Icon } from "../Icon";
 import { Button } from "../Button";
 import { ProgressRing } from "../ProgressRing";
 import { StatCard } from "../StatCard";
@@ -121,12 +122,12 @@ export function ProjectsReferencePage({ height = 900 }: ProjectsReferencePagePro
   const rail = (
     <Rail
       items={[
-        { icon: "▦" },
-        { icon: "▷" },
-        { icon: "◫" },
-        { icon: "▤", active: true, dot: true },
-        { icon: "◵" },
-        { icon: "⚙" },
+        { icon: <Icon name="folder" size={19} title="프로젝트" />, active: true },
+        { icon: <Icon name="gearshape" size={19} title="설정" /> },
+        { icon: <Icon name="bubble.left.and.bubble.right" size={19} title="인터뷰" /> },
+        { icon: <Icon name="doc.text" size={19} title="공개기록" /> },
+        { icon: <Icon name="newspaper" size={19} title="뉴스" /> },
+        { icon: <Icon name="clock.arrow.circlepath" size={19} title="히스토리" /> },
       ]}
       footer={<Avatar initials="Z" size={34} tone="accent" />}
     />
@@ -230,7 +231,7 @@ export function ProjectsReferencePage({ height = 900 }: ProjectsReferencePagePro
             <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--ds-accent)" }} />
             마지막 활동 <span style={{ color: "var(--ds-fg-secondary)" }}>4분 전</span> · Day 1
           </div>
-          <Button variant="primary" fullWidth icon={<span>＋</span>}>
+          <Button variant="primary" fullWidth icon={<Icon name="plus" size={14} title="" />}>
             새 30일 프로젝트
           </Button>
         </div>
@@ -248,10 +249,10 @@ export function ProjectsReferencePage({ height = 900 }: ProjectsReferencePagePro
       subtitleParts={["초기 검증", "Day 1 / 30", "macOS 메뉴바 앱", "소스 코드 3 개", "마지막 활동 4분 전"]}
       actions={
         <>
-          <Button variant="secondary" size="sm" icon={<span>◨</span>}>
+          <Button variant="secondary" size="sm" icon={<Icon name="sidebar.left" size={14} title="" />}>
             프로젝트 전환
           </Button>
-          <Button variant="primary" size="sm" icon={<span>›</span>}>
+          <Button variant="primary" size="sm" icon={<Icon name="chevron.right" size={14} title="" />}>
             오늘 화면 열기
           </Button>
         </>
@@ -291,7 +292,7 @@ export function ProjectsReferencePage({ height = 900 }: ProjectsReferencePagePro
         <div style={{ fontFamily: "var(--ds-mono)", fontSize: 11, color: "var(--ds-muted)", textAlign: "right" }}>
           시작 2026-05-16 · D-30: 2026-06-15
         </div>
-        <Button variant="ghost" size="sm" icon={<span>🗑</span>}>
+        <Button variant="ghost" size="sm" icon={<Icon name="trash" size={13} title="" />}>
           플랜 편집
         </Button>
       </div>
@@ -420,23 +421,23 @@ export function ProjectsReferencePage({ height = 900 }: ProjectsReferencePagePro
       {portfolioBanner}
 
       <MetaGroupLabel>활성 프로젝트</MetaGroupLabel>
-      <MetaRow glyph="◷" label="활성 프로젝트" value="3개" valueTone="accent" dot />
-      <MetaRow glyph="∿" label="진행 phase" value="F2 · B1" />
-      <MetaRow glyph="◌" label="인터뷰" value="5 / 15 게이트" />
-      <MetaRow glyph="▢" label="소스 루트" value="9개 watch" />
-      <MetaRow glyph="↗" label="오늘 호출" value="3 · $0.04" />
-      <MetaRow glyph="🗑" label="D-30 목표일" value="2026-06-15" />
+      <MetaRow glyph={<Icon name="clock" size={14} title="" />} label="활성 프로젝트" value="3개" valueTone="accent" dot />
+      <MetaRow glyph={<Icon name="waveform" size={14} title="" />} label="진행 phase" value="F2 · B1" />
+      <MetaRow glyph={<Icon name="bubble.left" size={14} title="" />} label="인터뷰" value="5 / 15 게이트" />
+      <MetaRow glyph={<Icon name="doc.text" size={14} title="" />} label="소스 루트" value="9개 watch" />
+      <MetaRow glyph={<Icon name="chart.line.uptrend.xyaxis" size={14} title="" />} label="오늘 호출" value="3 · $0.04" />
+      <MetaRow glyph={<Icon name="trash" size={14} title="" />} label="D-30 목표일" value="2026-06-15" />
 
       <MetaGroupLabel>보관함 요약</MetaGroupLabel>
-      <MetaRow glyph="✓" label="qmd-support" value="완주 28/30" />
-      <MetaRow glyph="⊖" label="MealMate" value="중단 D9" />
-      <MetaRow glyph="↗" label="평균 완주율" value="62% (2건)" />
+      <MetaRow glyph={<Icon name="checkmark" size={14} title="" />} label="qmd-support" value="완주 28/30" />
+      <MetaRow glyph={<Icon name="minus.circle" size={14} title="" />} label="MealMate" value="중단 D9" />
+      <MetaRow glyph={<Icon name="chart.line.uptrend.xyaxis" size={14} title="" />} label="평균 완주율" value="62% (2건)" />
 
       <MetaGroupLabel>빠른 액션</MetaGroupLabel>
-      <MetaActionRow glyph="›" title="오늘 화면으로" subtitle="Day 1 · 고객 후보 좁히기" kbd="↵" />
-      <MetaActionRow glyph="＋" glyphTone="sky" title="새 30일 프로젝트" subtitle="템플릿 또는 백지에서 시작" kbd="⌘N" />
-      <MetaActionRow glyph="◨" glyphTone="muted" title="프로젝트 전환" subtitle="활성/보관함 가로질러 검색" kbd="⌘P" />
-      <MetaActionRow glyph="◌" glyphTone="amber" title="인터뷰 추가" subtitle=".vtt / .txt drop ·…" kbd="⌘I" />
+      <MetaActionRow glyph={<Icon name="chevron.right" size={15} title="" />} title="오늘 화면으로" subtitle="Day 1 · 고객 후보 좁히기" kbd="↵" />
+      <MetaActionRow glyph={<Icon name="plus" size={15} title="" />} glyphTone="sky" title="새 30일 프로젝트" subtitle="템플릿 또는 백지에서 시작" kbd="⌘N" />
+      <MetaActionRow glyph={<Icon name="sidebar.left" size={15} title="" />} glyphTone="muted" title="프로젝트 전환" subtitle="활성/보관함 가로질러 검색" kbd="⌘P" />
+      <MetaActionRow glyph={<Icon name="bubble.left" size={15} title="" />} glyphTone="amber" title="인터뷰 추가" subtitle=".vtt / .txt drop ·…" kbd="⌘I" />
     </MetaPanel>
   );
 

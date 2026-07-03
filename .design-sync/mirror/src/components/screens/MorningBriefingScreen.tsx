@@ -751,7 +751,7 @@ function syncSources(failed: boolean): SyncSource[] {
       status: failed ? "미연결" : "연결됨",
       statusTone: failed ? "amber" : "accent",
     },
-    { name: "마지막 동기화", initials: "◷", tone: "muted", status: "09:00", statusTone: "muted" },
+    { name: "마지막 동기화", initials: "", tone: "muted", status: "09:00", statusTone: "muted" },
   ];
 }
 
@@ -886,11 +886,11 @@ export function MorningBriefingScreen({ height = 900, failed = false }: MorningB
   const rail = (
     <WorkspaceRail
       items={[
-        { icon: "square.and.arrow.down", title: "오늘" },
-        { icon: "play.fill", title: "리플레이" },
-        { icon: "chart.line.uptrend.xyaxis", title: "지표" },
-        { icon: "doc.text", title: "문서" },
-        { icon: "megaphone.fill", active: true, title: "브리핑", newDot: !failed },
+        { icon: "calendar", title: "오늘" },
+        { icon: "play.rectangle.on.rectangle", title: "Founder Replay" },
+        { icon: "chart.line.uptrend.xyaxis", title: "전략" },
+        { icon: "newspaper", title: "뉴스" },
+        { icon: "sunrise", active: true, title: "아침 브리핑" },
         { icon: "gearshape", title: "설정" },
       ]}
       footer={<Avatar initials="Z" size={34} tone="accent" />}
@@ -1021,7 +1021,7 @@ export function MorningBriefingScreen({ height = 900, failed = false }: MorningB
           <span style={{ color: "var(--ds-danger)", fontWeight: 600 }}>이상 신호 1</span>
         </div>
       </div>
-      <Button variant="ghost" size="sm" icon={<Icon name="arrow.triangle.2.circlepath" size={13} title="" />}>
+      <Button variant="ghost" size="sm" icon={<Icon name="arrow.clockwise" size={13} title="" />}>
         다시 동기화
       </Button>
     </div>

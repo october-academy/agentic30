@@ -1,5 +1,6 @@
 import React from "react";
 import { Tone, toneVars } from "../../tokens";
+import { Icon } from "../Icon";
 import { Toggle } from "../Toggle";
 import { Sparkline } from "../Sparkline";
 import { Rail } from "./Rail";
@@ -125,7 +126,9 @@ function PathPill({ text }: { text: React.ReactNode }) {
         overflow: "hidden",
       }}
     >
-      <span style={{ flex: "0 0 auto", color: "var(--ds-muted)", fontSize: 12 }}>🗀</span>
+      <span style={{ flex: "0 0 auto", color: "var(--ds-muted)", display: "inline-flex" }}>
+        <Icon name="folder" size={13} title="" />
+      </span>
       <span
         style={{
           flex: 1,
@@ -588,14 +591,14 @@ export function SettingsReferencePage({ height = 900 }: SettingsReferencePagePro
   const rail = (
     <Rail
       items={[
-        { icon: "▦" },
-        { icon: "▷" },
-        { icon: "◫" },
-        { icon: "▤" },
-        { icon: "◵" },
-        { icon: "⚙", active: true },
+        { icon: <Icon name="folder" size={18} title="" /> },
+        { icon: <Icon name="gearshape" size={18} title="" />, active: true },
+        { icon: <Icon name="bubble.left.and.bubble.right" size={18} title="" /> },
+        { icon: <Icon name="doc.text" size={18} title="" /> },
+        { icon: <Icon name="newspaper" size={18} title="" /> },
+        { icon: <Icon name="clock.arrow.circlepath" size={18} title="" /> },
       ]}
-      footer={<GlyphTile glyph="⚙" tone="accent" />}
+      footer={<GlyphTile glyph={<Icon name="gearshape" size={15} title="" />} tone="accent" />}
     />
   );
 
@@ -607,24 +610,24 @@ export function SettingsReferencePage({ height = 900 }: SettingsReferencePagePro
         {
           label: "General",
           rows: [
-            <SideRow active leading={<GlyphTile glyph="⌂" tone="accent" />} title="워크스페이스" />,
-            <SideRow leading={<GlyphTile glyph="◐" tone="sky" muted />} title="외관" />,
-            <SideRow leading={<GlyphTile glyph="!" tone="amber" muted />} title="메뉴바 & 알림" />,
+            <SideRow active leading={<GlyphTile glyph={<Icon name="folder" size={14} title="" />} tone="accent" />} title="워크스페이스" />,
+            <SideRow leading={<GlyphTile glyph={<Icon name="globe" size={14} title="" />} tone="sky" muted />} title="외관" />,
+            <SideRow leading={<GlyphTile glyph={<Icon name="bell" size={14} title="" />} tone="amber" muted />} title="메뉴바 & 알림" />,
           ],
         },
         {
           label: "Agent",
           rows: [
-            <SideRow leading={<GlyphTile glyph="</>" tone="accent" muted />} title="AI 연결" />,
-            <SideRow leading={<GlyphTile glyph="∞" tone="amber" muted />} title="연동" />,
+            <SideRow leading={<GlyphTile glyph={<Icon name="sparkles" size={14} title="" />} tone="accent" muted />} title="AI 연결" />,
+            <SideRow leading={<GlyphTile glyph={<Icon name="link" size={14} title="" />} tone="amber" muted />} title="연동" />,
           ],
         },
         {
           label: "Trust",
           rows: [
-            <SideRow leading={<GlyphTile glyph="◇" tone="rose" muted />} title="개인정보 & 진단" />,
-            <SideRow leading={<GlyphTile glyph="↻" tone="sky" muted />} title="업데이트" />,
-            <SideRow leading={<GlyphTile glyph="$" tone="muted" muted />} title="고급 & 실행 보조 앱" />,
+            <SideRow leading={<GlyphTile glyph={<Icon name="lock.fill" size={14} title="" />} tone="rose" muted />} title="개인정보 & 진단" />,
+            <SideRow leading={<GlyphTile glyph={<Icon name="arrow.triangle.2.circlepath" size={14} title="" />} tone="sky" muted />} title="업데이트" />,
+            <SideRow leading={<GlyphTile glyph={<Icon name="terminal" size={14} title="" />} tone="muted" muted />} title="고급 & 실행 보조 앱" />,
           ],
         },
       ]}
@@ -641,13 +644,13 @@ export function SettingsReferencePage({ height = 900 }: SettingsReferencePagePro
 
   const header = (
     <ReferenceHeader
-      icon={<GlyphTile glyph="⚙" tone="accent" />}
+      icon={<GlyphTile glyph={<Icon name="gearshape" size={15} title="" />} tone="accent" />}
       title="설정"
       subtitleParts={["Agentic30 · 로컬 우선", "zettalyst@gmail.com", "변경 사항 자동 저장"]}
       actions={
         <>
-          <HeaderActionButton glyph="🗑" label="기본값으로" tone="ghost" />
-          <HeaderActionButton glyph="✓" label="모두 저장됨" tone="accent" />
+          <HeaderActionButton glyph={<Icon name="trash" size={13} title="" />} label="기본값으로" tone="ghost" />
+          <HeaderActionButton glyph={<Icon name="checkmark" size={13} title="" />} label="모두 저장됨" tone="accent" />
         </>
       }
     />
@@ -860,7 +863,7 @@ export function SettingsReferencePage({ height = 900 }: SettingsReferencePagePro
                 <span style={{ fontFamily: "var(--ds-mono)", fontSize: 11.5, fontWeight: 500, color: "var(--ds-muted)" }}>
                   5분 전
                 </span>
-                <GhostButton label="지금 확인" glyph="⟳" width={88} />
+                <GhostButton label="지금 확인" glyph={<Icon name="arrow.clockwise" size={12} title="" />} width={88} />
               </>
             ),
           },
@@ -894,13 +897,13 @@ export function SettingsReferencePage({ height = 900 }: SettingsReferencePagePro
             id: "log-folder",
             title: "로그 폴더",
             subtitle: "~/Library/Logs/Agentic30 — 회전 7개 보관.",
-            control: <GhostButton label="Finder에서 열기" glyph="⬈" width={124} />,
+            control: <GhostButton label="Finder에서 열기" glyph={<Icon name="arrow.up.right" size={12} title="" />} width={124} />,
           },
           {
             id: "confetti",
             title: "Confetti 테스트",
             subtitle: "완료 축하 confetti 렌더링 경로를 즉시 재생합니다.",
-            control: <GhostButton label="재생" glyph="✦" width={72} />,
+            control: <GhostButton label="재생" glyph={<Icon name="sparkles" size={12} title="" />} width={72} />,
           },
         ]}
       />
@@ -942,15 +945,15 @@ export function SettingsReferencePage({ height = 900 }: SettingsReferencePagePro
       <div style={{ height: 26 }} />
 
       <MetaHeading>빠른 작업</MetaHeading>
-      <MetaAction glyph="⬇" title="진단 스냅샷 내보내기" subtitle="sanitize · ZIP" />
-      <MetaAction glyph="⟳" title="실행 보조 앱 재시작" subtitle="다운타임 ~ 1초" />
+      <MetaAction glyph={<Icon name="square.and.arrow.down" size={14} title="" />} title="진단 스냅샷 내보내기" subtitle="sanitize · ZIP" />
+      <MetaAction glyph={<Icon name="arrow.clockwise" size={14} title="" />} title="실행 보조 앱 재시작" subtitle="다운타임 ~ 1초" />
 
       <div style={{ height: 18 }} />
 
       <MetaHeading>참고 문서</MetaHeading>
-      <MetaAction glyph="▢" title="release-checklist.md" subtitle="배포 전 점검 항목" />
-      <MetaAction glyph="▢" title="known-limitations.md" subtitle="알려진 제한사항" />
-      <MetaAction glyph="▢" title="diagnostics-guide.md" subtitle="진단 가이드" />
+      <MetaAction glyph={<Icon name="doc.text" size={14} title="" />} title="release-checklist.md" subtitle="배포 전 점검 항목" />
+      <MetaAction glyph={<Icon name="doc.text" size={14} title="" />} title="known-limitations.md" subtitle="알려진 제한사항" />
+      <MetaAction glyph={<Icon name="doc.text" size={14} title="" />} title="diagnostics-guide.md" subtitle="진단 가이드" />
 
       <div style={{ height: 18 }} />
 

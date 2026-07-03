@@ -3,6 +3,7 @@ import { Tone, toneVars } from "../../tokens";
 import { Avatar } from "../Avatar";
 import { Badge } from "../Badge";
 import { Button } from "../Button";
+import { Icon } from "../Icon";
 import { ProgressBar } from "../ProgressBar";
 import { Rail } from "./Rail";
 import { Titlebar } from "./Titlebar";
@@ -287,7 +288,9 @@ function RiskRow({
 function ActionRow({ text, evidence }: { text: string; evidence: string }) {
   return (
     <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-      <span style={{ flex: "0 0 auto", paddingTop: 1, fontSize: 11, color: "var(--ds-warning)" }}>↳</span>
+      <span style={{ flex: "0 0 auto", display: "inline-flex", paddingTop: 2, color: "var(--ds-warning)" }}>
+        <Icon name="arrow.right" size={12} title="다음 행동" />
+      </span>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ds-fg)", lineHeight: 1.4 }}>{text}</span>
         <span style={{ fontFamily: "var(--ds-mono)", fontSize: 10.5, fontWeight: 500, color: "var(--ds-muted)" }}>
@@ -403,12 +406,12 @@ export function HistoryReferencePage({ height = 900 }: HistoryReferencePageProps
   const rail = (
     <Rail
       items={[
-        { icon: "▦" },
-        { icon: "▷" },
-        { icon: "◫" },
-        { icon: "▤" },
-        { icon: "◵", active: true, dot: true },
-        { icon: "⚙" },
+        { icon: <Icon name="folder" size={19} title="프로젝트" /> },
+        { icon: <Icon name="gearshape" size={19} title="설정" /> },
+        { icon: <Icon name="bubble.left.and.bubble.right" size={19} title="인터뷰" /> },
+        { icon: <Icon name="doc.text" size={19} title="공개기록" /> },
+        { icon: <Icon name="newspaper" size={19} title="뉴스" /> },
+        { icon: <Icon name="clock.arrow.circlepath" size={19} title="히스토리" />, active: true },
       ]}
       footer={<Avatar initials="Z" size={34} tone="accent" />}
     />
@@ -552,7 +555,7 @@ export function HistoryReferencePage({ height = 900 }: HistoryReferencePageProps
           <span>2026-05-12 → 2026-05-18</span>
         </div>
       </div>
-      <Button variant="primary" size="sm" icon={<span>⟳</span>}>
+      <Button variant="primary" size="sm" icon={<Icon name="arrow.clockwise" size={14} title="" />}>
         다시 인덱싱
       </Button>
     </div>
@@ -658,8 +661,12 @@ export function HistoryReferencePage({ height = 900 }: HistoryReferencePageProps
         border: "1px solid var(--ds-border-soft)",
       }}
     >
-      <span style={{ flex: "0 0 auto", width: 12, textAlign: "center", fontSize: 10, color: "var(--ds-muted)" }}>▸</span>
-      <span style={{ flex: "0 0 auto", fontSize: 11, color: "var(--ds-muted)" }}>◷</span>
+      <span style={{ flex: "0 0 auto", display: "inline-flex", width: 12, justifyContent: "center", color: "var(--ds-muted)" }}>
+        <Icon name="chevron.right" size={12} title="펼치기" />
+      </span>
+      <span style={{ flex: "0 0 auto", display: "inline-flex", color: "var(--ds-muted)" }}>
+        <Icon name="clock" size={13} title="" />
+      </span>
       <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ds-fg)" }}>Evidence 타임라인</span>
       <span style={{ fontFamily: "var(--ds-mono)", fontSize: 10.5, fontWeight: 500, color: "var(--ds-muted)" }}>
         세션 · 파일 · PR 근거

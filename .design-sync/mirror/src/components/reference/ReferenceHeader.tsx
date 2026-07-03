@@ -27,7 +27,10 @@ export function ReferenceHeader({ icon, title, badge, subtitleParts, actions }: 
             style={{
               display: "flex",
               alignItems: "center",
-              flexWrap: "wrap",
+              flexWrap: "nowrap",
+              overflow: "hidden",
+              whiteSpace: "nowrap",
+              textOverflow: "ellipsis",
               marginTop: 7,
               fontSize: "var(--ds-fs-body)",
               color: "var(--ds-muted)",
@@ -35,8 +38,8 @@ export function ReferenceHeader({ icon, title, badge, subtitleParts, actions }: 
           >
             {subtitleParts.map((p, i) => (
               <React.Fragment key={i}>
-                {i > 0 && <span style={{ margin: "0 8px", color: "var(--ds-muted-deep)" }}>·</span>}
-                <span>{p}</span>
+                {i > 0 && <span style={{ margin: "0 8px", color: "var(--ds-muted-deep)", flex: "0 0 auto" }}>·</span>}
+                <span style={{ flex: "0 0 auto", overflow: "hidden", textOverflow: "ellipsis" }}>{p}</span>
               </React.Fragment>
             ))}
           </div>

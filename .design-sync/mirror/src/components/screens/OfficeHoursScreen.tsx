@@ -169,12 +169,22 @@ function SessionSidebar() {
   );
 }
 
-/* ── Section marker eyebrow (accent bar + tracked label) ────────────────── */
+/* ── Section marker heading (accent bar + bold white label) ─────────────────
+ * The reference renders 도움안 선택 as a bold white heading (listname size),
+ * not a tracked grey eyebrow — so the label leads with weight, and the accent
+ * bar to its left carries the section-marker language. */
 function MarkerLabel({ children, trailing }: { children: React.ReactNode; trailing?: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-      <span style={{ width: 3, height: 14, borderRadius: "var(--ds-r-bar)", background: "var(--ds-accent)" }} />
-      <span className="ds-eyebrow" style={{ color: "var(--ds-fg-secondary)" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <span style={{ width: 3, height: 15, borderRadius: "var(--ds-r-bar)", background: "var(--ds-accent)" }} />
+      <span
+        style={{
+          fontSize: "var(--ds-fs-listname)",
+          fontWeight: 700,
+          color: "var(--ds-fg)",
+          letterSpacing: "var(--ds-track-tight)",
+        }}
+      >
         {children}
       </span>
       {trailing != null && <span style={{ marginLeft: "auto" }}>{trailing}</span>}
@@ -212,10 +222,10 @@ export function OfficeHoursScreen({ height }: OfficeHoursScreenProps) {
         <WorkspaceRail
           items={[
             { icon: "calendar", active: true, title: "오늘" },
-            { icon: "play.fill", locked: true, title: "리플레이 (잠김)" },
-            { icon: "chart.line.uptrend.xyaxis", locked: true, title: "성장 (잠김)" },
+            { icon: "play.rectangle.on.rectangle", locked: true, title: "Founder Replay (잠김)" },
+            { icon: "chart.line.uptrend.xyaxis", locked: true, title: "전략 (잠김)" },
             { icon: "newspaper", locked: true, title: "뉴스 (잠김)" },
-            { icon: "person.2.fill", locked: true, title: "인터뷰 (잠김)" },
+            { icon: "sunrise", locked: true, title: "아침 브리핑 (잠김)" },
             { icon: "gearshape", title: "설정" },
           ]}
           footer={<Avatar initials="Z" size={34} tone="accent" />}
@@ -269,37 +279,35 @@ export function OfficeHoursScreen({ height }: OfficeHoursScreenProps) {
                 <span>실행 중</span>
               </div>
             </div>
-            {/* running status — a live, greyscale mono chip (not the accent) */}
+            {/* running status — a live, greyscale mono chip (not the accent):
+             * matches the reference — bright mono text in a bordered pill with
+             * no leading dot. */}
             <span
               style={{
                 flex: "0 0 auto",
                 display: "inline-flex",
                 alignItems: "center",
-                gap: 7,
-                height: 26,
-                padding: "0 12px",
+                height: 30,
+                padding: "0 16px",
                 borderRadius: "var(--ds-r-pill)",
                 fontFamily: "var(--ds-mono)",
-                fontSize: 12,
-                fontWeight: 600,
-                letterSpacing: "0.02em",
-                color: "var(--ds-fg-secondary)",
+                fontSize: 13,
+                fontWeight: 500,
+                letterSpacing: "0.01em",
+                color: "var(--ds-fg)",
                 background: "var(--ds-surface-2)",
                 border: "1px solid var(--ds-border-strong)",
               }}
             >
-              <span
-                aria-hidden
-                style={{ width: 6, height: 6, borderRadius: "var(--ds-r-pill)", background: "var(--ds-accent-bright)" }}
-              />
               running
             </span>
           </div>
 
           {/* ── 목표 → 첫 인터뷰 progress ───────────────────────────────
-           * Clamped so the connector groups the two steps at the left
-           * rather than spanning the full main column. */}
-          <div style={{ maxWidth: 320 }}>
+           * Clamped tight so the connector is a short link between the two
+           * steps (grouped at the left), matching the reference rather than
+           * stretching a long line across the main column. */}
+          <div style={{ maxWidth: 232 }}>
             <Stepper
               steps={[
                 { label: "목표", state: "done" },

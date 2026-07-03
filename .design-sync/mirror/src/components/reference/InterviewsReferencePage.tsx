@@ -3,6 +3,7 @@ import { Tone, toneVars } from "../../tokens";
 import { Avatar } from "../Avatar";
 import { Badge } from "../Badge";
 import { Button } from "../Button";
+import { Icon } from "../Icon";
 import { Rail } from "./Rail";
 import { SideRow } from "./SideRow";
 import { ReferenceSidebar } from "./ReferenceSidebar";
@@ -109,7 +110,7 @@ function CheckRow({
   subtitle,
   trailing,
 }: {
-  glyph: string;
+  glyph: React.ReactNode;
   tone: Tone;
   title: React.ReactNode;
   subtitle?: React.ReactNode;
@@ -308,11 +309,22 @@ function MetaGroupLabel({ children }: { children: React.ReactNode }) {
 function ThemeRow({ title, filled, total, tone }: { title: React.ReactNode; filled: number; total: number; tone: Tone }) {
   const t = toneVars(tone);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "12px 14px",
+        borderRadius: "var(--ds-r-control)",
+        border: "1px solid var(--ds-border-soft)",
+        background: "var(--ds-surface)",
+        marginBottom: 8,
+      }}
+    >
       <span
         style={{
-          flex: 1,
-          minWidth: 0,
+          flex: "0 0 auto",
+          maxWidth: "48%",
           fontSize: 12.5,
           color: "var(--ds-fg)",
           overflow: "hidden",
@@ -324,8 +336,8 @@ function ThemeRow({ title, filled, total, tone }: { title: React.ReactNode; fill
       </span>
       <span
         style={{
-          flex: "0 0 auto",
-          width: 52,
+          flex: 1,
+          minWidth: 0,
           height: 4,
           borderRadius: 999,
           background: "var(--ds-surface-2)",
@@ -342,8 +354,17 @@ function ThemeRow({ title, filled, total, tone }: { title: React.ReactNode; fill
           }}
         />
       </span>
-      <span style={{ flex: "0 0 auto", fontFamily: "var(--ds-mono)", fontSize: 11, color: "var(--ds-muted)", width: 26, textAlign: "right" }}>
-        {filled} / {total}
+      <span
+        style={{
+          flex: "0 0 auto",
+          fontFamily: "var(--ds-mono)",
+          fontSize: 11,
+          color: "var(--ds-muted)",
+          textAlign: "right",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {filled}/{total}
       </span>
     </div>
   );
@@ -398,7 +419,9 @@ function UpcomingRow({
         <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "var(--ds-fg)" }}>{name}</span>
         <span style={{ display: "block", marginTop: 2, fontFamily: "var(--ds-mono)", fontSize: 11, color: timeColor }}>{time}</span>
       </span>
-      <span style={{ flex: "0 0 auto", color: "var(--ds-muted-deep)", fontSize: 13 }}>›</span>
+      <span style={{ flex: "0 0 auto", color: "var(--ds-muted-deep)", display: "inline-flex" }}>
+        <Icon name="chevron.right" size={13} title="" />
+      </span>
     </div>
   );
 }
@@ -415,12 +438,12 @@ export function InterviewsReferencePage({ height = 900 }: InterviewsReferencePag
   const rail = (
     <Rail
       items={[
-        { icon: "▦" },
-        { icon: "▷" },
-        { icon: "◫", active: true, dot: true },
-        { icon: "▤" },
-        { icon: "◵" },
-        { icon: "⚙" },
+        { icon: <Icon name="folder" size={19} title="프로젝트" /> },
+        { icon: <Icon name="gearshape" size={19} title="설정" /> },
+        { icon: <Icon name="bubble.left.and.bubble.right" size={19} title="인터뷰" />, active: true },
+        { icon: <Icon name="doc.text" size={19} title="공개기록" /> },
+        { icon: <Icon name="newspaper" size={19} title="뉴스" /> },
+        { icon: <Icon name="clock.arrow.circlepath" size={19} title="히스토리" /> },
       ]}
       footer={<Avatar initials="Z" size={34} tone="accent" />}
     />
@@ -497,7 +520,7 @@ export function InterviewsReferencePage({ height = 900 }: InterviewsReferencePag
             <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--ds-accent)" }} />
             분석 완료 <span style={{ color: "var(--ds-fg-secondary)" }}>04-22 21:14</span>
           </div>
-          <Button variant="primary" fullWidth icon={<span>＋</span>}>
+          <Button variant="primary" fullWidth icon={<Icon name="plus" size={14} title="" />}>
             인터뷰 추가
           </Button>
         </div>
@@ -515,10 +538,10 @@ export function InterviewsReferencePage({ height = 900 }: InterviewsReferencePag
       subtitleParts={["2026-04-22 19:30", "Zoom · 45분", "Day 1 · 1 / 4"]}
       actions={
         <>
-          <Button variant="ghost" size="sm" icon={<span>✎</span>}>
+          <Button variant="ghost" size="sm" icon={<Icon name="pencil" size={14} title="" />}>
             후속 질문 생성
           </Button>
-          <Button variant="primary" size="sm" icon={<span>›</span>}>
+          <Button variant="primary" size="sm" icon={<Icon name="chevron.right" size={14} title="" />}>
             SPEC.md에 반영
           </Button>
         </>
@@ -526,18 +549,23 @@ export function InterviewsReferencePage({ height = 900 }: InterviewsReferencePag
     />
   );
 
-  const filterTabs = (
-    <div style={{ paddingBottom: 6 }}>
-      <FilterTabs tabs={["요약", "인용 12", "후속 7", "대화 기록"]} value="요약" />
-    </div>
-  );
-
   const analysisStamp = (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 7, marginTop: 12, fontSize: 12 }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 7, fontSize: 12, marginBottom: 4 }}>
       <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--ds-accent)" }} />
       <span style={{ color: "var(--ds-accent)", fontWeight: 600 }}>분석 완료</span>
       <span style={{ color: "var(--ds-muted-deep)" }}>·</span>
       <span style={{ fontFamily: "var(--ds-mono)", color: "var(--ds-muted)" }}>04-22 21:14</span>
+    </div>
+  );
+
+  const filterTabs = (
+    <div style={{ position: "relative", borderBottom: "1px solid var(--ds-border-soft)" }}>
+      <div style={{ display: "inline-flex", verticalAlign: "bottom", marginBottom: -1 }}>
+        <FilterTabs tabs={["요약", "인용 12", "후속 7", "Transcript"]} value="요약" />
+      </div>
+      <div style={{ position: "absolute", right: 0, bottom: 0, height: "100%", display: "flex", alignItems: "center" }}>
+        {analysisStamp}
+      </div>
     </div>
   );
 
@@ -566,7 +594,7 @@ export function InterviewsReferencePage({ height = 900 }: InterviewsReferencePag
 
   /* ── signal 2×2 grid ── */
   const signalGrid = (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
       <SignalCard
         label="통증"
         tone="rose"
@@ -636,10 +664,10 @@ export function InterviewsReferencePage({ height = 900 }: InterviewsReferencePag
         </span>
       </div>
       <div style={{ borderTop: "1px solid var(--ds-border-soft)", padding: "4px 18px 8px" }}>
-        <CheckRow glyph="✓" tone="accent" title="의견이 아니라 행동을 물었다" trailing="7회" />
-        <CheckRow glyph="✓" tone="accent" title="미래 약속이 아니라 과거 사실을 받았다" trailing="4회" />
-        <CheckRow glyph="✓" tone="accent" title="구체 수치·날짜·금액으로 답을 받아냈다" trailing="12회" />
-        <CheckRow glyph="!" tone="amber" title="솔루션을 미리 설명하지 않았다" subtitle="06:14 · 1회" trailing="주의" />
+        <CheckRow glyph={<Icon name="checkmark" size={12} title="" />} tone="accent" title="의견이 아니라 행동을 물었다" trailing="7회" />
+        <CheckRow glyph={<Icon name="checkmark" size={12} title="" />} tone="accent" title="미래 약속이 아니라 과거 사실을 받았다" trailing="4회" />
+        <CheckRow glyph={<Icon name="checkmark" size={12} title="" />} tone="accent" title="구체 수치·날짜·금액으로 답을 받아냈다" trailing="12회" />
+        <CheckRow glyph={<Icon name="exclamationmark.triangle" size={12} title="" />} tone="amber" title="솔루션을 미리 설명하지 않았다" subtitle="06:14 · 1회" trailing="주의" />
       </div>
     </div>
   );
@@ -756,7 +784,6 @@ export function InterviewsReferencePage({ height = 900 }: InterviewsReferencePag
     <>
       {header}
       {filterTabs}
-      {analysisStamp}
 
       <RefSection title="요약" markerTone="accent">
         {summaryBanner}
@@ -818,7 +845,7 @@ export function InterviewsReferencePage({ height = 900 }: InterviewsReferencePag
       <ThemeRow title="툴 자비 결제" filled={2} total={3} tone="amber" />
 
       <MetaGroupLabel>예정 인터뷰</MetaGroupLabel>
-      <UpcomingRow day="02" month="5월" name="최예린" time="14:00 · 45m" timeTone="sky" />
+      <UpcomingRow day="02" month="5월" name="최예린" time="14:00 · 45m" />
       <UpcomingRow day="04" month="5월" name="신지호" time="10:00 · DM 대기" timeTone="amber" />
       <UpcomingRow day="06" month="5월" name="윤재희" time="16:00 · 커피챗" />
     </MetaPanel>

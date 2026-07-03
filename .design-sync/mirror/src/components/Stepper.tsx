@@ -1,4 +1,5 @@
 import React from "react";
+import { Icon } from "./Icon";
 
 export type StepState = "done" | "active" | "pending" | "locked";
 
@@ -27,9 +28,9 @@ interface NodeStyle {
 function nodeStyle(state: StepState): NodeStyle {
   switch (state) {
     case "done":
-      return { bg: "var(--ds-accent)", border: "var(--ds-accent)", color: "var(--ds-accent-ink)", label: "var(--ds-fg)", connector: "var(--ds-accent-line)" };
+      return { bg: "var(--ds-accent)", border: "var(--ds-accent)", color: "var(--ds-accent-ink)", label: "var(--ds-fg)", connector: "var(--ds-border)" };
     case "active":
-      return { bg: "var(--ds-accent-dim)", border: "var(--ds-accent)", color: "var(--ds-accent)", label: "var(--ds-fg)", connector: "var(--ds-border)" };
+      return { bg: "var(--ds-accent-dim)", border: "var(--ds-accent)", color: "var(--ds-accent)", label: "var(--ds-accent)", connector: "var(--ds-border)" };
     case "pending":
       return { bg: "var(--ds-surface-2)", border: "var(--ds-border-strong)", color: "var(--ds-muted)", label: "var(--ds-muted)", connector: "var(--ds-border)" };
     case "locked":
@@ -70,15 +71,36 @@ export function Stepper({ steps, orientation = "horizontal" }: StepperProps) {
               color: s.color,
             }}
           >
-            {step.state === "done" ? "✓" : step.state === "locked" ? "🔒" : i + 1}
+            {step.state === "done" ? (
+              <Icon name="checkmark" size={13} />
+            ) : step.state === "locked" ? (
+              <Icon name="lock.fill" size={11} />
+            ) : (
+              i + 1
+            )}
           </div>
         );
         if (horizontal) {
+          const isActive = step.state === "active";
           return (
             <React.Fragment key={i}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  ...(isActive
+                    ? {
+                        padding: "4px 12px 4px 5px",
+                        borderRadius: "var(--ds-r-pill)",
+                        background: "var(--ds-accent-dim)",
+                        border: "1px solid var(--ds-accent-line)",
+                      }
+                    : null),
+                }}
+              >
                 {node}
-                <span style={{ fontSize: "var(--ds-fs-body)", fontWeight: 500, color: s.label, whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: "var(--ds-fs-body)", fontWeight: isActive ? 600 : 500, color: s.label, whiteSpace: "nowrap" }}>
                   {step.label}
                 </span>
               </div>
