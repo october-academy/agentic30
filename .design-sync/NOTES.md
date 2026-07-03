@@ -72,6 +72,18 @@ the user's request ("완전히 처음부터, 다른 이름"). Its artifacts are 
 - **Wave 3 — TODO (non-shot):** Intake V2 8 steps, Market, Founder Replay (~4000 lines), History,
   locked mocks, menubar, search palette — after extended e2e capture.
 
+## Full-screen card fidelity (critical — how screen cards avoid right-clipping)
+The design-sync grading png (`_screenshots/<group>__<Name>.png`) is force-captured at a **1000px
+viewport** (package-capture.mjs:214), so a full 4-pane window (rail 52 + sidebar 240 + main + meta
+280) is clipped on the right in that artifact — MISLEADING. The actual CARD (what the user sees)
+renders at the **declared viewport** from `cfg.overrides.<Name>.viewport` (emit.mjs honors it up to
+2000). So every full-screen/full-width card sets `"viewport": "1420x920"` (screens/shells) or a
+matching WxH (Titlebar 1360x160, ReferenceHeader 1360x220) so the whole window shows crisp.
+To VERIFY a screen card, render its `.html` at the declared viewport with playwright (NOT the
+1000-forced grading png): see `.design-sync/compare/` montages (real-app-shot vs card@1420).
+Also: `--ds-pane-main-max` was tightened 880→**780** to match the app's ~788 main column (denser,
+fits a 1360 window like the real app). Wave 2b screens verified ~90-95% vs their e2e shots.
+
 ## Known render warns
 - `[GRID_OVERFLOW]` on 14 wide/full-width components (Button, Input, ProgressBar, SectionHeader,
   StatCard, Stepper, DayCalendar, FilterTabs, PhaseGateRow, RefSection, ReferenceHeader,

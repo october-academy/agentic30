@@ -22,6 +22,7 @@ export { ProgressRing, type ProgressRingProps } from "./components/ProgressRing"
 export { Sparkline, type SparklineProps } from "./components/Sparkline";
 export { SourcePill, type SourcePillProps } from "./components/SourcePill";
 export { DashPagination, type DashPaginationProps } from "./components/DashPagination";
+export { Confetti, type ConfettiProps } from "./components/Confetti";
 
 /* ---- Cards, rows & molecules ---- */
 export { Card, type CardProps } from "./components/Card";
@@ -51,6 +52,11 @@ export { ReferenceShell, type ReferenceShellProps } from "./components/reference
 export { PhaseGateRow, type PhaseGateRowProps } from "./components/reference/PhaseGateRow";
 export { DayCalendar, type DayCalendarProps, type CalendarPhase } from "./components/reference/DayCalendar";
 
+/* ---- App shell infra (workspace layout) ---- */
+export { WorkspaceShell, type WorkspaceShellProps } from "./components/WorkspaceShell";
+export { WorkspaceRail, type WorkspaceRailProps, type WorkspaceRailItem } from "./components/WorkspaceRail";
+export { SurfaceState, type SurfaceStateProps, type SurfaceStateKind, type SurfaceStateRow, type SurfaceStateRowState } from "./components/SurfaceState";
+
 /* ---- Screen compositions (the 6 reference-page dashboards) ---- */
 export { ProjectsReferencePage, type ProjectsReferencePageProps } from "./components/reference/ProjectsReferencePage";
 export { SettingsReferencePage, type SettingsReferencePageProps } from "./components/reference/SettingsReferencePage";
@@ -58,3 +64,9 @@ export { InterviewsReferencePage, type InterviewsReferencePageProps } from "./co
 export { BipLogReferencePage, type BipLogReferencePageProps } from "./components/reference/BipLogReferencePage";
 export { NewsReferencePage, type NewsReferencePageProps } from "./components/reference/NewsReferencePage";
 export { HistoryReferencePage, type HistoryReferencePageProps } from "./components/reference/HistoryReferencePage";
+
+/* ---- Workspace screens (the rail-router surfaces) ---- */
+export { DayWorkspaceScreen, type DayWorkspaceScreenProps } from "./components/screens/DayWorkspaceScreen";
+export { OfficeHoursScreen, type OfficeHoursScreenProps } from "./components/screens/OfficeHoursScreen";
+export { StrategyScreen, type StrategyScreenProps } from "./components/screens/StrategyScreen";
+export { MorningBriefingScreen, type MorningBriefingScreenProps } from "./components/screens/MorningBriefingScreen";

@@ -34,7 +34,7 @@ export function ReferenceShell({ rail, sidebar, titlebar, children, meta }: Refe
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", background: "var(--ds-page)" }}>
         {titlebar}
         <div className="ds-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-          <div style={{ maxWidth: 880, margin: "0 auto", padding: "24px" }}>{children}</div>
+          <div style={{ maxWidth: "var(--ds-pane-main-max)", margin: "0 auto", padding: "24px" }}>{children}</div>
         </div>
       </div>
       {meta}
