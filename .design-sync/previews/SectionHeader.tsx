@@ -1,21 +1,29 @@
-import { SectionHeader } from "agentic30-ds";
+import { SectionHeader } from "founder-os-kit";
 
-const canvas = { background: "var(--ds-page)", padding: 24, fontFamily: "var(--ds-sans)", width: 520, display: "flex", flexDirection: "column" as const, gap: 14 };
+const canvas = {
+  background: "var(--ds-page)",
+  padding: 24,
+  fontFamily: "var(--ds-sans)",
+  width: 520,
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: 18,
+};
 
-export const Accent = () => (
+export const Overview = () => (
   <div style={canvas}>
-    <SectionHeader label="질문 1 — 수요 증거" meta="1 / 6" accent />
+    <SectionHeader title="개요" meta="Day 1 of 30 · 초기 검증 진행 중" />
   </div>
 );
 
-export const Neutral = () => (
+export const WithEyebrow = () => (
   <div style={canvas}>
-    <SectionHeader label="세션 컨텍스트" meta="Office Hours · 질문 대화 2/3" />
+    <SectionHeader eyebrow="PHASE 게이트" title="진행 통과 조건" meta="Q2 진입점은 초기 검증" tone="violet" divider />
   </div>
 );
 
-export const NoMeta = () => (
+export const Divider = () => (
   <div style={canvas}>
-    <SectionHeader label="하나 선택" accent />
+    <SectionHeader title="질문 1 — DEMAND" meta="1 / 6" divider />
   </div>
 );

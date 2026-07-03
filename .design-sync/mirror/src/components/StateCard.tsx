@@ -1,37 +1,63 @@
-import { ClipboardCheckIcon, CircleAlertIcon, RefreshIcon, PlusIcon } from "../icons";
+import React from "react";
+import { Spinner } from "./Spinner";
 
 export interface StateCardProps {
-  /** `empty` (neutral) or `error` (danger-tinted icon). */
-  variant?: "empty" | "error";
-  /** The human explanation of the state. */
-  title: string;
-  /** Mono technical detail, e.g. "suggestedActions: []" or "timeout". */
-  meta?: string;
-  /** CTA label; renders a green text action with a sensible icon. */
-  ctaLabel?: string;
-  onCta?: () => void;
+  /** State variant — drives tint + default glyph. Default "empty". */
+  kind?: "empty" | "error" | "loading";
+  /** Leading glyph (SF-symbol-like char/node). Overridden by Spinner when loading. */
+  icon?: React.ReactNode;
+  /** Headline (fg). */
+  title: React.ReactNode;
+  /** Muted supporting copy. */
+  body?: React.ReactNode;
+  /** Trailing action node (usually a Button). */
+  action?: React.ReactNode;
 }
 
-/**
- * The empty / error state for a data surface. Every data surface ships a real
- * empty and error state, not just the full one. `empty` offers a forward action
- * ("직접 행동 적기"); `error` offers a retry.
- */
-export function StateCard({ variant = "empty", title, meta, ctaLabel, onCta }: StateCardProps) {
-  const isError = variant === "error";
+/** Empty / error / loading placeholder card, centered. */
+export function StateCard({ kind = "empty", icon, title, body, action }: StateCardProps) {
+  const isError = kind === "error";
+  const glyphColor = isError ? "var(--ds-danger)" : "var(--ds-muted)";
+  const glyphBg = isError ? "var(--ds-danger-dim)" : "var(--ds-surface-2)";
+  const glyphBorder = isError ? "var(--ds-danger-line)" : "var(--ds-border)";
   return (
-    <div className={`ds-statecard${isError ? " ds-statecard--error" : ""}`}>
-      <div className="ds-statecard__icon">
-        {isError ? <CircleAlertIcon /> : <ClipboardCheckIcon />}
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        textAlign: "center",
+        gap: 12,
+        padding: "32px 24px",
+        background: "var(--ds-surface)",
+        border: `1px solid ${isError ? "var(--ds-danger-line)" : "var(--ds-border)"}`,
+        borderRadius: "var(--ds-r-card)",
+        boxShadow: "var(--ds-shadow-card)",
+      }}
+    >
+      <div
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: "var(--ds-r-control)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 20,
+          color: glyphColor,
+          background: glyphBg,
+          border: `1px solid ${glyphBorder}`,
+        }}
+      >
+        {kind === "loading" ? <Spinner size={22} /> : icon ?? (isError ? "!" : "○")}
       </div>
-      <div className="ds-statecard__title">{title}</div>
-      {meta ? <div className="ds-statecard__meta">{meta}</div> : null}
-      {ctaLabel ? (
-        <button className="ds-statecard__cta" onClick={onCta}>
-          {isError ? <RefreshIcon /> : <PlusIcon />}
-          {ctaLabel}
-        </button>
-      ) : null}
+      <div style={{ fontSize: "var(--ds-fs-section)", fontWeight: 600, color: "var(--ds-fg)" }}>{title}</div>
+      {body != null && (
+        <div style={{ fontSize: "var(--ds-fs-body)", color: "var(--ds-muted)", maxWidth: 320, lineHeight: 1.55 }}>
+          {body}
+        </div>
+      )}
+      {action != null && <div style={{ marginTop: 4 }}>{action}</div>}
     </div>
   );
 }

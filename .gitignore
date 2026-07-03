@@ -67,3 +67,5 @@ ds-bundle/
 .design-sync/node_modules
 .design-sync/mirror/node_modules/
 .design-sync/mirror/dist/
+.design-sync/reference-shots/
+.design-sync/_archive-agentic30-ui-kit/

@@ -1,8 +1,8 @@
 {
-  "name": "agentic30-ds",
+  "name": "founder-os-kit",
   "version": "0.1.0",
   "private": true,
-  "description": "Agentic30 design-system mirror — React components built from STYLESEED.md + OpenDesignTokens.swift",
+  "description": "Founder OS Kit — React mirror of the full Agentic30 SwiftUI surface (screens + components), built from OpenDesignReferencePages/OpenDesignDayPageView/IntakeV2/etc. + OpenDesignTokens.swift, verified against e2e app screenshots",
   "type": "module",
   "module": "./dist/index.js",
   "main": "./dist/index.js",

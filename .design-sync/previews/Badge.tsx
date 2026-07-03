@@ -1,22 +1,37 @@
-import { Badge } from "agentic30-ds";
+import { Badge } from "founder-os-kit";
 
-const row = { background: "var(--ds-page)", padding: 24, fontFamily: "var(--ds-sans)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" as const };
-
-const Check = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M5 13l4 4L19 7" /></svg>
-);
+const canvas = { background: "var(--ds-page)", padding: 24, fontFamily: "var(--ds-sans)" };
+const row = { ...canvas, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" as const };
 
 export const Tones = () => (
   <div style={row}>
-    <Badge tone="accent">Day 7</Badge>
-    <Badge tone="neutral" icon={<Check />}>약속</Badge>
-    <Badge tone="danger">증거 0</Badge>
-    <Badge tone="warning">2일째 미룸</Badge>
+    <Badge tone="accent">활성</Badge>
+    <Badge tone="amber">2일째 미룸</Badge>
+    <Badge tone="rose">증거 0</Badge>
+    <Badge tone="sky">공개</Badge>
+    <Badge neutral>보관함</Badge>
   </div>
 );
 
-export const Recommended = () => (
+export const WithDot = () => (
   <div style={row}>
-    <Badge tone="accent">1 / 6</Badge>
+    <Badge tone="accent" dot>
+      running
+    </Badge>
+    <Badge tone="amber" dot>
+      진행 중 1
+    </Badge>
+    <Badge neutral dot>
+      중단 D9
+    </Badge>
+  </div>
+);
+
+export const DayCounters = () => (
+  <div style={row}>
+    <Badge tone="accent">D1/30</Badge>
+    <Badge tone="accent">D4/30</Badge>
+    <Badge tone="amber">D9/30</Badge>
+    <Badge neutral>완료</Badge>
   </div>
 );

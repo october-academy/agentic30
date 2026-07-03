@@ -1,29 +1,41 @@
-import { Stepper } from "agentic30-ds";
+import { Stepper } from "founder-os-kit";
 
-const canvas = { background: "var(--ds-page)", padding: "32px 24px", fontFamily: "var(--ds-sans)", width: 520 };
+const canvas = { background: "var(--ds-page)", padding: 24, fontFamily: "var(--ds-sans)" };
 
-export const DayLoop = () => (
-  <div style={canvas}>
+export const OfficeHoursDay1 = () => (
+  <div style={{ ...canvas, maxWidth: 520 }}>
     <Stepper
       steps={[
-        { name: "scan", status: "done" },
-        { name: "회고", status: "done" },
-        { name: "목표", status: "active" },
-        { name: "인터뷰", status: "locked" },
-        { name: "실행", status: "locked" },
+        { label: "목표", state: "done" },
+        { label: "첫 인터뷰", state: "active" },
+        { label: "증거 제출", state: "pending" },
       ]}
     />
   </div>
 );
 
-export const Day1 = () => (
-  <div style={canvas}>
+export const PhaseTrack = () => (
+  <div style={{ ...canvas, maxWidth: 620 }}>
     <Stepper
       steps={[
-        { name: "온보딩", status: "done" },
-        { name: "scan", status: "done" },
-        { name: "목표", status: "active" },
-        { name: "첫 인터뷰", status: "locked" },
+        { label: "초기 검증", state: "done" },
+        { label: "만들기", state: "active" },
+        { label: "공개", state: "pending" },
+        { label: "성장", state: "locked" },
+      ]}
+    />
+  </div>
+);
+
+export const Vertical = () => (
+  <div style={{ ...canvas, maxWidth: 320 }}>
+    <Stepper
+      orientation="vertical"
+      steps={[
+        { label: "고객 후보 1줄 정의", state: "done" },
+        { label: "첫 인터뷰 5건", state: "active" },
+        { label: "통증 가설 1건 확정", state: "pending" },
+        { label: "결제 요청 발송", state: "locked" },
       ]}
     />
   </div>

@@ -1,30 +1,50 @@
-import type { ReactNode } from "react";
-import { AlertIcon } from "../icons";
+import React from "react";
+import { Tone, toneVars } from "../tokens";
 
 export interface DebtBannerProps {
-  /** The unmet prior promise. Bold the quoted promise with `<b>`, e.g.
-   *  `<>어제 약속: <b>"조은성에게 DM으로 가격 물어보기"</b></>`. */
-  title: ReactNode;
-  /** Mono severity meta, e.g. "증거 0 · 2일째 미룸". */
-  meta: string;
-  /** "포기로 기록" affordance. */
-  onAbandon?: () => void;
+  /** Severity hue — tints the banner + left rail. Default amber (evidence debt / defer). */
+  tone?: Tone;
+  /** Banner title (fg, bold). */
+  title: React.ReactNode;
+  /** Muted supporting copy under the title. */
+  body?: React.ReactNode;
+  /** Leading glyph (SF-symbol-like char/node); defaults to a tone-colored dot. */
+  icon?: React.ReactNode;
+  /** Trailing action node, right-aligned. */
+  action?: React.ReactNode;
 }
 
-/**
- * The evidence-debt banner — a danger-severity strip surfaced when a prior
- * promise was never proven. It rides above the commit zone and persists even in
- * defer mode. The only severity-colored element in an otherwise greyscale card.
- */
-export function DebtBanner({ title, meta, onAbandon }: DebtBannerProps) {
+/** Severity / notice banner — evidence-debt, defer, blocked notices. */
+export function DebtBanner({ tone = "amber", title, body, icon, action }: DebtBannerProps) {
+  const t = toneVars(tone);
   return (
-    <div className="ds-debt">
-      <span className="ds-debt__icon"><AlertIcon /></span>
-      <div className="ds-debt__body">
-        <div className="ds-debt__title">{title}</div>
-        <div className="ds-debt__meta">{meta}</div>
+    <div
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 11,
+        padding: "12px 14px",
+        paddingLeft: 16,
+        background: t.dim,
+        border: `1px solid ${t.line}`,
+        borderRadius: "var(--ds-r-control)",
+        overflow: "hidden",
+      }}
+    >
+      <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: t.color }} />
+      <div style={{ flex: "0 0 auto", marginTop: 1, color: t.color, fontSize: 14, lineHeight: 1, display: "flex" }}>
+        {icon ?? <span style={{ width: 7, height: 7, borderRadius: 999, background: t.color, marginTop: 4 }} />}
       </div>
-      {onAbandon ? <button className="ds-debt__abandon" onClick={onAbandon}>포기로 기록</button> : null}
+      <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+        <div style={{ fontSize: "var(--ds-fs-body)", fontWeight: 600, color: "var(--ds-fg)" }}>{title}</div>
+        {body != null && (
+          <div style={{ fontSize: "var(--ds-fs-body)", color: "var(--ds-fg-secondary)", marginTop: 3, lineHeight: 1.5 }}>
+            {body}
+          </div>
+        )}
+      </div>
+      {action != null && <div style={{ flex: "0 0 auto" }}>{action}</div>}
     </div>
   );
 }

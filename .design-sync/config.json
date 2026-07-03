@@ -1,22 +1,26 @@
 {
-  "pkg": "agentic30-ds",
-  "globalName": "Agentic30DS",
-  "projectId": "adbfbb45-72b7-4f16-82b1-dba7073f71b1",
+  "pkg": "founder-os-kit",
+  "globalName": "FounderOSKit",
+  "projectId": "25ac21cf-3c06-4194-b8ba-a13600119bfb",
   "shape": "package",
   "buildCmd": "node .design-sync/mirror/build.mjs",
   "cssEntry": "dist/ds.css",
   "readmeHeader": ".design-sync/conventions.md",
   "runtimeFontPrefixes": ["SF Pro", "Pretendard"],
   "overrides": {
-    "ActionOption": { "cardMode": "column" },
     "Button": { "cardMode": "column" },
-    "Card": { "cardMode": "column" },
-    "DebtBanner": { "cardMode": "column" },
     "Input": { "cardMode": "column" },
-    "PromiseCard": { "cardMode": "column" },
-    "QuestionCard": { "cardMode": "column" },
+    "ProgressBar": { "cardMode": "column" },
     "SectionHeader": { "cardMode": "column" },
-    "StateCard": { "cardMode": "column" },
-    "Stepper": { "cardMode": "column" }
+    "StatCard": { "cardMode": "column" },
+    "Stepper": { "cardMode": "column" },
+    "DayCalendar": { "cardMode": "column" },
+    "FilterTabs": { "cardMode": "column" },
+    "PhaseGateRow": { "cardMode": "column" },
+    "RefSection": { "cardMode": "column" },
+    "ReferenceHeader": { "cardMode": "column" },
+    "ReferenceShell": { "cardMode": "column" },
+    "Titlebar": { "cardMode": "column" },
+    "ProjectsReferencePage": { "cardMode": "column" }
   }
 }

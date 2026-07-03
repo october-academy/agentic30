@@ -1,38 +1,85 @@
-/* Agentic30 Design System — tokens + component styles.
- * Authority: STYLESEED.md (design lock) + agentic30/OpenDesignTokens.swift.
- * Single accent = green; everything else greyscale; rose/amber are severity-only.
- * Radius personality = Soft; shadow = layered/black-based; motion = Snap. */
+/* Founder OS Kit — design tokens + component styles.
+ * Faithful React mirror of the Agentic30 SwiftUI surface.
+ * Token values extracted DIRECTLY from the app's dark palette:
+ *   OpenDesignDayColor (dark) + OpenDesignOfficeHoursColor + IntakeV2Color + StyleSeed (OpenDesignTokens.swift).
+ * Single accent = green (#37D59F); everything else greyscale; rose/amber/sky/violet are severity/source only.
+ * Radius personality = Soft; shadow = layered black-based (dark → hairline border, never a colored glow); motion = Snap. */
 
 :root {
-  /* ---- greyscale dark base (default skin) ---- */
-  --ds-page: #15171A;
-  --ds-surface: #1E2228;
-  --ds-surface-2: #252A31;
-  --ds-hover: #2B3138;
+  /* ---- greyscale dark base (the app default theme; window bg = OpenDesignDayColor.bg) ---- */
+  --ds-page: #141618;          /* OpenDesignDayColor.bg — page / window background */
+  --ds-bg-deep: #0a0b0d;       /* .bgDeep */
+  --ds-bg-darker: #060708;     /* .bgDarker */
+  --ds-surface: #0e1011;       /* .surface — cards, panels */
+  --ds-surface-2: #121415;     /* .surface2 — insets, sidebars */
+  --ds-elevated: #1b1d1f;      /* .elevated — popovers, raised */
+  --ds-hover: #242729;         /* .hover */
+  --ds-selected: #2d3134;      /* .selected */
 
-  --ds-border: rgba(255, 255, 255, 0.07);
-  --ds-border-soft: rgba(255, 255, 255, 0.05);
-  --ds-border-strong: rgba(255, 255, 255, 0.12);
+  --ds-border: #26292c;        /* .border — hairlines */
+  --ds-border-soft: #1d2022;   /* .borderSoft */
+  --ds-border-strong: #3e4347; /* .borderStrong */
 
-  --ds-fg: #E7E9EC;
-  --ds-fg-secondary: #B9BEC4;
-  --ds-muted: #8B9199;
-  --ds-muted-deep: #6B7178;
-  --ds-faint: #4F555C;
+  /* ---- ink (descending emphasis) ---- */
+  --ds-fg: #f0f2f4;            /* .fg */
+  --ds-fg-secondary: #bbbec1;  /* .fgSecondary */
+  --ds-muted: #7c8185;         /* .muted */
+  --ds-muted-deep: #53595d;    /* .mutedDeep */
 
   /* ---- the single accent (Green) ---- */
-  --ds-accent: #37D59F;          /* dark skin */
-  --ds-accent-ink: #15171A;      /* near-page ink used on accent fills */
-  --ds-accent-dim: rgba(55, 213, 159, 0.14);
-  --ds-accent-line: rgba(55, 213, 159, 0.40);
+  --ds-accent: #37d59f;              /* .accent */
+  --ds-accent-strong: #00c681;       /* .accentStrong */
+  --ds-accent-bright: #4bde80;       /* Agentic30BrandColor.greenBright — spinners, live pulse */
+  --ds-accent-ink: #141618;          /* near-page dark ink on an accent fill */
+  --ds-accent-dim: rgba(55, 213, 159, 0.14);   /* .accentDim */
+  --ds-accent-line: rgba(55, 213, 159, 0.40);  /* .accentLine */
 
-  /* ---- semantic status (severity / source) — never decoration ---- */
-  --ds-danger: #E2897E;
-  --ds-danger-dim: rgba(226, 137, 126, 0.13);
-  --ds-danger-line: rgba(226, 137, 126, 0.40);
-  --ds-warning: #E0B564;
-  --ds-warning-dim: rgba(224, 181, 100, 0.13);
-  --ds-warning-line: rgba(224, 181, 100, 0.40);
+  /* ---- severity + source hues — never decoration ---- */
+  --ds-warning: #efb146;       /* .amber — defer / evidence debt */
+  --ds-warning-dim: rgba(239, 177, 70, 0.14);
+  --ds-warning-line: rgba(239, 177, 70, 0.36);
+  --ds-danger: #f97770;        /* .rose — errors / blocked */
+  --ds-danger-dim: rgba(249, 119, 112, 0.14);
+  --ds-danger-line: rgba(249, 119, 112, 0.36);
+  --ds-sky: #59c5f5;           /* .sky — source / info */
+  --ds-sky-dim: rgba(89, 197, 245, 0.14);
+  --ds-sky-line: rgba(89, 197, 245, 0.36);
+  --ds-violet: #c789f5;        /* .violet — deploy markers / experiments */
+  --ds-violet-dim: rgba(199, 137, 245, 0.14);
+  --ds-violet-line: rgba(199, 137, 245, 0.36);
+  --ds-magenta: #f472b6;       /* .magenta */
+  --ds-magenta-dim: rgba(244, 114, 182, 0.14);
+  --ds-orange: #fb923c;        /* .orange */
+  --ds-orange-dim: rgba(251, 146, 60, 0.14);
+  --ds-teal: #3bc7c2;          /* OpenDesignReferenceTone.teal */
+  --ds-teal-dim: rgba(59, 199, 194, 0.14);
+  --ds-teal-line: rgba(59, 199, 194, 0.38);
+  --ds-pink: #f580c2;          /* OpenDesignReferenceTone.pink */
+  --ds-pink-dim: rgba(245, 128, 194, 0.14);
+  --ds-pink-line: rgba(245, 128, 194, 0.38);
+  --ds-diff-add: #3aba6a;      /* .diffAdd */
+  --ds-diff-del: #f2716a;      /* .diffDel */
+
+  /* ---- Intake on-dark tokens (white-alpha; IntakeV2Color dark theme) ---- */
+  --ds-btn-primary-fill: #ffffff;
+  --ds-btn-primary-text: rgba(0, 0, 0, 0.86);
+  --ds-btn-disabled-fill: rgba(255, 255, 255, 0.10);
+  --ds-btn-disabled-text: rgba(255, 255, 255, 0.34);
+  --ds-btn-secondary-fill: rgba(255, 255, 255, 0.06);
+  --ds-btn-secondary-text: rgba(255, 255, 255, 0.70);
+  --ds-card-fill: rgba(255, 255, 255, 0.03);
+  --ds-card-muted-fill: rgba(255, 255, 255, 0.02);
+  --ds-card-stroke: rgba(255, 255, 255, 0.08);
+  --ds-selection-dot-empty: rgba(255, 255, 255, 0.22);
+  --ds-spinner-track: rgba(255, 255, 255, 0.16);
+  --ds-terminal-bg: #0a0a0c;
+  --ds-terminal-stroke: rgba(255, 255, 255, 0.06);
+  --ds-terminal-command: rgba(255, 255, 255, 0.85);
+  --ds-terminal-muted: rgba(255, 255, 255, 0.40);
+
+  /* ---- ink for dark text on light control fills (StyleSeed: never pure #000) ---- */
+  --ds-ink-strong: #2a2a2a;
+  --ds-ink-muted: rgba(42, 42, 42, 0.42);
 
   /* ---- radius scale (Soft): chip 8 · control 10 · card 14 · pill 999 ---- */
   --ds-r-chip: 8px;
@@ -40,539 +87,246 @@
   --ds-r-card: 14px;
   --ds-r-pill: 999px;
 
-  /* ---- motion (Snap): no spring/bounce ---- */
+  /* ---- shadow language (layered, low-opacity, black-based) ---- */
+  --ds-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --ds-shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.55);
+
+  /* ---- motion (Snap): crisp, no bounce ---- */
   --ds-dur-fast: 0.12s;
   --ds-dur-normal: 0.18s;
   --ds-dur-slow: 0.30s;
   --ds-ease-snap: cubic-bezier(0.2, 0, 0, 1);
 
-  /* ---- type ---- */
+  /* ---- type scale (StyleSeed → px) ---- */
+  --ds-fs-hero: 46px;
+  --ds-fs-kpi: 34px;
+  --ds-fs-section: 17px;
+  --ds-fs-amount: 16px;
+  --ds-fs-listname: 14px;
+  --ds-fs-trend: 12px;
+  --ds-fs-body: 13px;
+  --ds-fs-label: 11px;
+  --ds-fs-caption: 11px;
+
+  /* ---- font stacks (system-served: SF Pro / SF Mono; Pretendard = host KR fallback) ---- */
   --ds-sans: -apple-system, "SF Pro Text", system-ui, "Pretendard", sans-serif;
   --ds-mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 /* ====================================================================
- * Primitives
+ * Root wrapper — every screen sits on the dark page.
  * ==================================================================== */
-
 .ds-root {
   background: var(--ds-page);
   color: var(--ds-fg);
   font-family: var(--ds-sans);
+  font-size: var(--ds-fs-body);
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+.ds-root *,
+.ds-root *::before,
+.ds-root *::after { box-sizing: border-box; }
 
-/* ---- Button ---- */
-.ds-btn {
-  border: none;
-  border-radius: var(--ds-r-control);
-  font-family: var(--ds-sans);
-  font-size: 13px;
-  font-weight: 600;
-  padding: 11px 16px;
-  cursor: pointer;
-  transition: background var(--ds-dur-fast) var(--ds-ease-snap),
-    border-color var(--ds-dur-fast) var(--ds-ease-snap);
-}
-.ds-btn--primary { background: var(--ds-accent); color: var(--ds-accent-ink); }
-.ds-btn--primary:hover:not(:disabled) { filter: brightness(1.05); }
-.ds-btn--primary:disabled {
-  background: var(--ds-accent-dim);
-  color: var(--ds-muted-deep);
-  cursor: not-allowed;
-}
-.ds-btn--ghost {
-  background: transparent;
-  border: 1px solid var(--ds-border);
-  color: var(--ds-fg-secondary);
-}
-.ds-btn--ghost:hover:not(:disabled) { border-color: var(--ds-border-strong); }
-.ds-btn--amber {
-  background: transparent;
-  border: 1px solid var(--ds-warning-line);
-  color: var(--ds-warning);
-}
-.ds-btn--full { width: 100%; }
-
-/* ---- Badge ---- */
-.ds-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-family: var(--ds-mono);
-  font-size: 10px;
-  font-weight: 600;
-  height: 20px;
-  padding: 0 8px;
+/* dark, unobtrusive scrollbars inside panels */
+.ds-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.ds-scroll::-webkit-scrollbar-thumb {
+  background: var(--ds-border-strong);
   border-radius: var(--ds-r-pill);
-  white-space: nowrap;
+  border: 3px solid transparent;
+  background-clip: padding-box;
 }
-.ds-badge--accent {
-  color: var(--ds-accent);
-  background: var(--ds-accent-dim);
-  border: 1px solid var(--ds-accent-line);
-}
-.ds-badge--neutral {
-  color: var(--ds-fg-secondary);
-  background: var(--ds-surface-2);
-  border: 1px solid var(--ds-border-strong);
-}
-.ds-badge--danger {
-  color: var(--ds-danger);
-  background: var(--ds-danger-dim);
-  border: 1px solid var(--ds-danger-line);
-}
-.ds-badge--warning {
-  color: var(--ds-warning);
-  background: var(--ds-warning-dim);
-  border: 1px solid var(--ds-warning-line);
-}
-.ds-badge svg { width: 12px; height: 12px; display: block; }
+.ds-scroll::-webkit-scrollbar-track { background: transparent; }
 
-/* ---- Input ---- */
-.ds-input {
-  width: 100%;
-  background: var(--ds-page);
-  border: 1px solid var(--ds-border);
-  border-radius: var(--ds-r-control);
-  color: var(--ds-fg);
-  font-family: var(--ds-sans);
-  font-size: 13px;
-  padding: 10px 12px;
-  outline: none;
-}
-.ds-input::placeholder { color: var(--ds-muted-deep); }
-.ds-input--accent { border-color: var(--ds-accent-line); }
-.ds-input--warning { border-color: var(--ds-warning-line); }
-
-/* ---- SectionHeader ---- */
-.ds-sectionhead {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-}
-.ds-sectionhead__bar {
-  width: 4px;
-  height: 12px;
-  border-radius: var(--ds-r-pill);
-  background: var(--ds-muted);
-}
-.ds-sectionhead--accent .ds-sectionhead__bar { background: var(--ds-accent); }
-.ds-sectionhead__label {
+/* uppercase tracked label helper (StyleSeed: labels are uppercase + tracked) */
+.ds-eyebrow {
   font-family: var(--ds-mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 1.1px;
+  font-size: var(--ds-fs-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--ds-fg-secondary);
-}
-.ds-sectionhead--accent .ds-sectionhead__label { color: var(--ds-accent); }
-.ds-sectionhead__meta {
-  font-family: var(--ds-mono);
-  font-size: 10.5px;
-  font-weight: 500;
-  color: var(--ds-muted-deep);
-  white-space: nowrap;
-}
-.ds-sectionhead__line { flex: 1; height: 1px; background: var(--ds-border-soft); }
-
-/* ---- Card ---- */
-.ds-card {
-  background: var(--ds-surface);
-  border: 1px solid var(--ds-border-soft);
-  border-radius: var(--ds-r-card);
-  padding: 22px 24px;
-}
-.ds-card__eyebrow {
-  font-family: var(--ds-mono);
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--ds-accent);
-}
-.ds-card__title {
-  font-size: 19px;
-  font-weight: 700;
-  color: var(--ds-fg);
-  margin-top: 8px;
-}
-.ds-card__body {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--ds-muted);
-  margin-top: 10px;
-  max-width: 520px;
-}
-.ds-card__actions { margin-top: 18px; display: flex; gap: 10px; }
-
-/* ====================================================================
- * Molecules
- * ==================================================================== */
-
-/* ---- ActionOption (the office-hours option idiom) ---- */
-.ds-actopt {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 11px 13px;
-  background: var(--ds-page);
-  border: 1px solid var(--ds-border-soft);
-  border-radius: var(--ds-r-control);
-  cursor: pointer;
-  transition: border-color var(--ds-dur-fast) var(--ds-ease-snap),
-    background var(--ds-dur-fast) var(--ds-ease-snap);
-}
-.ds-actopt:hover { border-color: var(--ds-border); }
-.ds-actopt--sel { border-color: var(--ds-accent-line); background: var(--ds-accent-dim); }
-.ds-actopt__radio {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  border-radius: var(--ds-r-pill);
-  border: 1.5px solid var(--ds-muted-deep);
-  position: relative;
-}
-.ds-actopt--sel .ds-actopt__radio { border-color: var(--ds-accent); }
-.ds-actopt--sel .ds-actopt__radio::after {
-  content: "";
-  position: absolute;
-  inset: 3px;
-  border-radius: var(--ds-r-pill);
-  background: var(--ds-accent);
-}
-.ds-actopt__label { flex: 1; min-width: 0; font-size: 13px; color: var(--ds-fg-secondary); }
-.ds-actopt--sel .ds-actopt__label { color: var(--ds-fg); font-weight: 500; }
-.ds-actopt__rec {
-  font-family: var(--ds-mono);
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--ds-accent);
-  padding: 1px 6px;
-  background: var(--ds-accent-dim);
-  border: 1px solid var(--ds-accent-line);
-  border-radius: var(--ds-r-chip);
-  flex-shrink: 0;
-}
-
-/* ---- StateCard (empty / error) ---- */
-.ds-statecard {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 9px;
-  padding: 22px 16px;
-  background: var(--ds-page);
-  border: 1px dashed var(--ds-border);
-  border-radius: var(--ds-r-control);
-}
-.ds-statecard__icon {
-  width: 38px;
-  height: 38px;
-  border-radius: var(--ds-r-pill);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--ds-surface-2);
-  border: 1px solid var(--ds-border);
   color: var(--ds-muted);
 }
-.ds-statecard--error .ds-statecard__icon {
-  background: var(--ds-danger-dim);
-  border-color: var(--ds-danger-line);
-  color: var(--ds-danger);
-}
-.ds-statecard__icon svg { width: 18px; height: 18px; display: block; }
-.ds-statecard__title { font-size: 12.5px; color: var(--ds-fg-secondary); line-height: 1.45; }
-.ds-statecard__meta { font-family: var(--ds-mono); font-size: 10px; color: var(--ds-muted-deep); }
-.ds-statecard--error .ds-statecard__meta { color: var(--ds-danger); }
-.ds-statecard__cta {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-family: var(--ds-sans);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ds-accent);
-  padding: 2px 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.ds-statecard__cta svg { width: 13px; height: 13px; display: block; }
 
-/* ---- DebtBanner (danger severity) ---- */
-.ds-debt {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  background: var(--ds-danger-dim);
-  border: 1px solid var(--ds-danger-line);
-  border-radius: var(--ds-r-control);
-  padding: 10px 12px;
-}
-.ds-debt__icon { color: var(--ds-danger); flex-shrink: 0; display: flex; margin-top: 1px; }
-.ds-debt__icon svg { width: 15px; height: 15px; display: block; }
-.ds-debt__body { flex: 1; min-width: 0; }
-.ds-debt__title { font-size: 12.5px; color: var(--ds-fg-secondary); line-height: 1.45; }
-.ds-debt__title b { color: var(--ds-fg); font-weight: 600; }
-.ds-debt__meta { font-family: var(--ds-mono); font-size: 10px; color: var(--ds-danger); margin-top: 3px; white-space: nowrap; }
-.ds-debt__abandon {
-  flex-shrink: 0;
-  align-self: center;
-  font-family: var(--ds-sans);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ds-muted);
-  background: transparent;
-  border: 1px solid var(--ds-border);
-  border-radius: var(--ds-r-chip);
-  padding: 5px 9px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ds-debt__abandon:hover { color: var(--ds-danger); border-color: var(--ds-danger-line); }
+/* ==== Supplementary tokens (audit-completed: rounded font, weights, spacing, panes, heights) ==== */
+:root {
+  /* rounded stack — 241 KPI/hero/number sites in the app render SF Pro Rounded */
+  --ds-rounded: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif;
 
-/* ---- DayRow (timeline) ---- */
-.ds-dayrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 8px;
-  border-radius: var(--ds-r-control);
-  margin-bottom: 2px;
-  border: 1px solid transparent;
-}
-.ds-dayrow__mark {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--ds-r-chip);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--ds-mono);
-  font-size: 10px;
-  font-weight: 600;
-  background: var(--ds-surface);
-  border: 1px solid var(--ds-border);
-  color: var(--ds-fg-secondary);
-}
-.ds-dayrow__body { min-width: 0; flex: 1; }
-.ds-dayrow__goal {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ds-fg-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ds-dayrow__sub { font-size: 10px; color: var(--ds-muted-deep); margin-top: 1px; }
-.ds-dayrow__badge {
-  font-family: var(--ds-mono);
-  font-size: 10px;
-  color: var(--ds-muted-deep);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  white-space: nowrap;
-}
-.ds-dayrow__badge svg { width: 14px; height: 14px; display: block; }
-.ds-dayrow--today { background: var(--ds-accent-dim); border-color: var(--ds-accent-line); }
-.ds-dayrow--today .ds-dayrow__mark { background: var(--ds-accent-dim); border-color: var(--ds-accent-line); color: var(--ds-accent); }
-.ds-dayrow--today .ds-dayrow__goal { color: var(--ds-fg); font-weight: 600; }
-.ds-dayrow--today .ds-dayrow__sub { color: var(--ds-accent); }
-.ds-dayrow--today .ds-dayrow__badge { color: var(--ds-accent); }
-.ds-dayrow--done .ds-dayrow__mark { color: var(--ds-muted); }
-.ds-dayrow--done .ds-dayrow__badge { color: var(--ds-accent); }
-.ds-dayrow--incomplete .ds-dayrow__mark { background: var(--ds-surface-2); border-color: var(--ds-border); color: var(--ds-muted); }
-.ds-dayrow--incomplete .ds-dayrow__badge { color: var(--ds-muted); }
-.ds-dayrow--incomplete .ds-dayrow__sub { color: var(--ds-muted); }
+  /* font weights (Font.Weight → numeric) */
+  --ds-fw-light: 300;
+  --ds-fw-regular: 400;
+  --ds-fw-medium: 500;
+  --ds-fw-semibold: 600;
+  --ds-fw-bold: 700;
+  --ds-fw-heavy: 800;
 
-/* ---- Stepper ---- */
-.ds-stepper { display: flex; align-items: flex-start; gap: 0; position: relative; }
-.ds-step { flex: 1; display: flex; flex-direction: column; align-items: center; position: relative; }
-.ds-step__line {
-  position: absolute;
-  top: 13px;
-  left: -50%;
-  width: 100%;
-  height: 2px;
-  background: var(--ds-border);
-  z-index: 0;
-}
-.ds-step:first-child .ds-step__line { display: none; }
-.ds-step--done .ds-step__line, .ds-step--active .ds-step__line { background: var(--ds-accent-line); }
-.ds-step__node {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--ds-r-pill);
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--ds-mono);
-  font-size: 11px;
-  font-weight: 600;
-  background: var(--ds-surface);
-  border: 1.5px solid var(--ds-border);
-  color: var(--ds-muted-deep);
-}
-.ds-step__node svg { width: 14px; height: 14px; display: block; }
-.ds-step--done .ds-step__node { background: var(--ds-accent-dim); border-color: var(--ds-accent); color: var(--ds-accent); }
-.ds-step--active .ds-step__node { background: var(--ds-accent); border-color: var(--ds-accent); color: var(--ds-accent-ink); }
-.ds-step__name { font-size: 11px; margin-top: 8px; color: var(--ds-muted); }
-.ds-step--active .ds-step__name { color: var(--ds-fg); font-weight: 600; }
-.ds-step--done .ds-step__name { color: var(--ds-fg-secondary); }
-.ds-step--locked .ds-step__name { color: var(--ds-muted-deep); }
-.ds-step--locked .ds-step__node { color: var(--ds-faint); }
+  /* tracking (StyleSeed: labels uppercase + tracked; large sans slightly negative) */
+  --ds-track-eyebrow: 0.08em;
+  --ds-track-label: 0.12em;
+  --ds-track-tight: -0.01em;
 
-/* ---- QuestionCard ---- */
-.ds-qcard {
-  position: relative;
-  background: linear-gradient(var(--ds-surface), var(--ds-surface-2));
-  border: 1px solid var(--ds-border);
-  border-radius: var(--ds-r-card);
-  padding: 18px 20px;
-  overflow: hidden;
-}
-.ds-qcard::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--ds-accent);
-}
-.ds-qcard__head { display: flex; align-items: center; margin-bottom: 11px; }
-.ds-qcard__eyebrow {
-  font-family: var(--ds-mono);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--ds-accent);
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
-}
-.ds-qcard__count {
-  margin-left: auto;
-  font-family: var(--ds-mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--ds-accent);
-  padding: 0 8px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  background: var(--ds-accent-dim);
-  border: 1px solid var(--ds-accent-line);
-  border-radius: var(--ds-r-pill);
-  white-space: nowrap;
-}
-.ds-qcard__text { font-size: 17px; font-weight: 700; color: var(--ds-fg); line-height: 1.45; }
+  /* 5th ink level (mockups define a grey below muted-deep) + missing severity lines */
+  --ds-faint: #4f555c;
+  --ds-magenta-line: rgba(244, 114, 182, 0.36);
+  --ds-orange-line: rgba(251, 146, 60, 0.36);
 
-/* ---- SignalTable ---- */
-.ds-signals {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  background: var(--ds-border-soft);
-  border: 1px solid var(--ds-border-soft);
-  border-radius: var(--ds-r-card);
-  overflow: hidden;
-}
-.ds-signals__row { display: flex; gap: 16px; padding: 12px 16px; background: var(--ds-surface); align-items: baseline; }
-.ds-signals__key {
-  width: 132px;
-  flex-shrink: 0;
-  font-family: var(--ds-mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--ds-fg-secondary);
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-}
-.ds-signals__value { font-size: 13px; font-weight: 500; color: var(--ds-fg-secondary); }
+  /* reference-page tone violet (OpenDesignReferenceTone.violet — distinct from day --ds-violet) */
+  --ds-tone-violet: #b085fa;
+  --ds-tone-violet-dim: rgba(176, 133, 250, 0.14);
+  --ds-tone-violet-line: rgba(176, 133, 250, 0.38);
 
-/* ====================================================================
- * Organisms
- * ==================================================================== */
+  /* low-alpha accent washes (large fills / positioning viz) */
+  --ds-accent-wash: rgba(55, 213, 159, 0.08);
+  --ds-accent-wash-strong: rgba(55, 213, 159, 0.10);
 
-/* ---- PromiseCard ---- */
-.ds-promise {
-  position: relative;
-  background: var(--ds-surface);
-  border: 1px solid var(--ds-border);
-  border-radius: var(--ds-r-card);
-  padding: 17px 19px 16px;
-  overflow: hidden;
-}
-.ds-promise::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--ds-muted);
-}
-.ds-promise__head { display: flex; align-items: center; margin-bottom: 12px; }
-.ds-promise__eyebrow {
-  font-family: var(--ds-mono);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--ds-muted);
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
-}
-.ds-promise__title { font-size: 15.5px; font-weight: 700; color: var(--ds-fg); line-height: 1.45; margin-bottom: 11px; }
-.ds-promise__acts { display: flex; flex-direction: column; gap: 7px; }
-.ds-promise__debt-wrap { margin-bottom: 13px; }
-.ds-promise__note { font-size: 11px; color: var(--ds-muted-deep); margin-top: 12px; line-height: 1.55; }
-.ds-promise__note b { color: var(--ds-accent); font-weight: 600; }
+  /* special radii — onboarding modal (34), active-indicator bars (2) */
+  --ds-r-modal: 34px;
+  --ds-r-bar: 2px;
 
-/* ---- DayTimelineSidebar ---- */
-.ds-sidebar {
-  width: 240px;
-  background: var(--ds-page);
-  border: 1px solid var(--ds-border-soft);
-  border-radius: var(--ds-r-card);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  /* border widths (1 default · 1.5 increased-contrast) */
+  --ds-bw: 1px;
+  --ds-bw-contrast: 1.5px;
+
+  /* spacing scale (StyleSeed 2px grid) */
+  --ds-space-1: 2px;
+  --ds-space-2: 4px;
+  --ds-space-3: 6px;
+  --ds-space-4: 8px;
+  --ds-space-5: 10px;
+  --ds-space-6: 12px;
+  --ds-space-7: 14px;
+  --ds-space-8: 16px;
+  --ds-space-9: 18px;
+  --ds-space-10: 20px;
+  --ds-space-12: 24px;
+  --ds-space-14: 28px;
+  --ds-space-18: 36px;
+  --ds-space-28: 56px;
+
+  /* pane widths + bar heights (WorkspaceShell / ReferenceShell — OpenDesignDayLayoutMetrics) */
+  --ds-pane-rail: 52px;
+  --ds-pane-rail-compact: 48px;
+  --ds-pane-sidebar: 240px;
+  --ds-pane-sidebar-md: 220px;
+  --ds-pane-sidebar-sm: 200px;
+  --ds-pane-meta: 280px;
+  --ds-pane-meta-compact: 252px;
+  --ds-pane-main-max: 880px;
+  --ds-h-titlebar: 36px;
+  --ds-h-header: 42px;
+  --ds-h-rail-item: 36px;
 }
-.ds-sidebar__header {
-  height: 48px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--ds-border-soft);
+
+/* ==== Light theme (Agentic30 "White") — opt-in: wrap a subtree in [data-theme="white"].
+ * Components read --ds-* so they switch automatically. Values = OpenDesignDayColor white palette. ==== */
+[data-theme="white"] {
+  --ds-page: #f7f9fb;
+  --ds-bg-deep: #eff3f6;
+  --ds-bg-darker: #e6ebef;
+  --ds-surface: #ffffff;
+  --ds-surface-2: #f4f7f9;
+  --ds-elevated: #ffffff;
+  --ds-hover: #e8edf0;
+  --ds-selected: #dee5eb;
+  --ds-border: #c7cdd1;
+  --ds-border-soft: #dce1e4;
+  --ds-border-strong: #a0a9b0;
+  --ds-fg: #141c23;
+  --ds-fg-secondary: #3a4147;
+  --ds-muted: #666d72;
+  --ds-muted-deep: #93999e;
+  --ds-faint: #aab0b5;
+  --ds-accent: #00834b;
+  --ds-accent-strong: #007238;
+  --ds-accent-bright: #00834b;
+  --ds-accent-ink: #ffffff;
+  --ds-accent-dim: rgba(0, 131, 75, 0.12);
+  --ds-accent-line: rgba(0, 131, 75, 0.34);
+  --ds-warning: #b8801f;
+  --ds-warning-dim: rgba(184, 128, 31, 0.12);
+  --ds-warning-line: rgba(184, 128, 31, 0.34);
+  --ds-danger: #c13c3b;
+  --ds-danger-dim: rgba(193, 60, 59, 0.10);
+  --ds-danger-line: rgba(193, 60, 59, 0.34);
+  --ds-sky: #0081b1;
+  --ds-sky-dim: rgba(0, 129, 177, 0.12);
+  --ds-sky-line: rgba(0, 129, 177, 0.34);
+  --ds-violet: #7345b7;
+  --ds-violet-dim: rgba(115, 69, 183, 0.12);
+  --ds-violet-line: rgba(115, 69, 183, 0.34);
+  --ds-tone-violet: #7345b7;
+  --ds-tone-violet-dim: rgba(115, 69, 183, 0.12);
+  --ds-tone-violet-line: rgba(115, 69, 183, 0.34);
+  --ds-teal: #0e7c78;
+  --ds-teal-dim: rgba(14, 124, 120, 0.12);
+  --ds-teal-line: rgba(14, 124, 120, 0.34);
+  --ds-pink: #c04d8a;
+  --ds-pink-dim: rgba(192, 77, 138, 0.12);
+  --ds-pink-line: rgba(192, 77, 138, 0.34);
+  --ds-magenta: #c2307b;
+  --ds-magenta-dim: rgba(194, 48, 123, 0.12);
+  --ds-magenta-line: rgba(194, 48, 123, 0.34);
+  --ds-orange: #d65711;
+  --ds-orange-dim: rgba(214, 87, 17, 0.12);
+  --ds-orange-line: rgba(214, 87, 17, 0.34);
+  --ds-diff-add: #007a34;
+  --ds-diff-del: #bd3838;
+  --ds-btn-primary-fill: #141c23;
+  --ds-btn-primary-text: #ffffff;
+  --ds-btn-disabled-fill: rgba(20, 28, 35, 0.08);
+  --ds-btn-disabled-text: rgba(20, 28, 35, 0.32);
+  --ds-btn-secondary-fill: #f4f7f9;
+  --ds-btn-secondary-text: #3a4147;
+  --ds-card-fill: #ffffff;
+  --ds-card-muted-fill: #f4f7f9;
+  --ds-card-stroke: rgba(20, 28, 35, 0.10);
+  --ds-selection-dot-empty: #a0a9b0;
+  --ds-ink-strong: #2a2a2a;
+  --ds-shadow-card: 0 1px 3px rgba(20, 28, 35, 0.06);
+  --ds-shadow-elevated: 0 4px 12px rgba(20, 28, 35, 0.10);
 }
-.ds-sidebar__proj { font-size: 12px; font-weight: 600; color: var(--ds-fg); }
-.ds-sidebar__prog { margin-left: auto; font-family: var(--ds-mono); font-size: 10px; color: var(--ds-muted); white-space: nowrap; }
-.ds-sidebar__scroll { flex: 1; overflow-y: auto; padding: 2px 6px 14px; }
-.ds-sidebar__group {
-  font-family: var(--ds-mono);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--ds-muted-deep);
-  letter-spacing: 1.1px;
-  text-transform: uppercase;
-  padding: 12px 8px 4px;
+
+/* ==== Supplementary accents (audit §9–14: decorative / brand / chat — screen-specific, theme-agnostic) ==== */
+:root {
+  /* Completion confetti (RealisticConfettiPaletteColor — 8 fixed hues) */
+  --ds-confetti-cyan: #26ccff;
+  --ds-confetti-purple: #a25afd;
+  --ds-confetti-pink: #ff5e7e;
+  --ds-confetti-lime: #88ff5a;
+  --ds-confetti-yellow: #fcff42;
+  --ds-confetti-orange: #ffa62d;
+  --ds-confetti-magenta: #ff36ff;
+  --ds-confetti-green: #4bde80;
+
+  /* macOS window traffic-light dots */
+  --ds-tl-close: #ff5f57;
+  --ds-tl-min: #febc2e;
+  --ds-tl-max: #28c840;
+
+  /* Third-party brand plates (integration / source tiles) */
+  --ds-brand-github: #0d1117;
+  --ds-brand-discord: #5865f2;
+  --ds-brand-toss: #0064ff;
+  --ds-brand-stripe: #635bff;
+  --ds-brand-claude: #decaab;
+  --ds-brand-aws: #172330;
+
+  /* ContentView chat / live-status inline accents */
+  --ds-chat-blocked: #ffab6b;
+  --ds-chat-sage: #7ba890;
+  --ds-chat-choice: #d1e3ff;
+  --ds-chat-choice-2: #8ab3ff;
+  --ds-chat-warm: #ebc270;
+
+  /* Onboarding scene / intent-icon accents (MacOnboarding / SceneColor) */
+  --ds-scene-lime: #d1fcb0;
+  --ds-scene-mark: #47eb52;
+  --ds-intent-blue: #429efa;
+  --ds-intent-red: #f26652;
+  --ds-intent-green: #8cdb6b;
+  --ds-intent-amber: #eba333;
 }
-.ds-sidebar__skip { display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin: 2px 0; }
-.ds-sidebar__skip-dots {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--ds-r-chip);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ds-muted-deep);
-  border: 1px dashed var(--ds-border-strong);
-}
-.ds-sidebar__skip-dots svg { width: 14px; height: 14px; display: block; }
-.ds-sidebar__skip-label { font-size: 11px; color: var(--ds-muted-deep); }
+
+/* ==== component styles are appended below as components are built (Phase C) ==== */
