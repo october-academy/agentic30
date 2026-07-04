@@ -1,5 +1,10 @@
 # Agentic30 Founder Memory OS — Goal Prompt (Claude Fable 5)
 
+> **[동결 — 2026-07-05 사용자 결정]** 이 프롬프트로 새 구현 세션을 시작하지
+> 마라. FMOS 트랙은 동결됐고 후속 구현은 `agentic30-greenfield`의 Founder
+> Memory 계약(docs/SPEC.md §23, docs/TODO.md Gate 9)으로 수렴했다. 이 문서는
+> design reference다.
+
 You are Claude Fable 5 running long, autonomous implementation sessions in
 `/Users/october/prj/agentic30-public` (SwiftUI/AppKit Mac app in `agentic30/`,
 Node sidecar in `sidecar/`).

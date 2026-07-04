@@ -1,6 +1,11 @@
 # Agentic30 Founder Memory OS SPEC
 
-> Design approved: 2026-06-27 KST · Status: **Final design — approved to build through the Section 13 gates.**
+> **[동결 — 2026-07-05 사용자 결정]** 이 SPEC의 구현 트랙은 동결됐다. 잔여
+> 게이트(P0 live acceptance, Gate A 재개방 delta, Gate A.2, Gate E)를 이 repo에서
+> 진행하지 마라. 계약 수치·실측 앵커는 `agentic30-greenfield` docs/SPEC.md §23
+> (Founder Memory, post-MVP)으로 이식됐고, 이 문서는 design reference로 보존된다.
+
+> Design approved: 2026-06-27 KST · Status: ~~Final design — approved to build through the Section 13 gates.~~ **Frozen 2026-07-05 — design reference only.**
 > Revised 2026-07-02 KST: frame-storage architecture review incorporated (Section 15) — tiered aging ladder, dedup/cadence semantics and authority, storage budget contract, long-horizon retention.
 > Revised again 2026-07-02 KST (founder direction, Section 15 second entry): indefinite local retention + end-to-end-encrypted cloud archive (Gate E, Section 10.7), screenpipe-style snapshot compaction via VideoToolbox (Gate A.2), unified visual pointer, `video_quality` resolution profiles. Deletion semantics unified: explicit user delete / budget pressure / user-configured TTL only — compaction and archival are never deletions.
 > File name kept as `agentic30_screenpipe_benchmarking_SPEC.md` for link continuity; the benchmarking phase is over and this is the Founder Memory OS design contract.

@@ -1,5 +1,11 @@
 # Agentic30 Founder Memory OS — TODO (status + working memory)
 
+> **[동결 — 2026-07-05 사용자 결정]** FMOS 트랙은 이 상태로 동결됐다. P0 live
+> acceptance를 포함해 이 파일의 잔여 작업을 진행하지 마라. 후속 구현은
+> `agentic30-greenfield`의 Founder Memory 계약(docs/SPEC.md §23, docs/TODO.md
+> Gate 9)으로 수렴했고, 이 문서와 FMOS 코드·테스트는 design reference로만
+> 보존된다. 이 마커는 미래 세션(Codex 포함)의 오발주를 막기 위한 것이다.
+
 > Last updated: 2026-07-02 KST
 > Read this file first every session. It is the ONLY tracker for current
 > status and remaining work, and it is the session's working memory: update
