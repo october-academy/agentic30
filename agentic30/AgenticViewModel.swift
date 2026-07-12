@@ -9818,10 +9818,18 @@ final class AgenticViewModel: ObservableObject {
               !["ready", "progress", "cancelled"].contains(state)
         else { return }
 
+        // providerLimited(provider usage/quota) and verificationUnavailable
+        // (tool-discovery/verification miss) are benign non-`ready` outcomes: the
+        // sidecar couldn't prove the connection, which is not evidence it is broken.
+        // Log them, but don't capture an exception — that only adds error-tracking
+        // noise for an expected verification hiccup on an optional integration.
+        let benign = (result.providerLimited ?? false) || (result.verificationUnavailable ?? false)
         let properties: [String: Any] = [
             "server": result.server ?? "",
             "provider": result.provider ?? selectedProvider.rawValue,
             "state": state,
+            "provider_limited": result.providerLimited ?? false,
+            "verification_unavailable": result.verificationUnavailable ?? false,
             "has_login_url": !(result.loginUrl?.isEmpty ?? true),
             "failure_detail": result.detail ?? "",
             "checked_at": result.checkedAt ?? "",
@@ -9833,11 +9841,11 @@ final class AgenticViewModel: ObservableObject {
         )
         PostHogTelemetry.captureLog(
             "mcp oauth connect did not complete",
-            level: state == "failed" ? .error : .warn,
+            level: state == "failed" && !benign ? .error : .warn,
             properties: properties,
             authSession: macAuthSession
         )
-        if state == "failed" {
+        if state == "failed" && !benign {
             PostHogTelemetry.captureException(
                 NSError(domain: "McpOauthConnect", code: -1, userInfo: [
                     NSLocalizedDescriptionKey: result.detail ?? "MCP OAuth connection failed."

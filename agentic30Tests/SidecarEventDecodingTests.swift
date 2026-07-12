@@ -1129,7 +1129,34 @@ struct SidecarEventDecodingTests {
         #expect(result.isReady == false)
         #expect(result.isLoginPending == false)
         #expect(result.state == "failed")
+        #expect(result.providerLimited == nil)
+        #expect(result.verificationUnavailable == nil)
         #expect(event.integrationStatus == nil)
+    }
+
+    @MainActor @Test func decodesMcpOauthConnectBenignVerificationMiss() throws {
+        // 도구 탐색/검증 미스는 verificationUnavailable로 표시돼 오류 추적 예외로
+        // 캡처되지 않는다 (providerLimited 한도 에러와 동일한 취급).
+        let payload = """
+        {
+          "type": "mcp_oauth_connect_result",
+          "mcpOauthConnect": {
+            "server": "vercel",
+            "provider": "codex",
+            "state": "failed",
+            "detail": "Vercel MCP 연결 실패: list_projects 도구를 찾을 수 없습니다",
+            "verificationUnavailable": true,
+            "checkedAt": "2026-07-12T09:31:00.000Z"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        let result = try #require(event.mcpOauthConnect)
+        #expect(result.state == "failed")
+        #expect(result.verificationUnavailable == true)
+        #expect(result.providerLimited == nil)
     }
 
     @MainActor @Test func decodesMcpOauthConnectLoginPendingPayload() throws {

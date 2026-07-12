@@ -972,6 +972,13 @@ nonisolated struct McpOauthConnectResult: Codable, Hashable {
     var loginUrl: String?
     var openBrowser: Bool? = nil
     var checkedAt: String?
+    /// Benign, non-`ready` outcomes the sidecar flags as "could not verify" rather
+    /// than "connection failed": `providerLimited` for provider usage/quota limits,
+    /// `verificationUnavailable` for tool-discovery/verification misses. Both are
+    /// reported as telemetry but NOT captured as exceptions (see
+    /// `reportMcpOauthConnectTelemetry`).
+    var providerLimited: Bool? = nil
+    var verificationUnavailable: Bool? = nil
 
     var isReady: Bool { state == "ready" }
     var isLoginPending: Bool { state == "login_pending" }

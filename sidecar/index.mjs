@@ -3436,6 +3436,7 @@ async function handleClientMessage(socket, payload) {
         provider: mcpOauthConnect.provider,
         state: mcpOauthConnect.state,
         provider_limited: mcpOauthConnect.providerLimited === true,
+        verification_unavailable: mcpOauthConnect.verificationUnavailable === true,
       });
       reportMcpOauthConnectOutcome(mcpOauthConnect);
       return;
@@ -20995,18 +20996,22 @@ function reportIntegrationStatusFailures(integrationStatus = {}) {
 function reportMcpOauthConnectOutcome(result = {}) {
   const stateName = String(result.state || "");
   if (!stateName || stateName === "ready" || stateName === "progress") return;
+  // providerLimited(사용량 한도)와 verificationUnavailable(도구 탐색/검증 미스)는
+  // 실제 연결 실패가 아니라 "실증하지 못한" 양성 결과 — 예외로 캡처하지 않는다.
+  const benign = result.providerLimited === true || result.verificationUnavailable === true;
   const properties = {
     operation: "mcp_oauth_connect",
     server: result.server || "",
     provider: result.provider || "",
     state: stateName,
     provider_limited: result.providerLimited === true,
+    verification_unavailable: result.verificationUnavailable === true,
     has_login_url: Boolean(result.loginUrl),
     detail: truncateTelemetryString(result.detail || ""),
   };
-  const level = stateName === "failed" && result.providerLimited !== true ? "error" : "warn";
+  const level = stateName === "failed" && !benign ? "error" : "warn";
   captureSidecarLog("mcp oauth connect did not complete", level, properties);
-  if (stateName === "failed" && result.providerLimited !== true) {
+  if (stateName === "failed" && !benign) {
     telemetry.captureException(
       new Error(`MCP OAuth connect failed: ${properties.server || "unknown"} (${properties.provider || "unknown"})`),
       properties,

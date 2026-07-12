@@ -77,6 +77,9 @@ export const McpOauthConnectResultSchema = z.object({
   traceId: boundedString(80).optional(),
   durationMs: z.number().int().nonnegative().optional(),
   providerLimited: z.boolean().optional(),
+  // 연결이 "실증"되지 못했을 뿐(도구 탐색/검증 미스) 실제 연결 실패는 아닌
+  // 양성(benign) 결과. providerLimited와 동일하게 예외로 캡처하지 않는다.
+  verificationUnavailable: z.boolean().optional(),
 }).strict();
 
 export const McpOauthConnectStatusSchema = z.object({
@@ -178,6 +181,17 @@ export const MCP_OAUTH_PREWARM_SERVERS = Object.freeze({
     mcpServerName: VERCEL_MCP_SERVER_NAME,
     mcpNamespaceAliases: mcpNamespaceAliases(VERCEL_MCP_SERVER_NAME),
     executionMode: "mcp_oauth_prewarm_vercel",
+    verificationTools: [
+      {
+        tool: "list_projects",
+        prompt: [
+          "Vercel exposes tools under the mcp__vercel namespace in Codex.",
+          "Search ToolSearch for: vercel mcp__vercel list_projects list_teams.",
+          "Call mcp__vercel.list_projects (an authenticated read that lists the account's projects) with minimal arguments; an empty list still proves the OAuth token works.",
+          "Do not count docs, search, or search_vercel_documentation as verification — those succeed (or return Not Found) without authentication and prove nothing about the connection; only an authenticated read like list_projects proves the API path works.",
+        ].join(" "),
+      },
+    ],
   },
 });
 for (const profile of Object.values(MCP_OAUTH_PREWARM_SERVERS)) {
@@ -290,13 +304,20 @@ export function buildMcpOauthVerifyPrompt(server) {
 function mcpNamespacePromptHint(target) {
   const aliases = targetNamespaceAliases(target);
   const prefixed = aliases.map((alias) => `${alias}__*`).join(" or ");
+  const underscored = target.mcpServerName.replace(/-/g, "_");
   const searchTerms = [
     target.mcpServerName,
-    target.mcpServerName.replace(/-/g, "_"),
+    underscored,
     ...aliases,
     ...targetVerificationToolNames(target),
   ].join(" ");
-  return `Tool names may appear under ${prefixed}. Use ToolSearch query: "${searchTerms}".`;
+  // 서버 설정 이름(대시)과 런타임 네임스페이스(언더스코어)가 다르면 모델이
+  // 서버 이름 그대로("cloudflare-api")인 도구를 찾다 실패한다(실측). 미스매치를
+  // 명시해 mcp__<namespace>__ 접두사로 매칭하도록 강제한다.
+  const mismatchNote = underscored !== target.mcpServerName
+    ? ` The server is configured as "${target.mcpServerName}", but its tools are registered under the underscored namespace "mcp__${underscored}" — there is no tool literally named "${target.mcpServerName}", so match tools by the mcp__${underscored}__ prefix, not by the server name.`
+    : "";
+  return `Tool names appear as mcp__<namespace>__<toolName> under ${prefixed}, never as the bare server name.${mismatchNote} Use ToolSearch query: "${searchTerms}".`;
 }
 
 function mcpVerificationPromptHint(target) {
@@ -360,7 +381,15 @@ function result(server, provider, state, detail, loginUrl = "", extra = {}) {
     detail: `MCP OAuth 결과 계약 오류: ${zodIssueSummary(parsed.error)}`.slice(0, 200),
     checkedAt: new Date().toISOString(),
     ...(typeof extra.providerLimited === "boolean" ? { providerLimited: extra.providerLimited } : {}),
+    ...(typeof extra.verificationUnavailable === "boolean" ? { verificationUnavailable: extra.verificationUnavailable } : {}),
   });
+}
+
+// 도구 탐색/검증을 완료하지 못한 "실패" — 연결이 실제로 끊겼다는 증거가 아니라
+// "실증하지 못했다"는 뜻. providerLimited 한도 에러와 마찬가지로 오류 추적에서
+// 예외로 캡처하지 않도록 verificationUnavailable로 표시한다(양성 non-ready).
+function verificationMissResult(server, provider, detail, loginUrl = "") {
+  return result(server, provider, "failed", detail, loginUrl, { verificationUnavailable: true });
 }
 
 const MCP_OAUTH_CANCELLED_DETAIL = "MCP 연결 확인을 중지했습니다. 다시 시도하세요.";
@@ -1022,10 +1051,9 @@ async function verifyCodexMcpOauthWithProvider({
   const parsed = parseMcpOauthPrewarmReply(transcript);
   if (parsed.ok) {
     if (!sawTargetMcpToolCall) {
-      return result(
+      return verificationMissResult(
         normalized,
         "codex",
-        "failed",
         `${target.label} 로그인은 됐지만 Codex에서 실제 도구 호출을 확인하지 못했어요 — 다시 'MCP 연결'을 눌러 검증해 주세요.`,
         loginUrl || parsed.loginUrl,
       );
@@ -1048,18 +1076,16 @@ async function verifyCodexMcpOauthWithProvider({
     );
   }
   if (parsed.reason) {
-    return result(
+    return verificationMissResult(
       normalized,
       "codex",
-      "failed",
       `${target.label} Codex 연결 실패: ${parsed.reason}`,
       loginUrl || parsed.loginUrl,
     );
   }
-  return result(
+  return verificationMissResult(
     normalized,
     "codex",
-    "failed",
     `${target.label} Codex 도구 호출 확인 결과를 읽지 못했어요 — 다시 'MCP 연결'을 눌러 주세요.`,
     loginUrl || parsed.loginUrl,
   );
@@ -1369,10 +1395,9 @@ export async function prewarmMcpOauth({
   const loginUrl = loginUrlAnnounced || parsed.loginUrl;
   if (parsed.ok) {
     if (!attempt.sawTargetMcpToolCall) {
-      return result(
+      return verificationMissResult(
         normalized,
         provider,
-        "failed",
         `${target.label} 로그인은 됐지만 실제 MCP 도구 호출을 확인하지 못했어요 — 다시 'MCP 연결'을 눌러 검증해 주세요.`,
         loginUrl,
       );
@@ -1397,7 +1422,7 @@ export async function prewarmMcpOauth({
     );
   }
   if (parsed.reason) {
-    return result(normalized, provider, "failed", `${target.label} MCP 연결 실패: ${parsed.reason}`, loginUrl);
+    return verificationMissResult(normalized, provider, `${target.label} MCP 연결 실패: ${parsed.reason}`, loginUrl);
   }
-  return result(normalized, provider, "failed", `${target.label} MCP 응답에서 확인 신호를 찾지 못했어요 — 다시 시도해 주세요.`, loginUrl);
+  return verificationMissResult(normalized, provider, `${target.label} MCP 응답에서 확인 신호를 찾지 못했어요 — 다시 시도해 주세요.`, loginUrl);
 }

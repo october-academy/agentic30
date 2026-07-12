@@ -114,10 +114,18 @@ test("buildMcpOauthPrewarmPrompt targets the MCP server name and all sentinels",
   assert.ok(cloudflarePrompt.includes("execute"));
   assert.ok(cloudflarePrompt.includes("/zones?status=active&per_page=1"));
   assert.equal(cloudflarePrompt.includes("accounts_list"), false);
+  // 대시/언더스코어 미스매치를 명시해 모델이 "cloudflare-api" 그대로인 도구를
+  // 찾다 실패(cloudflare-api 도구를 찾을 수 없습니다)하지 않게 한다.
+  assert.ok(cloudflarePrompt.includes('there is no tool literally named "cloudflare-api"'));
+  assert.ok(cloudflarePrompt.includes("mcp__cloudflare_api__ prefix"));
 
   const vercelPrompt = buildMcpOauthPrewarmPrompt("vercel");
   assert.ok(vercelPrompt.includes(`"${MCP_OAUTH_PREWARM_SERVERS.vercel.mcpServerName}"`));
   assert.ok(vercelPrompt.includes(`mcp__${MCP_OAUTH_PREWARM_SERVERS.vercel.mcpServerName}__authenticate`));
+  // Vercel 검증은 인증된 읽기(list_projects)로 증명하고 docs/search는 검증으로
+  // 세지 않는다 — docs-search가 Not Found를 반환해도 연결 실패로 오판하지 않게.
+  assert.ok(vercelPrompt.includes("list_projects"));
+  assert.ok(vercelPrompt.includes("search_vercel_documentation"));
   assert.throws(() => buildMcpOauthPrewarmPrompt("github"));
 });
 
@@ -284,6 +292,10 @@ test("MCP OAuth zod contracts validate app-facing result and status payloads", (
   assert.equal(profile.mcpServerName, "cloudflare-api");
   assert.deepEqual(profile.mcpNamespaceAliases, ["mcp__cloudflare-api", "mcp__cloudflare_api"]);
   assert.equal(profile.verificationTools[0].tool, "execute");
+  // Vercel도 인증된 읽기 도구를 검증 allowlist로 가져 docs/search 호출이
+  // "연결됨"으로 오인되지 않게 한다.
+  const vercelProfile = parseMcpOauthServerProfile(MCP_OAUTH_PREWARM_SERVERS.vercel);
+  assert.equal(vercelProfile.verificationTools[0].tool, "list_projects");
   assert.throws(
     () => parseMcpOauthServerProfile({
       server: "cloudflare",
@@ -1309,6 +1321,49 @@ test("prewarmMcpOauth surfaces model-reported failure reason", async () => {
   });
   assert.equal(result.state, "failed");
   assert.ok(result.detail.includes("연결 오류"));
+  // 모델이 FAIL을 보고한 것은 "실증 실패"이지 연결이 끊겼다는 증거가 아니다 —
+  // providerLimited처럼 예외로 캡처하지 않도록 verificationUnavailable로 표시.
+  assert.equal(result.verificationUnavailable, true);
+});
+
+test("prewarmMcpOauth flags verification misses as verificationUnavailable, not hard failures", async () => {
+  // 도구 탐색 미스(Cloudflare가 mcp__cloudflare_api를 못 찾음) 계열의 실패는
+  // 오류 추적 노이즈를 만들지 않도록 양성(benign)으로 표시돼야 한다.
+  const toolNotFound = await prewarmMcpOauth({
+    server: "cloudflare",
+    provider: "claude",
+    env: {},
+    runProviderStreamImpl: async (args) => {
+      args.onTextReplace(`${MCP_OAUTH_PREWARM_FAIL_SENTINEL}: cloudflare-api 도구를 찾을 수 없습니다`);
+    },
+  });
+  assert.equal(toolNotFound.state, "failed");
+  assert.equal(toolNotFound.verificationUnavailable, true);
+
+  // 확인 신호를 전혀 못 읽은 경우도 마찬가지.
+  const noSignal = await prewarmMcpOauth({
+    server: "vercel",
+    provider: "claude",
+    env: {},
+    runProviderStreamImpl: async (args) => {
+      args.onTextDelta("관련 없는 응답");
+    },
+  });
+  assert.equal(noSignal.state, "failed");
+  assert.equal(noSignal.verificationUnavailable, true);
+
+  // 반면 프로바이더 실행 예외(usage-limit 아님)는 실제 결함일 수 있으므로
+  // 여전히 하드 실패로 캡처된다.
+  const providerThrow = await prewarmMcpOauth({
+    server: "vercel",
+    provider: "claude",
+    env: {},
+    runProviderStreamImpl: async () => {
+      throw new Error("codex binary missing");
+    },
+  });
+  assert.equal(providerThrow.state, "failed");
+  assert.equal(providerThrow.verificationUnavailable, undefined);
 });
 
 test("prewarmMcpOauth fails closed without sentinel, on throw, and on timeout", async () => {
