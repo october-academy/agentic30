@@ -117,6 +117,7 @@ test("telemetry adopts a Mac-supplied anonymous distinct id and persists it", as
 
     telemetry.captureEvent("anonymous_event");
     assert.equal(captured.distinct_id, macDistinctId);
+    assert.equal(captured.properties.$set, undefined);
 
     const persisted = JSON.parse(
       fs.readFileSync(path.join(appSupportPath, "posthog-telemetry.json"), "utf8"),
@@ -138,6 +139,31 @@ test("telemetry adopts a Mac-supplied anonymous distinct id and persists it", as
     });
     telemetry.captureEvent("authenticated_event");
     assert.equal(captured.distinct_id, "user-42");
+    assert.equal(captured.properties.$set.email, "founder@example.com");
+
+    telemetry.captureException(new Error("test failure"));
+    assert.equal(captured.properties.distinct_id, "user-42");
+    assert.equal(captured.properties.$set.email, "founder@example.com");
+
+    setAuthContext({ accessToken: "access", userId: "user-43", email: "  next@example.com  " });
+    telemetry.captureEvent("different_account", { $set: { plan: "free", email: "wrong@example.com", access_token: "secret" } });
+    assert.equal(captured.distinct_id, "user-43");
+    assert.equal(captured.properties.$set.email, "next@example.com");
+    assert.equal(captured.properties.$set.plan, "free");
+    assert.equal(captured.properties.$set.access_token, "[redacted]");
+
+    for (const email of [null, "", "  "]) {
+      setAuthContext({ accessToken: "access", userId: "user-44", email });
+      telemetry.captureEvent("missing_email");
+      assert.equal(captured.properties.$set, undefined);
+    }
+    setAuthContext({ accessToken: "access", email: "unknown@example.com" });
+    telemetry.captureEvent("missing_user_id");
+    assert.equal(captured.properties.$set, undefined);
+    clearAuthContext();
+    telemetry.captureEvent("signed_out");
+    assert.equal(captured.distinct_id, macDistinctId);
+    assert.equal(captured.properties.$set, undefined);
   } finally {
     globalThis.fetch = originalFetch;
     clearAuthContext();
