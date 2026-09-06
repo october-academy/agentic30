@@ -233,6 +233,17 @@ enum PostHogTelemetrySanitizer {
         return sanitized
     }
 
+    /// Account email is allowed only in PostHog person properties. Keep the
+    /// ordinary event/log sanitizer's redaction rules for all other fields.
+    nonisolated static func sanitizePersonProperties(_ properties: [String: Any]) -> [String: Any] {
+        var sanitized = sanitize(properties)
+        if let email = (properties["email"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !email.isEmpty {
+            sanitized["email"] = email
+        }
+        return sanitized
+    }
+
     nonisolated static func emailDomain(_ value: String?) -> String? {
         guard let value,
               let atIndex = value.lastIndex(of: "@")
@@ -376,6 +387,14 @@ enum PostHogTelemetry {
     private static let captureFileLock = NSLock()
     private static let captureOnceLock = NSLock()
     private static let clientLock = NSLock()
+    private static let identityLock = NSLock()
+    // Feature captures often omit authSession. Remember only telemetry identity,
+    // never credentials, so they stay on the person established by identify().
+    private struct AccountIdentity {
+        let userId: String
+        let email: String?
+    }
+    private static var identifiedAccount: AccountIdentity?
     private static let defaultClient = PostHogSDKTelemetryClient()
     private static let internalEmailDomain = "october-academy.com"
     private static var activeConfig: PostHogTelemetryConfig?
@@ -419,6 +438,9 @@ enum PostHogTelemetry {
     }
 
     static func resetTestingHooks() {
+        identityLock.lock()
+        identifiedAccount = nil
+        identityLock.unlock()
         captureSink = nil
         configurationProvider = nil
         sdkClient = defaultClient
@@ -455,6 +477,13 @@ enum PostHogTelemetry {
 
     static func sanitizeAndAttachRuntimeProperties(_ properties: [String: Any]) -> [String: Any] {
         var sanitized = PostHogTelemetrySanitizer.sanitize(properties)
+        // identify() and capture() both encode person updates under these keys.
+        // Preserve their email through the SDK's final before-send pass.
+        for key in ["$set", "$set_once"] {
+            if let personProperties = properties[key] as? [String: Any] {
+                sanitized[key] = PostHogTelemetrySanitizer.sanitizePersonProperties(personProperties)
+            }
+        }
         for (key, value) in runtimeProperties() {
             sanitized[key] = value
         }
@@ -627,16 +656,21 @@ enum PostHogTelemetry {
         sdkClient.captureLog(
             message,
             level: level,
-            attributes: baseProperties(extra: eventProperties(properties), authSession: authSession)
+            attributes: baseProperties(extra: eventProperties(properties), authSession: authSession, includePersonProperties: false)
         )
     }
 
     static func identify(authSession: MacAuthSession) {
-        guard authSession.isUsable, ensureConfigured() else { return }
+        guard authSession.isUsable else { return }
+        identityLock.lock()
+        identifiedAccount = AccountIdentity(userId: authSession.userId, email: authSession.email)
+        identityLock.unlock()
+        guard ensureConfigured() else { return }
 
         var userProperties: [String: Any] = [
             "platform": "macos",
         ]
+        userProperties["email"] = authSession.email
         if let emailDomain = PostHogTelemetrySanitizer.emailDomain(authSession.email) {
             userProperties["email_domain"] = emailDomain
             if emailDomain == internalEmailDomain {
@@ -646,11 +680,14 @@ enum PostHogTelemetry {
 
         sdkClient.identify(
             authSession.userId,
-            userProperties: PostHogTelemetrySanitizer.sanitize(userProperties)
+            userProperties: PostHogTelemetrySanitizer.sanitizePersonProperties(userProperties)
         )
     }
 
     static func resetIdentity() {
+        identityLock.lock()
+        identifiedAccount = nil
+        identityLock.unlock()
         guard ensureConfigured() else { return }
         sdkClient.reset()
     }
@@ -936,13 +973,22 @@ enum PostHogTelemetry {
     private static func baseProperties(
         extra: [String: Any],
         authSession: MacAuthSession?,
-        distinctID: String? = nil
+        distinctID: String? = nil,
+        includePersonProperties: Bool = true
     ) -> [String: Any] {
         var properties = PostHogTelemetrySanitizer.sanitize(extra)
         properties["distinct_id"] = distinctID ?? Self.distinctID(for: authSession)
 
-        if let session = authSession {
+        if let session = accountIdentity(for: authSession),
+           properties["distinct_id"] as? String == session.userId {
             properties["auth_user_id"] = session.userId
+            if includePersonProperties,
+               let email = session.email?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !email.isEmpty {
+                var personProperties = properties["$set"] as? [String: Any] ?? [:]
+                personProperties["email"] = email
+                properties["$set"] = personProperties
+            }
             if let emailDomain = PostHogTelemetrySanitizer.emailDomain(session.email) {
                 properties["auth_email_domain"] = emailDomain
             }
@@ -972,10 +1018,19 @@ enum PostHogTelemetry {
     }
 
     private static func distinctID(for authSession: MacAuthSession?) -> String {
-        if let userID = authSession?.userId.nonEmpty {
+        if let userID = accountIdentity(for: authSession)?.userId.nonEmpty {
             return userID
         }
         return anonymousDistinctID()
+    }
+
+    private static func accountIdentity(for authSession: MacAuthSession?) -> AccountIdentity? {
+        if let session = authSession {
+            return session.isUsable ? AccountIdentity(userId: session.userId, email: session.email) : nil
+        }
+        identityLock.lock()
+        defer { identityLock.unlock() }
+        return identifiedAccount
     }
 
     nonisolated static func appVersionDescription() -> String {

@@ -421,6 +421,18 @@ export function createTelemetryClient({
     return auth.userId || anonymousDistinctId;
   }
 
+  function eventProperties(extra = {}) {
+    const properties = baseProperties(extra);
+    const auth = getAuthContextSummary();
+    const email = typeof auth.email === "string" ? auth.email.trim() : "";
+    if (auth.authenticated && auth.userId && email) {
+      // Event properties.email alone does not update the PostHog person.
+      // Add only the authenticated account email after generic redaction.
+      properties.$set = { ...properties.$set, email };
+    }
+    return properties;
+  }
+
   function send(url, payload, headers = {}) {
     fetch(url, {
       method: "POST",
@@ -460,7 +472,7 @@ export function createTelemetryClient({
         api_key: config.apiKey,
         event,
         distinct_id: distinctId(),
-        properties: baseProperties(properties),
+        properties: eventProperties(properties),
         timestamp: new Date().toISOString(),
       });
     },
@@ -474,7 +486,7 @@ export function createTelemetryClient({
         event: "$exception",
         properties: {
           distinct_id: distinctId(),
-          ...baseProperties(properties),
+          ...eventProperties(properties),
           handled,
           $exception_level: "error",
           $exception_list: [

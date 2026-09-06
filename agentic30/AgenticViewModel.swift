@@ -7252,8 +7252,11 @@ final class AgenticViewModel: ObservableObject {
         macOnboardingIntakeOnlyCompleted = Self.loadMacOnboardingIntakeOnlyCompleted()
         #endif
 
-        if let session = macAuthSession, session.shouldRefreshSoon {
-            macOnboardingStatus = .refreshing
+        if let session = macAuthSession {
+            PostHogTelemetry.identify(authSession: session)
+            if session.shouldRefreshSoon {
+                macOnboardingStatus = .refreshing
+            }
         }
         if let onboardingContextOverride {
             onboardingContext = onboardingContextOverride
@@ -15881,6 +15884,7 @@ final class AgenticViewModel: ObservableObject {
             KeychainHelper.deleteMacAuthSession()
             macAuthSession = nil
             macOnboardingStatus = .failed(error.localizedDescription)
+            PostHogTelemetry.resetIdentity()
             PostHogTelemetry.captureException(error, properties: [
                 "component": "agentic_view_model",
                 "operation": "exchange_mac_auth_code",

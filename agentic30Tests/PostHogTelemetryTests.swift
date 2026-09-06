@@ -465,7 +465,9 @@ final class PostHogTelemetryTests: XCTestCase {
         XCTAssertEqual(client.logs.count, 1)
         XCTAssertEqual(client.logs.first?.level, .error)
         XCTAssertEqual(client.logs.first?.attributes["message"] as? String, "[redacted]")
+        XCTAssertNil(client.logs.first?.attributes["$set"], "Logs do not update person profiles")
         XCTAssertEqual(client.identifies.first?.distinctId, "user_123")
+        XCTAssertEqual(client.identifies.first?.userProperties["email"] as? String, "founder@example.com")
         XCTAssertEqual(client.identifies.first?.userProperties["email_domain"] as? String, "example.com")
         XCTAssertNil(client.identifies.first?.userProperties["is_internal_tester"])
         XCTAssertEqual(client.resetCount, 1)
@@ -498,8 +500,80 @@ final class PostHogTelemetryTests: XCTestCase {
 
         XCTAssertEqual(client.identifies.count, 1)
         XCTAssertEqual(client.identifies.first?.distinctId, "internal_user")
+        XCTAssertEqual(client.identifies.first?.userProperties["email"] as? String, "admin@october-academy.com")
         XCTAssertEqual(client.identifies.first?.userProperties["email_domain"] as? String, "october-academy.com")
         XCTAssertEqual(client.identifies.first?.userProperties["is_internal_tester"] as? Bool, true)
+    }
+
+    func testPersonEmailSurvivesBeforeSendWithoutUnredactingOtherFields() {
+        let properties: [String: Any] = [
+            "email": "event@example.com",
+            "$set": [
+                "email": "  founder@example.com  ",
+                "access_token": "secret",
+                "nested": ["email": "private@example.com"],
+            ],
+            "$set_once": ["email": "first@example.com"],
+        ]
+        let sanitized = PostHogTelemetry.sanitizeAndAttachRuntimeProperties(properties)
+        let person = sanitized["$set"] as? [String: Any]
+        XCTAssertEqual(person?["email"] as? String, "founder@example.com")
+        XCTAssertEqual(person?["access_token"] as? String, "[redacted]")
+        XCTAssertNil((person?["nested"] as? [String: Any])?["email"])
+        XCTAssertEqual((sanitized["$set_once"] as? [String: Any])?["email"] as? String, "first@example.com")
+        XCTAssertNil(sanitized["email"])
+        XCTAssertNil(PostHogTelemetrySanitizer.sanitizePersonProperties(["email": " \n "])["email"])
+        XCTAssertNil(PostHogTelemetrySanitizer.sanitizePersonProperties([:])["email"])
+    }
+
+    func testAuthenticatedCapturesUpdatePersonEmailAndAnonymousCapturesOmitIt() {
+        let client = CapturingPostHogClient()
+        PostHogTelemetry.sdkClient = client
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        defer { PostHogTelemetry.resetTestingHooks() }
+        var session = MacAuthSession(
+            accessToken: "access", refreshToken: "refresh", expiresAt: nil,
+            tokenType: "bearer", userId: "user_123", email: "  founder@example.com  ",
+            onboardingCompletedAt: "2026-05-01T00:00:00Z", termsAcceptedAt: "2026-05-01T00:00:00Z",
+            termsVersion: "2026-04-15", privacyVersion: "2026-04-15"
+        )
+        PostHogTelemetry.capture("authenticated", properties: ["$set": ["plan": "free"]], authSession: session)
+        PostHogTelemetry.captureBlocking("terminating", authSession: session)
+        PostHogTelemetry.captureException(NSError(domain: "Test", code: 1), authSession: session)
+        for capture in client.captures {
+            let outgoing = PostHogTelemetry.sanitizeAndAttachRuntimeProperties(capture.properties)
+            XCTAssertEqual((outgoing["$set"] as? [String: Any])?["email"] as? String, "founder@example.com")
+            XCTAssertEqual(capture.distinctId, session.userId)
+        }
+        XCTAssertEqual((client.captures.first?.properties["$set"] as? [String: Any])?["plan"] as? String, "free")
+        XCTAssertEqual((client.exceptions.first?.properties["$set"] as? [String: Any])?["email"] as? String, "founder@example.com")
+
+        PostHogTelemetry.identify(authSession: session)
+        PostHogTelemetry.capture("feature_without_session")
+        XCTAssertEqual(client.captures.last?.distinctId, session.userId)
+        XCTAssertEqual((client.captures.last?.properties["$set"] as? [String: Any])?["email"] as? String, "founder@example.com")
+        var otherSession = session
+        otherSession.userId = "user_456"
+        otherSession.email = "other@example.com"
+        PostHogTelemetry.identify(authSession: otherSession)
+        PostHogTelemetry.capture("switched_account")
+        XCTAssertEqual(client.captures.last?.distinctId, otherSession.userId)
+        XCTAssertEqual((client.captures.last?.properties["$set"] as? [String: Any])?["email"] as? String, "other@example.com")
+        PostHogTelemetry.capture("explicit_account", authSession: session)
+        XCTAssertEqual(client.captures.last?.distinctId, session.userId)
+        XCTAssertEqual((client.captures.last?.properties["$set"] as? [String: Any])?["email"] as? String, "founder@example.com")
+
+        session.email = " "
+        PostHogTelemetry.identify(authSession: session)
+        XCTAssertNil(client.identifies.last?.userProperties["email"])
+        PostHogTelemetry.capture("missing_email", authSession: session)
+        XCTAssertNil(client.captures.last?.properties["$set"])
+        PostHogTelemetry.resetIdentity()
+        PostHogTelemetry.capture("anonymous")
+        XCTAssertNil(client.captures.last?.properties["$set"])
+        XCTAssertNotEqual(client.captures.last?.distinctId, session.userId)
     }
 
     private static func clearCaptureOnceState(defaultsKey: String, pendingKey: String) {
