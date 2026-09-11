@@ -18,6 +18,12 @@ final class SidecarErrorTelemetryClassificationTests: XCTestCase {
             ),
             "mac_office_hours_pending_state_unrecoverable"
         )
+        XCTAssertEqual(
+            AgenticViewModel.nonExceptionSidecarErrorTelemetryEvent(
+                forErrorKind: "office_hours_detached_pending"
+            ),
+            "mac_office_hours_detached_pending"
+        )
     }
 
     func testKnownRecoverableKindsStayNonException() {
@@ -59,6 +65,11 @@ final class SidecarErrorTelemetryClassificationTests: XCTestCase {
             (
                 "office_hours_pending_state_unrecoverable",
                 "mac_office_hours_pending_state_unrecoverable",
+                "codex"
+            ),
+            (
+                "office_hours_detached_pending",
+                "mac_office_hours_detached_pending",
                 "codex"
             ),
         ]
